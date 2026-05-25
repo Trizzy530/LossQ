@@ -852,23 +852,3 @@ function Input({
     </div>
   );
 }
-function Input({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div>
-      <label className="block text-sm text-slate-400 mb-2">{label}</label>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3"
-      />
-    </div>
-  );
-}
