@@ -29,7 +29,7 @@ export default function LoginPage() {
 
       localStorage.setItem("lossq_token", data.access_token || data.token || "");
       setMessage("Login successful");
-      window.location.href = "/demo";
+      window.location.href = "/admin";
     } catch (err) {
       setMessage(`Fetch failed: ${String(err)}`);
     }
