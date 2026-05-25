@@ -861,3 +861,18 @@ function MetricCard({ title, value }: { title: string; value: any }) {
     </div>
   );
 }
+
+function ChartCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: React.ReactNode;
+}) {
+  return (
+    <div className="bg-slate-800 rounded-xl p-5">
+      <h3 className="font-semibold mb-4">{title}</h3>
+      {children}
+    </div>
+  );
+}
