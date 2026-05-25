@@ -13,15 +13,11 @@ export default function LoginPage() {
 
     try {
       const API_URL = process.env.NEXT_PUBLIC_API_URL;
-       const res = await fetch(`${API_URL}/auth/login`, {
+
+      const res = await fetch(`${API_URL}/auth/login`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          email,
-          password,
-        }),
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email, password }),
       });
 
       const data = await res.json();
@@ -31,65 +27,40 @@ export default function LoginPage() {
         return;
       }
 
-      localStorage.setItem("lossq_token", data.access_token);
-      localStorage.setItem("lossq_user", data.user.email);
-
-      window.location.href = "/";
-    } catch (error: any) {
-      setMessage(`Login failed: ${error.message}`);
+      localStorage.setItem("lossq_token", data.access_token || data.token || "");
+      setMessage("Login successful");
+      window.location.href = "/demo";
+    } catch (err) {
+      setMessage(`Fetch failed: ${String(err)}`);
     }
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center p-8">
-      <form
-        onSubmit={login}
-        className="bg-slate-900 border border-slate-800 rounded-xl p-8 w-full max-w-md"
-      >
-        <h1 className="text-4xl font-bold mb-2">LossQ</h1>
-
-        <p className="text-slate-400 mb-6">
-          Sign in to your dashboard.
-        </p>
-
-        <label className="block text-sm text-slate-300 mb-2">
-          Email
-        </label>
+    <main className="min-h-screen flex items-center justify-center bg-[#030508] text-white px-6">
+      <form onSubmit={login} className="w-full max-w-md bg-[#0A1628] border border-blue-500/20 rounded-2xl p-8">
+        <h1 className="text-3xl font-black mb-2">LossQ</h1>
+        <p className="text-slate-400 mb-8">Sign in to continue.</p>
 
         <input
-          className="w-full bg-slate-800 p-3 rounded mb-4"
+          className="w-full mb-4 bg-white/5 border border-blue-500/20 rounded-lg px-4 py-3 outline-none"
           value={email}
           onChange={(e) => setEmail(e.target.value)}
+          placeholder="Email"
         />
-
-        <label className="block text-sm text-slate-300 mb-2">
-          Password
-        </label>
 
         <input
-          className="w-full bg-slate-800 p-3 rounded mb-4"
-          type="password"
+          className="w-full mb-6 bg-white/5 border border-blue-500/20 rounded-lg px-4 py-3 outline-none"
           value={password}
           onChange={(e) => setPassword(e.target.value)}
+          placeholder="Password"
+          type="password"
         />
 
-        <button
-          type="submit"
-          className="w-full bg-blue-600 py-3 rounded"
-        >
+        <button className="w-full bg-blue-600 hover:bg-blue-700 rounded-lg py-3 font-bold">
           Sign In
         </button>
-<a
-  href="/demo"
-  className="block text-center mt-4 text-blue-400 hover:text-blue-300"
->
-  Try instant demo without login
-</a>
-        {message && (
-          <p className="mt-4 text-sm text-slate-300 break-words">
-            {message}
-          </p>
-        )}
+
+        {message && <p className="mt-5 text-sm text-blue-300">{message}</p>}
       </form>
     </main>
   );
