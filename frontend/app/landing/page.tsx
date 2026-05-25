@@ -181,9 +181,9 @@ export default function LandingPage() {
                  onClick={handleSignup}
                  className="bg-blue-600 hover:bg-blue-700 px-8 py-4 rounded-lg font-bold"
 
-                 Join Beta
-               </button>
-             </div>
+                 <button>
+  		   Join Beta
+		</button>
            ) : (
              <p className="text-blue-400 font-mono mt-10">
                ✓ You’re on the list. We’ll be in touch shortly.
