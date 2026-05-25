@@ -83,7 +83,7 @@ export default function DashboardPage() {
 
   async function loadDashboard(policyNumberOverride?: string) {
     if (!getToken()) {
-      window.location.href = "/dashboard";
+      window.location.href = "/login";
       return;
     }
 
@@ -828,50 +828,5 @@ export default function DashboardPage() {
         </div>
       )}
     </main>
-  );
-}
-
-function MetricCard({ title, value }: { title: string; value: any }) {
-  return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-      <div className="text-slate-400 mb-3">{title}</div>
-      <div className="text-2xl font-bold break-words">{value || "-"}</div>
-    </div>
-  );
-}
-
-function Input({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div>
-      <label className="block text-sm text-slate-400 mb-2">{label}</label>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3"
-      />
-    </div>
-  );
-}
-
-function ChartCard({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="bg-slate-800 rounded-xl p-5">
-      <h3 className="font-semibold mb-4">{title}</h3>
-      {children}
-    </div>
   );
 }
