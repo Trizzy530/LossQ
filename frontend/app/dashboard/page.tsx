@@ -852,3 +852,12 @@ function Input({
     </div>
   );
 }
+
+function MetricCard({ title, value }: { title: string; value: any }) {
+  return (
+    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+      <div className="text-slate-400 mb-3">{title}</div>
+      <div className="text-2xl font-bold break-words">{value || "-"}</div>
+    </div>
+  );
+}
