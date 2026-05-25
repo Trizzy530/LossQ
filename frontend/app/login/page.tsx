@@ -77,7 +77,7 @@ export default function LoginPage() {
       localStorage.setItem("lossq_token", token);
       localStorage.setItem("lossq_user", cleanEmail);
 
-      window.location.href = "/";
+      window.location.href = "/dashboard";
     } catch {
       setMessage("Fetch failed. Check Vercel API URL and Railway CORS.");
     } finally {
