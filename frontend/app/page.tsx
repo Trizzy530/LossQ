@@ -1,883 +1,321 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import {
-  BarChart,
-  Bar,
-  LineChart,
-  Line,
-  PieChart,
-  Pie,
-  Cell,
-  XAxis,
-  YAxis,
-  CartesianGrid,
-  Tooltip,
-  ResponsiveContainer,
-} from "recharts";
 
-const API = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+export default function LandingPage() {
+ const [email, setEmail] = useState("");
+ const [joined, setJoined] = useState(false);
 
-async function safeJson(res: Response) {
-  try {
-    return await res.json();
-  } catch {
-    return null;
-  }
+ useEffect(() => {
+   const cursor = document.getElementById("cursor");
+   const ring = document.getElementById("cursorRing");
+
+   if (!cursor || !ring) return;
+
+   let mx = 0;
+   let my = 0;
+   let rx = 0;
+   let ry = 0;
+
+   const move = (e: MouseEvent) => {
+     mx = e.clientX;
+     my = e.clientY;
+     cursor.style.left = `${mx}px`;
+     cursor.style.top = `${my}px`;
+   };
+
+   const animate = () => {
+     rx += (mx - rx) * 0.12;
+     ry += (my - ry) * 0.12;
+     ring.style.left = `${rx}px`;
+     ring.style.top = `${ry}px`;
+     requestAnimationFrame(animate);
+   };
+
+   document.addEventListener("mousemove", move);
+   animate();
+
+   return () => document.removeEventListener("mousemove", move);
+ }, []);
+
+ function handleSignup() {
+   if (!email || !email.includes("@")) {
+     alert("Enter a valid email.");
+     return;
+   }
+
+   setJoined(true);
+ }
+
+ return (
+   <main className="min-h-screen bg-[#030508] text-[#F0F4FF] overflow-x-hidden">
+     <div id="cursor" className="hidden md:block fixed w-3 h-3 bg-blue-500 rounded-full pointer-events-none z-[9999] -translate-x-1/2 -translate-y-1/2 mix-blend-screen" />
+     <div id="cursorRing" className="hidden md:block fixed w-9 h-9 border border-blue-400/50 rounded-full pointer-events-none z-[9998] -translate-x-1/2 -translate-y-1/2" />
+
+     <div className="fixed inset-0 bg-[linear-gradient(rgba(0,120,255,0.04)_1px,transparent_1px),linear-gradient(90deg,rgba(0,120,255,0.04)_1px,transparent_1px)] bg-[size:60px_60px] pointer-events-none" />
+     <div className="fixed inset-0 bg-[radial-gradient(circle_at_center,rgba(0,120,255,0.12),transparent_55%)] pointer-events-none" />
+
+     <nav className="fixed top-0 left-0 right-0 z-50 px-8 md:px-12 py-5 flex items-center justify-between bg-black/70 backdrop-blur-xl border-b border-blue-500/10">
+       <a href="/landing" className="text-2xl font-black tracking-tight">
+         Loss<span className="text-blue-500">Q</span>
+       </a>
+
+       <div className="hidden md:flex items-center gap-8 text-xs uppercase tracking-[0.2em] text-slate-400">
+         <a href="#features" className="hover:text-white">Features</a>
+         <a href="#how" className="hover:text-white">How It Works</a>
+         <a href="#pricing" className="hover:text-white">Pricing</a>
+         <a href="/login" className="border border-blue-500 text-blue-400 px-5 py-2 rounded hover:bg-blue-600 hover:text-white">
+           Launch App
+         </a>
+       </div>
+     </nav>
+
+     <section className="relative z-10 min-h-screen flex flex-col items-center justify-center text-center px-6 pt-32">
+       <div className="text-blue-400 text-xs tracking-[0.25em] uppercase border border-blue-500/20 bg-blue-500/5 px-5 py-2 rounded-full mb-10">
+         AI Underwriting Intelligence
+       </div>
+
+       <h1 className="text-5xl md:text-8xl font-black leading-[0.95] tracking-tight max-w-5xl">
+         Insurance Loss Runs.
+         <span className="block text-blue-500">Instant.</span>
+         <span className="block text-transparent [-webkit-text-stroke:1px_#0078ff]">
+           Intelligent.
+         </span>
+       </h1>
+
+       <p className="text-slate-400 text-lg md:text-xl leading-8 max-w-2xl mt-8">
+         LossQ helps brokers process loss runs, analyze claim severity, generate renewal memos,
+         create carrier packets, and explain account risk faster.
+       </p>
+
+       <div className="flex flex-wrap gap-4 justify-center mt-10">
+         <a href="/login" className="bg-blue-600 hover:bg-blue-700 px-8 py-4 rounded-lg font-bold shadow-[0_0_40px_rgba(0,120,255,0.35)]">
+           Launch Demo →
+         </a>
+
+         <a href="#how" className="border border-white/15 hover:border-blue-500 hover:bg-blue-500/10 px-8 py-4 rounded-lg font-bold">
+           See How It Works
+         </a>
+       </div>
+
+       <div className="grid grid-cols-1 md:grid-cols-3 mt-16 border border-blue-500/15 rounded-2xl overflow-hidden bg-[#0A1628] max-w-3xl w-full">
+         <Stat value="<5s" label="Loss Run Processing" />
+         <Stat value="AI" label="Claim Intelligence" />
+         <Stat value="PDF" label="Carrier Reports" />
+       </div>
+     </section>
+
+     <Ticker />
+
+     <section id="features" className="relative z-10 max-w-7xl mx-auto px-6 py-28">
+       <p className="text-blue-400 text-xs tracking-[0.25em] uppercase mb-5">Platform Features</p>
+
+       <h2 className="text-4xl md:text-6xl font-black max-w-3xl leading-tight">
+         Everything an underwriter <span className="text-blue-500">actually</span> needs.
+       </h2>
+
+       <div className="grid grid-cols-1 md:grid-cols-3 gap-px mt-16 bg-blue-500/15 border border-blue-500/15 rounded-2xl overflow-hidden">
+         <Feature icon="⚡" title="Instant Loss Run Processing" text="Upload PDF, Excel, or CSV loss runs and organize claims by policy workspace." tag="// File → Intelligence" />
+         <Feature icon="🧠" title="Claims Intelligence Panel" text="Clickable claim analysis with severity, reserve adequacy, litigation risk, and renewal impact." tag="// AI Claim Analysis" />
+         <Feature icon="📊" title="Renewal Risk Scoring" text="Policy-specific summaries, trend analytics, reserve pressure, and underwriting risk indicators." tag="// Risk Engine" />
+         <Feature icon="📋" title="Carrier Packet Generation" text="Generate carrier-ready PDFs, executive reports, and submission materials in one click." tag="// Submission Ready" />
+         <Feature icon="✍️" title="Broker Narrative Generator" text="Create professional renewal memos and carrier narratives based on the selected policy." tag="// Memo Builder" />
+         <Feature icon="🏢" title="Multi-Policy Workspaces" text="Separate business profiles, policy numbers, claims, charts, Copilot answers, and exports." tag="// Account Isolation" />
+       </div>
+     </section>
+
+     <section id="how" className="relative z-10 px-6 py-28 bg-gradient-to-b from-transparent via-[#060D1A] to-transparent">
+       <div className="max-w-7xl mx-auto">
+         <p className="text-blue-400 text-xs tracking-[0.25em] uppercase mb-5">How It Works</p>
+
+         <h2 className="text-4xl md:text-6xl font-black max-w-3xl leading-tight">
+           From upload to insight in <span className="text-blue-500">seconds.</span>
+         </h2>
+
+         <div className="grid grid-cols-1 md:grid-cols-4 gap-8 mt-16">
+           <Step num="01" title="Upload Loss Run" text="Drop in PDF, Excel, or CSV claim data." />
+           <Step num="02" title="AI Parses Claims" text="LossQ extracts, normalizes, and organizes the claim information." />
+           <Step num="03" title="Analyze Risk" text="See severity, litigation exposure, reserves, trends, and renewal risk." />
+           <Step num="04" title="Export & Submit" text="Generate renewal memos, loss runs, and carrier-ready packets." />
+         </div>
+       </div>
+     </section>
+
+     <section id="pricing" className="relative z-10 max-w-7xl mx-auto px-6 py-28">
+       <p className="text-blue-400 text-xs tracking-[0.25em] uppercase mb-5">Pricing</p>
+
+       <h2 className="text-4xl md:text-6xl font-black max-w-3xl leading-tight">
+         Simple pricing. <span className="text-blue-500">No surprises.</span>
+       </h2>
+
+       <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mt-16">
+         <Price tier="Starter" price="$99" desc="For solo brokers testing AI loss run workflows." features={["1 user", "20 uploads/month", "AI claim intelligence", "PDF exports", "Email support"]} />
+         <Price featured tier="Pro" price="$249" desc="For agencies running active renewals and submissions." features={["Up to 5 users", "Unlimited uploads", "Renewal memos", "Carrier packets", "Priority support"]} />
+         <Price tier="Agency" price="$499" desc="For larger teams needing full platform access." features={["Unlimited users", "Unlimited uploads", "All Pro features", "Team workflows", "Dedicated support"]} />
+       </div>
+     </section>
+
+     <section id="waitlist" className="relative z-10 px-6 py-28 text-center">
+       <div className="max-w-3xl mx-auto bg-[#0A1628] border border-blue-500/15 rounded-3xl p-10 md:p-20 relative overflow-hidden">
+         <div className="absolute -top-40 left-1/2 -translate-x-1/2 w-96 h-96 bg-blue-500/20 rounded-full blur-3xl" />
+
+         <div className="relative">
+           <h2 className="text-4xl md:text-6xl font-black leading-tight">
+             Get Early Access to LossQ
+           </h2>
+
+           <p className="text-slate-400 text-lg leading-8 mt-6">
+             Join the beta and start turning messy loss runs into underwriting intelligence.
+           </p>
+
+           {!joined ? (
+             <div className="flex flex-col md:flex-row gap-3 max-w-xl mx-auto mt-10">
+               <input
+                 value={email}
+                 onChange={(e) => setEmail(e.target.value)}
+                 placeholder="your@agency.com"
+                 className="flex-1 bg-white/5 border border-blue-500/20 rounded-lg px-5 py-4 outline-none focus:border-blue-500"
+               />
+
+               <button
+                 onClick={handleSignup}
+                 className="bg-blue-600 hover:bg-blue-700 px-8 py-4 rounded-lg font-bold"
+
+                 Join Beta
+               </button>
+             </div>
+           ) : (
+             <p className="text-blue-400 font-mono mt-10">
+               ✓ You’re on the list. We’ll be in touch shortly.
+             </p>
+           )}
+
+           <p className="text-slate-500 text-xs tracking-widest uppercase mt-5">
+             No credit card required · Founder pricing available
+           </p>
+         </div>
+       </div>
+     </section>
+
+     <footer className="relative z-10 border-t border-blue-500/15 px-8 py-10 flex flex-col md:flex-row items-center justify-between gap-6">
+       <div className="font-black text-xl">Loss<span className="text-blue-500">Q</span></div>
+
+       <div className="flex gap-6 text-xs tracking-widest uppercase text-slate-500">
+         <a href="#features" className="hover:text-white">Features</a>
+         <a href="#pricing" className="hover:text-white">Pricing</a>
+         <a href="mailto:hello@lossq.com" className="hover:text-white">Contact</a>
+       </div>
+
+       <p className="text-xs text-slate-500">© 2026 LossQ. All rights reserved.</p>
+     </footer>
+   </main>
+ );
 }
 
-function objectToChartData(data: Record<string, number>) {
-  return Object.entries(data || {}).map(([name, value]) => ({
-    name,
-    value: Number(value || 0),
-  }));
+function Stat({ value, label }: { value: string; label: string }) {
+ return (
+   <div className="p-7 border-b md:border-b-0 md:border-r border-blue-500/15 last:border-0">
+     <div className="text-4xl font-black text-blue-400">{value}</div>
+     <div className="text-xs tracking-widest uppercase text-slate-500 mt-2">{label}</div>
+   </div>
+ );
 }
 
-export default function DashboardPage() {
-  const [claims, setClaims] = useState<any[]>([]);
-  const [summary, setSummary] = useState<any>({});
-  const [timeline, setTimeline] = useState<any>({});
-  const [profile, setProfile] = useState<any>({});
-  const [profiles, setProfiles] = useState<any[]>([]);
-  const [files, setFiles] = useState<FileList | null>(null);
-  const [message, setMessage] = useState("");
-
-  const [copilotOpen, setCopilotOpen] = useState(false);
-  const [copilotQuestion, setCopilotQuestion] = useState("");
-  const [copilotAnswer, setCopilotAnswer] = useState("");
-  const [copilotLoading, setCopilotLoading] = useState(false);
-
-  const [renewalMemo, setRenewalMemo] = useState("");
-  const [memoLoading, setMemoLoading] = useState(false);
-
-  useEffect(() => {
-    loadDashboard();
-  }, []);
-
-  function getToken() {
-    return localStorage.getItem("lossq_token");
-  }
-
-  function authHeaders() {
-    return { Authorization: `Bearer ${getToken()}` };
-  }
-
-  function newBlankProfile() {
-    setProfile({
-      business_name: "",
-      carrier_name: "",
-      agency_name: "",
-      policy_number: "",
-      effective_date: "",
-      expiration_date: "",
-      evaluation_date: "",
-    });
-
-    setClaims([]);
-    setSummary({});
-    setTimeline({});
-    setRenewalMemo("");
-    setCopilotAnswer("");
-    setMessage("New blank account profile started.");
-  }
-
-  async function loadDashboard(policyNumberOverride?: string) {
-    if (!getToken()) {
-      window.location.href = "/login";
-      return;
-    }
-
-    try {
-      const profilesRes = await fetch(`${API}/account-profile/all`, {
-        headers: authHeaders(),
-      });
-
-      if (profilesRes.ok) {
-        const profilesData = await safeJson(profilesRes);
-        setProfiles(Array.isArray(profilesData) ? profilesData : []);
-      }
-
-      let activeProfile = profile;
-
-      if (policyNumberOverride) {
-        const selectedRes = await fetch(
-          `${API}/account-profile/policy/${encodeURIComponent(policyNumberOverride)}`,
-          { headers: authHeaders() }
-        );
-
-        if (selectedRes.ok) {
-          activeProfile = await safeJson(selectedRes);
-          setProfile(activeProfile || {});
-        }
-      } else {
-        const profileRes = await fetch(`${API}/account-profile/`, {
-          headers: authHeaders(),
-        });
-
-        if (profileRes.ok) {
-          activeProfile = await safeJson(profileRes);
-          setProfile(activeProfile || {});
-        }
-      }
-
-      const policyNumber =
-        policyNumberOverride ||
-        activeProfile?.policy_number ||
-        profile?.policy_number ||
-        "";
-
-      const hasPolicy = policyNumber && policyNumber !== "Policy Not Set";
-
-      const claimsUrl = hasPolicy
-        ? `${API}/claims/?policy_number=${encodeURIComponent(policyNumber)}`
-        : `${API}/claims/`;
-
-      const claimsRes = await fetch(claimsUrl, { headers: authHeaders() });
-
-      if (claimsRes.ok) {
-        const claimsData = await safeJson(claimsRes);
-        setClaims(Array.isArray(claimsData) ? claimsData : []);
-      } else {
-        setClaims([]);
-      }
-
-      const summaryUrl = hasPolicy
-        ? `${API}/summary/underwriting?policy_number=${encodeURIComponent(policyNumber)}`
-        : `${API}/summary/underwriting`;
-
-      const summaryRes = await fetch(summaryUrl, { headers: authHeaders() });
-
-      if (summaryRes.ok) {
-        setSummary((await safeJson(summaryRes)) || {});
-      } else {
-        setSummary({});
-      }
-
-      const timelineUrl = hasPolicy
-        ? `${API}/timeline/analytics?policy_number=${encodeURIComponent(policyNumber)}`
-        : `${API}/timeline/analytics`;
-
-      const timelineRes = await fetch(timelineUrl, { headers: authHeaders() });
-
-      if (timelineRes.ok) {
-        setTimeline((await safeJson(timelineRes)) || {});
-      } else {
-        setTimeline({});
-      }
-    } catch {
-      setMessage("Dashboard could not load. Confirm backend is running on port 8000.");
-      setClaims([]);
-      setSummary({});
-      setTimeline({});
-    }
-  }
-
-  async function selectAccount(policyNumber: string) {
-    if (!policyNumber) return;
-    setMessage(`Loading policy ${policyNumber}...`);
-    setCopilotAnswer("");
-    await loadDashboard(policyNumber);
-    setMessage(`Loaded policy ${policyNumber}.`);
-  }
-
-  async function deleteProfile(policyNumber: string) {
-    const confirmed = confirm(`Delete profile ${policyNumber}?`);
-    if (!confirmed) return;
-
-    try {
-      const res = await fetch(
-        `${API}/account-profile/${encodeURIComponent(policyNumber)}`,
-        {
-          method: "DELETE",
-          headers: authHeaders(),
-        }
-      );
-
-      if (!res.ok) {
-        setMessage("Failed to delete profile. Make sure the backend delete route was added.");
-        return;
-      }
-
-      setProfiles((prev) => prev.filter((p) => p.policy_number !== policyNumber));
-
-      if (profile?.policy_number === policyNumber) {
-        newBlankProfile();
-      }
-
-      setMessage(`Deleted profile ${policyNumber}.`);
-    } catch {
-      setMessage("Delete failed.");
-    }
-  }
-
-  async function saveProfile() {
-    const payload = {
-      business_name: profile.business_name || "",
-      carrier_name: profile.carrier_name || "",
-      agency_name: profile.agency_name || "",
-      policy_number: profile.policy_number || "",
-      effective_date: profile.effective_date || "",
-      expiration_date: profile.expiration_date || "",
-      evaluation_date: profile.evaluation_date || "",
-    };
-
-    if (!payload.policy_number) {
-      setMessage("Policy number is required before saving.");
-      return;
-    }
-
-    const res = await fetch(`${API}/account-profile/`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeaders(),
-      },
-      body: JSON.stringify(payload),
-    });
-
-    if (!res.ok) {
-      setMessage("Could not save account profile.");
-      return;
-    }
-
-    setMessage("Account profile saved.");
-    await loadDashboard(payload.policy_number);
-  }
-
-  async function lookupPolicy() {
-    if (!profile.policy_number) {
-      setMessage("Enter a policy number first.");
-      return;
-    }
-
-    const res = await fetch(
-      `${API}/account-profile/policy/${encodeURIComponent(profile.policy_number)}`,
-      { headers: authHeaders() }
-    );
-
-    if (!res.ok) {
-      setMessage("No account found for that policy number.");
-      return;
-    }
-
-    const data = await safeJson(res);
-    setProfile(data || {});
-    setCopilotAnswer("");
-    await loadDashboard(data?.policy_number);
-    setMessage("Account profile loaded.");
-  }
-
-  async function uploadFiles() {
-    if (!files || files.length === 0) {
-      setMessage("Please select one or more PDF, Excel, or CSV files first.");
-      return;
-    }
-
-    if (!profile.policy_number || profile.policy_number === "Policy Not Set") {
-      setMessage("Select or enter a policy number before uploading.");
-      return;
-    }
-
-    setMessage("Uploading and analyzing loss runs...");
-
-    const formData = new FormData();
-    formData.append("policy_number", profile.policy_number);
-
-    let endpoint = `${API}/upload/loss-run`;
-
-    if (files.length === 1) {
-      formData.append("file", files[0]);
-    } else {
-      endpoint = `${API}/upload/loss-runs`;
-      Array.from(files).forEach((file) => formData.append("files", file));
-    }
-
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: authHeaders(),
-      body: formData,
-    });
-
-    const data = await safeJson(res);
-
-    if (!res.ok) {
-      setMessage(`Upload failed: ${JSON.stringify(data)}`);
-      return;
-    }
-
-    setMessage(`Upload complete. Saved ${data?.saved_claims || 0} claim(s).`);
-    await loadDashboard(profile.policy_number);
-  }
-
-  async function downloadPdf(url: string, filename: string) {
-    const res = await fetch(url, { headers: authHeaders() });
-
-    if (!res.ok) {
-      setMessage("Could not generate report.");
-      return;
-    }
-
-    const blob = await res.blob();
-    const objectUrl = window.URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = objectUrl;
-    a.download = filename;
-    a.click();
-
-    window.URL.revokeObjectURL(objectUrl);
-  }
-
-  async function exportCarrierLossRun() {
-    const policy = profile?.policy_number
-      ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
-      : "";
-
-    await downloadPdf(
-      `${API}/reports/loss-run-template-pdf${policy}`,
-      "lossq_carrier_loss_run.pdf"
-    );
-  }
-
-  async function exportExecutiveReport() {
-    const policy = profile?.policy_number
-      ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
-      : "";
-
-    await downloadPdf(
-      `${API}/reports/underwriting-pdf${policy}`,
-      "lossq_executive_report.pdf"
-    );
-  }
-
-  async function generateRenewalMemo() {
-    if (!profile?.policy_number) {
-      setRenewalMemo("Select a policy/account first.");
-      return;
-    }
-
-    setMemoLoading(true);
-    setRenewalMemo(`Generating renewal memo for ${profile.policy_number}...`);
-
-    try {
-      const policy = `?policy_number=${encodeURIComponent(profile.policy_number)}`;
-
-      const res = await fetch(`${API}/renewal/memo${policy}`, {
-        headers: authHeaders(),
-      });
-
-      const data = await safeJson(res);
-
-      if (!res.ok) {
-        setRenewalMemo(JSON.stringify(data));
-        return;
-      }
-
-      setRenewalMemo(
-        `Policy analyzed: ${data?.policy_number || profile.policy_number}\nClaims used: ${data?.claims_used ?? claims.length}\n\n${data?.memo || "No memo generated."}`
-      );
-    } catch {
-      setRenewalMemo("Memo failed.");
-    } finally {
-      setMemoLoading(false);
-    }
-  }
-
-  async function generateCarrierPacket() {
-    await generateRenewalMemo();
-    await exportCarrierLossRun();
-    setMessage("Carrier packet generated.");
-  }
-
-  function copyRenewalMemo() {
-    navigator.clipboard.writeText(renewalMemo || "");
-    setMessage("Renewal memo copied.");
-  }
-
-  async function askCopilot(questionOverride?: string) {
-    const question = questionOverride || copilotQuestion;
-
-    if (!question.trim()) {
-      setCopilotAnswer("Ask a question first.");
-      return;
-    }
-
-    if (!profile?.policy_number) {
-      setCopilotAnswer("Select a policy/account first so Copilot analyzes the correct claims.");
-      setCopilotOpen(true);
-      return;
-    }
-
-    setCopilotOpen(true);
-    setCopilotLoading(true);
-    setCopilotAnswer(`Thinking about policy ${profile.policy_number}...`);
-
-    try {
-      const res = await fetch(`${API}/copilot/ask`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders(),
-        },
-        body: JSON.stringify({
-          question,
-          policy_number: profile.policy_number,
-        }),
-      });
-
-      const data = await safeJson(res);
-
-      if (!res.ok) {
-        setCopilotAnswer(JSON.stringify(data));
-        return;
-      }
-
-      const claimsUsed = data?.claims_used ?? claims.length;
-      const policyUsed = data?.policy_number || profile.policy_number;
-
-      setCopilotAnswer(
-        `Policy analyzed: ${policyUsed}\nClaims used: ${claimsUsed}\n\n${data?.answer || "No answer returned."}`
-      );
-      setCopilotQuestion(question);
-    } catch {
-      setCopilotAnswer("Copilot failed.");
-    } finally {
-      setCopilotLoading(false);
-    }
-  }
-
-  function logout() {
-    localStorage.removeItem("lossq_token");
-    localStorage.removeItem("lossq_user");
-    window.location.href = "/login";
-  }
-
-  const totalClaims = claims.length;
-  const openClaims = claims.filter((c) => c.status === "Open").length;
-  const totalIncurred = claims.reduce(
-    (sum, c) => sum + Number(c.total_incurred || 0),
-    0
-  );
-  const flaggedClaims = claims.filter((c) => c.flag).length;
-
-  const lossTrendData = objectToChartData(timeline?.incurred_by_year || {});
-  const agingData = objectToChartData(timeline?.open_claim_aging || {});
-  const severityData = objectToChartData(timeline?.severity_heatmap || {});
-  const lineData = objectToChartData(timeline?.incurred_by_line || {});
-
-  return (
-    <main className="min-h-screen bg-slate-950 text-white p-10">
-      <div className="max-w-7xl mx-auto pb-32">
-        <header className="flex justify-between items-start mb-10">
-          <div>
-            <h1 className="text-5xl font-bold">LossQ Dashboard</h1>
-            <p className="text-slate-400 mt-2">
-              AI underwriting operating system for commercial loss runs
-            </p>
-          </div>
-
-          <div className="flex gap-4">
-            <a href="/landing" className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg">
-              Landing
-            </a>
-            <a href="/demo" className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg">
-              Demo
-            </a>
-            <button onClick={() => setCopilotOpen(true)} className="bg-blue-600 hover:bg-blue-700 px-5 py-3 rounded-lg">
-              Open Copilot
-            </button>
-            <button onClick={logout} className="bg-red-600 hover:bg-red-700 px-5 py-3 rounded-lg">
-              Logout
-            </button>
-          </div>
-        </header>
-
-        {message && (
-          <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6 text-slate-300">
-            {message}
-          </div>
-        )}
-
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <h2 className="text-3xl font-semibold mb-4">Account Workspace</h2>
-
-          {profiles.length === 0 ? (
-            <p className="text-slate-400">No saved accounts yet. Save a profile below.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {profiles.map((item) => (
-                <div
-                  key={item.id}
-                  className={`rounded-xl border p-4 ${
-                    profile?.policy_number === item.policy_number
-                      ? "border-blue-500 bg-blue-500/10"
-                      : "border-slate-800 bg-slate-950"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => selectAccount(item.policy_number)}
-                    className="w-full text-left"
-                  >
-                    <p className="font-bold">{item.business_name || "-"}</p>
-                    <p className="text-slate-400 text-sm">{item.carrier_name || "-"}</p>
-                    <p className="text-blue-400 text-sm mt-2">{item.policy_number || "-"}</p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => deleteProfile(item.policy_number)}
-                    className="mt-4 w-full bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm font-semibold"
-                  >
-                    Delete Profile
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-3xl font-semibold">Carrier Account Profile</h2>
-
-            <div className="flex gap-3">
-              <button onClick={newBlankProfile} className="bg-slate-700 hover:bg-slate-600 px-5 py-3 rounded-lg font-semibold">
-                New Blank Profile
-              </button>
-              <button onClick={saveProfile} className="bg-emerald-600 hover:bg-emerald-700 px-5 py-3 rounded-lg font-semibold">
-                Save Profile
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            <Input label="Business Name" value={profile?.business_name || ""} onChange={(v) => setProfile({ ...profile, business_name: v })} />
-            <Input label="Carrier Name" value={profile?.carrier_name || ""} onChange={(v) => setProfile({ ...profile, carrier_name: v })} />
-            <Input label="Agency Name" value={profile?.agency_name || ""} onChange={(v) => setProfile({ ...profile, agency_name: v })} />
-
-            <div>
-              <label className="block text-sm text-slate-400 mb-2">Policy Number</label>
-              <div className="flex gap-2">
-                <input
-                  value={profile?.policy_number || ""}
-                  onChange={(e) => setProfile({ ...profile, policy_number: e.target.value })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3"
-                />
-                <button onClick={lookupPolicy} className="bg-blue-600 hover:bg-blue-700 px-4 py-3 rounded-lg font-semibold">
-                  Lookup
-                </button>
-              </div>
-            </div>
-
-            <Input label="Effective Date" value={profile?.effective_date || ""} onChange={(v) => setProfile({ ...profile, effective_date: v })} />
-            <Input label="Expiration Date" value={profile?.expiration_date || ""} onChange={(v) => setProfile({ ...profile, expiration_date: v })} />
-            <Input label="Evaluation Date" value={profile?.evaluation_date || ""} onChange={(v) => setProfile({ ...profile, evaluation_date: v })} />
-          </div>
-        </section>
-
-        <section className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
-          <MetricCard title="Business" value={profile?.business_name || "-"} />
-          <MetricCard title="Policy Number" value={profile?.policy_number || "-"} />
-          <MetricCard title="Carrier" value={profile?.carrier_name || "-"} />
-          <MetricCard title="Total Claims" value={totalClaims} />
-        </section>
-
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <h2 className="text-3xl font-semibold mb-4">Upload & Report Center</h2>
-
-          <div className="flex flex-wrap gap-4 items-center">
-            <input
-              type="file"
-              multiple
-              accept=".pdf,.xlsx,.csv"
-              onChange={(e) => setFiles(e.target.files)}
-              className="text-sm text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:text-white"
-            />
-
-            <button onClick={uploadFiles} className="bg-blue-600 hover:bg-blue-700 px-5 py-3 rounded-lg font-semibold">
-              Upload & Analyze
-            </button>
-            <button onClick={exportCarrierLossRun} className="bg-emerald-600 hover:bg-emerald-700 px-5 py-3 rounded-lg font-semibold">
-              Export Carrier Loss Run
-            </button>
-            <button onClick={exportExecutiveReport} className="bg-green-700 hover:bg-green-800 px-5 py-3 rounded-lg font-semibold">
-              Export Executive Report
-            </button>
-            <button onClick={generateCarrierPacket} className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold">
-              Generate Carrier Packet
-            </button>
-          </div>
-        </section>
-
-        <section className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
-          <MetricCard title="Open Claims" value={openClaims} />
-          <MetricCard title="Total Incurred" value={`$${Number(totalIncurred).toLocaleString()}`} />
-          <MetricCard title="Flagged Issues" value={flaggedClaims} />
-          <MetricCard title="Renewal Risk" value={summary?.renewal_risk || "GREEN"} />
-        </section>
-
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <h2 className="text-3xl font-semibold mb-5">AI Underwriting Summary</h2>
-          <p className="text-slate-300 leading-8">{summary?.summary || "No summary available."}</p>
-          <p className="text-slate-400 mt-6">{summary?.recommendation || "Upload claims to generate intelligence."}</p>
-        </section>
-
-        <details className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <summary className="cursor-pointer text-2xl font-semibold">AI Renewal Memo</summary>
-
-          <div className="mt-6">
-            <div className="flex gap-4 mb-5">
-              <button onClick={generateRenewalMemo} disabled={memoLoading} className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold disabled:opacity-50">
-                {memoLoading ? "Generating..." : "Generate Renewal Memo"}
-              </button>
-
-              {renewalMemo && (
-                <button onClick={copyRenewalMemo} className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg font-semibold">
-                  Copy Memo
-                </button>
-              )}
-            </div>
-
-            <div className="bg-slate-800 rounded-xl p-5 max-h-[420px] overflow-y-auto">
-              <pre className="whitespace-pre-wrap text-slate-300 leading-7 text-sm">
-                {renewalMemo || "Generate a memo above."}
-              </pre>
-            </div>
-          </div>
-        </details>
-
-        <details className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <summary className="cursor-pointer text-3xl font-semibold">
-            Interactive Claim Development Charts
-          </summary>
-
-          <div className="mt-6">
-            <p className="text-slate-400 mb-6">
-              Visualize loss trends, claim aging, severity distribution, and line-of-business concentration.
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-              <MetricCard title="Reserve Pressure" value={timeline?.reserve_pressure || "Low"} />
-              <MetricCard title="Open Claims" value={timeline?.open_claims || 0} />
-              <MetricCard title="Total Reserve" value={`$${Number(timeline?.total_reserve || 0).toLocaleString()}`} />
-              <MetricCard title="Total Incurred" value={`$${Number(timeline?.total_incurred || 0).toLocaleString()}`} />
-            </div>
-
-            <div className="bg-slate-800 rounded-xl p-5 mb-6">
-              <h3 className="font-semibold mb-2">Trend Intelligence</h3>
-              <p className="text-slate-300">
-                {timeline?.trend_note || "No trend intelligence available yet."}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <ChartCard title="Incurred Loss Trend">
-                <ResponsiveContainer width="100%" height={280}>
-                  <LineChart data={lossTrendData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis dataKey="name" stroke="#94a3b8" />
-                    <YAxis stroke="#94a3b8" />
-                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
-                    <Line type="monotone" dataKey="value" stroke="#38bdf8" strokeWidth={4} dot={{ fill: "#38bdf8", strokeWidth: 2, r: 5 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </ChartCard>
-
-              <ChartCard title="Open Claim Aging">
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={agingData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis dataKey="name" stroke="#94a3b8" />
-                    <YAxis stroke="#94a3b8" />
-                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
-                    <Bar dataKey="value" fill="#f59e0b" radius={[8, 8, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </ChartCard>
-
-              <ChartCard title="Severity Distribution">
-                <ResponsiveContainer width="100%" height={280}>
-                  <PieChart>
-                    <Pie data={severityData} dataKey="value" nameKey="name" outerRadius={100} label>
-                      {severityData.map((_, index) => {
-                        const colors = ["#22c55e", "#eab308", "#f97316", "#ef4444"];
-                        return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
-                      })}
-                    </Pie>
-                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </ChartCard>
-
-              <ChartCard title="Incurred by Line of Business">
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={lineData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis dataKey="name" stroke="#94a3b8" />
-                    <YAxis stroke="#94a3b8" />
-                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
-                    <Bar dataKey="value" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </ChartCard>
-            </div>
-          </div>
-        </details>
-
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <h2 className="text-3xl font-semibold mb-6">Claims Analysis</h2>
-
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-slate-700 text-left">
-                  <th className="pb-4">Claim #</th>
-                  <th className="pb-4">Line</th>
-                  <th className="pb-4">Status</th>
-                  <th className="pb-4">Paid</th>
-                  <th className="pb-4">Reserve</th>
-                  <th className="pb-4">Total</th>
-                  <th className="pb-4">Policy</th>
-                  <th className="pb-4">Flag</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {claims.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="py-6 text-slate-400">
-                      No claims found for this policy.
-                    </td>
-                  </tr>
-                ) : (
-                  claims.map((claim) => (
-                    <tr key={claim.id || claim.claim_number} className="border-b border-slate-800">
-                      <td className="py-4">
-                        {claim.id ? (
-                          <a href={`/claims/${claim.id}`} className="text-blue-400 hover:text-blue-300 underline">
-                            {claim.claim_number || "Unnamed Claim"}
-                          </a>
-                        ) : (
-                          claim.claim_number || "Unnamed Claim"
-                        )}
-                      </td>
-                      <td>{claim.line_of_business || "-"}</td>
-                      <td>{claim.status || "-"}</td>
-                      <td>${Number(claim.paid_amount || 0).toLocaleString()}</td>
-                      <td>${Number(claim.reserve_amount || 0).toLocaleString()}</td>
-                      <td>${Number(claim.total_incurred || 0).toLocaleString()}</td>
-                      <td>{claim.policy_number || "-"}</td>
-                      <td>{claim.flag ? <span className="text-red-400">{claim.flag}</span> : <span className="text-slate-400">None</span>}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-
-      <button
-        onClick={() => setCopilotOpen(!copilotOpen)}
-        className="fixed bottom-6 right-6 z-50 rounded-full bg-blue-600 hover:bg-blue-700 px-6 py-4 font-semibold shadow-2xl"
-      >
-        {copilotOpen ? "Close Copilot" : "Ask Copilot"}
-      </button>
-
-      {copilotOpen && (
-        <div className="fixed bottom-24 right-6 z-50 w-[420px] max-w-[calc(100vw-3rem)] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
-          <div className="bg-slate-800 px-5 py-4 flex justify-between">
-            <div>
-              <h2 className="font-semibold">AI Underwriting Copilot</h2>
-              <p className="text-xs text-slate-400">
-                Account: {profile?.business_name || "No account selected"} | Policy: {profile?.policy_number || "-"}
-              </p>
-            </div>
-
-            <button onClick={() => setCopilotOpen(false)} className="text-slate-400 hover:text-white">✕</button>
-          </div>
-
-          <div className="p-5 max-h-[520px] overflow-y-auto">
-            {[
-              "What are the biggest renewal concerns?",
-              "Summarize litigation exposure.",
-              "What claims should concern carriers?",
-              "What should the broker explain before submission?",
-            ].map((q) => (
-              <button key={q} onClick={() => askCopilot(q)} className="w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 py-2 text-sm mb-2">
-                {q}
-              </button>
-            ))}
-
-            <div className="flex gap-2 mt-4">
-              <input
-                value={copilotQuestion}
-                onChange={(e) => setCopilotQuestion(e.target.value)}
-                placeholder="Ask a question..."
-                className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm"
-              />
-
-              <button onClick={() => askCopilot()} disabled={copilotLoading} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg disabled:opacity-50">
-                {copilotLoading ? "..." : "Ask"}
-              </button>
-            </div>
-
-            {copilotAnswer && (
-              <div className="bg-slate-800 rounded-xl p-4 mt-4">
-                <p className="text-slate-300 whitespace-pre-line text-sm leading-7">
-                  {copilotAnswer}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </main>
-  );
+function Feature({ icon, title, text, tag }: { icon: string; title: string; text: string; tag: string }) {
+ return (
+   <div className="bg-[#060D1A] hover:bg-[#0A1628] p-9 transition">
+     <div className="w-12 h-12 rounded-xl bg-blue-500/10 border border-blue-500/15 flex items-center justify-center mb-6 text-xl">
+       {icon}
+     </div>
+
+     <h3 className="text-xl font-bold mb-3">{title}</h3>
+     <p className="text-slate-400 leading-7 text-sm">{text}</p>
+     <p className="text-blue-400 font-mono text-xs tracking-widest mt-6">{tag}</p>
+   </div>
+ );
 }
 
-function MetricCard({ title, value }: { title: string; value: any }) {
-  return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-      <div className="text-slate-400 mb-3">{title}</div>
-      <div className="text-2xl font-bold break-words">{value || "-"}</div>
-    </div>
-  );
+function Step({ num, title, text }: { num: string; title: string; text: string }) {
+ return (
+   <div className="text-center">
+     <div className="w-16 h-16 mx-auto rounded-full border border-blue-500 bg-[#0A1628] text-blue-400 flex items-center justify-center font-mono shadow-[0_0_30px_rgba(0,120,255,0.25)]">
+       {num}
+     </div>
+
+     <h4 className="font-bold text-lg mt-6 mb-3">{title}</h4>
+     <p className="text-slate-400 text-sm leading-6">{text}</p>
+   </div>
+ );
 }
 
-function Input({
-  label,
-  value,
-  onChange,
+function Price({
+ tier,
+ price,
+ desc,
+ features,
+ featured = false,
 }: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
+ tier: string;
+ price: string;
+ desc: string;
+ features: string[];
+ featured?: boolean;
 }) {
-  return (
-    <div>
-      <label className="block text-sm text-slate-400 mb-2">{label}</label>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3"
-      />
-    </div>
-  );
+ return (
+   <div className={`relative bg-[#0A1628] border rounded-2xl p-9 ${featured ? "border-blue-500 shadow-[0_0_45px_rgba(0,120,255,0.25)]" : "border-blue-500/15"}`}>
+     {featured && (
+       <div className="absolute -top-3 left-1/2 -translate-x-1/2 bg-blue-600 text-white text-xs font-mono tracking-widest px-4 py-1 rounded-full">
+         MOST POPULAR
+       </div>
+     )}
+
+     <p className="text-blue-400 font-mono text-xs tracking-widest uppercase">{tier}</p>
+     <h3 className="text-5xl font-black mt-5">{price}<span className="text-lg text-slate-500">/mo</span></h3>
+     <p className="text-slate-400 text-sm leading-6 mt-4 mb-8">{desc}</p>
+
+     <ul className="space-y-3 mb-9">
+       {features.map((feature) => (
+         <li key={feature} className="text-slate-400 text-sm border-b border-white/5 pb-3">
+           <span className="text-blue-400 mr-2">→</span>{feature}
+         </li>
+       ))}
+     </ul>
+
+     <a href="/login" className={`block text-center rounded-lg py-4 font-bold ${featured ? "bg-blue-600 hover:bg-blue-700" : "border border-white/15 hover:border-blue-500 hover:bg-blue-500/10"}`}>
+       Get Started
+     </a>
+   </div>
+ );
 }
 
-function ChartCard({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="bg-slate-800 rounded-xl p-5">
-      <h3 className="font-semibold mb-4">{title}</h3>
-      {children}
-    </div>
-  );
+function Ticker() {
+ const items = [
+   "Instant Loss Run Processing",
+   "AI Renewal Risk Scoring",
+   "Carrier Packet Generation",
+   "Claims Intelligence Panel",
+   "Executive PDF Reports",
+   "Broker Narrative Generator",
+   "Multi-Policy Workspaces",
+   "Timeline Analytics",
+ ];
+
+ return (
+   <div className="relative z-10 overflow-hidden border-y border-blue-500/15 bg-[#060D1A] py-4">
+     <div className="flex gap-16 whitespace-nowrap animate-[ticker_24s_linear_infinite]">
+       {[...items, ...items].map((item, index) => (
+         <span key={`${item}-${index}`} className="text-slate-500 text-xs tracking-[0.25em] uppercase shrink-0">
+           <span className="text-blue-400 mr-2">→</span>{item}
+         </span>
+       ))}
+     </div>
+
+     <style jsx>{`
+       @keyframes ticker {
+         from { transform: translateX(0); }
+         to { transform: translateX(-50%); }
+       }
+     `}</style>
+   </div>
+ );
 }
