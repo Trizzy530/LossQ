@@ -12,7 +12,8 @@ export default function LoginPage() {
     setMessage("Signing in...");
 
     try {
-      const res = await fetch("http://127.0.0.1:8000/auth/login", {
+      const API_URL = process.env.NEXT_PUBLIC_API_URL;
+       const res = await fetch(`${API_URL}/auth/login`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
