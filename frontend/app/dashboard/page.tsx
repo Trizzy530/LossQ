@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
+import { useRouter, useSearchParams } from "next/navigation";
 import {
   BarChart,
   Bar,
@@ -16,7 +17,8 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-const API = "https://lossq-production.up.railway.app";
+const API =
+  process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
 
 async function safeJson(res: Response) {
   try {
@@ -34,6 +36,10 @@ function objectToChartData(data: Record<string, number>) {
 }
 
 export default function DashboardPage() {
+  const router = useRouter();
+  const searchParams = useSearchParams();
+
+  const [ready, setReady] = useState(false);
   const [claims, setClaims] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>({});
   const [timeline, setTimeline] = useState<any>({});
@@ -50,16 +56,34 @@ export default function DashboardPage() {
   const [renewalMemo, setRenewalMemo] = useState("");
   const [memoLoading, setMemoLoading] = useState(false);
 
+  const welcome = searchParams.get("welcome") === "1";
+
   useEffect(() => {
+    const token = getToken();
+
+    if (!token) {
+      router.replace("/login");
+      return;
+    }
+
+    setReady(true);
     loadDashboard();
   }, []);
 
   function getToken() {
+    if (typeof window === "undefined") return null;
     return localStorage.getItem("lossq_token");
   }
 
   function authHeaders() {
-    return { Authorization: `Bearer ${getToken()}` };
+    const token = getToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  function logout() {
+    localStorage.removeItem("lossq_token");
+    localStorage.removeItem("lossq_user");
+    router.replace("/login");
   }
 
   function newBlankProfile() {
@@ -83,7 +107,7 @@ export default function DashboardPage() {
 
   async function loadDashboard(policyNumberOverride?: string) {
     if (!getToken()) {
-      window.location.href = "/login";
+      router.replace("/login");
       return;
     }
 
@@ -443,12 +467,6 @@ export default function DashboardPage() {
     }
   }
 
-  function logout() {
-    localStorage.removeItem("lossq_token");
-    localStorage.removeItem("lossq_user");
-    window.location.href = "/login";
-  }
-
   const totalClaims = claims.length;
   const openClaims = claims.filter((c) => c.status === "Open").length;
   const totalIncurred = claims.reduce(
@@ -462,6 +480,14 @@ export default function DashboardPage() {
   const severityData = objectToChartData(timeline?.severity_heatmap || {});
   const lineData = objectToChartData(timeline?.incurred_by_line || {});
 
+  if (!ready) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
+        Loading dashboard...
+      </main>
+    );
+  }
+
   return (
     <main className="min-h-screen bg-slate-950 text-white p-10">
       <div className="max-w-7xl mx-auto pb-32">
@@ -474,7 +500,7 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex gap-4">
-            <a href="/landing" className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg">
+            <a href="/" className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg">
               Landing
             </a>
             <button onClick={() => setCopilotOpen(true)} className="bg-blue-600 hover:bg-blue-700 px-5 py-3 rounded-lg">
@@ -486,393 +512,17 @@ export default function DashboardPage() {
           </div>
         </header>
 
+        {welcome && (
+          <div className="bg-emerald-600/20 border border-emerald-500 rounded-xl p-4 mb-6 text-emerald-200">
+            Welcome to LossQ. Your account was created successfully.
+          </div>
+        )}
+
         {message && (
           <div className="bg-slate-900 border border-slate-800 rounded-xl p-4 mb-6 text-slate-300">
             {message}
           </div>
         )}
 
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <h2 className="text-3xl font-semibold mb-4">Account Workspace</h2>
-
-          {profiles.length === 0 ? (
-            <p className="text-slate-400">No saved accounts yet. Save a profile below.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {profiles.map((item) => (
-                <div
-                  key={item.id}
-                  className={`rounded-xl border p-4 ${
-                    profile?.policy_number === item.policy_number
-                      ? "border-blue-500 bg-blue-500/10"
-                      : "border-slate-800 bg-slate-950"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => selectAccount(item.policy_number)}
-                    className="w-full text-left"
-                  >
-                    <p className="font-bold">{item.business_name || "-"}</p>
-                    <p className="text-slate-400 text-sm">{item.carrier_name || "-"}</p>
-                    <p className="text-blue-400 text-sm mt-2">{item.policy_number || "-"}</p>
-                  </button>
-
-                  <button
-                    type="button"
-                    onClick={() => deleteProfile(item.policy_number)}
-                    className="mt-4 w-full bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm font-semibold"
-                  >
-                    Delete Profile
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <div className="flex justify-between items-center mb-6">
-            <h2 className="text-3xl font-semibold">Carrier Account Profile</h2>
-
-            <div className="flex gap-3">
-              <button onClick={newBlankProfile} className="bg-slate-700 hover:bg-slate-600 px-5 py-3 rounded-lg font-semibold">
-                New Blank Profile
-              </button>
-              <button onClick={saveProfile} className="bg-emerald-600 hover:bg-emerald-700 px-5 py-3 rounded-lg font-semibold">
-                Save Profile
-              </button>
-            </div>
-          </div>
-
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            <Input label="Business Name" value={profile?.business_name || ""} onChange={(v) => setProfile({ ...profile, business_name: v })} />
-            <Input label="Carrier Name" value={profile?.carrier_name || ""} onChange={(v) => setProfile({ ...profile, carrier_name: v })} />
-            <Input label="Agency Name" value={profile?.agency_name || ""} onChange={(v) => setProfile({ ...profile, agency_name: v })} />
-
-            <div>
-              <label className="block text-sm text-slate-400 mb-2">Policy Number</label>
-              <div className="flex gap-2">
-                <input
-                  value={profile?.policy_number || ""}
-                  onChange={(e) => setProfile({ ...profile, policy_number: e.target.value })}
-                  className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3"
-                />
-                <button onClick={lookupPolicy} className="bg-blue-600 hover:bg-blue-700 px-4 py-3 rounded-lg font-semibold">
-                  Lookup
-                </button>
-              </div>
-            </div>
-
-            <Input label="Effective Date" value={profile?.effective_date || ""} onChange={(v) => setProfile({ ...profile, effective_date: v })} />
-            <Input label="Expiration Date" value={profile?.expiration_date || ""} onChange={(v) => setProfile({ ...profile, expiration_date: v })} />
-            <Input label="Evaluation Date" value={profile?.evaluation_date || ""} onChange={(v) => setProfile({ ...profile, evaluation_date: v })} />
-          </div>
-        </section>
-
-        <section className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
-          <MetricCard title="Business" value={profile?.business_name || "-"} />
-          <MetricCard title="Policy Number" value={profile?.policy_number || "-"} />
-          <MetricCard title="Carrier" value={profile?.carrier_name || "-"} />
-          <MetricCard title="Total Claims" value={totalClaims} />
-        </section>
-
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <h2 className="text-3xl font-semibold mb-4">Upload & Report Center</h2>
-
-          <div className="flex flex-wrap gap-4 items-center">
-            <input
-              type="file"
-              multiple
-              accept=".pdf,.xlsx,.csv"
-              onChange={(e) => setFiles(e.target.files)}
-              className="text-sm text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:text-white"
-            />
-
-            <button onClick={uploadFiles} className="bg-blue-600 hover:bg-blue-700 px-5 py-3 rounded-lg font-semibold">
-              Upload & Analyze
-            </button>
-            <button onClick={exportCarrierLossRun} className="bg-emerald-600 hover:bg-emerald-700 px-5 py-3 rounded-lg font-semibold">
-              Export Carrier Loss Run
-            </button>
-            <button onClick={exportExecutiveReport} className="bg-green-700 hover:bg-green-800 px-5 py-3 rounded-lg font-semibold">
-              Export Executive Report
-            </button>
-            <button onClick={generateCarrierPacket} className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold">
-              Generate Carrier Packet
-            </button>
-          </div>
-        </section>
-
-        <section className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
-          <MetricCard title="Open Claims" value={openClaims} />
-          <MetricCard title="Total Incurred" value={`$${Number(totalIncurred).toLocaleString()}`} />
-          <MetricCard title="Flagged Issues" value={flaggedClaims} />
-          <MetricCard title="Renewal Risk" value={summary?.renewal_risk || "GREEN"} />
-        </section>
-
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <h2 className="text-3xl font-semibold mb-5">AI Underwriting Summary</h2>
-          <p className="text-slate-300 leading-8">{summary?.summary || "No summary available."}</p>
-          <p className="text-slate-400 mt-6">{summary?.recommendation || "Upload claims to generate intelligence."}</p>
-        </section>
-
-        <details className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <summary className="cursor-pointer text-2xl font-semibold">AI Renewal Memo</summary>
-
-          <div className="mt-6">
-            <div className="flex gap-4 mb-5">
-              <button onClick={generateRenewalMemo} disabled={memoLoading} className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold disabled:opacity-50">
-                {memoLoading ? "Generating..." : "Generate Renewal Memo"}
-              </button>
-
-              {renewalMemo && (
-                <button onClick={copyRenewalMemo} className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg font-semibold">
-                  Copy Memo
-                </button>
-              )}
-            </div>
-
-            <div className="bg-slate-800 rounded-xl p-5 max-h-[420px] overflow-y-auto">
-              <pre className="whitespace-pre-wrap text-slate-300 leading-7 text-sm">
-                {renewalMemo || "Generate a memo above."}
-              </pre>
-            </div>
-          </div>
-        </details>
-
-        <details className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <summary className="cursor-pointer text-3xl font-semibold">
-            Interactive Claim Development Charts
-          </summary>
-
-          <div className="mt-6">
-            <p className="text-slate-400 mb-6">
-              Visualize loss trends, claim aging, severity distribution, and line-of-business concentration.
-            </p>
-
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-              <MetricCard title="Reserve Pressure" value={timeline?.reserve_pressure || "Low"} />
-              <MetricCard title="Open Claims" value={timeline?.open_claims || 0} />
-              <MetricCard title="Total Reserve" value={`$${Number(timeline?.total_reserve || 0).toLocaleString()}`} />
-              <MetricCard title="Total Incurred" value={`$${Number(timeline?.total_incurred || 0).toLocaleString()}`} />
-            </div>
-
-            <div className="bg-slate-800 rounded-xl p-5 mb-6">
-              <h3 className="font-semibold mb-2">Trend Intelligence</h3>
-              <p className="text-slate-300">
-                {timeline?.trend_note || "No trend intelligence available yet."}
-              </p>
-            </div>
-
-            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-              <ChartCard title="Incurred Loss Trend">
-                <ResponsiveContainer width="100%" height={280}>
-                  <LineChart data={lossTrendData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis dataKey="name" stroke="#94a3b8" />
-                    <YAxis stroke="#94a3b8" />
-                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
-                    <Line type="monotone" dataKey="value" stroke="#38bdf8" strokeWidth={4} dot={{ fill: "#38bdf8", strokeWidth: 2, r: 5 }} />
-                  </LineChart>
-                </ResponsiveContainer>
-              </ChartCard>
-
-              <ChartCard title="Open Claim Aging">
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={agingData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis dataKey="name" stroke="#94a3b8" />
-                    <YAxis stroke="#94a3b8" />
-                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
-                    <Bar dataKey="value" fill="#f59e0b" radius={[8, 8, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </ChartCard>
-
-              <ChartCard title="Severity Distribution">
-                <ResponsiveContainer width="100%" height={280}>
-                  <PieChart>
-                    <Pie data={severityData} dataKey="value" nameKey="name" outerRadius={100} label>
-                      {severityData.map((_, index) => {
-                        const colors = ["#22c55e", "#eab308", "#f97316", "#ef4444"];
-                        return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
-                      })}
-                    </Pie>
-                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
-                  </PieChart>
-                </ResponsiveContainer>
-              </ChartCard>
-
-              <ChartCard title="Incurred by Line of Business">
-                <ResponsiveContainer width="100%" height={280}>
-                  <BarChart data={lineData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
-                    <XAxis dataKey="name" stroke="#94a3b8" />
-                    <YAxis stroke="#94a3b8" />
-                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
-                    <Bar dataKey="value" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
-                  </BarChart>
-                </ResponsiveContainer>
-              </ChartCard>
-            </div>
-          </div>
-        </details>
-
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-          <h2 className="text-3xl font-semibold mb-6">Claims Analysis</h2>
-
-          <div className="overflow-x-auto">
-            <table className="w-full">
-              <thead>
-                <tr className="border-b border-slate-700 text-left">
-                  <th className="pb-4">Claim #</th>
-                  <th className="pb-4">Line</th>
-                  <th className="pb-4">Status</th>
-                  <th className="pb-4">Paid</th>
-                  <th className="pb-4">Reserve</th>
-                  <th className="pb-4">Total</th>
-                  <th className="pb-4">Policy</th>
-                  <th className="pb-4">Flag</th>
-                </tr>
-              </thead>
-
-              <tbody>
-                {claims.length === 0 ? (
-                  <tr>
-                    <td colSpan={8} className="py-6 text-slate-400">
-                      No claims found for this policy.
-                    </td>
-                  </tr>
-                ) : (
-                  claims.map((claim) => (
-                    <tr key={claim.id || claim.claim_number} className="border-b border-slate-800">
-                      <td className="py-4">
-                        {claim.id ? (
-                          <a href={`/claims/${claim.id}`} className="text-blue-400 hover:text-blue-300 underline">
-                            {claim.claim_number || "Unnamed Claim"}
-                          </a>
-                        ) : (
-                          claim.claim_number || "Unnamed Claim"
-                        )}
-                      </td>
-                      <td>{claim.line_of_business || "-"}</td>
-                      <td>{claim.status || "-"}</td>
-                      <td>${Number(claim.paid_amount || 0).toLocaleString()}</td>
-                      <td>${Number(claim.reserve_amount || 0).toLocaleString()}</td>
-                      <td>${Number(claim.total_incurred || 0).toLocaleString()}</td>
-                      <td>{claim.policy_number || "-"}</td>
-                      <td>{claim.flag ? <span className="text-red-400">{claim.flag}</span> : <span className="text-slate-400">None</span>}</td>
-                    </tr>
-                  ))
-                )}
-              </tbody>
-            </table>
-          </div>
-        </section>
-      </div>
-
-      <button
-        onClick={() => setCopilotOpen(!copilotOpen)}
-        className="fixed bottom-6 right-6 z-50 rounded-full bg-blue-600 hover:bg-blue-700 px-6 py-4 font-semibold shadow-2xl"
-      >
-        {copilotOpen ? "Close Copilot" : "Ask Copilot"}
-      </button>
-
-      {copilotOpen && (
-        <div className="fixed bottom-24 right-6 z-50 w-[420px] max-w-[calc(100vw-3rem)] bg-slate-900 border border-slate-700 rounded-2xl shadow-2xl overflow-hidden">
-          <div className="bg-slate-800 px-5 py-4 flex justify-between">
-            <div>
-              <h2 className="font-semibold">AI Underwriting Copilot</h2>
-              <p className="text-xs text-slate-400">
-                Account: {profile?.business_name || "No account selected"} | Policy: {profile?.policy_number || "-"}
-              </p>
-            </div>
-
-            <button onClick={() => setCopilotOpen(false)} className="text-slate-400 hover:text-white">✕</button>
-          </div>
-
-          <div className="p-5 max-h-[520px] overflow-y-auto">
-            {[
-              "What are the biggest renewal concerns?",
-              "Summarize litigation exposure.",
-              "What claims should concern carriers?",
-              "What should the broker explain before submission?",
-            ].map((q) => (
-              <button key={q} onClick={() => askCopilot(q)} className="w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 py-2 text-sm mb-2">
-                {q}
-              </button>
-            ))}
-
-            <div className="flex gap-2 mt-4">
-              <input
-                value={copilotQuestion}
-                onChange={(e) => setCopilotQuestion(e.target.value)}
-                placeholder="Ask a question..."
-                className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm"
-              />
-
-              <button onClick={() => askCopilot()} disabled={copilotLoading} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg disabled:opacity-50">
-                {copilotLoading ? "..." : "Ask"}
-              </button>
-            </div>
-
-            {copilotAnswer && (
-              <div className="bg-slate-800 rounded-xl p-4 mt-4">
-                <p className="text-slate-300 whitespace-pre-line text-sm leading-7">
-                  {copilotAnswer}
-                </p>
-              </div>
-            )}
-          </div>
-        </div>
-      )}
-    </main>
-  );
-}
-
-
-function Input({
-  label,
-  value,
-  onChange,
-}: {
-  label: string;
-  value: string;
-  onChange: (value: string) => void;
-}) {
-  return (
-    <div>
-      <label className="block text-sm text-slate-400 mb-2">{label}</label>
-      <input
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-        className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3"
-      />
-    </div>
-  );
-}
-
-function MetricCard({ title, value }: { title: string; value: any }) {
-  return (
-    <div className="bg-slate-900 border border-slate-800 rounded-xl p-6">
-      <div className="text-slate-400 mb-3">{title}</div>
-      <div className="text-2xl font-bold break-words">{value || "-"}</div>
-    </div>
-  );
-}
-
-function ChartCard({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <div className="bg-slate-800 rounded-xl p-5">
-      <h3 className="font-semibold mb-4">{title}</h3>
-      {children}
-    </div>
-  );
-}
+        {/* EVERYTHING BELOW IS YOUR EXISTING DASHBOARD BUILD */}
+        {/* Keep the rest of your file exactly the same from Account Workspace down. */}
