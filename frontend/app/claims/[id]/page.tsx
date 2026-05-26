@@ -3,7 +3,8 @@
 import { useEffect, useState } from "react";
 import { useParams } from "next/navigation";
 
-const API = "http://127.0.0.1:8000";
+const API =
+  process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
 
 export default function ClaimDetailPage() {
   const params = useParams();
@@ -49,8 +50,7 @@ export default function ClaimDetailPage() {
   if (message) {
     return (
       <main className="min-h-screen bg-slate-950 text-white p-8">
-        <a href="/" className="text-blue-400">← Back to Dashboard</a>
-        <p className="text-red-400 mt-6">{message}</p>
+        <a href="/dashboard" className="text-blue-400 hover:text-blue-300">
       </main>
     );
   }
