@@ -16,7 +16,7 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-const API = "https://lossq-production.up.railway.app";
+const API =process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
 
 async function safeJson(res: Response) {
   try {
@@ -55,12 +55,14 @@ export default function DashboardPage() {
   }, []);
 
   function getToken() {
-    return localStorage.getItem("lossq_token");
-  }
+  if (typeof window === "undefined") return null;
+  return localStorage.getItem("lossq_token");
+}
 
-  function authHeaders() {
-    return { Authorization: `Bearer ${getToken()}` };
-  }
+  function authHeaders(): Record<string, string> {
+  const token = getToken();
+  return token ? { Authorization: `Bearer ${token}` } : {};
+}
 
   function newBlankProfile() {
     setProfile({
@@ -474,16 +476,18 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex gap-4">
-            <a href="/landing" className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg">
-              Landing
-            </a>
-            <button onClick={() => setCopilotOpen(true)} className="bg-blue-600 hover:bg-blue-700 px-5 py-3 rounded-lg">
-              Open Copilot
-            </button>
-            <button onClick={logout} className="bg-red-600 hover:bg-red-700 px-5 py-3 rounded-lg">
-              Logout
-            </button>
-          </div>
+           <a href="/" className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg">
+           Landing
+           </a>
+
+          <button onClick={() => setCopilotOpen(true)} className="bg-blue-600 hover:bg-blue-700 px-5 py-3 rounded-lg">
+           Open Copilot
+          </button>
+
+          <button onClick={logout} className="bg-red-600 hover:bg-red-700 px-5 py-3 rounded-lg">
+           Logout
+         </button>
+        </div>
         </header>
 
         {message && (
