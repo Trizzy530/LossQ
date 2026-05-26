@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useState } from "react";
-import { useRouter, useSearchParams } from "next/navigation";
+import { useRouter } from "next/navigation";
 import {
   BarChart,
   Bar,
@@ -37,7 +37,7 @@ function objectToChartData(data: Record<string, number>) {
 
 export default function DashboardPage() {
   const router = useRouter();
-  const searchParams = useSearchParams();
+  
 
   const [ready, setReady] = useState(false);
   const [claims, setClaims] = useState<any[]>([]);
@@ -56,7 +56,7 @@ export default function DashboardPage() {
   const [renewalMemo, setRenewalMemo] = useState("");
   const [memoLoading, setMemoLoading] = useState(false);
 
-  const welcome = searchParams.get("welcome") === "1";
+  const [welcome, setWelcome] = useState(false);
 
   useEffect(() => {
     const token = getToken();
@@ -66,6 +66,7 @@ export default function DashboardPage() {
       return;
     }
 
+    setWelcome(window.location.search.includes("welcome=1"));
     setReady(true);
     loadDashboard();
   }, []);
@@ -75,10 +76,17 @@ export default function DashboardPage() {
     return localStorage.getItem("lossq_token");
   }
 
-  function authHeaders() {
-    const token = getToken();
-    return token ? { Authorization: `Bearer ${token}` } : {};
+  function authHeaders(): Record<string, string> {
+  const token = getToken();
+
+  if (!token) {
+    return {};
   }
+
+  return {
+    Authorization: `Bearer ${token}`,
+  };
+}
 
   function logout() {
     localStorage.removeItem("lossq_token");
@@ -524,5 +532,9 @@ export default function DashboardPage() {
           </div>
         )}
 
-        {/* EVERYTHING BELOW IS YOUR EXISTING DASHBOARD BUILD */}
-        {/* Keep the rest of your file exactly the same from Account Workspace down. */}
+      </div>
+    </main>
+  );
+}
+
+ 
