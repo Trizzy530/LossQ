@@ -5,6 +5,14 @@ import { useEffect, useState } from "react";
 const API =
   process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
 
+async function safeJson(res: Response) {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
@@ -18,8 +26,41 @@ export default function LoginPage() {
     if (params.get("fresh") === "1") {
       localStorage.removeItem("lossq_token");
       localStorage.removeItem("lossq_user");
+      sessionStorage.removeItem("lossq_welcome");
     }
   }, []);
+
+  async function loginUser(cleanEmail: string, cleanPassword: string, isNewUser = false) {
+    const loginRes = await fetch(`${API}/auth/login`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: cleanEmail, password: cleanPassword }),
+    });
+
+    const loginData = await safeJson(loginRes);
+
+    if (!loginRes.ok) {
+      throw new Error(loginData?.detail || "Login failed after registration.");
+    }
+
+    const token = loginData?.access_token || loginData?.token;
+
+    if (!token) {
+      throw new Error("No login token returned.");
+    }
+
+    localStorage.setItem("lossq_token", token);
+    localStorage.setItem("lossq_user", cleanEmail);
+
+    sessionStorage.setItem(
+      "lossq_welcome",
+      isNewUser
+        ? `Welcome to LossQ, ${cleanEmail.split("@")[0]}`
+        : `Welcome back, ${cleanEmail.split("@")[0]}`
+    );
+
+    window.location.href = "/dashboard";
+  }
 
   async function submit() {
     setLoading(true);
@@ -33,42 +74,27 @@ export default function LoginPage() {
         return;
       }
 
-      const endpoint = mode === "login" ? "/auth/login" : "/auth/register";
+      if (mode === "register") {
+        const registerRes = await fetch(`${API}/auth/register`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email: cleanEmail, password }),
+        });
 
-      const res = await fetch(`${API}${endpoint}`, {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ email: cleanEmail, password }),
-      });
+        const registerData = await safeJson(registerRes);
 
-      const data = await res.json().catch(() => null);
+        if (!registerRes.ok) {
+          setMessage(registerData?.detail || "Registration failed.");
+          return;
+        }
 
-      if (!res.ok) {
-        setMessage(data?.detail || "Request failed.");
+        await loginUser(cleanEmail, password, true);
         return;
       }
 
-      const token = data?.access_token || data?.token;
-
-      if (!token) {
-        setMessage("Account created. Please log in.");
-        setMode("login");
-        return;
-      }
-
-      localStorage.setItem("lossq_token", token);
-      localStorage.setItem("lossq_user", cleanEmail);
-
-      sessionStorage.setItem(
-        "lossq_welcome",
-        mode === "register"
-          ? `Welcome to LossQ, ${cleanEmail.split("@")[0]}`
-          : `Welcome back, ${cleanEmail.split("@")[0]}`
-      );
-
-      window.location.href = "/dashboard";
-    } catch {
-      setMessage("Fetch failed. Check backend connection.");
+      await loginUser(cleanEmail, password, false);
+    } catch (err: any) {
+      setMessage(err?.message || "Request failed. Check backend connection.");
     } finally {
       setLoading(false);
     }
@@ -85,7 +111,7 @@ export default function LoginPage() {
         </h1>
 
         <p className="text-slate-300 text-xl mb-8">
-          {mode === "login" ? "Sign in to continue." : "Create your account"}
+          {mode === "login" ? "Sign in to continue." : "Create your account."}
         </p>
 
         {message && (
@@ -136,4 +162,3 @@ export default function LoginPage() {
     </main>
   );
 }
-
