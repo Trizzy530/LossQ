@@ -73,7 +73,7 @@ export default function ClaimDetailPage() {
   return (
     <main className="min-h-screen bg-slate-950 text-white p-8">
       <div className="max-w-7xl mx-auto">
-        <a href="/" className="text-blue-400 hover:text-blue-300">
+        <a href="/dashboard" className="text-blue-400 hover:text-blue-300">
           ← Back to Dashboard
         </a>
 
