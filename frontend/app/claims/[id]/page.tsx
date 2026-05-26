@@ -44,13 +44,18 @@ export default function ClaimDetailPage() {
       return;
     }
 
+
     setData(result);
   }
 
   if (message) {
     return (
       <main className="min-h-screen bg-slate-950 text-white p-8">
-        <a href="/dashboard" className="text-blue-400 hover:text-blue-300">
+        <a href="/dashboard" className="text-blue-400">
+          ← Back to Dashboard
+        </a>
+
+        <p className="text-red-400 mt-6">{message}</p>
       </main>
     );
   }
