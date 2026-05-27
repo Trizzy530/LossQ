@@ -1,5 +1,6 @@
 "use client";
 
+import { useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import {
   BarChart,
@@ -33,6 +34,7 @@ function objectToChartData(data: Record<string, number>) {
   }));
 }
 
+
 export default function DashboardPage() {
   const [claims, setClaims] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>({});
@@ -41,7 +43,8 @@ export default function DashboardPage() {
   const [profiles, setProfiles] = useState<any[]>([]);
   const [files, setFiles] = useState<FileList | null>(null);
   const [message, setMessage] = useState("");
-
+  const router = useRouter();
+  const [authReady, setAuthReady] = useState(false);
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [copilotQuestion, setCopilotQuestion] = useState("");
   const [copilotAnswer, setCopilotAnswer] = useState("");
@@ -51,8 +54,17 @@ export default function DashboardPage() {
   const [memoLoading, setMemoLoading] = useState(false);
 
   useEffect(() => {
-    loadDashboard();
-  }, []);
+  const token = localStorage.getItem("lossq_token");
+
+  if (!token) {
+    router.replace("/login?fresh=1");
+    return;
+  }
+
+  setAuthReady(true);
+  loadDashboard();
+}, []);
+
 
   function getToken() {
   if (typeof window === "undefined") return null;
@@ -446,10 +458,11 @@ export default function DashboardPage() {
   }
 
   function logout() {
-    localStorage.removeItem("lossq_token");
-    localStorage.removeItem("lossq_user");
-    window.location.href = "/login";
-  }
+  localStorage.removeItem("lossq_token");
+  localStorage.removeItem("lossq_user");
+  sessionStorage.removeItem("lossq_welcome");
+  router.replace("/login?fresh=1");
+}
 
   const totalClaims = claims.length;
   const openClaims = claims.filter((c) => c.status === "Open").length;
@@ -463,6 +476,14 @@ export default function DashboardPage() {
   const agingData = objectToChartData(timeline?.open_claim_aging || {});
   const severityData = objectToChartData(timeline?.severity_heatmap || {});
   const lineData = objectToChartData(timeline?.incurred_by_line || {});
+
+if (!authReady) {
+  return (
+    <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
+      Checking session...
+    </main>
+  );
+}
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-10">
