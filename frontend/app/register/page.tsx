@@ -7,47 +7,40 @@ import Link from "next/link";
 const API =
   process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
 
-function errorToText(data: any) {
-  if (!data) return "Registration failed.";
-  if (typeof data === "string") return data;
-  if (typeof data.detail === "string") return data.detail;
-  if (typeof data.message === "string") return data.message;
-
-  if (Array.isArray(data.detail)) {
-    return data.detail
-      .map((item: any) => item?.msg || JSON.stringify(item))
-      .join(", ");
-  }
-
-  return JSON.stringify(data);
-}
-
 export default function RegisterPage() {
   const router = useRouter();
 
   const [organizationName, setOrganizationName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
-
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
+  function errorToText(data: any) {
+    if (!data) return "Registration failed.";
+    if (typeof data === "string") return data;
+    if (typeof data.detail === "string") return data.detail;
+    if (Array.isArray(data.detail)) {
+      return data.detail.map((item: any) => item?.msg || JSON.stringify(item)).join(", ");
+    }
+    if (typeof data.message === "string") return data.message;
+    return JSON.stringify(data);
+  }
+
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
-
     setError("");
     setLoading(true);
 
     try {
       const res = await fetch(`${API}/auth/register`, {
         method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
+        headers: { "Content-Type": "application/json" },
+        cache: "no-store",
         body: JSON.stringify({
-          email,
+          email: email.trim(),
           password,
-          organization_name: organizationName,
+          organization_name: organizationName.trim(),
         }),
       });
 
@@ -55,14 +48,6 @@ export default function RegisterPage() {
 
       if (!res.ok) {
         setError(errorToText(data));
-        return;
-      }
-
-      const token = data.access_token || data.token;
-
-      if (token) {
-        localStorage.setItem("lossq_token", token);
-        router.replace("/dashboard?welcome=1");
         return;
       }
 
@@ -76,10 +61,7 @@ export default function RegisterPage() {
 
   return (
     <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center px-6">
-      <form
-        onSubmit={handleRegister}
-        className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8"
-      >
+      <form onSubmit={handleRegister} className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8">
         <h1 className="text-3xl font-bold mb-2">Create LossQ Account</h1>
         <p className="text-slate-400 mb-6">Register to access your dashboard.</p>
 
@@ -115,11 +97,7 @@ export default function RegisterPage() {
           required
         />
 
-        <button
-          type="submit"
-          disabled={loading}
-          className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 rounded-lg px-5 py-3 font-semibold"
-        >
+        <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 rounded-lg px-5 py-3 font-semibold">
           {loading ? "Creating account..." : "Register"}
         </button>
 
