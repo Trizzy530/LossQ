@@ -1,7 +1,7 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState } from "react";
+import { useEffect, useState, type ReactNode } from "react";
 import {
   BarChart,
   Bar,
@@ -17,7 +17,10 @@ import {
   ResponsiveContainer,
 } from "recharts";
 
-const API =process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
+const API =
+  process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
+
+const SESSION_TIMEOUT_MS = 1000 * 60 * 60 * 24;
 
 async function safeJson(res: Response) {
   try {
@@ -34,17 +37,21 @@ function objectToChartData(data: Record<string, number>) {
   }));
 }
 
-
 export default function DashboardPage() {
+  const router = useRouter();
+
   const [claims, setClaims] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>({});
   const [timeline, setTimeline] = useState<any>({});
   const [profile, setProfile] = useState<any>({});
   const [profiles, setProfiles] = useState<any[]>([]);
   const [files, setFiles] = useState<FileList | null>(null);
+
   const [message, setMessage] = useState("");
-  const router = useRouter();
   const [authReady, setAuthReady] = useState(false);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState("");
+
   const [copilotOpen, setCopilotOpen] = useState(false);
   const [copilotQuestion, setCopilotQuestion] = useState("");
   const [copilotAnswer, setCopilotAnswer] = useState("");
@@ -54,27 +61,68 @@ export default function DashboardPage() {
   const [memoLoading, setMemoLoading] = useState(false);
 
   useEffect(() => {
-  const token = localStorage.getItem("lossq_token");
+    async function validateSession() {
+      const token = localStorage.getItem("lossq_token");
+      const loginTime = localStorage.getItem("lossq_login_time");
 
-  if (!token) {
-    router.replace("/login?fresh=1");
-    return;
+      if (!token) {
+        router.replace("/login?fresh=1");
+        return;
+      }
+
+      if (!loginTime) {
+        localStorage.setItem("lossq_login_time", Date.now().toString());
+      }
+
+      if (loginTime) {
+        const expired = Date.now() - Number(loginTime) > SESSION_TIMEOUT_MS;
+
+        if (expired) {
+          clearSession();
+          router.replace("/login?expired=1");
+          return;
+        }
+      }
+
+      try {
+        const validateRes = await fetch(`${API}/auth/validate`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (validateRes.status === 401 || validateRes.status === 403) {
+          clearSession();
+          router.replace("/login?expired=1");
+          return;
+        }
+      } catch {
+        setMessage("Session validation skipped. Backend validation unavailable.");
+      }
+
+      setAuthReady(true);
+      await loadDashboard();
+    }
+
+    validateSession();
+  }, []);
+
+  function clearSession() {
+    localStorage.removeItem("lossq_token");
+    localStorage.removeItem("lossq_user");
+    localStorage.removeItem("lossq_login_time");
+    sessionStorage.removeItem("lossq_welcome");
   }
 
-  setAuthReady(true);
-  loadDashboard();
-}, []);
-
-
   function getToken() {
-  if (typeof window === "undefined") return null;
-  return localStorage.getItem("lossq_token");
-}
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("lossq_token");
+  }
 
   function authHeaders(): Record<string, string> {
-  const token = getToken();
-  return token ? { Authorization: `Bearer ${token}` } : {};
-}
+    const token = getToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
 
   function newBlankProfile() {
     setProfile({
@@ -97,14 +145,23 @@ export default function DashboardPage() {
 
   async function loadDashboard(policyNumberOverride?: string) {
     if (!getToken()) {
-      window.location.href = "/login";
+      router.replace("/login?fresh=1");
       return;
     }
+
+    setDashboardLoading(true);
+    setDashboardError("");
 
     try {
       const profilesRes = await fetch(`${API}/account-profile/all`, {
         headers: authHeaders(),
       });
+
+      if (profilesRes.status === 401 || profilesRes.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
 
       if (profilesRes.ok) {
         const profilesData = await safeJson(profilesRes);
@@ -119,6 +176,12 @@ export default function DashboardPage() {
           { headers: authHeaders() }
         );
 
+        if (selectedRes.status === 401 || selectedRes.status === 403) {
+          clearSession();
+          router.replace("/login?expired=1");
+          return;
+        }
+
         if (selectedRes.ok) {
           activeProfile = await safeJson(selectedRes);
           setProfile(activeProfile || {});
@@ -127,6 +190,12 @@ export default function DashboardPage() {
         const profileRes = await fetch(`${API}/account-profile/`, {
           headers: authHeaders(),
         });
+
+        if (profileRes.status === 401 || profileRes.status === 403) {
+          clearSession();
+          router.replace("/login?expired=1");
+          return;
+        }
 
         if (profileRes.ok) {
           activeProfile = await safeJson(profileRes);
@@ -148,6 +217,12 @@ export default function DashboardPage() {
 
       const claimsRes = await fetch(claimsUrl, { headers: authHeaders() });
 
+      if (claimsRes.status === 401 || claimsRes.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
       if (claimsRes.ok) {
         const claimsData = await safeJson(claimsRes);
         setClaims(Array.isArray(claimsData) ? claimsData : []);
@@ -161,6 +236,12 @@ export default function DashboardPage() {
 
       const summaryRes = await fetch(summaryUrl, { headers: authHeaders() });
 
+      if (summaryRes.status === 401 || summaryRes.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
       if (summaryRes.ok) {
         setSummary((await safeJson(summaryRes)) || {});
       } else {
@@ -173,16 +254,24 @@ export default function DashboardPage() {
 
       const timelineRes = await fetch(timelineUrl, { headers: authHeaders() });
 
+      if (timelineRes.status === 401 || timelineRes.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
       if (timelineRes.ok) {
         setTimeline((await safeJson(timelineRes)) || {});
       } else {
         setTimeline({});
       }
     } catch {
-      setMessage("Dashboard could not load. Confirm backend is running.");
+      setDashboardError("Dashboard could not load. Confirm backend is running.");
       setClaims([]);
       setSummary({});
       setTimeline({});
+    } finally {
+      setDashboardLoading(false);
     }
   }
 
@@ -206,6 +295,12 @@ export default function DashboardPage() {
           headers: authHeaders(),
         }
       );
+
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
 
       if (!res.ok) {
         setMessage("Failed to delete profile.");
@@ -249,6 +344,12 @@ export default function DashboardPage() {
       body: JSON.stringify(payload),
     });
 
+    if (res.status === 401 || res.status === 403) {
+      clearSession();
+      router.replace("/login?expired=1");
+      return;
+    }
+
     if (!res.ok) {
       setMessage("Could not save account profile.");
       return;
@@ -268,6 +369,12 @@ export default function DashboardPage() {
       `${API}/account-profile/policy/${encodeURIComponent(profile.policy_number)}`,
       { headers: authHeaders() }
     );
+
+    if (res.status === 401 || res.status === 403) {
+      clearSession();
+      router.replace("/login?expired=1");
+      return;
+    }
 
     if (!res.ok) {
       setMessage("No account found for that policy number.");
@@ -314,6 +421,12 @@ export default function DashboardPage() {
 
     const data = await safeJson(res);
 
+    if (res.status === 401 || res.status === 403) {
+      clearSession();
+      router.replace("/login?expired=1");
+      return;
+    }
+
     if (!res.ok) {
       setMessage(`Upload failed: ${JSON.stringify(data)}`);
       return;
@@ -325,6 +438,12 @@ export default function DashboardPage() {
 
   async function downloadPdf(url: string, filename: string) {
     const res = await fetch(url, { headers: authHeaders() });
+
+    if (res.status === 401 || res.status === 403) {
+      clearSession();
+      router.replace("/login?expired=1");
+      return;
+    }
 
     if (!res.ok) {
       setMessage("Could not generate report.");
@@ -382,13 +501,21 @@ export default function DashboardPage() {
 
       const data = await safeJson(res);
 
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
       if (!res.ok) {
         setRenewalMemo(JSON.stringify(data));
         return;
       }
 
       setRenewalMemo(
-        `Policy analyzed: ${data?.policy_number || profile.policy_number}\nClaims used: ${data?.claims_used ?? claims.length}\n\n${data?.memo || "No memo generated."}`
+        `Policy analyzed: ${data?.policy_number || profile.policy_number}\nClaims used: ${
+          data?.claims_used ?? claims.length
+        }\n\n${data?.memo || "No memo generated."}`
       );
     } catch {
       setRenewalMemo("Memo failed.");
@@ -441,13 +568,21 @@ export default function DashboardPage() {
 
       const data = await safeJson(res);
 
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
       if (!res.ok) {
         setCopilotAnswer(JSON.stringify(data));
         return;
       }
 
       setCopilotAnswer(
-        `Policy analyzed: ${data?.policy_number || profile.policy_number}\nClaims used: ${data?.claims_used ?? claims.length}\n\n${data?.answer || "No answer returned."}`
+        `Policy analyzed: ${data?.policy_number || profile.policy_number}\nClaims used: ${
+          data?.claims_used ?? claims.length
+        }\n\n${data?.answer || "No answer returned."}`
       );
       setCopilotQuestion(question);
     } catch {
@@ -458,11 +593,9 @@ export default function DashboardPage() {
   }
 
   function logout() {
-  localStorage.removeItem("lossq_token");
-  localStorage.removeItem("lossq_user");
-  sessionStorage.removeItem("lossq_welcome");
-  router.replace("/login?fresh=1");
-}
+    clearSession();
+    router.replace("/login?fresh=1");
+  }
 
   const totalClaims = claims.length;
   const openClaims = claims.filter((c) => c.status === "Open").length;
@@ -477,13 +610,55 @@ export default function DashboardPage() {
   const severityData = objectToChartData(timeline?.severity_heatmap || {});
   const lineData = objectToChartData(timeline?.incurred_by_line || {});
 
-if (!authReady) {
-  return (
-    <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
-      Checking session...
-    </main>
-  );
-}
+  if (!authReady) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-3xl font-bold mb-4">Checking session...</div>
+          <div className="text-slate-400">Validating your LossQ access</div>
+        </div>
+      </main>
+    );
+  }
+
+  if (dashboardLoading) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center">
+        <div className="text-center">
+          <div className="text-3xl font-bold mb-4">Loading LossQ...</div>
+          <div className="text-slate-400">Preparing underwriting workspace</div>
+        </div>
+      </main>
+    );
+  }
+
+  if (dashboardError) {
+    return (
+      <main className="min-h-screen bg-slate-950 text-white flex items-center justify-center px-6">
+        <div className="bg-slate-900 border border-red-500 rounded-2xl p-10 max-w-lg w-full text-center">
+          <h1 className="text-3xl font-bold mb-4 text-red-400">
+            Dashboard Error
+          </h1>
+
+          <p className="text-slate-300 mb-6">{dashboardError}</p>
+
+          <button
+            onClick={() => loadDashboard()}
+            className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-lg font-semibold"
+          >
+            Retry
+          </button>
+
+          <button
+            onClick={logout}
+            className="block mx-auto mt-4 text-slate-400 hover:text-white text-sm"
+          >
+            Return to login
+          </button>
+        </div>
+      </main>
+    );
+  }
 
   return (
     <main className="min-h-screen bg-slate-950 text-white p-10">
@@ -497,18 +672,28 @@ if (!authReady) {
           </div>
 
           <div className="flex gap-4">
-           <a href="/" className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg">
-           Landing
-           </a>
+            <a href="/" className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg">
+              Landing
+            </a>
 
-          <button onClick={() => setCopilotOpen(true)} className="bg-blue-600 hover:bg-blue-700 px-5 py-3 rounded-lg">
-           Open Copilot
-          </button>
+            <a href="/settings" className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg">
+              Settings
+            </a>
 
-          <button onClick={logout} className="bg-red-600 hover:bg-red-700 px-5 py-3 rounded-lg">
-           Logout
-         </button>
-        </div>
+            <button
+              onClick={() => setCopilotOpen(true)}
+              className="bg-blue-600 hover:bg-blue-700 px-5 py-3 rounded-lg"
+            >
+              Open Copilot
+            </button>
+
+            <button
+              onClick={logout}
+              className="bg-red-600 hover:bg-red-700 px-5 py-3 rounded-lg"
+            >
+              Logout
+            </button>
+          </div>
         </header>
 
         {message && (
@@ -561,10 +746,16 @@ if (!authReady) {
             <h2 className="text-3xl font-semibold">Carrier Account Profile</h2>
 
             <div className="flex gap-3">
-              <button onClick={newBlankProfile} className="bg-slate-700 hover:bg-slate-600 px-5 py-3 rounded-lg font-semibold">
+              <button
+                onClick={newBlankProfile}
+                className="bg-slate-700 hover:bg-slate-600 px-5 py-3 rounded-lg font-semibold"
+              >
                 New Blank Profile
               </button>
-              <button onClick={saveProfile} className="bg-emerald-600 hover:bg-emerald-700 px-5 py-3 rounded-lg font-semibold">
+              <button
+                onClick={saveProfile}
+                className="bg-emerald-600 hover:bg-emerald-700 px-5 py-3 rounded-lg font-semibold"
+              >
                 Save Profile
               </button>
             </div>
@@ -583,7 +774,10 @@ if (!authReady) {
                   onChange={(e) => setProfile({ ...profile, policy_number: e.target.value })}
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3"
                 />
-                <button onClick={lookupPolicy} className="bg-blue-600 hover:bg-blue-700 px-4 py-3 rounded-lg font-semibold">
+                <button
+                  onClick={lookupPolicy}
+                  className="bg-blue-600 hover:bg-blue-700 px-4 py-3 rounded-lg font-semibold"
+                >
                   Lookup
                 </button>
               </div>
@@ -638,8 +832,12 @@ if (!authReady) {
 
         <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
           <h2 className="text-3xl font-semibold mb-5">AI Underwriting Summary</h2>
-          <p className="text-slate-300 leading-8">{summary?.summary || "No summary available."}</p>
-          <p className="text-slate-400 mt-6">{summary?.recommendation || "Upload claims to generate intelligence."}</p>
+          <p className="text-slate-300 leading-8">
+            {summary?.summary || "No summary available."}
+          </p>
+          <p className="text-slate-400 mt-6">
+            {summary?.recommendation || "Upload claims to generate intelligence."}
+          </p>
         </section>
 
         <details className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
@@ -647,12 +845,19 @@ if (!authReady) {
 
           <div className="mt-6">
             <div className="flex gap-4 mb-5">
-              <button onClick={generateRenewalMemo} disabled={memoLoading} className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold disabled:opacity-50">
+              <button
+                onClick={generateRenewalMemo}
+                disabled={memoLoading}
+                className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold disabled:opacity-50"
+              >
                 {memoLoading ? "Generating..." : "Generate Renewal Memo"}
               </button>
 
               {renewalMemo && (
-                <button onClick={copyRenewalMemo} className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg font-semibold">
+                <button
+                  onClick={copyRenewalMemo}
+                  className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg font-semibold"
+                >
                   Copy Memo
                 </button>
               )}
@@ -770,14 +975,23 @@ if (!authReady) {
                     </td>
                   </tr>
                 ) : (
-                  claims.map((claim) => (
-                    <tr key={claim.id || claim.claim_number} className="border-b border-slate-800">
-                      <td className="py-4">
-                        {claim.id ? (
-                          <a href={`/claims/${claim.id}`} className="text-blue-400 hover:text-blue-300 underline">
-                            {claim.claim_number || "Unnamed Claim"}
-                          </a>
-                        ) : (
+                  [...claims]
+  .sort((a, b) => {
+    const statusOrder: Record<string, number> = {
+      Open: 0,
+      Pending: 1,
+      Reopened: 2,
+      Closed: 3,
+    };
+
+    const aStatus = statusOrder[a.status] ?? 9;
+    const bStatus = statusOrder[b.status] ?? 9;
+
+    if (aStatus !== bStatus) return aStatus - bStatus;
+
+    return Number(b.total_incurred || 0) - Number(a.total_incurred || 0);
+  })
+  .map((claim) => ( : (
                           claim.claim_number || "Unnamed Claim"
                         )}
                       </td>
@@ -824,7 +1038,11 @@ if (!authReady) {
               "What claims should concern carriers?",
               "What should the broker explain before submission?",
             ].map((q) => (
-              <button key={q} onClick={() => askCopilot(q)} className="w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 py-2 text-sm mb-2">
+              <button
+                key={q}
+                onClick={() => askCopilot(q)}
+                className="w-full text-left bg-slate-800 hover:bg-slate-700 border border-slate-700 rounded-lg px-3 py-2 text-sm mb-2"
+              >
                 {q}
               </button>
             ))}
@@ -837,7 +1055,11 @@ if (!authReady) {
                 className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-3 py-2 text-sm"
               />
 
-              <button onClick={() => askCopilot()} disabled={copilotLoading} className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg disabled:opacity-50">
+              <button
+                onClick={() => askCopilot()}
+                disabled={copilotLoading}
+                className="bg-blue-600 hover:bg-blue-700 px-4 py-2 rounded-lg disabled:opacity-50"
+              >
                 {copilotLoading ? "..." : "Ask"}
               </button>
             </div>
@@ -855,7 +1077,6 @@ if (!authReady) {
     </main>
   );
 }
-
 
 function Input({
   label,
@@ -892,7 +1113,7 @@ function ChartCard({
   children,
 }: {
   title: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div className="bg-slate-800 rounded-xl p-5">
