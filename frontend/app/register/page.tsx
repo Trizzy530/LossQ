@@ -7,6 +7,22 @@ import Link from "next/link";
 const API =
   process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
 
+function errorToText(data: any) {
+  if (!data) return "Registration failed.";
+
+  if (typeof data === "string") return data;
+  if (typeof data.detail === "string") return data.detail;
+  if (typeof data.message === "string") return data.message;
+
+  if (Array.isArray(data.detail)) {
+    return data.detail
+      .map((item: any) => item?.msg || JSON.stringify(item))
+      .join(", ");
+  }
+
+  return JSON.stringify(data);
+}
+
 export default function RegisterPage() {
   const router = useRouter();
 
@@ -14,23 +30,8 @@ export default function RegisterPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  const [error, setError] = useState("");
+  const [error, setError] = useState<string>("");
   const [loading, setLoading] = useState(false);
-
-  function getErrorMessage(data: any, fallback: string) {
-    if (!data) return fallback;
-
-    if (typeof data.detail === "string") return data.detail;
-    if (typeof data.message === "string") return data.message;
-
-    if (Array.isArray(data.detail)) {
-      return data.detail
-        .map((item: any) => item?.msg || JSON.stringify(item))
-        .join(", ");
-    }
-
-    return fallback;
-  }
 
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
@@ -39,72 +40,44 @@ export default function RegisterPage() {
     setLoading(true);
 
     try {
-      const registerRes = await fetch(`${API}/auth/register`, {
+      const res = await fetch(`${API}/auth/register`, {
         method: "POST",
         headers: {
           "Content-Type": "application/json",
         },
         body: JSON.stringify({
-          full_name: name,
-          name,
           email,
           password,
+          name,
+          full_name: name,
+          username: email,
         }),
       });
 
-      const registerData = await registerRes.json().catch(() => ({}));
+      const data = await res.json().catch(() => ({}));
 
-      if (!registerRes.ok) {
-        throw new Error(getErrorMessage(registerData, "Registration failed"));
+      if (!res.ok) {
+        setError(errorToText(data));
+        return;
       }
 
-      const registerToken = registerData.access_token || registerData.token;
+      const token = data.access_token || data.token;
 
-      if (registerToken) {
-        localStorage.setItem("lossq_token", registerToken);
+      if (token) {
+        localStorage.setItem("lossq_token", token);
 
-        if (registerData.user) {
-          localStorage.setItem("lossq_user", JSON.stringify(registerData.user));
+        if (data.user) {
+          localStorage.setItem("lossq_user", JSON.stringify(data.user));
         }
 
         router.replace("/dashboard?welcome=1");
         return;
       }
 
-      const loginRes = await fetch(`${API}/auth/login`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          email,
-          password,
-        }),
-      });
-
-      const loginData = await loginRes.json().catch(() => ({}));
-
-      if (!loginRes.ok) {
-        throw new Error(
-          getErrorMessage(loginData, "Account created, but auto-login failed.")
-        );
-      }
-
-      const loginToken = loginData.access_token || loginData.token;
-
-      if (!loginToken) {
-        throw new Error("Account created, but no login token was returned.");
-      }
-
-      localStorage.setItem("lossq_token", loginToken);
-
-      if (loginData.user) {
-        localStorage.setItem("lossq_user", JSON.stringify(loginData.user));
-      }
-
-      router.replace("/dashboard?welcome=1");
+      setError("Account created, but no login token was returned. Try logging in.");
+      router.replace("/login?fresh=1");
     } catch (err: any) {
-      setError(err.message || "Registration failed");
+      setError(err?.message || "Registration failed.");
     } finally {
       setLoading(false);
     }
@@ -117,12 +90,10 @@ export default function RegisterPage() {
         className="w-full max-w-md bg-slate-900 border border-slate-800 rounded-2xl p-8"
       >
         <h1 className="text-3xl font-bold mb-2">Create LossQ Account</h1>
-        <p className="text-slate-400 mb-6">
-          Register to access your dashboard.
-        </p>
+        <p className="text-slate-400 mb-6">Register to access your dashboard.</p>
 
         {error && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-300 p-3 rounded-lg mb-4">
+          <div className="bg-red-500/10 border border-red-500/30 text-red-300 p-3 rounded-lg mb-4 whitespace-pre-wrap">
             {error}
           </div>
         )}
