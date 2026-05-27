@@ -54,6 +54,10 @@ app.include_router(renewal.router)
 app.include_router(account_profile.router)
 app.include_router(timeline.router)
 
+@app.get("/version")
+def version():
+    return {"version": "resend-auth-v1"}
+
 @app.get("/")
 def root():
     return {"message": "LossQ API running"}
