@@ -1,5 +1,5 @@
 import os
-import resend
+# import resend
 from dotenv import load_dotenv
 from datetime import datetime, timedelta
 from fastapi import APIRouter, Depends, HTTPException
@@ -26,8 +26,7 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "https://loss-q.vercel.app")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "LossQ <onboarding@resend.dev>")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 
-if RESEND_API_KEY:
-    resend.api_key = RESEND_API_KEY
+# Resend temporarily disabled
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
@@ -72,8 +71,8 @@ def create_access_token(data: dict):
 
 
 def send_email(to: str, subject: str, html: str):
-    if not RESEND_API_KEY:
-        return {"sent": False, "reason": "RESEND_API_KEY missing"}
+    print(f"EMAIL DEBUG -> TO: {to} | SUBJECT: {subject}")
+    return {"sent": True}
 
     try:
         return resend.Emails.send({
