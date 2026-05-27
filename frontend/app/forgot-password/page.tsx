@@ -25,11 +25,13 @@ export default function ForgotPasswordPage() {
 
       const data = await res.json().catch(() => ({}));
 
-      setMessage(data.message || "If an account exists, reset instructions will be generated.");
+     setMessage(data.message || "If an account exists, a reset email has been sent.");
 
-      if (data.reset_link_placeholder) {
-        setResetLink(data.reset_link_placeholder);
-      }
+      {resetLink && (
+  <a href={resetLink}>
+    Dev reset link: {resetLink}
+  </a>
+)}
     } catch {
       setMessage("Could not request password reset.");
     } finally {
