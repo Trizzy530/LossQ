@@ -13,9 +13,25 @@ async function safeJson(res: Response) {
   }
 }
 
+function errorToText(data: any, fallback: string) {
+  if (!data) return fallback;
+  if (typeof data === "string") return data;
+  if (typeof data.detail === "string") return data.detail;
+  if (typeof data.message === "string") return data.message;
+
+  if (Array.isArray(data.detail)) {
+    return data.detail
+      .map((item: any) => item?.msg || JSON.stringify(item))
+      .join(", ");
+  }
+
+  return fallback;
+}
+
 export default function LoginPage() {
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
   const [mode, setMode] = useState<"login" | "register">("login");
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(false);
@@ -40,7 +56,7 @@ export default function LoginPage() {
     const loginData = await safeJson(loginRes);
 
     if (!loginRes.ok) {
-      throw new Error(loginData?.detail || "Login failed after registration.");
+      throw new Error(errorToText(loginData, "Login failed after registration."));
     }
 
     const token = loginData?.access_token || loginData?.token;
@@ -68,6 +84,7 @@ export default function LoginPage() {
 
     try {
       const cleanEmail = email.trim().toLowerCase();
+      const cleanOrganization = organizationName.trim();
 
       if (!cleanEmail || !password) {
         setMessage("Email and password are required.");
@@ -75,16 +92,25 @@ export default function LoginPage() {
       }
 
       if (mode === "register") {
+        if (!cleanOrganization) {
+          setMessage("Organization name is required.");
+          return;
+        }
+
         const registerRes = await fetch(`${API}/auth/register`, {
           method: "POST",
           headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ email: cleanEmail, password }),
+          body: JSON.stringify({
+            email: cleanEmail,
+            password,
+            organization_name: cleanOrganization,
+          }),
         });
 
         const registerData = await safeJson(registerRes);
 
         if (!registerRes.ok) {
-          setMessage(registerData?.detail || "Registration failed.");
+          setMessage(errorToText(registerData, "Registration failed."));
           return;
         }
 
@@ -115,9 +141,18 @@ export default function LoginPage() {
         </p>
 
         {message && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg p-3 mb-5 text-sm">
+          <div className="bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg p-3 mb-5 text-sm whitespace-pre-wrap">
             {message}
           </div>
+        )}
+
+        {mode === "register" && (
+          <input
+            value={organizationName}
+            onChange={(e) => setOrganizationName(e.target.value)}
+            placeholder="Organization Name"
+            className="w-full bg-slate-900 border border-blue-400/40 rounded-lg px-4 py-3 mb-4 outline-none focus:border-blue-500"
+          />
         )}
 
         <input
@@ -155,7 +190,7 @@ export default function LoginPage() {
             : "Already have an account? Login"}
         </button>
 
-        <a href="/landing" className="block text-center mt-6 text-blue-400 text-sm">
+        <a href="/" className="block text-center mt-6 text-blue-400 text-sm">
           Back to landing
         </a>
       </div>
