@@ -26,17 +26,13 @@ from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
 
+load_dotenv()
+
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="LossQ API")
 
-
-
-load_dotenv()
-
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:3000")
-
-    app.add_middleware(
+app.add_middleware(
     CORSMiddleware,
     allow_origins=["*"],
     allow_credentials=False,
@@ -54,7 +50,6 @@ app.include_router(admin.router)
 app.include_router(analytics.router)
 app.include_router(demo.router)
 app.include_router(copilot.router)
-app.include_router(renewal.router)
 app.include_router(renewal.router)
 app.include_router(account_profile.router)
 app.include_router(timeline.router)
