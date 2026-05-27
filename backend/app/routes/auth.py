@@ -267,3 +267,10 @@ def verify_email(token: str):
         "email": email,
         "status": "verified",
     }
+
+@router.get("/debug-auth-version")
+def debug_auth_version():
+    return {
+        "auth_version": "resend-auth-no-placeholder-v2",
+        "forgot_password_message": "If an account exists, a reset email has been sent."
+    }
