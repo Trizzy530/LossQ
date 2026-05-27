@@ -7,6 +7,7 @@ from sqlalchemy.orm import Session
 from passlib.context import CryptContext
 from jose import jwt, JWTError
 from pydantic import BaseModel
+from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
 
 from app.database import SessionLocal
 from app.models.user import User
@@ -30,6 +31,7 @@ RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 
+security = HTTPBearer()
 
 class RegisterRequest(BaseModel):
     email: str
@@ -273,3 +275,23 @@ def debug_auth_version():
         "auth_version": "resend-auth-no-placeholder-v2",
         "forgot_password_message": "If an account exists, a reset email has been sent."
     }
+
+@router.get("/validate")
+def validate_token(credentials: HTTPAuthorizationCredentials = Depends(security)):
+    token = credentials.credentials
+
+    try:
+        payload = jwt.decode(token, SECRET_KEY, algorithms=[ALGORITHM])
+
+        return {
+            "valid": True,
+            "user": {
+                "email": payload.get("sub"),
+                "user_id": payload.get("user_id"),
+                "role": payload.get("role"),
+                "organization_id": payload.get("organization_id"),
+            },
+        }
+
+    except JWTError:
+        raise HTTPException(status_code=401, detail="Invalid or expired token")
