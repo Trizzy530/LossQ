@@ -215,6 +215,26 @@ def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
               Reset Password
             </a>
           </p>
+          <p>{reset_link}</p>
+        </div>
+        """,
+    )
+
+    return {"message": "If an account exists, a reset email has been sent."}
+    reset_link = f"{FRONTEND_URL}/reset-password?token={reset_token}"
+
+    send_email(
+        to=user.email,
+        subject="Reset your LossQ password",
+        html=f"""
+        <div style="font-family:Arial,sans-serif;line-height:1.6">
+          <h2>Reset your LossQ password</h2>
+          <p>This link expires in 30 minutes.</p>
+          <p>
+            <a href="{reset_link}" style="background:#2563eb;color:white;padding:12px 18px;border-radius:8px;text-decoration:none;">
+              Reset Password
+            </a>
+          </p>
           <p>If the button does not work, copy this link:</p>
           <p>{reset_link}</p>
         </div>
