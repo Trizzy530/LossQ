@@ -9,7 +9,6 @@ const API =
 
 function errorToText(data: any) {
   if (!data) return "Registration failed.";
-
   if (typeof data === "string") return data;
   if (typeof data.detail === "string") return data.detail;
   if (typeof data.message === "string") return data.message;
@@ -26,11 +25,11 @@ function errorToText(data: any) {
 export default function RegisterPage() {
   const router = useRouter();
 
-  const [name, setName] = useState("");
+  const [organizationName, setOrganizationName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
 
-  const [error, setError] = useState<string>("");
+  const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
   async function handleRegister(e: React.FormEvent) {
@@ -41,19 +40,16 @@ export default function RegisterPage() {
 
     try {
       const res = await fetch(`${API}/auth/register`, {
-  method: "POST",
-  headers: {
-    "Content-Type": "application/json",
-  },
-  body: JSON.stringify({
-    email,
-    password,
-    name,
-    full_name: name,
-    organization_name: name,
-    username: email,
-  }),
-});
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          email,
+          password,
+          organization_name: organizationName,
+        }),
+      });
 
       const data = await res.json().catch(() => ({}));
 
@@ -66,16 +62,10 @@ export default function RegisterPage() {
 
       if (token) {
         localStorage.setItem("lossq_token", token);
-
-        if (data.user) {
-          localStorage.setItem("lossq_user", JSON.stringify(data.user));
-        }
-
         router.replace("/dashboard?welcome=1");
         return;
       }
 
-      setError("Account created, but no login token was returned. Try logging in.");
       router.replace("/login?fresh=1");
     } catch (err: any) {
       setError(err?.message || "Registration failed.");
@@ -100,9 +90,9 @@ export default function RegisterPage() {
         )}
 
         <input
-          value={name}
-          onChange={(e) => setName(e.target.value)}
-          placeholder="Name or Company"
+          value={organizationName}
+          onChange={(e) => setOrganizationName(e.target.value)}
+          placeholder="Organization Name"
           className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 mb-4"
           required
         />
