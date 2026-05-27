@@ -395,6 +395,15 @@ export default function LoginPage() {
             : "Already have an account? Login"}
         </button>
 
+<div className="text-center mt-4">
+  <a
+    href="/forgot-password"
+    className="text-sm text-blue-400 hover:text-blue-300"
+  >
+    Forgot password?
+  </a>
+</div>
+
         <a href="/" className="block text-center mt-6 text-blue-400 text-sm">
           Back to landing
         </a>
