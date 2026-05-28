@@ -18,6 +18,7 @@ from app.routes import (
     renewal,
     account_profile,
     timeline,
+    carrier_packet,
 )
 
 from app.models.user import User
@@ -53,6 +54,7 @@ app.include_router(copilot.router)
 app.include_router(renewal.router)
 app.include_router(account_profile.router)
 app.include_router(timeline.router)
+app.include_router(carrier_packet.router)
 
 @app.get("/version")
 def version():
