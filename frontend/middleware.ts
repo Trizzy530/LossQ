@@ -20,7 +20,7 @@ export function middleware(request: NextRequest) {
 
   if (isProtected && !token) {
     return NextResponse.redirect(
-      new URL("/login?fresh=1", request.url)
+      new URL("/login", request.url)
     );
   }
 
