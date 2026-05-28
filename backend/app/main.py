@@ -62,4 +62,4 @@ def version():
 
 @app.get("/")
 def root():
-    return {"message": "LossQ API running", "version": "resend-auth-v1"}
+    return {"message": "LossQ API running", "version": "carrier-packet-live"}
