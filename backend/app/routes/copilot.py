@@ -158,8 +158,31 @@ Do not reference claims outside this selected account.
 If no claims are provided, tell the broker to upload a loss run under the selected policy.
 
 Answer the broker's question using only the provided claim data.
-Be concise, practical, and underwriting-focused.
-Give clear broker actions where appropriate.
+Return the response in this exact structure:
+
+SUMMARY:
+Short underwriting overview.
+
+RENEWAL_RISK:
+GREEN, YELLOW, or RED with explanation.
+
+SEVERITY_DRIVERS:
+Bullet list of largest severity concerns.
+
+LITIGATION_EXPOSURE:
+Explain litigation concerns.
+
+RESERVE_ADEQUACY:
+Discuss reserve concerns.
+
+BROKER_ACTIONS:
+Bullet list of broker recommendations.
+
+UNDERWRITER_CONCERNS:
+Bullet list of likely carrier concerns.
+
+SUBMISSION_STRATEGY:
+Explain how the broker should position the account.
 
 Current selected account intelligence:
 Risk Level: {intelligence["risk_level"]}
@@ -200,3 +223,174 @@ Broker question:
             "policy_number": request.policy_number,
             "claims_used": len(claims),
         }
+
+@router.post("/renewal-analysis")
+def renewal_analysis(
+    request: CopilotRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    query = db.query(Claim).filter(
+        Claim.organization_id == current_user["organization_id"]
+    )
+
+    if request.policy_number:
+        query = query.filter(
+            Claim.policy_number == request.policy_number
+        )
+
+    claims = query.all()
+
+    intelligence = build_underwriting_intelligence(claims)
+
+    return {
+        "policy_number": request.policy_number,
+        "claims_used": len(claims),
+        "renewal_risk": intelligence["renewal_risk"],
+        "risk_score": intelligence["risk_score"],
+        "summary": intelligence["summary"],
+        "recommendation": intelligence["recommendation"],
+        "submission_strength": intelligence["submission_strength"],
+    }
+
+
+@router.post("/litigation-analysis")
+def litigation_analysis(
+    request: CopilotRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    query = db.query(Claim).filter(
+        Claim.organization_id == current_user["organization_id"]
+    )
+
+    if request.policy_number:
+        query = query.filter(
+            Claim.policy_number == request.policy_number
+        )
+
+    claims = query.all()
+
+    litigation_claims = [
+        c for c in claims if c.litigation
+    ]
+
+    return {
+        "policy_number": request.policy_number,
+        "litigation_claims": len(litigation_claims),
+        "claims": [
+            {
+                "claim_number": c.claim_number,
+                "status": c.status,
+                "total_incurred": c.total_incurred,
+                "description": c.description,
+            }
+            for c in litigation_claims
+        ],
+    }
+
+
+@router.post("/reserve-analysis")
+def reserve_analysis(
+    request: CopilotRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    query = db.query(Claim).filter(
+        Claim.organization_id == current_user["organization_id"]
+    )
+
+    if request.policy_number:
+        query = query.filter(
+            Claim.policy_number == request.policy_number
+        )
+
+    claims = query.all()
+
+    reserve_total = sum(
+        float(c.reserve_amount or 0)
+        for c in claims
+    )
+
+    incurred_total = sum(
+        float(c.total_incurred or 0)
+        for c in claims
+    )
+
+    reserve_ratio = (
+        reserve_total / incurred_total
+        if incurred_total > 0
+        else 0
+    )
+
+    adequacy = "Adequate"
+
+    if reserve_ratio < 0.15:
+        adequacy = "Potentially Deficient"
+
+    elif reserve_ratio > 0.5:
+        adequacy = "Conservative"
+
+    return {
+        "policy_number": request.policy_number,
+        "reserve_total": reserve_total,
+        "incurred_total": incurred_total,
+        "reserve_ratio": reserve_ratio,
+        "reserve_adequacy": adequacy,
+    }
+
+
+@router.post("/carrier-strategy")
+def carrier_strategy(
+    request: CopilotRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    query = db.query(Claim).filter(
+        Claim.organization_id == current_user["organization_id"]
+    )
+
+    if request.policy_number:
+        query = query.filter(
+            Claim.policy_number == request.policy_number
+        )
+
+    claims = query.all()
+
+    intelligence = build_underwriting_intelligence(claims)
+
+    return {
+        "policy_number": request.policy_number,
+        "carrier_strategy": intelligence["carrier_narrative"],
+        "risk_level": intelligence["risk_level"],
+        "renewal_risk": intelligence["renewal_risk"],
+        "submission_strength": intelligence["submission_strength"],
+    }
+
+
+@router.post("/broker-summary")
+def broker_summary(
+    request: CopilotRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    query = db.query(Claim).filter(
+        Claim.organization_id == current_user["organization_id"]
+    )
+
+    if request.policy_number:
+        query = query.filter(
+            Claim.policy_number == request.policy_number
+        )
+
+    claims = query.all()
+
+    intelligence = build_underwriting_intelligence(claims)
+
+    return {
+        "policy_number": request.policy_number,
+        "summary": intelligence["summary"],
+        "recommendation": intelligence["recommendation"],
+        "risk_level": intelligence["risk_level"],
+        "renewal_risk": intelligence["renewal_risk"],
+    }
