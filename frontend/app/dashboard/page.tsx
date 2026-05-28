@@ -949,7 +949,7 @@ export default function DashboardPage() {
           </div>
         </details>
 
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+              <section className="bg-slate-900 border border-slate-800 rounded-xl p-6">
           <h2 className="text-3xl font-semibold mb-6">Claims Analysis</h2>
 
           <div className="overflow-x-auto">
@@ -976,34 +976,47 @@ export default function DashboardPage() {
                   </tr>
                 ) : (
                   [...claims]
-  .sort((a, b) => {
-    const statusOrder: Record<string, number> = {
-      Open: 0,
-      Pending: 1,
-      Reopened: 2,
-      Closed: 3,
-    };
+                    .sort((a, b) => {
+                      const statusOrder: Record<string, number> = {
+                        Open: 0,
+                        Pending: 1,
+                        Reopened: 2,
+                        Closed: 3,
+                      };
 
-    const aStatus = statusOrder[a.status] ?? 9;
-    const bStatus = statusOrder[b.status] ?? 9;
+                      const aStatus = statusOrder[a.status] ?? 9;
+                      const bStatus = statusOrder[b.status] ?? 9;
 
-    if (aStatus !== bStatus) return aStatus - bStatus;
+                      if (aStatus !== bStatus) return aStatus - bStatus;
 
-    return Number(b.total_incurred || 0) - Number(a.total_incurred || 0);
-  })
-  .map((claim) => ( : (
-                          claim.claim_number || "Unnamed Claim"
-                        )}
-                      </td>
-                      <td>{claim.line_of_business || "-"}</td>
-                      <td>{claim.status || "-"}</td>
-                      <td>${Number(claim.paid_amount || 0).toLocaleString()}</td>
-                      <td>${Number(claim.reserve_amount || 0).toLocaleString()}</td>
-                      <td>${Number(claim.total_incurred || 0).toLocaleString()}</td>
-                      <td>{claim.policy_number || "-"}</td>
-                      <td>{claim.flag ? <span className="text-red-400">{claim.flag}</span> : <span className="text-slate-400">None</span>}</td>
-                    </tr>
-                  ))
+                      return Number(b.total_incurred || 0) - Number(a.total_incurred || 0);
+                    })
+                    .map((claim) => (
+                      <tr key={claim.id || claim.claim_number} className="border-b border-slate-800">
+                        <td className="py-4">
+                          {claim.id ? (
+                            <a href={`/claims/${claim.id}`} className="text-blue-400 hover:text-blue-300 underline">
+                              {claim.claim_number || "Unnamed Claim"}
+                            </a>
+                          ) : (
+                            claim.claim_number || "Unnamed Claim"
+                          )}
+                        </td>
+                        <td>{claim.line_of_business || "-"}</td>
+                        <td>{claim.status || "-"}</td>
+                        <td>${Number(claim.paid_amount || 0).toLocaleString()}</td>
+                        <td>${Number(claim.reserve_amount || 0).toLocaleString()}</td>
+                        <td>${Number(claim.total_incurred || 0).toLocaleString()}</td>
+                        <td>{claim.policy_number || "-"}</td>
+                        <td>
+                          {claim.flag ? (
+                            <span className="text-red-400">{claim.flag}</span>
+                          ) : (
+                            <span className="text-slate-400">None</span>
+                          )}
+                        </td>
+                      </tr>
+                    ))
                 )}
               </tbody>
             </table>
@@ -1028,7 +1041,9 @@ export default function DashboardPage() {
               </p>
             </div>
 
-            <button onClick={() => setCopilotOpen(false)} className="text-slate-400 hover:text-white">✕</button>
+            <button onClick={() => setCopilotOpen(false)} className="text-slate-400 hover:text-white">
+              ✕
+            </button>
           </div>
 
           <div className="p-5 max-h-[520px] overflow-y-auto">
@@ -1113,7 +1128,7 @@ function ChartCard({
   children,
 }: {
   title: string;
-  children: ReactNode;
+  children: React.ReactNode;
 }) {
   return (
     <div className="bg-slate-800 rounded-xl p-5">
@@ -1122,3 +1137,4 @@ function ChartCard({
     </div>
   );
 }
+
