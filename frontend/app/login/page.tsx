@@ -78,8 +78,9 @@ export default function LoginPage() {
       throw new Error("No login token returned.");
     }
 
-    localStorage.setItem("lossq_token", token);
-    localStorage.setItem("lossq_user", cleanEmail);
+localStorage.setItem("lossq_token", token);
+localStorage.setItem("lossq_user", JSON.stringify(loginData?.user || { email: cleanEmail }));
+localStorage.setItem("lossq_login_time", Date.now().toString());
 
     sessionStorage.setItem(
       "lossq_welcome",
