@@ -58,7 +58,7 @@ app.include_router(carrier_packet.router)
 
 @app.get("/version")
 def version():
-    return {"version": "resend-auth-v1"}
+    return {"version": "carrier-packet-v2-6e80c7b"}
 
 @app.get("/")
 def root():
