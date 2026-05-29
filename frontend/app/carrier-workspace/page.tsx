@@ -1,15 +1,67 @@
 "use client";
 
+import { useState } from "react";
+
+const API =
+  process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
+
 export default function CarrierWorkspacePage() {
+  const [policyNumber, setPolicyNumber] = useState("");
+  const [packet, setPacket] = useState<any>(null);
+  const [message, setMessage] = useState("");
+  const [loading, setLoading] = useState(false);
+
+  function authHeaders(): Record<string, string> {
+    const token = localStorage.getItem("lossq_token");
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  async function generatePacket() {
+    if (!policyNumber.trim()) {
+      setMessage("Enter a policy number first.");
+      return;
+    }
+
+    setLoading(true);
+    setMessage("");
+    setPacket(null);
+
+    try {
+      const res = await fetch(`${API}/carrier-packet/generate`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(),
+        },
+        body: JSON.stringify({
+          policy_number: policyNumber.trim(),
+        }),
+      });
+
+      const data = await res.json().catch(() => ({}));
+
+      if (!res.ok) {
+        setMessage(data.detail || "Could not generate carrier packet.");
+        return;
+      }
+
+      setPacket(data);
+      setMessage("Carrier packet generated.");
+    } catch {
+      setMessage("Carrier packet request failed.");
+    } finally {
+      setLoading(false);
+    }
+  }
+
   return (
     <main className="min-h-screen bg-slate-950 text-white p-10">
-      <div className="max-w-6xl mx-auto">
+      <div className="max-w-7xl mx-auto">
         <div className="flex justify-between items-start mb-10">
           <div>
             <h1 className="text-5xl font-bold">Carrier Workspace</h1>
             <p className="text-slate-400 mt-2">
-              Broker-ready submission center for carrier packets, renewal memos,
-              and underwriting exports.
+              Generate broker-ready carrier submission packets from account loss data.
             </p>
           </div>
 
@@ -21,36 +73,124 @@ export default function CarrierWorkspacePage() {
           </a>
         </div>
 
-        <section className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-10">
-          <Card title="Carrier Packet" description="Generate submission-ready packet." />
-          <Card title="Renewal Memo" description="Create broker-ready AI narrative." />
-          <Card title="Loss Run Export" description="Export polished carrier loss run." />
+        <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-8">
+          <h2 className="text-3xl font-semibold mb-5">Generate Carrier Packet</h2>
+
+          <div className="flex flex-col md:flex-row gap-4">
+            <input
+              value={policyNumber}
+              onChange={(e) => setPolicyNumber(e.target.value)}
+              placeholder="Enter policy number"
+              className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-3"
+            />
+
+            <button
+              onClick={generatePacket}
+              disabled={loading}
+              className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 px-6 py-3 rounded-lg font-semibold"
+            >
+              {loading ? "Generating..." : "Generate Packet"}
+            </button>
+          </div>
+
+          {message && (
+            <div className="mt-5 bg-slate-800 border border-slate-700 rounded-lg p-4 text-slate-300">
+              {message}
+            </div>
+          )}
         </section>
 
-        <section className="bg-slate-900 border border-slate-800 rounded-2xl p-8">
-          <h2 className="text-3xl font-semibold mb-4">Workspace Status</h2>
-          <p className="text-slate-300">
-            Carrier workspace shell is ready. Next step is wiring it to the
-            dashboard account profile, selected policy, reports API, and AI
-            renewal memo generator.
-          </p>
-        </section>
+        {packet && (
+          <>
+            <section className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
+              <Metric title="Policy" value={packet.policy_number} />
+              <Metric title="Renewal Risk" value={packet.renewal_risk} />
+              <Metric title="Risk Level" value={packet.risk_level} />
+              <Metric title="Submission Strength" value={packet.submission_strength} />
+            </section>
+
+            <section className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+              <Metric title="Total Claims" value={packet.claim_metrics?.total_claims} />
+              <Metric title="Open Claims" value={packet.claim_metrics?.open_claims} />
+              <Metric
+                title="Total Incurred"
+                value={`$${Number(packet.claim_metrics?.total_incurred || 0).toLocaleString()}`}
+              />
+            </section>
+
+            <Section title="Account Summary" content={packet.account_summary} />
+            <Section title="Reserve Analysis" content={packet.reserve_analysis} />
+            <Section title="Litigation Exposure" content={packet.litigation_exposure} />
+            <Section title="Broker Strategy" content={packet.broker_strategy} />
+            <Section title="Carrier Narrative" content={packet.carrier_narrative} />
+
+            <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-8">
+              <h2 className="text-3xl font-semibold mb-5">Severity Drivers</h2>
+
+              {packet.severity_drivers?.length === 0 ? (
+                <p className="text-slate-400">No severity drivers identified.</p>
+              ) : (
+                <div className="space-y-4">
+                  {packet.severity_drivers?.map((claim: any) => (
+                    <div
+                      key={claim.claim_number}
+                      className="bg-slate-800 border border-slate-700 rounded-xl p-5"
+                    >
+                      <div className="flex justify-between gap-4 mb-2">
+                        <h3 className="text-xl font-semibold">
+                          Claim {claim.claim_number}
+                        </h3>
+
+                        <span className="text-blue-400 font-semibold">
+                          ${Number(claim.total_incurred || 0).toLocaleString()}
+                        </span>
+                      </div>
+
+                      <p className="text-slate-400 text-sm mb-2">
+                        {claim.line_of_business || "-"} · {claim.status || "-"}
+                      </p>
+
+                      <p className="text-slate-300">
+                        {claim.description || "No description available."}
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </section>
+
+            <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
+              <h2 className="text-3xl font-semibold mb-5">Recommendations</h2>
+
+              <ul className="list-disc pl-6 space-y-3 text-slate-300">
+                {packet.recommendations?.map((item: string, index: number) => (
+                  <li key={index}>{item}</li>
+                ))}
+              </ul>
+            </section>
+          </>
+        )}
       </div>
     </main>
   );
 }
 
-function Card({
-  title,
-  description,
-}: {
-  title: string;
-  description: string;
-}) {
+function Metric({ title, value }: { title: string; value: any }) {
   return (
     <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
-      <h3 className="text-2xl font-semibold mb-3">{title}</h3>
-      <p className="text-slate-400">{description}</p>
+      <div className="text-slate-400 mb-2">{title}</div>
+      <div className="text-2xl font-bold break-words">{value || "-"}</div>
     </div>
+  );
+}
+
+function Section({ title, content }: { title: string; content: string }) {
+  return (
+    <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-8">
+      <h2 className="text-3xl font-semibold mb-5">{title}</h2>
+      <p className="text-slate-300 leading-8 whitespace-pre-line">
+        {content || "No data available."}
+      </p>
+    </section>
   );
 }
