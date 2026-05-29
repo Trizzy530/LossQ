@@ -54,6 +54,43 @@ export default function CarrierWorkspacePage() {
     }
   }
 
+async function downloadPdf() {
+  if (!policyNumber.trim()) {
+    setMessage("Enter a policy number first.");
+    return;
+  }
+
+  try {
+    const res = await fetch(`${API}/carrier-packet/pdf`, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify({
+        policy_number: policyNumber.trim(),
+      }),
+    });
+
+    if (!res.ok) {
+      setMessage("Could not download PDF packet.");
+      return;
+    }
+
+    const blob = await res.blob();
+    const url = window.URL.createObjectURL(blob);
+
+    const a = document.createElement("a");
+    a.href = url;
+    a.download = `lossq_carrier_packet_${policyNumber.trim()}.pdf`;
+    a.click();
+
+    window.URL.revokeObjectURL(url);
+  } catch {
+    setMessage("PDF download failed.");
+  }
+}
+
   return (
     <main className="min-h-screen bg-slate-950 text-white p-10">
       <div className="max-w-7xl mx-auto">
@@ -99,7 +136,13 @@ export default function CarrierWorkspacePage() {
             </div>
           )}
         </section>
-
+<button
+  onClick={downloadPdf}
+  disabled={loading}
+  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 px-6 py-3 rounded-lg font-semibold"
+>
+  Download PDF Packet
+</button>
         {packet && (
           <>
             <section className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
