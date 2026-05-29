@@ -6,6 +6,10 @@ from app.database import SessionLocal
 from app.models.claim import Claim
 from app.auth_utils import get_current_user
 from app.routes.summary import build_underwriting_intelligence
+from fastapi.responses import Response
+from reportlab.lib.pagesizes import letter
+from reportlab.pdfgen import canvas
+from io import BytesIO
 
 router = APIRouter(prefix="/carrier-packet", tags=["Carrier Packet"])
 
@@ -134,3 +138,71 @@ def generate_carrier_packet(
             "Highlight corrective actions and risk controls where applicable.",
         ],
     }
+
+@router.post("/pdf")
+def download_carrier_packet_pdf(
+    request: CarrierPacketRequest,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    packet = generate_carrier_packet(request, db, current_user)
+
+    buffer = BytesIO()
+    pdf = canvas.Canvas(buffer, pagesize=letter)
+    width, height = letter
+
+    y = height - 50
+
+    def write_line(text, size=10, gap=16):
+        nonlocal y
+        if y < 60:
+            pdf.showPage()
+            y = height - 50
+        pdf.setFont("Helvetica", size)
+        pdf.drawString(50, y, str(text)[:110])
+        y -= gap
+
+    pdf.setFont("Helvetica-Bold", 18)
+    pdf.drawString(50, y, "LossQ Carrier Submission Packet")
+    y -= 35
+
+    write_line(f"Policy Number: {packet['policy_number']}", 12)
+    write_line(f"Renewal Risk: {packet['renewal_risk']}", 12)
+    write_line(f"Risk Level: {packet['risk_level']}", 12)
+    write_line(f"Submission Strength: {packet['submission_strength']}", 12)
+    y -= 10
+
+    write_line("Account Summary", 14, 22)
+    for line in packet["account_summary"].split(". "):
+        write_line(line)
+
+    y -= 10
+    write_line("Reserve Analysis", 14, 22)
+    for line in packet["reserve_analysis"].split(". "):
+        write_line(line)
+
+    y -= 10
+    write_line("Litigation Exposure", 14, 22)
+    for line in packet["litigation_exposure"].split(". "):
+        write_line(line)
+
+    y -= 10
+    write_line("Broker Strategy", 14, 22)
+    for line in packet["broker_strategy"].split(". "):
+        write_line(line)
+
+    y -= 10
+    write_line("Recommendations", 14, 22)
+    for item in packet["recommendations"]:
+        write_line(f"- {item}")
+
+    pdf.save()
+    buffer.seek(0)
+
+    return Response(
+        content=buffer.read(),
+        media_type="application/pdf",
+        headers={
+            "Content-Disposition": f"attachment; filename=lossq_carrier_packet_{request.policy_number}.pdf"
+        },
+    )
