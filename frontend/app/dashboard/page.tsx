@@ -172,7 +172,9 @@ export default function DashboardPage() {
 
       if (policyNumberOverride) {
         const selectedRes = await fetch(
-          `${API}/account-profile/policy/${encodeURIComponent(policyNumberOverride)}`,
+          `${API}/account-profile/policy/${encodeURIComponent(
+            policyNumberOverride
+          )}`,
           { headers: authHeaders() }
         );
 
@@ -231,7 +233,9 @@ export default function DashboardPage() {
       }
 
       const summaryUrl = hasPolicy
-        ? `${API}/summary/underwriting?policy_number=${encodeURIComponent(policyNumber)}`
+        ? `${API}/summary/underwriting?policy_number=${encodeURIComponent(
+            policyNumber
+          )}`
         : `${API}/summary/underwriting`;
 
       const summaryRes = await fetch(summaryUrl, { headers: authHeaders() });
@@ -249,7 +253,9 @@ export default function DashboardPage() {
       }
 
       const timelineUrl = hasPolicy
-        ? `${API}/timeline/analytics?policy_number=${encodeURIComponent(policyNumber)}`
+        ? `${API}/timeline/analytics?policy_number=${encodeURIComponent(
+            policyNumber
+          )}`
         : `${API}/timeline/analytics`;
 
       const timelineRes = await fetch(timelineUrl, { headers: authHeaders() });
@@ -307,7 +313,9 @@ export default function DashboardPage() {
         return;
       }
 
-      setProfiles((prev) => prev.filter((p) => p.policy_number !== policyNumber));
+      setProfiles((prev) =>
+        prev.filter((p) => p.policy_number !== policyNumber)
+      );
 
       if (profile?.policy_number === policyNumber) {
         newBlankProfile();
@@ -366,7 +374,9 @@ export default function DashboardPage() {
     }
 
     const res = await fetch(
-      `${API}/account-profile/policy/${encodeURIComponent(profile.policy_number)}`,
+      `${API}/account-profile/policy/${encodeURIComponent(
+        profile.policy_number
+      )}`,
       { headers: authHeaders() }
     );
 
@@ -493,7 +503,9 @@ export default function DashboardPage() {
     setRenewalMemo(`Generating renewal memo for ${profile.policy_number}...`);
 
     try {
-      const policy = `?policy_number=${encodeURIComponent(profile.policy_number)}`;
+      const policy = `?policy_number=${encodeURIComponent(
+        profile.policy_number
+      )}`;
 
       const res = await fetch(`${API}/renewal/memo${policy}`, {
         headers: authHeaders(),
@@ -544,7 +556,9 @@ export default function DashboardPage() {
     }
 
     if (!profile?.policy_number) {
-      setCopilotAnswer("Select a policy/account first so Copilot analyzes the correct claims.");
+      setCopilotAnswer(
+        "Select a policy/account first so Copilot analyzes the correct claims."
+      );
       setCopilotOpen(true);
       return;
     }
@@ -672,11 +686,17 @@ export default function DashboardPage() {
           </div>
 
           <div className="flex gap-4">
-            <a href="/" className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg">
+            <a
+              href="/"
+              className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg"
+            >
               Landing
             </a>
 
-            <a href="/settings" className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg">
+            <a
+              href="/settings"
+              className="bg-slate-800 hover:bg-slate-700 px-5 py-3 rounded-lg"
+            >
               Settings
             </a>
 
@@ -703,42 +723,54 @@ export default function DashboardPage() {
         )}
 
         <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <h2 className="text-3xl font-semibold mb-4">Account Workspace</h2>
+          <h2 className="text-3xl font-semibold mb-4">
+            Upload & Report Center
+          </h2>
 
-          {profiles.length === 0 ? (
-            <p className="text-slate-400">No saved accounts yet. Save a profile below.</p>
-          ) : (
-            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-              {profiles.map((item) => (
-                <div
-                  key={item.id}
-                  className={`rounded-xl border p-4 ${
-                    profile?.policy_number === item.policy_number
-                      ? "border-blue-500 bg-blue-500/10"
-                      : "border-slate-800 bg-slate-950"
-                  }`}
-                >
-                  <button
-                    type="button"
-                    onClick={() => selectAccount(item.policy_number)}
-                    className="w-full text-left"
-                  >
-                    <p className="font-bold">{item.business_name || "-"}</p>
-                    <p className="text-slate-400 text-sm">{item.carrier_name || "-"}</p>
-                    <p className="text-blue-400 text-sm mt-2">{item.policy_number || "-"}</p>
-                  </button>
+          <div className="flex flex-wrap gap-4 items-center">
+            <input
+              type="file"
+              multiple
+              accept=".pdf,.xlsx,.csv"
+              onChange={(e) => setFiles(e.target.files)}
+              className="text-sm text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:text-white"
+            />
 
-                  <button
-                    type="button"
-                    onClick={() => deleteProfile(item.policy_number)}
-                    className="mt-4 w-full bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm font-semibold"
-                  >
-                    Delete Profile
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
+            <button
+              onClick={uploadFiles}
+              className="bg-blue-600 hover:bg-blue-700 px-5 py-3 rounded-lg font-semibold"
+            >
+              Upload & Analyze
+            </button>
+
+            <button
+              onClick={exportCarrierLossRun}
+              className="bg-emerald-600 hover:bg-emerald-700 px-5 py-3 rounded-lg font-semibold"
+            >
+              Export Carrier Loss Run
+            </button>
+
+            <button
+              onClick={exportExecutiveReport}
+              className="bg-green-700 hover:bg-green-800 px-5 py-3 rounded-lg font-semibold"
+            >
+              Export Executive Report
+            </button>
+
+            <button
+              onClick={generateCarrierPacket}
+              className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold"
+            >
+              Generate Carrier Packet
+            </button>
+
+            <a
+              href="/carrier-workspace"
+              className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold"
+            >
+              Carrier Workspace
+            </a>
+          </div>
         </section>
 
         <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
@@ -752,6 +784,7 @@ export default function DashboardPage() {
               >
                 New Blank Profile
               </button>
+
               <button
                 onClick={saveProfile}
                 className="bg-emerald-600 hover:bg-emerald-700 px-5 py-3 rounded-lg font-semibold"
@@ -762,18 +795,38 @@ export default function DashboardPage() {
           </div>
 
           <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-            <Input label="Business Name" value={profile?.business_name || ""} onChange={(v) => setProfile({ ...profile, business_name: v })} />
-            <Input label="Carrier Name" value={profile?.carrier_name || ""} onChange={(v) => setProfile({ ...profile, carrier_name: v })} />
-            <Input label="Agency Name" value={profile?.agency_name || ""} onChange={(v) => setProfile({ ...profile, agency_name: v })} />
+            <Input
+              label="Business Name"
+              value={profile?.business_name || ""}
+              onChange={(v) => setProfile({ ...profile, business_name: v })}
+            />
+
+            <Input
+              label="Carrier Name"
+              value={profile?.carrier_name || ""}
+              onChange={(v) => setProfile({ ...profile, carrier_name: v })}
+            />
+
+            <Input
+              label="Agency Name"
+              value={profile?.agency_name || ""}
+              onChange={(v) => setProfile({ ...profile, agency_name: v })}
+            />
 
             <div>
-              <label className="block text-sm text-slate-400 mb-2">Policy Number</label>
+              <label className="block text-sm text-slate-400 mb-2">
+                Policy Number
+              </label>
+
               <div className="flex gap-2">
                 <input
                   value={profile?.policy_number || ""}
-                  onChange={(e) => setProfile({ ...profile, policy_number: e.target.value })}
+                  onChange={(e) =>
+                    setProfile({ ...profile, policy_number: e.target.value })
+                  }
                   className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3"
                 />
+
                 <button
                   onClick={lookupPolicy}
                   className="bg-blue-600 hover:bg-blue-700 px-4 py-3 rounded-lg font-semibold"
@@ -783,73 +836,68 @@ export default function DashboardPage() {
               </div>
             </div>
 
-            <Input label="Effective Date" value={profile?.effective_date || ""} onChange={(v) => setProfile({ ...profile, effective_date: v })} />
-            <Input label="Expiration Date" value={profile?.expiration_date || ""} onChange={(v) => setProfile({ ...profile, expiration_date: v })} />
-            <Input label="Evaluation Date" value={profile?.evaluation_date || ""} onChange={(v) => setProfile({ ...profile, evaluation_date: v })} />
+            <Input
+              label="Effective Date"
+              value={profile?.effective_date || ""}
+              onChange={(v) => setProfile({ ...profile, effective_date: v })}
+            />
+
+            <Input
+              label="Expiration Date"
+              value={profile?.expiration_date || ""}
+              onChange={(v) => setProfile({ ...profile, expiration_date: v })}
+            />
+
+            <Input
+              label="Evaluation Date"
+              value={profile?.evaluation_date || ""}
+              onChange={(v) => setProfile({ ...profile, evaluation_date: v })}
+            />
           </div>
         </section>
 
         <section className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
           <MetricCard title="Business" value={profile?.business_name || "-"} />
-          <MetricCard title="Policy Number" value={profile?.policy_number || "-"} />
+          <MetricCard
+            title="Policy Number"
+            value={profile?.policy_number || "-"}
+          />
           <MetricCard title="Carrier" value={profile?.carrier_name || "-"} />
           <MetricCard title="Total Claims" value={totalClaims} />
         </section>
 
-        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <h2 className="text-3xl font-semibold mb-4">Upload & Report Center</h2>
-
-          <div className="flex flex-wrap gap-4 items-center">
-            <input
-              type="file"
-              multiple
-              accept=".pdf,.xlsx,.csv"
-              onChange={(e) => setFiles(e.target.files)}
-              className="text-sm text-slate-300 file:mr-4 file:rounded-lg file:border-0 file:bg-blue-600 file:px-4 file:py-2 file:text-white"
-            />
-
-            <button onClick={uploadFiles} className="bg-blue-600 hover:bg-blue-700 px-5 py-3 rounded-lg font-semibold">
-              Upload & Analyze
-            </button>
-            <button onClick={exportCarrierLossRun} className="bg-emerald-600 hover:bg-emerald-700 px-5 py-3 rounded-lg font-semibold">
-              Export Carrier Loss Run
-            </button>
-            <button onClick={exportExecutiveReport} className="bg-green-700 hover:bg-green-800 px-5 py-3 rounded-lg font-semibold">
-              Export Executive Report
-            </button>
-            <button
-  onClick={generateCarrierPacket}
-  className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold"
->
-  Generate Carrier Packet
-</button>
-
-<a
-  href="/carrier-workspace"
-  className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold"
->
-  Carrier Workspace
-</a>
-
         <section className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
           <MetricCard title="Open Claims" value={openClaims} />
-          <MetricCard title="Total Incurred" value={`$${Number(totalIncurred).toLocaleString()}`} />
+          <MetricCard
+            title="Total Incurred"
+            value={`$${Number(totalIncurred).toLocaleString()}`}
+          />
           <MetricCard title="Flagged Issues" value={flaggedClaims} />
-          <MetricCard title="Renewal Risk" value={summary?.renewal_risk || "GREEN"} />
+          <MetricCard
+            title="Renewal Risk"
+            value={summary?.renewal_risk || "GREEN"}
+          />
         </section>
 
         <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <h2 className="text-3xl font-semibold mb-5">AI Underwriting Summary</h2>
+          <h2 className="text-3xl font-semibold mb-5">
+            AI Underwriting Summary
+          </h2>
+
           <p className="text-slate-300 leading-8">
             {summary?.summary || "No summary available."}
           </p>
+
           <p className="text-slate-400 mt-6">
-            {summary?.recommendation || "Upload claims to generate intelligence."}
+            {summary?.recommendation ||
+              "Upload claims to generate intelligence."}
           </p>
         </section>
 
         <details className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <summary className="cursor-pointer text-2xl font-semibold">AI Renewal Memo</summary>
+          <summary className="cursor-pointer text-2xl font-semibold">
+            AI Renewal Memo
+          </summary>
 
           <div className="mt-6">
             <div className="flex gap-4 mb-5">
@@ -886,14 +934,28 @@ export default function DashboardPage() {
 
           <div className="mt-6">
             <p className="text-slate-400 mb-6">
-              Visualize loss trends, claim aging, severity distribution, and line-of-business concentration.
+              Visualize loss trends, claim aging, severity distribution, and
+              line-of-business concentration.
             </p>
 
             <div className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
-              <MetricCard title="Reserve Pressure" value={timeline?.reserve_pressure || "Low"} />
+              <MetricCard
+                title="Reserve Pressure"
+                value={timeline?.reserve_pressure || "Low"}
+              />
               <MetricCard title="Open Claims" value={timeline?.open_claims || 0} />
-              <MetricCard title="Total Reserve" value={`$${Number(timeline?.total_reserve || 0).toLocaleString()}`} />
-              <MetricCard title="Total Incurred" value={`$${Number(timeline?.total_incurred || 0).toLocaleString()}`} />
+              <MetricCard
+                title="Total Reserve"
+                value={`$${Number(
+                  timeline?.total_reserve || 0
+                ).toLocaleString()}`}
+              />
+              <MetricCard
+                title="Total Incurred"
+                value={`$${Number(
+                  timeline?.total_incurred || 0
+                ).toLocaleString()}`}
+              />
             </div>
 
             <div className="bg-slate-800 rounded-xl p-5 mb-6">
@@ -910,8 +972,20 @@ export default function DashboardPage() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis dataKey="name" stroke="#94a3b8" />
                     <YAxis stroke="#94a3b8" />
-                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
-                    <Line type="monotone" dataKey="value" stroke="#38bdf8" strokeWidth={4} dot={{ fill: "#38bdf8", strokeWidth: 2, r: 5 }} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#0f172a",
+                        border: "1px solid #334155",
+                        color: "#fff",
+                      }}
+                    />
+                    <Line
+                      type="monotone"
+                      dataKey="value"
+                      stroke="#38bdf8"
+                      strokeWidth={4}
+                      dot={{ fill: "#38bdf8", strokeWidth: 2, r: 5 }}
+                    />
                   </LineChart>
                 </ResponsiveContainer>
               </ChartCard>
@@ -922,8 +996,18 @@ export default function DashboardPage() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis dataKey="name" stroke="#94a3b8" />
                     <YAxis stroke="#94a3b8" />
-                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
-                    <Bar dataKey="value" fill="#f59e0b" radius={[8, 8, 0, 0]} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#0f172a",
+                        border: "1px solid #334155",
+                        color: "#fff",
+                      }}
+                    />
+                    <Bar
+                      dataKey="value"
+                      fill="#f59e0b"
+                      radius={[8, 8, 0, 0]}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </ChartCard>
@@ -931,13 +1015,35 @@ export default function DashboardPage() {
               <ChartCard title="Severity Distribution">
                 <ResponsiveContainer width="100%" height={280}>
                   <PieChart>
-                    <Pie data={severityData} dataKey="value" nameKey="name" outerRadius={100} label>
+                    <Pie
+                      data={severityData}
+                      dataKey="value"
+                      nameKey="name"
+                      outerRadius={100}
+                      label
+                    >
                       {severityData.map((_, index) => {
-                        const colors = ["#22c55e", "#eab308", "#f97316", "#ef4444"];
-                        return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
+                        const colors = [
+                          "#22c55e",
+                          "#eab308",
+                          "#f97316",
+                          "#ef4444",
+                        ];
+                        return (
+                          <Cell
+                            key={`cell-${index}`}
+                            fill={colors[index % colors.length]}
+                          />
+                        );
                       })}
                     </Pie>
-                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#0f172a",
+                        border: "1px solid #334155",
+                        color: "#fff",
+                      }}
+                    />
                   </PieChart>
                 </ResponsiveContainer>
               </ChartCard>
@@ -948,8 +1054,18 @@ export default function DashboardPage() {
                     <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
                     <XAxis dataKey="name" stroke="#94a3b8" />
                     <YAxis stroke="#94a3b8" />
-                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
-                    <Bar dataKey="value" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
+                    <Tooltip
+                      contentStyle={{
+                        backgroundColor: "#0f172a",
+                        border: "1px solid #334155",
+                        color: "#fff",
+                      }}
+                    />
+                    <Bar
+                      dataKey="value"
+                      fill="#8b5cf6"
+                      radius={[8, 8, 0, 0]}
+                    />
                   </BarChart>
                 </ResponsiveContainer>
               </ChartCard>
@@ -957,7 +1073,7 @@ export default function DashboardPage() {
           </div>
         </details>
 
-              <section className="bg-slate-900 border border-slate-800 rounded-xl p-6">
+        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6">
           <h2 className="text-3xl font-semibold mb-6">Claims Analysis</h2>
 
           <div className="overflow-x-auto">
@@ -997,13 +1113,22 @@ export default function DashboardPage() {
 
                       if (aStatus !== bStatus) return aStatus - bStatus;
 
-                      return Number(b.total_incurred || 0) - Number(a.total_incurred || 0);
+                      return (
+                        Number(b.total_incurred || 0) -
+                        Number(a.total_incurred || 0)
+                      );
                     })
                     .map((claim) => (
-                      <tr key={claim.id || claim.claim_number} className="border-b border-slate-800">
+                      <tr
+                        key={claim.id || claim.claim_number}
+                        className="border-b border-slate-800"
+                      >
                         <td className="py-4">
                           {claim.id ? (
-                            <a href={`/claims/${claim.id}`} className="text-blue-400 hover:text-blue-300 underline">
+                            <a
+                              href={`/claims/${claim.id}`}
+                              className="text-blue-400 hover:text-blue-300 underline"
+                            >
                               {claim.claim_number || "Unnamed Claim"}
                             </a>
                           ) : (
@@ -1012,9 +1137,15 @@ export default function DashboardPage() {
                         </td>
                         <td>{claim.line_of_business || "-"}</td>
                         <td>{claim.status || "-"}</td>
-                        <td>${Number(claim.paid_amount || 0).toLocaleString()}</td>
-                        <td>${Number(claim.reserve_amount || 0).toLocaleString()}</td>
-                        <td>${Number(claim.total_incurred || 0).toLocaleString()}</td>
+                        <td>
+                          ${Number(claim.paid_amount || 0).toLocaleString()}
+                        </td>
+                        <td>
+                          ${Number(claim.reserve_amount || 0).toLocaleString()}
+                        </td>
+                        <td>
+                          ${Number(claim.total_incurred || 0).toLocaleString()}
+                        </td>
                         <td>{claim.policy_number || "-"}</td>
                         <td>
                           {claim.flag ? (
@@ -1045,11 +1176,15 @@ export default function DashboardPage() {
             <div>
               <h2 className="font-semibold">AI Underwriting Copilot</h2>
               <p className="text-xs text-slate-400">
-                Account: {profile?.business_name || "No account selected"} | Policy: {profile?.policy_number || "-"}
+                Account: {profile?.business_name || "No account selected"} |
+                Policy: {profile?.policy_number || "-"}
               </p>
             </div>
 
-            <button onClick={() => setCopilotOpen(false)} className="text-slate-400 hover:text-white">
+            <button
+              onClick={() => setCopilotOpen(false)}
+              className="text-slate-400 hover:text-white"
+            >
               ✕
             </button>
           </div>
@@ -1136,7 +1271,7 @@ function ChartCard({
   children,
 }: {
   title: string;
-  children: React.ReactNode;
+  children: ReactNode;
 }) {
   return (
     <div className="bg-slate-800 rounded-xl p-5">
@@ -1145,4 +1280,3 @@ function ChartCard({
     </div>
   );
 }
-
