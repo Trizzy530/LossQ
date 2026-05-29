@@ -21,6 +21,9 @@ const API =
   process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
 
 const SESSION_TIMEOUT_MS = 1000 * 60 * 60 * 24;
+const PROFILE_CACHE_KEY = "lossq_account_profiles";
+
+type AnyObject = Record<string, any>;
 
 async function safeJson(res: Response) {
   try {
@@ -35,6 +38,52 @@ function objectToChartData(data: Record<string, number>) {
     name,
     value: Number(value || 0),
   }));
+}
+
+function normalizeProfiles(data: any): AnyObject[] {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.profiles)) return data.profiles;
+  if (Array.isArray(data?.accounts)) return data.accounts;
+  if (data && typeof data === "object" && data.policy_number) return [data];
+  return [];
+}
+
+function getCachedProfiles(): AnyObject[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = localStorage.getItem(PROFILE_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function setCachedProfiles(profiles: AnyObject[]) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profiles));
+}
+
+function mergeProfiles(existing: AnyObject[], incoming: AnyObject[]) {
+  const map = new Map<string, AnyObject>();
+
+  existing.forEach((item) => {
+    const key = item?.policy_number || item?.id;
+    if (key) map.set(String(key), item);
+  });
+
+  incoming.forEach((item) => {
+    const key = item?.policy_number || item?.id;
+    if (key) {
+      map.set(String(key), {
+        ...(map.get(String(key)) || {}),
+        ...item,
+      });
+    }
+  });
+
+  return Array.from(map.values());
 }
 
 export default function DashboardPage() {
@@ -124,6 +173,52 @@ export default function DashboardPage() {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }
 
+  function updateProfileList(incomingProfiles: AnyObject[]) {
+    setProfiles((prev) => {
+      const merged = mergeProfiles(prev, incomingProfiles);
+      setCachedProfiles(merged);
+      return merged;
+    });
+  }
+
+  async function loadProfileList() {
+    const cached = getCachedProfiles();
+
+    if (cached.length > 0) {
+      setProfiles(cached);
+    }
+
+    try {
+      const profilesRes = await fetch(`${API}/account-profile/all`, {
+        headers: authHeaders(),
+      });
+
+      if (profilesRes.status === 401 || profilesRes.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return cached;
+      }
+
+      if (profilesRes.ok) {
+        const profilesData = await safeJson(profilesRes);
+        const normalized = normalizeProfiles(profilesData);
+
+        if (normalized.length > 0) {
+          const merged = mergeProfiles(cached, normalized);
+          setProfiles(merged);
+          setCachedProfiles(merged);
+          return merged;
+        }
+      }
+    } catch {
+      if (cached.length > 0) {
+        setMessage("Loaded saved account workspace. Backend profile list unavailable.");
+      }
+    }
+
+    return cached;
+  }
+
   function newBlankProfile() {
     setProfile({
       business_name: "",
@@ -153,20 +248,7 @@ export default function DashboardPage() {
     setDashboardError("");
 
     try {
-      const profilesRes = await fetch(`${API}/account-profile/all`, {
-        headers: authHeaders(),
-      });
-
-      if (profilesRes.status === 401 || profilesRes.status === 403) {
-        clearSession();
-        router.replace("/login?expired=1");
-        return;
-      }
-
-      if (profilesRes.ok) {
-        const profilesData = await safeJson(profilesRes);
-        setProfiles(Array.isArray(profilesData) ? profilesData : []);
-      }
+      await loadProfileList();
 
       let activeProfile = profile;
 
@@ -187,6 +269,18 @@ export default function DashboardPage() {
         if (selectedRes.ok) {
           activeProfile = await safeJson(selectedRes);
           setProfile(activeProfile || {});
+          if (activeProfile?.policy_number) {
+            updateProfileList([activeProfile]);
+          }
+        } else {
+          const cachedMatch = getCachedProfiles().find(
+            (item) => item?.policy_number === policyNumberOverride
+          );
+
+          if (cachedMatch) {
+            activeProfile = cachedMatch;
+            setProfile(cachedMatch);
+          }
         }
       } else {
         const profileRes = await fetch(`${API}/account-profile/`, {
@@ -202,6 +296,15 @@ export default function DashboardPage() {
         if (profileRes.ok) {
           activeProfile = await safeJson(profileRes);
           setProfile(activeProfile || {});
+          if (activeProfile?.policy_number) {
+            updateProfileList([activeProfile]);
+          }
+        } else {
+          const cachedProfiles = getCachedProfiles();
+          if (cachedProfiles.length > 0 && !activeProfile?.policy_number) {
+            activeProfile = cachedProfiles[0];
+            setProfile(cachedProfiles[0]);
+          }
         }
       }
 
@@ -313,9 +416,11 @@ export default function DashboardPage() {
         return;
       }
 
-      setProfiles((prev) =>
-        prev.filter((p) => p.policy_number !== policyNumber)
-      );
+      setProfiles((prev) => {
+        const next = prev.filter((p) => p.policy_number !== policyNumber);
+        setCachedProfiles(next);
+        return next;
+      });
 
       if (profile?.policy_number === policyNumber) {
         newBlankProfile();
@@ -323,7 +428,17 @@ export default function DashboardPage() {
 
       setMessage(`Deleted profile ${policyNumber}.`);
     } catch {
-      setMessage("Delete failed.");
+      setProfiles((prev) => {
+        const next = prev.filter((p) => p.policy_number !== policyNumber);
+        setCachedProfiles(next);
+        return next;
+      });
+
+      if (profile?.policy_number === policyNumber) {
+        newBlankProfile();
+      }
+
+      setMessage(`Deleted local profile ${policyNumber}. Backend delete unavailable.`);
     }
   }
 
@@ -343,28 +458,39 @@ export default function DashboardPage() {
       return;
     }
 
-    const res = await fetch(`${API}/account-profile/`, {
-      method: "PUT",
-      headers: {
-        "Content-Type": "application/json",
-        ...authHeaders(),
-      },
-      body: JSON.stringify(payload),
-    });
+    try {
+      const res = await fetch(`${API}/account-profile/`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(),
+        },
+        body: JSON.stringify(payload),
+      });
 
-    if (res.status === 401 || res.status === 403) {
-      clearSession();
-      router.replace("/login?expired=1");
-      return;
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (!res.ok) {
+        updateProfileList([payload]);
+        setMessage("Saved profile locally. Backend save failed.");
+        return;
+      }
+
+      const savedData = await safeJson(res);
+      const savedProfile = savedData?.policy_number ? savedData : payload;
+
+      setProfile(savedProfile);
+      updateProfileList([savedProfile]);
+      setMessage("Account profile saved.");
+      await loadDashboard(savedProfile.policy_number);
+    } catch {
+      updateProfileList([payload]);
+      setMessage("Saved profile locally. Backend save unavailable.");
     }
-
-    if (!res.ok) {
-      setMessage("Could not save account profile.");
-      return;
-    }
-
-    setMessage("Account profile saved.");
-    await loadDashboard(payload.policy_number);
   }
 
   async function lookupPolicy() {
@@ -373,29 +499,60 @@ export default function DashboardPage() {
       return;
     }
 
-    const res = await fetch(
-      `${API}/account-profile/policy/${encodeURIComponent(
-        profile.policy_number
-      )}`,
-      { headers: authHeaders() }
-    );
+    try {
+      const res = await fetch(
+        `${API}/account-profile/policy/${encodeURIComponent(
+          profile.policy_number
+        )}`,
+        { headers: authHeaders() }
+      );
 
-    if (res.status === 401 || res.status === 403) {
-      clearSession();
-      router.replace("/login?expired=1");
-      return;
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (!res.ok) {
+        const cachedMatch = getCachedProfiles().find(
+          (item) => item?.policy_number === profile.policy_number
+        );
+
+        if (cachedMatch) {
+          setProfile(cachedMatch);
+          setCopilotAnswer("");
+          await loadDashboard(cachedMatch.policy_number);
+          setMessage("Account profile loaded from saved workspace.");
+          return;
+        }
+
+        setMessage("No account found for that policy number.");
+        return;
+      }
+
+      const data = await safeJson(res);
+      setProfile(data || {});
+      if (data?.policy_number) {
+        updateProfileList([data]);
+      }
+      setCopilotAnswer("");
+      await loadDashboard(data?.policy_number);
+      setMessage("Account profile loaded.");
+    } catch {
+      const cachedMatch = getCachedProfiles().find(
+        (item) => item?.policy_number === profile.policy_number
+      );
+
+      if (cachedMatch) {
+        setProfile(cachedMatch);
+        setCopilotAnswer("");
+        await loadDashboard(cachedMatch.policy_number);
+        setMessage("Account profile loaded from saved workspace.");
+        return;
+      }
+
+      setMessage("Lookup failed.");
     }
-
-    if (!res.ok) {
-      setMessage("No account found for that policy number.");
-      return;
-    }
-
-    const data = await safeJson(res);
-    setProfile(data || {});
-    setCopilotAnswer("");
-    await loadDashboard(data?.policy_number);
-    setMessage("Account profile loaded.");
   }
 
   async function uploadFiles() {
@@ -723,11 +880,26 @@ export default function DashboardPage() {
         )}
 
         <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
-          <h2 className="text-3xl font-semibold mb-4">Account Workspace</h2>
+          <div className="flex justify-between items-center mb-4">
+            <div>
+              <h2 className="text-3xl font-semibold">Account Workspace</h2>
+              <p className="text-slate-400 mt-1">
+                Saved company/carrier profiles
+              </p>
+            </div>
+
+            <button
+              onClick={newBlankProfile}
+              className="bg-slate-700 hover:bg-slate-600 px-5 py-3 rounded-lg font-semibold"
+            >
+              New Company Profile
+            </button>
+          </div>
 
           {profiles.length === 0 ? (
             <p className="text-slate-400">
-              No saved accounts yet. Save a profile below.
+              No saved accounts yet. Complete the carrier account profile below
+              and click Save Profile.
             </p>
           ) : (
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
@@ -747,10 +919,13 @@ export default function DashboardPage() {
                   >
                     <p className="font-bold">{item.business_name || "-"}</p>
                     <p className="text-slate-400 text-sm">
-                      {item.carrier_name || "-"}
+                      Carrier: {item.carrier_name || "-"}
+                    </p>
+                    <p className="text-slate-400 text-sm">
+                      Agency: {item.agency_name || "-"}
                     </p>
                     <p className="text-blue-400 text-sm mt-2">
-                      {item.policy_number || "-"}
+                      Policy: {item.policy_number || "-"}
                     </p>
                   </button>
 
@@ -988,10 +1163,7 @@ export default function DashboardPage() {
                 title="Reserve Pressure"
                 value={timeline?.reserve_pressure || "Low"}
               />
-              <MetricCard
-                title="Open Claims"
-                value={timeline?.open_claims || 0}
-              />
+              <MetricCard title="Open Claims" value={timeline?.open_claims || 0} />
               <MetricCard
                 title="Total Reserve"
                 value={`$${Number(
