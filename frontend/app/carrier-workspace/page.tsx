@@ -113,36 +113,38 @@ async function downloadPdf() {
         <section className="bg-slate-900 border border-slate-800 rounded-2xl p-6 mb-8">
           <h2 className="text-3xl font-semibold mb-5">Generate Carrier Packet</h2>
 
-          <div className="flex flex-col md:flex-row gap-4">
-            <input
-              value={policyNumber}
-              onChange={(e) => setPolicyNumber(e.target.value)}
-              placeholder="Enter policy number"
-              className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-3"
-            />
+         <div className="flex flex-col md:flex-row gap-4">
+  <input
+    value={policyNumber}
+    onChange={(e) => setPolicyNumber(e.target.value)}
+    placeholder="Enter policy number"
+    className="flex-1 bg-slate-800 border border-slate-700 rounded-lg px-4 py-3"
+  />
 
-            <button
-              onClick={generatePacket}
-              disabled={loading}
-              className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 px-6 py-3 rounded-lg font-semibold"
-            >
-              {loading ? "Generating..." : "Generate Packet"}
-            </button>
-          </div>
+  <button
+    onClick={generatePacket}
+    disabled={loading}
+    className="bg-purple-600 hover:bg-purple-700 disabled:opacity-50 px-6 py-3 rounded-lg font-semibold"
+  >
+    {loading ? "Generating..." : "Generate Packet"}
+  </button>
 
+  <button
+    onClick={downloadPdf}
+    disabled={loading}
+    className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 px-6 py-3 rounded-lg font-semibold"
+  >
+    Download PDF Packet
+  </button>
+</div>
           {message && (
             <div className="mt-5 bg-slate-800 border border-slate-700 rounded-lg p-4 text-slate-300">
               {message}
             </div>
           )}
         </section>
-<button
-  onClick={downloadPdf}
-  disabled={loading}
-  className="bg-emerald-600 hover:bg-emerald-700 disabled:opacity-50 px-6 py-3 rounded-lg font-semibold"
->
-  Download PDF Packet
-</button>
+
+
         {packet && (
           <>
             <section className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-8">
