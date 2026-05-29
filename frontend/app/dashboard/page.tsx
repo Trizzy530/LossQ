@@ -723,6 +723,51 @@ export default function DashboardPage() {
         )}
 
         <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
+          <h2 className="text-3xl font-semibold mb-4">Account Workspace</h2>
+
+          {profiles.length === 0 ? (
+            <p className="text-slate-400">
+              No saved accounts yet. Save a profile below.
+            </p>
+          ) : (
+            <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+              {profiles.map((item) => (
+                <div
+                  key={item.id || item.policy_number}
+                  className={`rounded-xl border p-4 ${
+                    profile?.policy_number === item.policy_number
+                      ? "border-blue-500 bg-blue-500/10"
+                      : "border-slate-800 bg-slate-950"
+                  }`}
+                >
+                  <button
+                    type="button"
+                    onClick={() => selectAccount(item.policy_number)}
+                    className="w-full text-left"
+                  >
+                    <p className="font-bold">{item.business_name || "-"}</p>
+                    <p className="text-slate-400 text-sm">
+                      {item.carrier_name || "-"}
+                    </p>
+                    <p className="text-blue-400 text-sm mt-2">
+                      {item.policy_number || "-"}
+                    </p>
+                  </button>
+
+                  <button
+                    type="button"
+                    onClick={() => deleteProfile(item.policy_number)}
+                    className="mt-4 w-full bg-red-600 hover:bg-red-700 px-4 py-2 rounded-lg text-sm font-semibold"
+                  >
+                    Delete Profile
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        <section className="bg-slate-900 border border-slate-800 rounded-xl p-6 mb-10">
           <h2 className="text-3xl font-semibold mb-4">
             Upload & Report Center
           </h2>
@@ -943,7 +988,10 @@ export default function DashboardPage() {
                 title="Reserve Pressure"
                 value={timeline?.reserve_pressure || "Low"}
               />
-              <MetricCard title="Open Claims" value={timeline?.open_claims || 0} />
+              <MetricCard
+                title="Open Claims"
+                value={timeline?.open_claims || 0}
+              />
               <MetricCard
                 title="Total Reserve"
                 value={`$${Number(
