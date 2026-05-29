@@ -817,11 +817,19 @@ export default function DashboardPage() {
             <button onClick={exportExecutiveReport} className="bg-green-700 hover:bg-green-800 px-5 py-3 rounded-lg font-semibold">
               Export Executive Report
             </button>
-            <button onClick={generateCarrierPacket} className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold">
-              Generate Carrier Packet
-            </button>
-          </div>
-        </section>
+            <button
+  onClick={generateCarrierPacket}
+  className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold"
+>
+  Generate Carrier Packet
+</button>
+
+<a
+  href="/carrier-workspace"
+  className="bg-purple-600 hover:bg-purple-700 px-5 py-3 rounded-lg font-semibold"
+>
+  Carrier Workspace
+</a>
 
         <section className="grid grid-cols-1 md:grid-cols-4 gap-6 mb-10">
           <MetricCard title="Open Claims" value={openClaims} />
