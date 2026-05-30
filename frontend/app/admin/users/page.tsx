@@ -38,7 +38,7 @@ export default function AdminUsersPage() {
     }
 
     try {
-      const res = await fetch("https://lossq-production.up.railway.app/admin/users/", {
+      const res = await fetch("https://lossq-production.up.railway.app/admin/users", {
         method: "GET",
         headers: authHeaders(),
       });
@@ -77,7 +77,7 @@ export default function AdminUsersPage() {
     }
 
     try {
-      const res = await fetch(`https://lossq-production.up.railway.app/admin/users/${userId}/role`, {
+      const res = await fetch(`https://lossq-production.up.railway.app/admin/users${userId}/role`, {
         method: "PUT",
         headers: authHeaders(),
         body: JSON.stringify({ role }),

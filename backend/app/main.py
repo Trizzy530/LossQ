@@ -32,7 +32,7 @@ load_dotenv()
 
 Base.metadata.create_all(bind=engine)
 
-app = FastAPI(title="LossQ API")
+app = FastAPI(title="LossQ API", redirect_slashes=False)
 
 app.add_middleware(
     CORSMiddleware,
