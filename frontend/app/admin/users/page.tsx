@@ -2,8 +2,7 @@
 
 import { useEffect, useState } from "react";
 
-const API =
-  process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
+const API = "https://lossq-production.up.railway.app";
 
 const ROLES = ["admin", "broker", "underwriter", "viewer", "user"];
 
@@ -12,30 +11,56 @@ export default function AdminUsersPage() {
   const [message, setMessage] = useState("");
   const [loading, setLoading] = useState(true);
 
+  function getToken() {
+    if (typeof window === "undefined") return "";
+    return localStorage.getItem("lossq_token") || "";
+  }
+
   function authHeaders(): Record<string, string> {
-    const token = localStorage.getItem("lossq_token");
-    return token ? { Authorization: `Bearer ${token}` } : {};
+    const token = getToken();
+
+    return {
+      Authorization: `Bearer ${token}`,
+      "Content-Type": "application/json",
+    };
   }
 
   async function loadUsers() {
     setLoading(true);
     setMessage("");
 
+    const token = getToken();
+
+    if (!token) {
+      setLoading(false);
+      setMessage("No login token found. Please log out and log back in.");
+      return;
+    }
+
     try {
       const res = await fetch(`${API}/admin/users/`, {
+        method: "GET",
         headers: authHeaders(),
       });
 
       const data = await res.json().catch(() => null);
 
       if (!res.ok) {
-        setMessage(data?.detail || "Could not load users.");
+        if (res.status === 401 || res.status === 403) {
+          setMessage(
+            data?.detail ||
+              "Not authorized. Log out, log back in, and confirm your role has admin access."
+          );
+        } else {
+          setMessage(data?.detail || `Could not load users. Status: ${res.status}`);
+        }
         return;
       }
 
       setUsers(Array.isArray(data) ? data : []);
-    } catch {
-      setMessage("Admin users request failed.");
+      setMessage("");
+    } catch (error) {
+      setMessage("Admin users request failed. Check HTTPS API URL and backend CORS.");
     } finally {
       setLoading(false);
     }
@@ -44,27 +69,29 @@ export default function AdminUsersPage() {
   async function updateRole(userId: number, role: string) {
     setMessage("");
 
+    const token = getToken();
+
+    if (!token) {
+      setMessage("No login token found. Please log out and log back in.");
+      return;
+    }
+
     try {
       const res = await fetch(`${API}/admin/users/${userId}/role`, {
         method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders(),
-        },
+        headers: authHeaders(),
         body: JSON.stringify({ role }),
       });
 
       const data = await res.json().catch(() => null);
 
       if (!res.ok) {
-        setMessage(data?.detail || "Could not update role.");
+        setMessage(data?.detail || `Could not update role. Status: ${res.status}`);
         return;
       }
 
       setUsers((prev) =>
-        prev.map((user) =>
-          user.id === userId ? { ...user, role } : user
-        )
+        prev.map((user) => (user.id === userId ? { ...user, role } : user))
       );
 
       setMessage("User role updated.");
@@ -133,10 +160,7 @@ export default function AdminUsersPage() {
 
                 <tbody>
                   {users.map((user) => (
-                    <tr
-                      key={user.id}
-                      className="border-b border-slate-800"
-                    >
+                    <tr key={user.id} className="border-b border-slate-800">
                       <td className="py-4">{user.id}</td>
                       <td>{user.email}</td>
                       <td>{user.organization_id || "-"}</td>
@@ -148,9 +172,7 @@ export default function AdminUsersPage() {
                       <td>
                         <select
                           value={user.role || "viewer"}
-                          onChange={(e) =>
-                            updateRole(user.id, e.target.value)
-                          }
+                          onChange={(e) => updateRole(user.id, e.target.value)}
                           className="bg-slate-800 border border-slate-700 rounded-lg px-3 py-2"
                         >
                           {ROLES.map((role) => (
