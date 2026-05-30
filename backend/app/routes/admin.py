@@ -21,7 +21,7 @@ def get_db():
 def require_admin(current_user: dict):
     if current_user.get("role") != "admin":
         if not current_user:
-    raise HTTPException(status_code=401, detail="Not authenticated")
+    raise HTTPException(status_code=403, detail="Admin access required")
 
 
 @router.get("/overview")
