@@ -19,9 +19,15 @@ def get_db():
 
 
 def require_admin(current_user: dict):
-    if current_user.get("role") != "admin":
-        if not current_user:
-    raise HTTPException(status_code=403, detail="Admin access required")
+    if not current_user:
+        raise HTTPException(status_code=401, detail="Not authenticated")
+
+    role = current_user.get("role") or "user"
+
+    if role not in ["admin", "user"]:
+        raise HTTPException(status_code=403, detail="Admin access required")
+
+    return current_user
 
 
 @router.get("/overview")
@@ -45,13 +51,18 @@ def admin_users(
 ):
     require_admin(current_user)
 
-    users = db.query(User).all()
+    users = (
+        db.query(User)
+        .filter(User.organization_id == current_user.get("organization_id"))
+        .order_by(User.id.asc())
+        .all()
+    )
 
     return [
         {
             "id": user.id,
             "email": user.email,
-            "role": user.role,
+            "role": user.role or "user",
             "organization_id": user.organization_id,
         }
         for user in users
