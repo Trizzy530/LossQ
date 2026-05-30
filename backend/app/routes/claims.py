@@ -1,5 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import text
 
 from app.database import SessionLocal
 from app.models.claim import Claim
@@ -132,6 +133,21 @@ def build_claim_ai_analysis(claim):
         "ai_summary": ai_summary,
     }
 
+def ensure_claim_timeline_columns(db: Session):
+    statements = [
+        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS date_reported VARCHAR",
+        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS date_closed VARCHAR",
+        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS open_days INTEGER",
+        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS claim_age INTEGER",
+    ]
+
+    for statement in statements:
+        try:
+            db.execute(text(statement))
+        except Exception:
+            pass
+
+    db.commit()
 
 @router.get("/")
 def get_claims(
@@ -139,12 +155,16 @@ def get_claims(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    ensure_claim_timeline_columns(db)
+
     query = db.query(Claim).filter(
         Claim.organization_id == current_user["organization_id"]
     )
 
     if policy_number:
-        query = query.filter(Claim.policy_number == policy_number)
+        query = query.filter(
+            Claim.policy_number == policy_number
+        )
 
     return query.order_by(Claim.id.desc()).all()
 
@@ -155,6 +175,8 @@ def get_claim_detail(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    ensure_claim_timeline_columns(db)
+
     claim = (
         db.query(Claim)
         .filter(
@@ -165,7 +187,10 @@ def get_claim_detail(
     )
 
     if not claim:
-        raise HTTPException(status_code=404, detail="Claim not found")
+        raise HTTPException(
+            status_code=404,
+            detail="Claim not found"
+        )
 
     analysis = build_claim_ai_analysis(claim)
 
