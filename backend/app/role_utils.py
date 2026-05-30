@@ -6,7 +6,7 @@ ROLE_PERMISSIONS = {
     "broker": ["read", "upload", "edit", "export"],
     "underwriter": ["read", "export"],
     "viewer": ["read"],
-    "user": ["read", "upload", "edit", "export"],
+    "user": ["read", "upload", "edit", "export", "manage_users"],
 }
 
 
