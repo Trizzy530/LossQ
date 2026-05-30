@@ -10,6 +10,7 @@ from fastapi.responses import Response
 from reportlab.lib.pagesizes import letter
 from reportlab.pdfgen import canvas
 from io import BytesIO
+from app.role_utils import require_permission
 
 router = APIRouter(prefix="/carrier-packet", tags=["Carrier Packet"])
 
@@ -30,7 +31,7 @@ def get_db():
 def generate_carrier_packet(
     request: CarrierPacketRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("export")),
 ):
     claims = (
         db.query(Claim)
@@ -143,7 +144,7 @@ def generate_carrier_packet(
 def download_carrier_packet_pdf(
     request: CarrierPacketRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("export")),
 ):
     packet = generate_carrier_packet(request, db, current_user)
 

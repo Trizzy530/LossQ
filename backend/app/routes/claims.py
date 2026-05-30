@@ -5,6 +5,7 @@ from sqlalchemy import text
 from app.database import SessionLocal
 from app.models.claim import Claim
 from app.auth_utils import get_current_user
+from app.role_utils import require_permission
 
 router = APIRouter(prefix="/claims", tags=["Claims"])
 
@@ -153,7 +154,7 @@ def ensure_claim_timeline_columns(db: Session):
 def get_claims(
     policy_number: str | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+   current_user: dict = Depends(require_permission("read")),
 ):
     ensure_claim_timeline_columns(db)
 
@@ -173,7 +174,7 @@ def get_claims(
 def get_claim_detail(
     claim_id: int,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("read")),
 ):
     ensure_claim_timeline_columns(db)
 

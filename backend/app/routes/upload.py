@@ -13,6 +13,7 @@ from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
 from app.services.parser_service import extract_text_from_pdf, parse_claims_from_text
 from app.services.excel_parser_service import parse_claims_from_excel
+from app.role_utils import require_permission
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
@@ -255,17 +256,17 @@ async def upload_loss_run(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return await save_uploaded_files([file], policy_number, db, current_user)
+    current_user: dict = Depends(require_permission("upload")),
 
 
-@router.post("/loss-runs")
+@router.post("/loss-run")
 async def upload_multiple_loss_runs(
     files: List[UploadFile] = File(...),
     policy_number: str = Form(...),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return await save_uploaded_files(files, policy_number, db, current_user)
+    current_user: dict = Depends(require_permission("upload")),
 
 
 async def save_uploaded_files(files, policy_number, db, current_user):
