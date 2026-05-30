@@ -169,8 +169,7 @@ def login_user(data: LoginRequest, db: Session = Depends(get_db)):
     if not user or not pwd_context.verify(data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
        
-       print("LOGIN ROLE:", user.email, user.role)
-
+     
     token = create_access_token({
         "sub": user.email,
         "user_id": user.id,
