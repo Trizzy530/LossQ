@@ -19,6 +19,7 @@ from app.routes import (
     account_profile,
     timeline,
     carrier_packet,
+    admin_users,
 )
 
 from app.models.user import User
