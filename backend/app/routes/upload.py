@@ -254,7 +254,7 @@ async def upload_loss_run(
     file: UploadFile = File(...),
     policy_number: str = Form(...),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("upload")),
 ):
     current_user: dict = Depends(require_permission("upload")),
 
@@ -264,7 +264,7 @@ async def upload_multiple_loss_runs(
     files: List[UploadFile] = File(...),
     policy_number: str = Form(...),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_permission("upload")),
 ):
     current_user: dict = Depends(require_permission("upload")),
 
