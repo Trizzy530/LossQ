@@ -120,7 +120,7 @@ def register_user(data: RegisterRequest, db: Session = Depends(get_db)):
     access_token = create_access_token({
         "sub": new_user.email,
         "user_id": new_user.id,
-        "role": new_user.role,
+        "role": user.role or "user",
         "organization_id": new_user.organization_id,
     })
 
@@ -168,6 +168,8 @@ def login_user(data: LoginRequest, db: Session = Depends(get_db)):
 
     if not user or not pwd_context.verify(data.password, user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
+       
+       print("LOGIN ROLE:", user.email, user.role)
 
     token = create_access_token({
         "sub": user.email,
