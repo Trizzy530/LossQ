@@ -6,7 +6,7 @@ from app.database import SessionLocal
 from app.models.user import User
 from app.role_utils import require_permission
 
-router = APIRouter(prefix="/admin/users", tags=["Admin Users"])
+router = APIRouter(prefix="/admin", tags=["Admin Users"])
 
 
 class RoleUpdateRequest(BaseModel):
@@ -24,7 +24,7 @@ def get_db():
         db.close()
 
 
-@router.get("/")
+@router.get("/users")
 def list_organization_users(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("manage_users")),
@@ -40,14 +40,14 @@ def list_organization_users(
         {
             "id": user.id,
             "email": user.email,
-            "role": user.role,
+            "role": user.role or "user",
             "organization_id": user.organization_id,
         }
         for user in users
     ]
 
 
-@router.put("/{user_id}/role")
+@router.put("/users/{user_id}/role")
 def update_user_role(
     user_id: int,
     data: RoleUpdateRequest,
