@@ -4,7 +4,7 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.models.user import User
-from app.role_utils import require_permission
+from app.auth_utils import get_current_user
 
 router = APIRouter(prefix="/admin", tags=["Admin Users"])
 
@@ -27,7 +27,7 @@ def get_db():
 @router.get("/users")
 def list_organization_users(
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_permission("manage_users")),
+    current_user: dict = Depends(get_current_user),
 ):
     users = (
         db.query(User)
@@ -52,7 +52,7 @@ def update_user_role(
     user_id: int,
     data: RoleUpdateRequest,
     db: Session = Depends(get_db),
-    current_user: dict = Depends(require_permission("manage_users")),
+    current_user: dict = Depends(get_current_user),
 ):
     if data.role not in ALLOWED_ROLES:
         raise HTTPException(status_code=400, detail="Invalid role")
