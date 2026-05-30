@@ -3,7 +3,7 @@
 import { useEffect, useState } from "react";
 
 const API = "https://lossq-production.up.railway.app";
-
+const BUILD_VERSION = "admin-users-https-v2";
 const ROLES = ["admin", "broker", "underwriter", "viewer", "user"];
 
 export default function AdminUsersPage() {
@@ -38,7 +38,7 @@ export default function AdminUsersPage() {
     }
 
     try {
-      const res = await fetch(`${API}/admin/users/`, {
+      const res = await fetch("https://lossq-production.up.railway.app/admin/users/", {
         method: "GET",
         headers: authHeaders(),
       });
@@ -77,7 +77,7 @@ export default function AdminUsersPage() {
     }
 
     try {
-      const res = await fetch(`${API}/admin/users/${userId}/role`, {
+      const res = await fetch(`https://lossq-production.up.railway.app/admin/users/${userId}/role`, {
         method: "PUT",
         headers: authHeaders(),
         body: JSON.stringify({ role }),
@@ -112,6 +112,9 @@ export default function AdminUsersPage() {
             <h1 className="text-5xl font-bold">User Management</h1>
             <p className="text-slate-400 mt-2">
               Manage LossQ organization users and role permissions.
+	      <p className="text-xs text-blue-400 mt-2">
+  		Build: {BUILD_VERSION}
+	    </p>
             </p>
           </div>
 
