@@ -151,18 +151,6 @@ def build_underwriter_decision_engine(claims, policy_number=None):
         "underwriting_concerns": underwriting_concerns,
         "best_market_types": best_market_types,
         "underwriter_decision_summary": underwriter_decision_summary,
-        "decision_metrics": {
-            "total_claims": total_claims,
-            "open_claims": open_claims,
-            "litigation_claims": litigation_claims,
-            "flagged_claims": flagged_claims,
-            "large_claims": large_claims,
-            "severe_claims": severe_claims,
-            "total_incurred": total_incurred,
-            "total_reserve": total_reserve,
-            "average_severity": average_severity,
-            "renewal_score": renewal_score,
-        },
     }
 
 
@@ -248,83 +236,152 @@ def build_carrier_appetite_engine(claims, policy_number=None):
         },
     ]
 
-    carrier_matches = sorted(
-        carrier_matches,
-        key=lambda item: item["match_score"],
-        reverse=True,
-    )
-
-    best_fit_carriers = carrier_matches[:3]
-    poor_fit_carriers = carrier_matches[-2:]
-
-    carrier_match_reasons = []
-
-    if total_claims == 0:
-        carrier_match_reasons.append("No claims were found, which improves standard carrier appetite.")
-    if total_claims >= 5:
-        carrier_match_reasons.append("Claim frequency may reduce appetite with preferred markets.")
-    if open_claims > 0:
-        carrier_match_reasons.append("Open claims may require updated loss runs and current reserve explanations.")
-    if litigation_claims > 0:
-        carrier_match_reasons.append("Litigation exposure may move the account toward regional, specialty, or E&S review.")
-    if large_claims > 0:
-        carrier_match_reasons.append("Large losses should be explained with corrective-action documentation.")
-    if total_reserve > 0:
-        carrier_match_reasons.append("Open reserves may affect carrier pricing and final appetite.")
-    if flagged_claims > 0:
-        carrier_match_reasons.append("Flagged claims should be addressed before market submission.")
-
-    if not carrier_match_reasons:
-        carrier_match_reasons.append("Loss data supports a standard renewal marketing strategy.")
-
-    if carrier_appetite_score >= 75:
-        market_strategy = (
-            "Start with incumbent, preferred standard markets, and strong regional carriers. "
-            "Use the favorable renewal score as leverage for competitive terms."
-        )
-    elif carrier_appetite_score >= 55:
-        market_strategy = (
-            "Target regional and middle-market carriers first. Submit a broker narrative that explains reserves, open claims, and corrective actions."
-        )
-    elif carrier_appetite_score >= 40:
-        market_strategy = (
-            "Use a controlled marketing strategy. Approach regional, specialty, and loss-sensitive markets with detailed claim narratives."
-        )
-    else:
-        market_strategy = (
-            "Prepare for restricted appetite. Build a full carrier packet before marketing to E&S or specialty markets."
-        )
-
-    placement_summary = (
-        f"LossQ estimates carrier appetite at {carrier_appetite_score}/100, rated {carrier_appetite_level}. "
-        f"The best market direction is {best_fit_carriers[0]['carrier_type']} with a "
-        f"{best_fit_carriers[0]['match_score']}/100 match score. This is based on "
-        f"{total_claims} claim(s), {open_claims} open claim(s), ${total_incurred:,.2f} "
-        f"in total incurred losses, ${total_reserve:,.2f} in reserves, "
-        f"{litigation_claims} litigated claim(s), and average severity of ${average_severity:,.2f}."
-    )
+    carrier_matches = sorted(carrier_matches, key=lambda item: item["match_score"], reverse=True)
 
     return {
         "policy_number": policy_number,
         "carrier_appetite_score": carrier_appetite_score,
         "carrier_appetite_level": carrier_appetite_level,
-        "best_fit_carriers": best_fit_carriers,
-        "poor_fit_carriers": poor_fit_carriers,
-        "carrier_match_reasons": carrier_match_reasons,
-        "market_strategy": market_strategy,
-        "placement_summary": placement_summary,
-        "appetite_metrics": {
+        "best_fit_carriers": carrier_matches[:3],
+        "poor_fit_carriers": carrier_matches[-2:],
+        "carrier_match_reasons": [
+            "Carrier appetite is based on frequency, severity, reserve pressure, litigation, and open claim development.",
+            f"Total claims reviewed: {total_claims}.",
+            f"Open claims reviewed: {open_claims}.",
+            f"Litigation claims reviewed: {litigation_claims}.",
+            f"Flagged claims reviewed: {flagged_claims}.",
+        ],
+        "market_strategy": (
+            "Target regional and middle-market carriers first. Use a clean broker narrative with claim explanations, reserve updates, and loss-control improvements."
+        ),
+        "placement_summary": (
+            f"LossQ estimates carrier appetite at {carrier_appetite_score}/100, rated {carrier_appetite_level}. "
+            f"This is based on {total_claims} claim(s), {open_claims} open claim(s), "
+            f"${total_incurred:,.2f} in total incurred losses, ${total_reserve:,.2f} in reserves, "
+            f"{litigation_claims} litigated claim(s), {large_claims} large claim(s), "
+            f"{severe_claims} severe claim(s), and average severity of ${average_severity:,.2f}."
+        ),
+    }
+
+
+def build_submission_readiness_engine(claims, policy_number=None):
+    intelligence = build_underwriting_intelligence(claims)
+    decision = build_underwriter_decision_engine(claims, policy_number)
+    appetite = build_carrier_appetite_engine(claims, policy_number)
+
+    total_claims = len(claims)
+    open_claims = len([c for c in claims if is_open(c)])
+    litigation_claims = len([c for c in claims if getattr(c, "litigation", False)])
+    flagged_claims = len([c for c in claims if is_flagged(c)])
+    total_incurred = sum(money(c.total_incurred) for c in claims)
+    total_reserve = sum(money(c.reserve_amount) for c in claims)
+
+    readiness_score = 100
+
+    missing_items = []
+    required_documents = []
+    recommended_actions = []
+
+    required_documents.append("Currently valued loss runs")
+    required_documents.append("Carrier account profile")
+    required_documents.append("Policy details and effective dates")
+
+    if total_claims > 0:
+        required_documents.append("Claims summary by policy period")
+
+    if open_claims > 0:
+        readiness_score -= min(open_claims * 7, 25)
+        missing_items.append("Updated status for all open claims")
+        required_documents.append("Open claim status report")
+        recommended_actions.append("Request current adjuster notes and reserve status before marketing.")
+
+    if litigation_claims > 0:
+        readiness_score -= min(litigation_claims * 10, 25)
+        missing_items.append("Litigation status updates")
+        required_documents.append("Defense counsel or litigation update")
+        recommended_actions.append("Prepare a litigation narrative explaining current posture, expected resolution, and defense strategy.")
+
+    if flagged_claims > 0:
+        readiness_score -= min(flagged_claims * 6, 18)
+        missing_items.append("Explanation for flagged claims")
+        recommended_actions.append("Address flagged claims before carrier submission.")
+
+    if total_reserve >= 100000:
+        readiness_score -= 12
+        missing_items.append("Reserve explanation for high open reserves")
+        required_documents.append("Reserve development explanation")
+        recommended_actions.append("Explain whether reserves are precautionary, expected to reduce, or likely to develop.")
+
+    if total_incurred >= 250000:
+        readiness_score -= 10
+        missing_items.append("Large loss narrative")
+        required_documents.append("Large loss narrative")
+        recommended_actions.append("Summarize what happened, what changed, and why the exposure is controlled going forward.")
+
+    if total_claims >= 5:
+        readiness_score -= 8
+        missing_items.append("Frequency trend explanation")
+        required_documents.append("Loss-control or corrective-action plan")
+        recommended_actions.append("Document safety, operational, driver, or procedural changes made after the losses.")
+
+    if appetite.get("carrier_appetite_score", 0) < 55:
+        readiness_score -= 8
+        missing_items.append("Expanded market strategy")
+        recommended_actions.append("Prepare for regional, specialty, loss-sensitive, or E&S market review.")
+
+    readiness_score = max(0, min(100, readiness_score))
+
+    if readiness_score >= 85:
+        readiness_level = "Excellent"
+        carrier_confidence = "High"
+        submission_quality = "Strong"
+    elif readiness_score >= 70:
+        readiness_level = "Good"
+        carrier_confidence = "Moderate to High"
+        submission_quality = "Marketable"
+    elif readiness_score >= 50:
+        readiness_level = "Needs Work"
+        carrier_confidence = "Moderate"
+        submission_quality = "Incomplete"
+    else:
+        readiness_level = "Not Ready"
+        carrier_confidence = "Low"
+        submission_quality = "Weak"
+
+    if not missing_items:
+        missing_items.append("No major missing submission items detected.")
+
+    if not recommended_actions:
+        recommended_actions.append("Proceed with standard renewal submission package.")
+
+    readiness_summary = (
+        f"LossQ rates this submission {readiness_score}/100, or {readiness_level}. "
+        f"Carrier confidence is {carrier_confidence}, and submission quality is {submission_quality}. "
+        f"The review considered {total_claims} claim(s), {open_claims} open claim(s), "
+        f"{litigation_claims} litigated claim(s), {flagged_claims} flagged claim(s), "
+        f"${total_incurred:,.2f} in total incurred losses, and ${total_reserve:,.2f} in reserves."
+    )
+
+    return {
+        "policy_number": policy_number,
+        "submission_readiness_score": readiness_score,
+        "submission_readiness_level": readiness_level,
+        "missing_items": missing_items,
+        "required_documents": required_documents,
+        "recommended_actions": recommended_actions,
+        "carrier_confidence": carrier_confidence,
+        "submission_quality": submission_quality,
+        "readiness_summary": readiness_summary,
+        "readiness_metrics": {
             "total_claims": total_claims,
             "open_claims": open_claims,
             "litigation_claims": litigation_claims,
             "flagged_claims": flagged_claims,
-            "large_claims": large_claims,
-            "severe_claims": severe_claims,
             "total_incurred": total_incurred,
             "total_reserve": total_reserve,
-            "average_severity": average_severity,
-            "renewal_score": renewal_score,
-            "marketability_score": marketability_score,
+            "renewal_score": intelligence.get("renewal_score"),
+            "marketability_score": decision.get("marketability_score"),
+            "carrier_appetite_score": appetite.get("carrier_appetite_score"),
         },
     }
 
@@ -335,15 +392,12 @@ def renewal_decision(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    query = db.query(Claim).filter(
-        Claim.organization_id == current_user["organization_id"]
-    )
+    query = db.query(Claim).filter(Claim.organization_id == current_user["organization_id"])
 
     if policy_number:
         query = query.filter(Claim.policy_number == policy_number)
 
     claims = query.all()
-
     return build_underwriter_decision_engine(claims, policy_number)
 
 
@@ -353,16 +407,28 @@ def carrier_appetite(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    query = db.query(Claim).filter(
-        Claim.organization_id == current_user["organization_id"]
-    )
+    query = db.query(Claim).filter(Claim.organization_id == current_user["organization_id"])
 
     if policy_number:
         query = query.filter(Claim.policy_number == policy_number)
 
     claims = query.all()
-
     return build_carrier_appetite_engine(claims, policy_number)
+
+
+@router.get("/submission-readiness")
+def submission_readiness(
+    policy_number: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    query = db.query(Claim).filter(Claim.organization_id == current_user["organization_id"])
+
+    if policy_number:
+        query = query.filter(Claim.policy_number == policy_number)
+
+    claims = query.all()
+    return build_submission_readiness_engine(claims, policy_number)
 
 
 @router.get("/memo")
@@ -371,9 +437,7 @@ def renewal_memo(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    query = db.query(Claim).filter(
-        Claim.organization_id == current_user["organization_id"]
-    )
+    query = db.query(Claim).filter(Claim.organization_id == current_user["organization_id"])
 
     if policy_number:
         query = query.filter(Claim.policy_number == policy_number)
@@ -383,16 +447,13 @@ def renewal_memo(
     intelligence = build_underwriting_intelligence(claims)
     decision = build_underwriter_decision_engine(claims, policy_number)
     appetite = build_carrier_appetite_engine(claims, policy_number)
+    readiness = build_submission_readiness_engine(claims, policy_number)
 
     total_claims = len(claims)
     open_claims = len([c for c in claims if is_open(c)])
     litigation_claims = len([c for c in claims if getattr(c, "litigation", False)])
 
-    top_claims = sorted(
-        claims,
-        key=lambda c: money(c.total_incurred),
-        reverse=True,
-    )[:5]
+    top_claims = sorted(claims, key=lambda c: money(c.total_incurred), reverse=True)[:5]
 
     top_claim_text = "\n".join(
         [
@@ -442,6 +503,18 @@ Placement Summary:
 
 ----------------------------------------
 
+SUBMISSION READINESS ENGINE
+
+Submission Readiness Score: {readiness["submission_readiness_score"]}/100
+Submission Readiness Level: {readiness["submission_readiness_level"]}
+Carrier Confidence: {readiness["carrier_confidence"]}
+Submission Quality: {readiness["submission_quality"]}
+
+Readiness Summary:
+{readiness["readiness_summary"]}
+
+----------------------------------------
+
 CLAIM SUMMARY
 
 Total Claims: {total_claims}
@@ -477,12 +550,6 @@ CARRIER NARRATIVE
 
 ----------------------------------------
 
-UNDERWRITER DECISION SUMMARY
-
-{decision["underwriter_decision_summary"]}
-
-----------------------------------------
-
 Generated by LossQ AI
 """
 
@@ -492,4 +559,5 @@ Generated by LossQ AI
         "claims_used": total_claims,
         "decision": decision,
         "carrier_appetite": appetite,
+        "submission_readiness": readiness,
     }
