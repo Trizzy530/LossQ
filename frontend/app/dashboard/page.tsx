@@ -31,6 +31,9 @@ type ToolKey =
   | "upload"
   | "renewal-risk"
   | "decision"
+  | "carrier-appetite"
+  | "submission-readiness"
+  | "carrier-match"
   | "summary"
   | "memo"
   | "charts"
@@ -105,6 +108,8 @@ export default function DashboardPage() {
   const [claims, setClaims] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>({});
   const [decision, setDecision] = useState<any>({});
+  const [carrierAppetite, setCarrierAppetite] = useState<any>({});
+  const [submissionReadiness, setSubmissionReadiness] = useState<any>({});
   const [timeline, setTimeline] = useState<any>({});
   const [profile, setProfile] = useState<any>({});
   const [profiles, setProfiles] = useState<any[]>([]);
@@ -247,6 +252,8 @@ export default function DashboardPage() {
     setClaims([]);
     setSummary({});
     setDecision({});
+    setCarrierAppetite({});
+    setSubmissionReadiness({});
     setTimeline({});
     setRenewalMemo("");
     setCopilotAnswer("");
@@ -384,6 +391,41 @@ export default function DashboardPage() {
       } else {
         setDecision({});
       }
+       const appetiteUrl = hasPolicy
+  ? `${API}/renewal/carrier-appetite?policy_number=${encodeURIComponent(policyNumber)}`
+  : `${API}/renewal/carrier-appetite`;
+
+const appetiteRes = await fetch(appetiteUrl, { headers: authHeaders() });
+
+if (appetiteRes.status === 401 || appetiteRes.status === 403) {
+  clearSession();
+  router.replace("/login?expired=1");
+  return;
+}
+
+if (appetiteRes.ok) {
+  setCarrierAppetite((await safeJson(appetiteRes)) || {});
+} else {
+  setCarrierAppetite({});
+}
+
+const readinessUrl = hasPolicy
+  ? `${API}/renewal/submission-readiness?policy_number=${encodeURIComponent(policyNumber)}`
+  : `${API}/renewal/submission-readiness`;
+
+const readinessRes = await fetch(readinessUrl, { headers: authHeaders() });
+
+if (readinessRes.status === 401 || readinessRes.status === 403) {
+  clearSession();
+  router.replace("/login?expired=1");
+  return;
+}
+
+if (readinessRes.ok) {
+  setSubmissionReadiness((await safeJson(readinessRes)) || {});
+} else {
+  setSubmissionReadiness({});
+}
 
       const timelineUrl = hasPolicy
         ? `${API}/timeline/analytics?policy_number=${encodeURIComponent(policyNumber)}`
@@ -407,6 +449,8 @@ export default function DashboardPage() {
       setClaims([]);
       setSummary({});
       setDecision({});
+      setCarrierAppetite({});
+      setSubmissionReadiness({});
       setTimeline({});
     } finally {
       setDashboardLoading(false);
@@ -422,6 +466,8 @@ export default function DashboardPage() {
     setClaims([]);
     setSummary({});
     setDecision({});
+    setCarrierAppetite({});
+    setSubmissionReadiness({});
     setTimeline({});
 
     await loadDashboard(policyNumber);
@@ -874,6 +920,15 @@ export default function DashboardPage() {
           </ToolButton>
           <ToolButton active={activeTool === "decision"} onClick={() => setActiveTool("decision")}>
             Underwriter Decision
+          <ToolButton active={activeTool === "carrier-appetite"} onClick={() => setActiveTool("carrier-appetite")}>
+           Carrier Appetite
+          </ToolButton>
+          <ToolButton active={activeTool === "submission-readiness"} onClick={() => setActiveTool("submission-readiness")}>
+           Submission Readiness
+          </ToolButton>
+          <ToolButton active={activeTool === "carrier-match"} onClick={() => setActiveTool("carrier-match")}>
+           Carrier Match
+          </ToolButton>
           </ToolButton>
           <ToolButton active={activeTool === "summary"} onClick={() => setActiveTool("summary")}>
             AI Summary
@@ -1136,7 +1191,125 @@ export default function DashboardPage() {
               </div>
             </section>
           )}
+	{activeTool === "carrier-appetite" && (
+  <section className="glass-panel p-6 md:p-8">
+    <p className="text-sm uppercase tracking-[0.25em] text-blue-300 mb-3">
+      Carrier Appetite Engine
+    </p>
 
+    <h2 className="text-2xl md:text-3xl font-bold mb-6">
+      Market Appetite Strategy
+    </h2>
+
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+      <MetricCard title="Appetite Score" value={carrierAppetite?.carrier_appetite_score !== undefined ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
+      <MetricCard title="Appetite Level" value={carrierAppetite?.carrier_appetite_level || "-"} />
+      <MetricCard title="Best Market" value={carrierAppetite?.best_fit_carriers?.[0]?.carrier_type || "-"} />
+    </div>
+
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <ListCard
+        title="Best Fit Markets"
+        items={(carrierAppetite?.best_fit_carriers || []).map(
+          (item: any) =>
+            `${item.carrier_type} — ${item.match_score}/100 — ${item.fit}`
+        )}
+        color="blue"
+      />
+
+      <ListCard
+        title="Appetite Reasons"
+        items={carrierAppetite?.carrier_match_reasons || ["No carrier appetite reasons available."]}
+        color="purple"
+      />
+    </div>
+
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+      <TextCard
+        title="Market Strategy"
+        text={carrierAppetite?.market_strategy || "No market strategy available yet."}
+      />
+
+      <TextCard
+        title="Placement Summary"
+        text={carrierAppetite?.placement_summary || "No placement summary available yet."}
+      />
+    </div>
+  </section>
+)}
+
+{activeTool === "submission-readiness" && (
+  <section className="glass-panel p-6 md:p-8">
+    <p className="text-sm uppercase tracking-[0.25em] text-green-300 mb-3">
+      Submission Readiness Engine
+    </p>
+
+    <h2 className="text-2xl md:text-3xl font-bold mb-6">
+      Submission Checklist & Carrier Confidence
+    </h2>
+
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+      <MetricCard title="Readiness Score" value={submissionReadiness?.submission_readiness_score !== undefined ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
+      <MetricCard title="Readiness Level" value={submissionReadiness?.submission_readiness_level || "-"} />
+      <MetricCard title="Carrier Confidence" value={submissionReadiness?.carrier_confidence || "-"} />
+      <MetricCard title="Submission Quality" value={submissionReadiness?.submission_quality || "-"} />
+    </div>
+
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <ListCard
+        title="Missing Items"
+        items={submissionReadiness?.missing_items || ["No missing items available."]}
+        color="red"
+      />
+
+      <ListCard
+        title="Required Documents"
+        items={submissionReadiness?.required_documents || ["No required documents available."]}
+        color="blue"
+      />
+    </div>
+
+    <div className="mt-6">
+      <ListCard
+        title="Recommended Actions"
+        items={submissionReadiness?.recommended_actions || ["No recommended actions available."]}
+        color="purple"
+      />
+    </div>
+
+    <div className="mt-6">
+      <TextCard
+        title="Readiness Summary"
+        text={submissionReadiness?.readiness_summary || "No readiness summary available yet."}
+      />
+    </div>
+  </section>
+)}
+
+{activeTool === "carrier-match" && (
+  <section className="glass-panel p-6 md:p-8">
+    <p className="text-sm uppercase tracking-[0.25em] text-purple-300 mb-3">
+      Carrier Match Engine
+    </p>
+
+    <h2 className="text-2xl md:text-3xl font-bold mb-4">
+      Named Carrier Matching
+    </h2>
+
+    <p className="text-slate-300 leading-8 max-w-3xl">
+      This tab is ready for the next engine. It will rank named carriers such as
+      Travelers, Liberty Mutual, Nationwide, CNA, Hanover, Auto-Owners, Progressive,
+      and regional markets based on the selected policy’s claims, litigation,
+      reserves, severity, frequency, and renewal risk profile.
+    </p>
+
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-8">
+      <MetricCard title="Status" value="Ready for Build" />
+      <MetricCard title="Next Endpoint" value="/renewal/carrier-match" />
+      <MetricCard title="Purpose" value="Named Carrier Ranking" />
+    </div>
+  </section>
+)}
           {activeTool === "summary" && (
             <section className="glass-panel p-6 md:p-8">
               <h2 className="text-2xl md:text-3xl font-bold mb-5">AI Underwriting Summary</h2>
