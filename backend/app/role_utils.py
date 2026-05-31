@@ -6,13 +6,13 @@ ROLE_PERMISSIONS = {
     "broker": ["read", "upload", "edit", "export"],
     "underwriter": ["read", "export"],
     "viewer": ["read"],
-    "user": ["read", "upload", "edit", "export", "manage_users"],
+    "user": ["read", "upload", "edit", "export"],
 }
 
 
 def require_permission(permission: str):
     def checker(current_user: dict = Depends(get_current_user)):
-        role = current_user.get("role", "viewer")
+        role = current_user.get("role") or "viewer"
         permissions = ROLE_PERMISSIONS.get(role, [])
 
         if permission not in permissions:
