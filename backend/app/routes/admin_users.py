@@ -82,3 +82,31 @@ def update_user_role(
             "organization_id": user.organization_id,
         },
     }
+
+@router.post("/users/bootstrap-admin")
+def bootstrap_admin(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("read")),
+):
+    user = (
+        db.query(User)
+        .filter(User.id == current_user["user_id"])
+        .first()
+    )
+
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+
+    user.role = "admin"
+    db.commit()
+    db.refresh(user)
+
+    return {
+        "message": "Current user promoted to admin",
+        "user": {
+            "id": user.id,
+            "email": user.email,
+            "role": user.role,
+            "organization_id": user.organization_id,
+        },
+    }
