@@ -29,7 +29,7 @@ def money_to_float(value):
 
     try:
         return float(cleaned)
-    except:
+    except Exception:
         return 0.0
 
 
@@ -43,6 +43,59 @@ def find_money(labels, block):
         if match:
             return money_to_float(match.group(1))
     return 0.0
+
+
+def find_text(labels, text):
+    for label in labels:
+        match = re.search(
+            rf"{label}\s*[:\-]?\s*([^\n\r]+)",
+            text,
+            re.IGNORECASE,
+        )
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def find_date(labels, text):
+    for label in labels:
+        match = re.search(
+            rf"{label}\s*[:\-]?\s*(\d{{1,2}}[\/\-]\d{{1,2}}[\/\-]\d{{2,4}}|\d{{4}}-\d{{1,2}}-\d{{1,2}})",
+            text,
+            re.IGNORECASE,
+        )
+        if match:
+            return match.group(1).strip()
+    return ""
+
+
+def extract_profile_from_text(text):
+    return {
+        "business_name": find_text(
+            ["Named Insured", "Insured Name", "Business Name", "Account Name"],
+            text,
+        ),
+        "carrier_name": find_text(
+            ["Carrier", "Carrier Name", "Insurance Carrier"],
+            text,
+        ),
+        "agency_name": find_text(
+            ["Agency", "Agency Name", "Broker", "Broker Name"],
+            text,
+        ),
+        "policy_number": find_text(
+            ["Policy Number", "Policy No", "Policy #", "Policy"],
+            text,
+        ),
+        "effective_date": find_date(
+            ["Effective Date", "Policy Effective Date", "Eff Date"],
+            text,
+        ),
+        "expiration_date": find_date(
+            ["Expiration Date", "Policy Expiration Date", "Exp Date"],
+            text,
+        ),
+    }
 
 
 def detect_line(block):
@@ -68,6 +121,8 @@ def detect_line(block):
 
 def parse_claims_from_text(text):
     claims = []
+
+    profile = extract_profile_from_text(text)
 
     claim_pattern = r"(GL-\d+|AUTO-\d+|WC-\d+|PROP-\d+|CLM-\d+|\b\d{5,12}\b)"
     matches = list(re.finditer(claim_pattern, text, re.IGNORECASE))
@@ -106,13 +161,16 @@ def parse_claims_from_text(text):
             flag = "Litigation exposure" if not flag else flag + " | Litigation exposure"
 
         claims.append({
+            **profile,
             "claim_number": match.group(1).upper(),
             "policy_id": 1,
             "line_of_business": line,
             "claim_type": line,
             "cause_of_loss": "Needs Review",
             "claimant_type": "Needs Review",
-            "date_of_loss": "Needs Review",
+            "date_of_loss": find_date(["Date of Loss", "Loss Date", "DOL"], block) or "Needs Review",
+            "date_reported": find_date(["Date Reported", "Reported Date", "Report Date"], block),
+            "date_closed": find_date(["Date Closed", "Closed Date", "Closure Date"], block),
             "status": status,
             "description": block[:750],
             "paid_amount": paid,
