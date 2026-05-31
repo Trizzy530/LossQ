@@ -3,15 +3,32 @@ import re
 
 
 def extract_text_from_pdf(file_path):
-    reader = PdfReader(file_path)
     text = ""
 
-    for page in reader.pages:
-        page_text = page.extract_text()
-        if page_text:
-            text += page_text + "\n"
+    try:
+        reader = PdfReader(file_path)
+        for page in reader.pages:
+            page_text = page.extract_text()
+            if page_text:
+                text += page_text + "\n"
+    except Exception:
+        pass
 
     return text
+
+
+def clean_text(value):
+    if not value:
+        return ""
+
+    cleaned = str(value).replace("\n", " ").replace("\r", " ").strip()
+    cleaned = re.sub(r"\s+", " ", cleaned)
+
+    bad_values = ["none", "nan", "needs review", "not set"]
+    if cleaned.lower() in bad_values:
+        return ""
+
+    return cleaned
 
 
 def money_to_float(value):
@@ -45,19 +62,19 @@ def find_money(labels, block):
     return 0.0
 
 
-def find_text(labels, text):
+def find_text_after_label(labels, text):
     for label in labels:
         match = re.search(
-            rf"{label}\s*[:\-]?\s*([^\n\r]+)",
+            rf"{label}\s*[:\-]?\s*([A-Za-z0-9 ,.&/#\-]+)",
             text,
             re.IGNORECASE,
         )
         if match:
-            return match.group(1).strip()
+            return clean_text(match.group(1))
     return ""
 
 
-def find_date(labels, text):
+def find_date_after_label(labels, text):
     for label in labels:
         match = re.search(
             rf"{label}\s*[:\-]?\s*(\d{{1,2}}[\/\-]\d{{1,2}}[\/\-]\d{{2,4}}|\d{{4}}-\d{{1,2}}-\d{{1,2}})",
@@ -65,37 +82,104 @@ def find_date(labels, text):
             re.IGNORECASE,
         )
         if match:
-            return match.group(1).strip()
+            return clean_text(match.group(1))
     return ""
 
 
 def extract_profile_from_text(text):
-    return {
-        "business_name": find_text(
-            ["Named Insured", "Insured Name", "Business Name", "Account Name"],
-            text,
-        ),
-        "carrier_name": find_text(
-            ["Carrier", "Carrier Name", "Insurance Carrier"],
-            text,
-        ),
-        "agency_name": find_text(
-            ["Agency", "Agency Name", "Broker", "Broker Name"],
-            text,
-        ),
-        "policy_number": find_text(
-            ["Policy Number", "Policy No", "Policy #", "Policy"],
-            text,
-        ),
-        "effective_date": find_date(
-            ["Effective Date", "Policy Effective Date", "Eff Date"],
-            text,
-        ),
-        "expiration_date": find_date(
-            ["Expiration Date", "Policy Expiration Date", "Exp Date"],
-            text,
-        ),
+    profile = {
+        "business_name": "",
+        "carrier_name": "",
+        "agency_name": "",
+        "policy_number": "",
+        "effective_date": "",
+        "expiration_date": "",
+        "evaluation_date": "",
     }
+
+    profile["business_name"] = find_text_after_label(
+        [
+            "Named Insured",
+            "Insured Name",
+            "Insured",
+            "Business Name",
+            "Account Name",
+            "Policyholder",
+        ],
+        text,
+    )
+
+    profile["agency_name"] = find_text_after_label(
+        [
+            "Agency Name",
+            "Agency",
+            "Broker Name",
+            "Broker",
+            "Producer",
+        ],
+        text,
+    )
+
+    profile["policy_number"] = find_text_after_label(
+        [
+            "Policy Number",
+            "Policy No",
+            "Policy #",
+            "Policy",
+        ],
+        text,
+    )
+
+    profile["evaluation_date"] = find_date_after_label(
+        [
+            "Evaluation Date",
+            "Valuation Date",
+            "Loss Run Date",
+            "As Of",
+        ],
+        text,
+    )
+
+    effective_range = re.search(
+        r"Effective\s*[:\-]?\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})\s*[-–]\s*(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4})",
+        text,
+        re.IGNORECASE,
+    )
+
+    if effective_range:
+        profile["effective_date"] = clean_text(effective_range.group(1))
+        profile["expiration_date"] = clean_text(effective_range.group(2))
+    else:
+        profile["effective_date"] = find_date_after_label(
+            ["Effective Date", "Policy Effective Date", "Eff Date", "Effective"],
+            text,
+        )
+        profile["expiration_date"] = find_date_after_label(
+            ["Expiration Date", "Policy Expiration Date", "Exp Date", "Expiration"],
+            text,
+        )
+
+    carrier = find_text_after_label(
+        [
+            "Carrier Name",
+            "Insurance Carrier",
+            "Carrier",
+            "Insurance Company",
+        ],
+        text,
+    )
+
+    if not carrier:
+        if "Berkley" in text or "Mid-Atlantic" in text:
+            carrier = "Berkley Mid-Atlantic Group"
+        elif "Continental Western" in text:
+            carrier = "Continental Western Insurance Company"
+        elif "Firemen" in text:
+            carrier = "Firemen's Insurance Company"
+
+    profile["carrier_name"] = carrier
+
+    return profile
 
 
 def detect_line(block):
@@ -104,7 +188,7 @@ def detect_line(block):
     if "general liability" in lower or "slip" in lower or "premises" in lower:
         return "General Liability"
 
-    if "commercial auto" in lower or "auto" in lower or "vehicle" in lower or "collision" in lower:
+    if "commercial auto" in lower or "auto" in lower or "vehicle" in lower:
         return "Commercial Auto"
 
     if "workers" in lower or "employee injury" in lower:
@@ -121,10 +205,21 @@ def detect_line(block):
 
 def parse_claims_from_text(text):
     claims = []
-
     profile = extract_profile_from_text(text)
 
-    claim_pattern = r"(GL-\d+|AUTO-\d+|WC-\d+|PROP-\d+|CLM-\d+|\b\d{5,12}\b)"
+    claim_pattern = (
+        r"(?:Claim Number\s*)?"
+        r"("
+        r"\d{1,3}\s?[A-Z]{1,4}\s?\d{6,15}"
+        r"|GL-\d+"
+        r"|AUTO-\d+"
+        r"|WC-\d+"
+        r"|PROP-\d+"
+        r"|CLM-\d+"
+        r"|\b\d{5,15}\b"
+        r")"
+    )
+
     matches = list(re.finditer(claim_pattern, text, re.IGNORECASE))
 
     for index, match in enumerate(matches):
@@ -135,9 +230,37 @@ def parse_claims_from_text(text):
         if len(block.strip()) < 20:
             continue
 
-        paid = find_money(["Paid", "Amount Paid", "Loss Paid"], block)
-        reserve = find_money(["Reserve", "Outstanding Reserve", "Loss Reserve"], block)
-        total = find_money(["Total Incurred", "Incurred", "Total Loss"], block)
+        paid = find_money(
+            [
+                "Paid Loss Gross of Recovery",
+                "Paid Loss",
+                "Amount Paid",
+                "Loss Paid",
+                "Paid",
+            ],
+            block,
+        )
+
+        reserve = find_money(
+            [
+                "Case Loss & Expense Reserve",
+                "Outstanding Reserve",
+                "Loss Reserve",
+                "Reserve",
+            ],
+            block,
+        )
+
+        total = find_money(
+            [
+                "Gross Incurred",
+                "Net Incurred",
+                "Total Incurred",
+                "Incurred",
+                "Total Loss",
+            ],
+            block,
+        )
 
         if total == 0:
             total = paid + reserve
@@ -154,25 +277,37 @@ def parse_claims_from_text(text):
 
         line = detect_line(block)
 
+        date_of_loss = find_date_after_label(
+            ["Loss Date", "Date of Loss", "DOL", "Claim Date"],
+            block,
+        )
+
+        date_reported = find_date_after_label(
+            ["Date Reported", "Reported Date", "Report Date"],
+            block,
+        )
+
         flag = None
         if total >= 100000:
             flag = "High severity claim"
         if litigation:
             flag = "Litigation exposure" if not flag else flag + " | Litigation exposure"
 
+        claim_number = clean_text(match.group(1)).upper()
+
         claims.append({
             **profile,
-            "claim_number": match.group(1).upper(),
+            "claim_number": claim_number,
             "policy_id": 1,
             "line_of_business": line,
             "claim_type": line,
             "cause_of_loss": "Needs Review",
             "claimant_type": "Needs Review",
-            "date_of_loss": find_date(["Date of Loss", "Loss Date", "DOL"], block) or "Needs Review",
-            "date_reported": find_date(["Date Reported", "Reported Date", "Report Date"], block),
-            "date_closed": find_date(["Date Closed", "Closed Date", "Closure Date"], block),
+            "date_of_loss": date_of_loss or "Needs Review",
+            "date_reported": date_reported,
+            "date_closed": "",
             "status": status,
-            "description": block[:750],
+            "description": clean_text(block[:1000]),
             "paid_amount": paid,
             "reserve_amount": reserve,
             "total_incurred": total,

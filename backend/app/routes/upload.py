@@ -10,7 +10,11 @@ from app.database import SessionLocal
 from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
-from app.services.parser_service import extract_text_from_pdf, parse_claims_from_text
+from app.services.parser_service import (
+    extract_text_from_pdf,
+    parse_claims_from_text,
+    extract_profile_from_text,
+)
 from app.services.excel_parser_service import parse_claims_from_excel
 from app.role_utils import require_permission
 
@@ -33,12 +37,15 @@ def parse_file(file_path: str, filename: str):
 
     if lower_name.endswith(".pdf"):
         text_data = extract_text_from_pdf(file_path)
-        return parse_claims_from_text(text_data)
+        claims = parse_claims_from_text(text_data)
+        profile = extract_profile_from_text(text_data)
+        return claims, profile
 
     if lower_name.endswith(".csv") or lower_name.endswith(".xlsx"):
-        return parse_claims_from_excel(file_path)
+        claims = parse_claims_from_excel(file_path)
+        return claims, {}
 
-    return []
+    return [], {}
 
 
 def parse_date(value: Any):
@@ -79,12 +86,7 @@ def days_between(start_value: Any, end_value: Any):
 
     try:
         start_dt = datetime.fromisoformat(start)
-
-        if end:
-            end_dt = datetime.fromisoformat(end)
-        else:
-            end_dt = datetime.now()
-
+        end_dt = datetime.fromisoformat(end) if end else datetime.now()
         return max((end_dt - start_dt).days, 0)
     except Exception:
         return None
@@ -154,21 +156,17 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
         "claim_number": pick(raw, ["claim_number", "claim_no", "claim_id"], "Unknown"),
         "policy_id": raw.get("policy_id"),
         "policy_number": final_policy_number,
-
         "line_of_business": pick(raw, ["line_of_business", "lob", "coverage_line"]),
         "claim_type": pick(raw, ["claim_type", "type"]),
         "cause_of_loss": pick(raw, ["cause_of_loss", "cause"]),
         "claimant_type": pick(raw, ["claimant_type"]),
-
         "date_of_loss": date_of_loss,
         "date_reported": date_reported,
         "date_closed": date_closed,
         "open_days": open_days,
         "claim_age": claim_age,
-
         "status": status,
         "description": pick(raw, ["description", "claim_description", "narrative"]),
-
         "paid_amount": float(pick(raw, ["paid_amount", "paid", "total_paid"], 0) or 0),
         "reserve_amount": float(
             pick(raw, ["reserve_amount", "reserve", "outstanding_reserve"], 0) or 0
@@ -176,7 +174,6 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
         "total_incurred": float(
             pick(raw, ["total_incurred", "incurred", "total"], 0) or 0
         ),
-
         "litigation": bool(pick(raw, ["litigation", "is_litigated"], False)),
         "litigation_status": pick(raw, ["litigation_status"]),
         "attorney_assigned": bool(pick(raw, ["attorney_assigned"], False)),
@@ -184,66 +181,58 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
         "venue_state": pick(raw, ["venue_state"]),
         "injury_type": pick(raw, ["injury_type"]),
         "flag": pick(raw, ["flag"]),
-
         "organization_id": current_user["organization_id"],
         "uploaded_by_user_id": current_user["user_id"],
         "uploaded_at": datetime.now().isoformat(),
     }
 
 
-def extract_profile_data(parsed_claims: list[dict], fallback_policy_number: str):
+def extract_profile_data(parsed_claims: list[dict], fallback_policy_number: str, direct_profile: dict | None = None):
+    direct_profile = direct_profile or {}
+
     profile = {
-        "business_name": "",
-        "carrier_name": "",
-        "agency_name": "",
-        "policy_number": clean_profile_value(fallback_policy_number),
-        "effective_date": "",
-        "expiration_date": "",
-        "evaluation_date": datetime.now().date().isoformat(),
+        "business_name": clean_profile_value(direct_profile.get("business_name")),
+        "carrier_name": clean_profile_value(direct_profile.get("carrier_name")),
+        "agency_name": clean_profile_value(direct_profile.get("agency_name")),
+        "policy_number": clean_profile_value(direct_profile.get("policy_number")),
+        "effective_date": parse_date(direct_profile.get("effective_date")) or "",
+        "expiration_date": parse_date(direct_profile.get("expiration_date")) or "",
+        "evaluation_date": parse_date(direct_profile.get("evaluation_date")) or datetime.now().date().isoformat(),
     }
 
     for item in parsed_claims:
-        business_name = clean_profile_value(
-            pick(item, ["business_name", "insured_name", "named_insured", "account_name"], "")
-        )
+        if not profile["business_name"]:
+            profile["business_name"] = clean_profile_value(
+                pick(item, ["business_name", "insured_name", "named_insured", "account_name"], "")
+            )
 
-        carrier_name = clean_profile_value(
-            pick(item, ["carrier_name", "insurance_carrier", "carrier"], "")
-        )
+        if not profile["carrier_name"]:
+            profile["carrier_name"] = clean_profile_value(
+                pick(item, ["carrier_name", "insurance_carrier", "carrier"], "")
+            )
 
-        agency_name = clean_profile_value(
-            pick(item, ["agency_name", "broker_name", "agency"], "")
-        )
+        if not profile["agency_name"]:
+            profile["agency_name"] = clean_profile_value(
+                pick(item, ["agency_name", "broker_name", "agency"], "")
+            )
 
-        policy_number = clean_profile_value(
-            pick(item, ["policy_number", "policy_no", "policy"], "")
-        )
+        if not profile["policy_number"]:
+            profile["policy_number"] = clean_profile_value(
+                pick(item, ["policy_number", "policy_no", "policy"], "")
+            )
 
-        effective_date = parse_date(
-            pick(item, ["effective_date", "policy_effective_date"])
-        )
+        if not profile["effective_date"]:
+            profile["effective_date"] = parse_date(
+                pick(item, ["effective_date", "policy_effective_date"])
+            ) or ""
 
-        expiration_date = parse_date(
-            pick(item, ["expiration_date", "policy_expiration_date", "expiry_date"])
-        )
+        if not profile["expiration_date"]:
+            profile["expiration_date"] = parse_date(
+                pick(item, ["expiration_date", "policy_expiration_date", "expiry_date"])
+            ) or ""
 
-        if business_name and not profile["business_name"]:
-            profile["business_name"] = business_name
-
-        if carrier_name and not profile["carrier_name"]:
-            profile["carrier_name"] = carrier_name
-
-        if agency_name and not profile["agency_name"]:
-            profile["agency_name"] = agency_name
-
-        if policy_number and not profile["policy_number"]:
-            profile["policy_number"] = policy_number
-
-        if effective_date and not profile["effective_date"]:
-            profile["effective_date"] = effective_date
-
-        if expiration_date and not profile["expiration_date"]:
-            profile["expiration_date"] = expiration_date
+    if not profile["policy_number"]:
+        profile["policy_number"] = clean_profile_value(fallback_policy_number)
 
     return profile
 
@@ -321,6 +310,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     total_saved = 0
     uploaded_files = []
     all_parsed_claims = []
+    direct_profile = {}
 
     for file in files:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
@@ -330,7 +320,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        parsed_claims = parse_file(file_path, file.filename)
+        parsed_claims, parsed_profile = parse_file(file_path, file.filename)
+
+        if parsed_profile:
+            for key, value in parsed_profile.items():
+                if value and not direct_profile.get(key):
+                    direct_profile[key] = value
+
         all_parsed_claims.extend(parsed_claims)
 
         for claim_data in parsed_claims:
@@ -362,7 +358,12 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             "policy_number": policy_number,
         })
 
-    profile_data = extract_profile_data(all_parsed_claims, policy_number)
+    profile_data = extract_profile_data(
+        parsed_claims=all_parsed_claims,
+        fallback_policy_number=policy_number,
+        direct_profile=direct_profile,
+    )
+
     profile = upsert_account_profile(db, profile_data, current_user)
 
     db.commit()
