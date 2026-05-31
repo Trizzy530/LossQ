@@ -45,18 +45,14 @@ def build_underwriter_decision_engine(claims, policy_number=None):
     severe_claims = len([c for c in claims if money(c.total_incurred) >= 250000])
 
     renewal_score = int(intelligence.get("renewal_score", 75))
-
     renewal_probability = renewal_score
 
     if open_claims >= 3:
         renewal_probability -= 8
-
     if litigation_claims > 0:
         renewal_probability -= 10
-
     if severe_claims > 0:
         renewal_probability -= 10
-
     if total_claims >= 10:
         renewal_probability -= 8
     elif total_claims >= 5:
@@ -68,7 +64,6 @@ def build_underwriter_decision_engine(claims, policy_number=None):
 
     if flagged_claims > 0:
         marketability_score -= min(flagged_claims * 5, 15)
-
     if total_reserve > 100000:
         marketability_score -= 8
 
@@ -95,29 +90,21 @@ def build_underwriter_decision_engine(claims, policy_number=None):
 
     if open_claims > 0:
         underwriting_concerns.append(f"{open_claims} open claim(s) may continue developing.")
-
     if litigation_claims > 0:
         underwriting_concerns.append(f"{litigation_claims} litigated claim(s) create uncertainty.")
-
     if total_reserve > 0:
         underwriting_concerns.append(f"${total_reserve:,.2f} in open reserves may pressure renewal terms.")
-
     if large_claims > 0:
         underwriting_concerns.append(f"{large_claims} large claim(s) exceed $100,000.")
-
     if severe_claims > 0:
         underwriting_concerns.append(f"{severe_claims} severe claim(s) exceed $250,000.")
-
     if total_claims >= 5:
         underwriting_concerns.append("Claim frequency may raise carrier concerns.")
-
     if flagged_claims > 0:
         underwriting_concerns.append(f"{flagged_claims} flagged claim(s) require explanation.")
 
     if not underwriting_concerns:
         underwriting_concerns.append("No major underwriting concerns detected from current loss data.")
-
-    best_market_types = []
 
     if renewal_probability >= 80:
         best_market_types = [
@@ -179,6 +166,169 @@ def build_underwriter_decision_engine(claims, policy_number=None):
     }
 
 
+def build_carrier_appetite_engine(claims, policy_number=None):
+    intelligence = build_underwriting_intelligence(claims)
+    decision = build_underwriter_decision_engine(claims, policy_number)
+
+    total_claims = len(claims)
+    open_claims = len([c for c in claims if is_open(c)])
+    litigation_claims = len([c for c in claims if getattr(c, "litigation", False)])
+    flagged_claims = len([c for c in claims if is_flagged(c)])
+
+    total_incurred = sum(money(c.total_incurred) for c in claims)
+    total_reserve = sum(money(c.reserve_amount) for c in claims)
+    average_severity = total_incurred / total_claims if total_claims else 0
+
+    large_claims = len([c for c in claims if money(c.total_incurred) >= 100000])
+    severe_claims = len([c for c in claims if money(c.total_incurred) >= 250000])
+
+    renewal_score = int(intelligence.get("renewal_score", 75))
+    marketability_score = int(decision.get("marketability_score", renewal_score))
+
+    carrier_appetite_score = marketability_score
+
+    if litigation_claims > 0:
+        carrier_appetite_score -= 8
+    if severe_claims > 0:
+        carrier_appetite_score -= 10
+    if open_claims >= 3:
+        carrier_appetite_score -= 6
+    if total_reserve >= 250000:
+        carrier_appetite_score -= 10
+    elif total_reserve >= 100000:
+        carrier_appetite_score -= 5
+    if total_claims >= 10:
+        carrier_appetite_score -= 8
+    elif total_claims >= 5:
+        carrier_appetite_score -= 4
+
+    carrier_appetite_score = max(0, min(100, carrier_appetite_score))
+
+    if carrier_appetite_score >= 85:
+        carrier_appetite_level = "Preferred"
+    elif carrier_appetite_score >= 70:
+        carrier_appetite_level = "Strong"
+    elif carrier_appetite_score >= 55:
+        carrier_appetite_level = "Moderate"
+    elif carrier_appetite_score >= 40:
+        carrier_appetite_level = "Limited"
+    else:
+        carrier_appetite_level = "Distressed"
+
+    carrier_matches = [
+        {
+            "carrier_type": "Preferred Standard Carrier",
+            "match_score": max(0, min(100, carrier_appetite_score + 5)),
+            "fit": "Best Fit" if carrier_appetite_score >= 80 else "Selective Fit",
+            "reason": "Best suited for accounts with clean loss history, low severity, and minimal open claim pressure.",
+        },
+        {
+            "carrier_type": "Regional Commercial Carrier",
+            "match_score": max(0, min(100, carrier_appetite_score + 12)),
+            "fit": "Best Fit" if carrier_appetite_score >= 60 else "Possible Fit",
+            "reason": "Often more flexible for accounts with moderate losses and strong broker explanations.",
+        },
+        {
+            "carrier_type": "Middle Market Carrier",
+            "match_score": max(0, min(100, carrier_appetite_score + 2)),
+            "fit": "Best Fit" if 55 <= carrier_appetite_score < 85 else "Selective Fit",
+            "reason": "Appropriate when the account needs underwriting review but remains marketable.",
+        },
+        {
+            "carrier_type": "Loss-Sensitive Program",
+            "match_score": max(0, min(100, 100 - abs(carrier_appetite_score - 55))),
+            "fit": "Best Fit" if 40 <= carrier_appetite_score < 70 else "Possible Fit",
+            "reason": "Useful when carriers want insured participation because losses or reserves are elevated.",
+        },
+        {
+            "carrier_type": "E&S / Specialty Market",
+            "match_score": max(0, min(100, 100 - carrier_appetite_score + 30)),
+            "fit": "Best Fit" if carrier_appetite_score < 50 else "Backup Fit",
+            "reason": "Best used when standard markets are restricted due to frequency, severity, litigation, or reserve pressure.",
+        },
+    ]
+
+    carrier_matches = sorted(
+        carrier_matches,
+        key=lambda item: item["match_score"],
+        reverse=True,
+    )
+
+    best_fit_carriers = carrier_matches[:3]
+    poor_fit_carriers = carrier_matches[-2:]
+
+    carrier_match_reasons = []
+
+    if total_claims == 0:
+        carrier_match_reasons.append("No claims were found, which improves standard carrier appetite.")
+    if total_claims >= 5:
+        carrier_match_reasons.append("Claim frequency may reduce appetite with preferred markets.")
+    if open_claims > 0:
+        carrier_match_reasons.append("Open claims may require updated loss runs and current reserve explanations.")
+    if litigation_claims > 0:
+        carrier_match_reasons.append("Litigation exposure may move the account toward regional, specialty, or E&S review.")
+    if large_claims > 0:
+        carrier_match_reasons.append("Large losses should be explained with corrective-action documentation.")
+    if total_reserve > 0:
+        carrier_match_reasons.append("Open reserves may affect carrier pricing and final appetite.")
+    if flagged_claims > 0:
+        carrier_match_reasons.append("Flagged claims should be addressed before market submission.")
+
+    if not carrier_match_reasons:
+        carrier_match_reasons.append("Loss data supports a standard renewal marketing strategy.")
+
+    if carrier_appetite_score >= 75:
+        market_strategy = (
+            "Start with incumbent, preferred standard markets, and strong regional carriers. "
+            "Use the favorable renewal score as leverage for competitive terms."
+        )
+    elif carrier_appetite_score >= 55:
+        market_strategy = (
+            "Target regional and middle-market carriers first. Submit a broker narrative that explains reserves, open claims, and corrective actions."
+        )
+    elif carrier_appetite_score >= 40:
+        market_strategy = (
+            "Use a controlled marketing strategy. Approach regional, specialty, and loss-sensitive markets with detailed claim narratives."
+        )
+    else:
+        market_strategy = (
+            "Prepare for restricted appetite. Build a full carrier packet before marketing to E&S or specialty markets."
+        )
+
+    placement_summary = (
+        f"LossQ estimates carrier appetite at {carrier_appetite_score}/100, rated {carrier_appetite_level}. "
+        f"The best market direction is {best_fit_carriers[0]['carrier_type']} with a "
+        f"{best_fit_carriers[0]['match_score']}/100 match score. This is based on "
+        f"{total_claims} claim(s), {open_claims} open claim(s), ${total_incurred:,.2f} "
+        f"in total incurred losses, ${total_reserve:,.2f} in reserves, "
+        f"{litigation_claims} litigated claim(s), and average severity of ${average_severity:,.2f}."
+    )
+
+    return {
+        "policy_number": policy_number,
+        "carrier_appetite_score": carrier_appetite_score,
+        "carrier_appetite_level": carrier_appetite_level,
+        "best_fit_carriers": best_fit_carriers,
+        "poor_fit_carriers": poor_fit_carriers,
+        "carrier_match_reasons": carrier_match_reasons,
+        "market_strategy": market_strategy,
+        "placement_summary": placement_summary,
+        "appetite_metrics": {
+            "total_claims": total_claims,
+            "open_claims": open_claims,
+            "litigation_claims": litigation_claims,
+            "flagged_claims": flagged_claims,
+            "large_claims": large_claims,
+            "severe_claims": severe_claims,
+            "total_incurred": total_incurred,
+            "total_reserve": total_reserve,
+            "average_severity": average_severity,
+            "renewal_score": renewal_score,
+            "marketability_score": marketability_score,
+        },
+    }
+
+
 @router.get("/decision")
 def renewal_decision(
     policy_number: str | None = Query(default=None),
@@ -195,6 +345,24 @@ def renewal_decision(
     claims = query.all()
 
     return build_underwriter_decision_engine(claims, policy_number)
+
+
+@router.get("/carrier-appetite")
+def carrier_appetite(
+    policy_number: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    query = db.query(Claim).filter(
+        Claim.organization_id == current_user["organization_id"]
+    )
+
+    if policy_number:
+        query = query.filter(Claim.policy_number == policy_number)
+
+    claims = query.all()
+
+    return build_carrier_appetite_engine(claims, policy_number)
 
 
 @router.get("/memo")
@@ -214,6 +382,7 @@ def renewal_memo(
 
     intelligence = build_underwriting_intelligence(claims)
     decision = build_underwriter_decision_engine(claims, policy_number)
+    appetite = build_carrier_appetite_engine(claims, policy_number)
 
     total_claims = len(claims)
     open_claims = len([c for c in claims if is_open(c)])
@@ -257,6 +426,19 @@ Expected Premium Impact: {decision["expected_premium_impact"]}
 Carrier Appetite: {decision["carrier_appetite"]}
 Marketability Score: {decision["marketability_score"]}/100
 Submission Readiness: {decision["submission_readiness"]}
+
+----------------------------------------
+
+CARRIER APPETITE ENGINE
+
+Carrier Appetite Score: {appetite["carrier_appetite_score"]}/100
+Carrier Appetite Level: {appetite["carrier_appetite_level"]}
+
+Market Strategy:
+{appetite["market_strategy"]}
+
+Placement Summary:
+{appetite["placement_summary"]}
 
 ----------------------------------------
 
@@ -309,4 +491,5 @@ Generated by LossQ AI
         "policy_number": policy_number,
         "claims_used": total_claims,
         "decision": decision,
+        "carrier_appetite": appetite,
     }
