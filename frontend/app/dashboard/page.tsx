@@ -35,6 +35,7 @@ type ToolKey =
   | "submission-readiness"
   | "carrier-match"
   | "premium-forecast"
+  | "submission-builder"
   | "summary"
   | "memo"
   | "charts"
@@ -113,6 +114,7 @@ export default function DashboardPage() {
   const [submissionReadiness, setSubmissionReadiness] = useState<any>({});
   const [carrierMatch, setCarrierMatch] = useState<any>({});
   const [premiumForecast, setPremiumForecast] = useState<any>({});
+  const [submissionBuilder, setSubmissionBuilder] = useState<any>({});
   const [timeline, setTimeline] = useState<any>({});
   const [profile, setProfile] = useState<any>({});
   const [profiles, setProfiles] = useState<any[]>([]);
@@ -457,6 +459,7 @@ if (premiumForecastRes.ok) {
   );
 } else {
   setPremiumForecast({});
+  setSubmissionBuilder({});
 }
 
 if (carrierMatchRes.ok) {
@@ -475,6 +478,8 @@ if (carrierMatchRes.ok) {
         router.replace("/login?expired=1");
         return;
       }
+
+
 
       if (timelineRes.ok) {
         setTimeline((await safeJson(timelineRes)) || {});
@@ -960,6 +965,11 @@ if (carrierMatchRes.ok) {
 	  <ToolButton active={activeTool === "premium-forecast"} onClick={() => setActiveTool("premium-forecast")}>
            Premium Forecast
           </ToolButton>
+          <ToolButton active={activeTool === "submission-builder"} onClick={() => setActiveTool("submission-builder")}>
+           Submission Builder
+          </ToolButton>
+
+
 
           <div className="mt-auto space-y-3">
             <NavButton href="/">Landing</NavButton>
@@ -1008,6 +1018,9 @@ if (carrierMatchRes.ok) {
               <MobileToolButton active={activeTool === "carrier-match"} onClick={() => setActiveTool("carrier-match")}>Carrier Match</MobileToolButton>
 <MobileToolButton active={activeTool === "premium-forecast"} onClick={() => setActiveTool("premium-forecast")}>
   Premium Forecast
+</MobileToolButton>
+<MobileToolButton active={activeTool === "submission-builder"} onClick={() => setActiveTool("submission-builder")}>
+  Submission Builder
 </MobileToolButton>
               <MobileToolButton active={activeTool === "summary"} onClick={() => setActiveTool("summary")}>Summary</MobileToolButton>
               <MobileToolButton active={activeTool === "memo"} onClick={() => setActiveTool("memo")}>Memo</MobileToolButton>
@@ -1458,6 +1471,81 @@ if (carrierMatchRes.ok) {
     </div>
   </section>
 )}
+
+{activeTool === "submission-builder" && (
+  <section className="glass-panel p-6 md:p-8">
+    <p className="text-sm uppercase tracking-[0.25em] text-blue-300 mb-3">
+      Submission Builder Engine
+    </p>
+
+    <h2 className="text-2xl md:text-3xl font-bold mb-6">
+      Carrier Submission Package
+    </h2>
+
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <TextCard
+        title="Underwriter Narrative"
+        text={
+          submissionBuilder?.underwriter_narrative ||
+          "No underwriter narrative available yet."
+        }
+      />
+
+      <TextCard
+        title="Executive Summary"
+        text={
+          submissionBuilder?.executive_summary ||
+          "No executive summary available yet."
+        }
+      />
+    </div>
+
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+      <TextCard
+        title="Broker Marketing Memo"
+        text={
+          submissionBuilder?.broker_marketing_memo ||
+          "No broker marketing memo available yet."
+        }
+      />
+
+      <TextCard
+        title="Renewal Strategy"
+        text={
+          submissionBuilder?.renewal_strategy ||
+          "No renewal strategy available yet."
+        }
+      />
+    </div>
+
+    <div className="mt-6">
+      <TextCard
+        title="Carrier Submission Email"
+        text={
+          submissionBuilder?.carrier_submission_email ||
+          "No carrier submission email available yet."
+        }
+      />
+    </div>
+
+    <div className="mt-6">
+      <ListCard
+        title="Loss Explanations"
+        items={
+          submissionBuilder?.loss_explanations?.length
+            ? submissionBuilder.loss_explanations.map(
+                (item: any) =>
+                  `${item.claim_number} — ${item.explanation} Broker position: ${item.broker_position}`
+              )
+            : ["No loss explanations available yet."]
+        }
+        color="purple"
+      />
+    </div>
+  </section>
+)}
+
+
           {activeTool === "summary" && (
             <section className="glass-panel p-6 md:p-8">
               <h2 className="text-2xl md:text-3xl font-bold mb-5">AI Underwriting Summary</h2>
