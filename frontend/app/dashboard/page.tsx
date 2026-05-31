@@ -970,7 +970,6 @@ if (carrierMatchRes.ok) {
           </ToolButton>
 
 
-
           <div className="mt-auto space-y-3">
             <NavButton href="/">Landing</NavButton>
             <NavButton href="/settings">Settings</NavButton>
