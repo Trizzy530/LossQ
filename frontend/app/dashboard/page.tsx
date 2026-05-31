@@ -41,7 +41,7 @@ type DashboardData = {
 const API_BASE =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   process.env.NEXT_PUBLIC_BACKEND_URL ||
-  "http://localhost:8000";
+  https://lossq-production.up.railway.app
 
 const emptyProfile: CarrierProfile = {
   business_name: "",
@@ -138,7 +138,7 @@ export default function DashboardPage() {
 
   async function loadProfileList() {
     try {
-      const data = await apiFetch("/carrier-profiles", {
+      const data = await apiFetch("/account-profile/all", {
         headers: getAuthHeaders(false),
       });
 
@@ -175,7 +175,7 @@ export default function DashboardPage() {
 
     try {
       await apiFetch(
-        `/carrier-profiles/${encodeURIComponent(profile.policy_number)}`,
+        `/account-profile/${encodeURIComponent(profile.policy_number)}`,
         {
           method: "DELETE",
           headers: getAuthHeaders(false),
@@ -194,7 +194,7 @@ export default function DashboardPage() {
     try {
       setSaving(true);
 
-      const saved = await apiFetch("/carrier-profiles", {
+      const saved = await apiFetch("/account-profile/", {
         method: "POST",
         headers: getAuthHeaders(true),
         body: JSON.stringify(profile),
