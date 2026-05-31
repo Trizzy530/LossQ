@@ -391,41 +391,42 @@ export default function DashboardPage() {
       } else {
         setDecision({});
       }
-       const appetiteUrl = hasPolicy
-  ? `${API}/renewal/carrier-appetite?policy_number=${encodeURIComponent(policyNumber)}`
-  : `${API}/renewal/carrier-appetite`;
 
-const appetiteRes = await fetch(appetiteUrl, { headers: authHeaders() });
+      const appetiteUrl = hasPolicy
+        ? `${API}/renewal/carrier-appetite?policy_number=${encodeURIComponent(policyNumber)}`
+        : `${API}/renewal/carrier-appetite`;
 
-if (appetiteRes.status === 401 || appetiteRes.status === 403) {
-  clearSession();
-  router.replace("/login?expired=1");
-  return;
-}
+      const appetiteRes = await fetch(appetiteUrl, { headers: authHeaders() });
 
-if (appetiteRes.ok) {
-  setCarrierAppetite((await safeJson(appetiteRes)) || {});
-} else {
-  setCarrierAppetite({});
-}
+      if (appetiteRes.status === 401 || appetiteRes.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
 
-const readinessUrl = hasPolicy
-  ? `${API}/renewal/submission-readiness?policy_number=${encodeURIComponent(policyNumber)}`
-  : `${API}/renewal/submission-readiness`;
+      if (appetiteRes.ok) {
+        setCarrierAppetite((await safeJson(appetiteRes)) || {});
+      } else {
+        setCarrierAppetite({});
+      }
 
-const readinessRes = await fetch(readinessUrl, { headers: authHeaders() });
+      const readinessUrl = hasPolicy
+        ? `${API}/renewal/submission-readiness?policy_number=${encodeURIComponent(policyNumber)}`
+        : `${API}/renewal/submission-readiness`;
 
-if (readinessRes.status === 401 || readinessRes.status === 403) {
-  clearSession();
-  router.replace("/login?expired=1");
-  return;
-}
+      const readinessRes = await fetch(readinessUrl, { headers: authHeaders() });
 
-if (readinessRes.ok) {
-  setSubmissionReadiness((await safeJson(readinessRes)) || {});
-} else {
-  setSubmissionReadiness({});
-}
+      if (readinessRes.status === 401 || readinessRes.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (readinessRes.ok) {
+        setSubmissionReadiness((await safeJson(readinessRes)) || {});
+      } else {
+        setSubmissionReadiness({});
+      }
 
       const timelineUrl = hasPolicy
         ? `${API}/timeline/analytics?policy_number=${encodeURIComponent(policyNumber)}`
@@ -906,42 +907,18 @@ if (readinessRes.ok) {
             <div className="text-sm text-slate-400 mt-1">AI Underwriting Suite</div>
           </div>
 
-          <ToolButton active={activeTool === "overview"} onClick={() => setActiveTool("overview")}>
-            Overview
-          </ToolButton>
-          <ToolButton active={activeTool === "profiles"} onClick={() => setActiveTool("profiles")}>
-            Carrier Profiles
-          </ToolButton>
-          <ToolButton active={activeTool === "upload"} onClick={() => setActiveTool("upload")}>
-            Upload Center
-          </ToolButton>
-          <ToolButton active={activeTool === "renewal-risk"} onClick={() => setActiveTool("renewal-risk")}>
-            Renewal Risk
-          </ToolButton>
-          <ToolButton active={activeTool === "decision"} onClick={() => setActiveTool("decision")}>
-            Underwriter Decision
-          <ToolButton active={activeTool === "carrier-appetite"} onClick={() => setActiveTool("carrier-appetite")}>
-           Carrier Appetite
-          </ToolButton>
-          <ToolButton active={activeTool === "submission-readiness"} onClick={() => setActiveTool("submission-readiness")}>
-           Submission Readiness
-          </ToolButton>
-          <ToolButton active={activeTool === "carrier-match"} onClick={() => setActiveTool("carrier-match")}>
-           Carrier Match
-          </ToolButton>
-          </ToolButton>
-          <ToolButton active={activeTool === "summary"} onClick={() => setActiveTool("summary")}>
-            AI Summary
-          </ToolButton>
-          <ToolButton active={activeTool === "memo"} onClick={() => setActiveTool("memo")}>
-            Renewal Memo
-          </ToolButton>
-          <ToolButton active={activeTool === "charts"} onClick={() => setActiveTool("charts")}>
-            Charts
-          </ToolButton>
-          <ToolButton active={activeTool === "claims"} onClick={() => setActiveTool("claims")}>
-            Claims
-          </ToolButton>
+          <ToolButton active={activeTool === "overview"} onClick={() => setActiveTool("overview")}>Overview</ToolButton>
+          <ToolButton active={activeTool === "profiles"} onClick={() => setActiveTool("profiles")}>Carrier Profiles</ToolButton>
+          <ToolButton active={activeTool === "upload"} onClick={() => setActiveTool("upload")}>Upload Center</ToolButton>
+          <ToolButton active={activeTool === "renewal-risk"} onClick={() => setActiveTool("renewal-risk")}>Renewal Risk</ToolButton>
+          <ToolButton active={activeTool === "decision"} onClick={() => setActiveTool("decision")}>Underwriter Decision</ToolButton>
+          <ToolButton active={activeTool === "carrier-appetite"} onClick={() => setActiveTool("carrier-appetite")}>Carrier Appetite</ToolButton>
+          <ToolButton active={activeTool === "submission-readiness"} onClick={() => setActiveTool("submission-readiness")}>Submission Readiness</ToolButton>
+          <ToolButton active={activeTool === "carrier-match"} onClick={() => setActiveTool("carrier-match")}>Carrier Match</ToolButton>
+          <ToolButton active={activeTool === "summary"} onClick={() => setActiveTool("summary")}>AI Summary</ToolButton>
+          <ToolButton active={activeTool === "memo"} onClick={() => setActiveTool("memo")}>Renewal Memo</ToolButton>
+          <ToolButton active={activeTool === "charts"} onClick={() => setActiveTool("charts")}>Charts</ToolButton>
+          <ToolButton active={activeTool === "claims"} onClick={() => setActiveTool("claims")}>Claims</ToolButton>
 
           <div className="mt-auto space-y-3">
             <NavButton href="/">Landing</NavButton>
@@ -985,6 +962,9 @@ if (readinessRes.ok) {
               <MobileToolButton active={activeTool === "upload"} onClick={() => setActiveTool("upload")}>Upload</MobileToolButton>
               <MobileToolButton active={activeTool === "renewal-risk"} onClick={() => setActiveTool("renewal-risk")}>Renewal Risk</MobileToolButton>
               <MobileToolButton active={activeTool === "decision"} onClick={() => setActiveTool("decision")}>Decision</MobileToolButton>
+              <MobileToolButton active={activeTool === "carrier-appetite"} onClick={() => setActiveTool("carrier-appetite")}>Carrier Appetite</MobileToolButton>
+              <MobileToolButton active={activeTool === "submission-readiness"} onClick={() => setActiveTool("submission-readiness")}>Submission Readiness</MobileToolButton>
+              <MobileToolButton active={activeTool === "carrier-match"} onClick={() => setActiveTool("carrier-match")}>Carrier Match</MobileToolButton>
               <MobileToolButton active={activeTool === "summary"} onClick={() => setActiveTool("summary")}>Summary</MobileToolButton>
               <MobileToolButton active={activeTool === "memo"} onClick={() => setActiveTool("memo")}>Memo</MobileToolButton>
               <MobileToolButton active={activeTool === "charts"} onClick={() => setActiveTool("charts")}>Charts</MobileToolButton>
@@ -1007,10 +987,11 @@ if (readinessRes.ok) {
                 <MetricCard title="Renewal Score" value={summary?.renewal_score ?? "-"} />
               </section>
 
-              <section className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+              <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
                 <MetricCard title="Risk Level" value={summary?.renewal_risk_level || "Not Rated"} />
                 <MetricCard title="Renewal Probability" value={decision?.renewal_probability !== undefined ? `${decision.renewal_probability}%` : "-"} />
-                <MetricCard title="Marketability Score" value={decision?.marketability_score !== undefined ? `${decision.marketability_score}/100` : "-"} />
+                <MetricCard title="Carrier Appetite" value={carrierAppetite?.carrier_appetite_score !== undefined ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
+                <MetricCard title="Submission Readiness" value={submissionReadiness?.submission_readiness_score !== undefined ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
               </section>
 
               <section className="glass-panel p-6 md:p-8">
@@ -1191,125 +1172,131 @@ if (readinessRes.ok) {
               </div>
             </section>
           )}
-	{activeTool === "carrier-appetite" && (
-  <section className="glass-panel p-6 md:p-8">
-    <p className="text-sm uppercase tracking-[0.25em] text-blue-300 mb-3">
-      Carrier Appetite Engine
-    </p>
 
-    <h2 className="text-2xl md:text-3xl font-bold mb-6">
-      Market Appetite Strategy
-    </h2>
+          {activeTool === "carrier-appetite" && (
+            <section className="glass-panel p-6 md:p-8">
+              <p className="text-sm uppercase tracking-[0.25em] text-blue-300 mb-3">
+                Carrier Appetite Engine
+              </p>
 
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-      <MetricCard title="Appetite Score" value={carrierAppetite?.carrier_appetite_score !== undefined ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
-      <MetricCard title="Appetite Level" value={carrierAppetite?.carrier_appetite_level || "-"} />
-      <MetricCard title="Best Market" value={carrierAppetite?.best_fit_carriers?.[0]?.carrier_type || "-"} />
-    </div>
+              <h2 className="text-2xl md:text-3xl font-bold mb-6">
+                Market Appetite Strategy
+              </h2>
 
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <ListCard
-        title="Best Fit Markets"
-        items={(carrierAppetite?.best_fit_carriers || []).map(
-          (item: any) =>
-            `${item.carrier_type} — ${item.match_score}/100 — ${item.fit}`
-        )}
-        color="blue"
-      />
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+                <MetricCard title="Appetite Score" value={carrierAppetite?.carrier_appetite_score !== undefined ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
+                <MetricCard title="Appetite Level" value={carrierAppetite?.carrier_appetite_level || "-"} />
+                <MetricCard title="Best Market" value={carrierAppetite?.best_fit_carriers?.[0]?.carrier_type || "-"} />
+              </div>
 
-      <ListCard
-        title="Appetite Reasons"
-        items={carrierAppetite?.carrier_match_reasons || ["No carrier appetite reasons available."]}
-        color="purple"
-      />
-    </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <ListCard
+                  title="Best Fit Markets"
+                  items={
+                    carrierAppetite?.best_fit_carriers?.length
+                      ? carrierAppetite.best_fit_carriers.map(
+                          (item: any) =>
+                            `${item.carrier_type} — ${item.match_score}/100 — ${item.fit}`
+                        )
+                      : ["No best fit markets available."]
+                  }
+                  color="blue"
+                />
 
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-      <TextCard
-        title="Market Strategy"
-        text={carrierAppetite?.market_strategy || "No market strategy available yet."}
-      />
+                <ListCard
+                  title="Appetite Reasons"
+                  items={carrierAppetite?.carrier_match_reasons || ["No carrier appetite reasons available."]}
+                  color="purple"
+                />
+              </div>
 
-      <TextCard
-        title="Placement Summary"
-        text={carrierAppetite?.placement_summary || "No placement summary available yet."}
-      />
-    </div>
-  </section>
-)}
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                <TextCard
+                  title="Market Strategy"
+                  text={carrierAppetite?.market_strategy || "No market strategy available yet."}
+                />
 
-{activeTool === "submission-readiness" && (
-  <section className="glass-panel p-6 md:p-8">
-    <p className="text-sm uppercase tracking-[0.25em] text-green-300 mb-3">
-      Submission Readiness Engine
-    </p>
+                <TextCard
+                  title="Placement Summary"
+                  text={carrierAppetite?.placement_summary || "No placement summary available yet."}
+                />
+              </div>
+            </section>
+          )}
 
-    <h2 className="text-2xl md:text-3xl font-bold mb-6">
-      Submission Checklist & Carrier Confidence
-    </h2>
+          {activeTool === "submission-readiness" && (
+            <section className="glass-panel p-6 md:p-8">
+              <p className="text-sm uppercase tracking-[0.25em] text-green-300 mb-3">
+                Submission Readiness Engine
+              </p>
 
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-      <MetricCard title="Readiness Score" value={submissionReadiness?.submission_readiness_score !== undefined ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
-      <MetricCard title="Readiness Level" value={submissionReadiness?.submission_readiness_level || "-"} />
-      <MetricCard title="Carrier Confidence" value={submissionReadiness?.carrier_confidence || "-"} />
-      <MetricCard title="Submission Quality" value={submissionReadiness?.submission_quality || "-"} />
-    </div>
+              <h2 className="text-2xl md:text-3xl font-bold mb-6">
+                Submission Checklist & Carrier Confidence
+              </h2>
 
-    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-      <ListCard
-        title="Missing Items"
-        items={submissionReadiness?.missing_items || ["No missing items available."]}
-        color="red"
-      />
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+                <MetricCard title="Readiness Score" value={submissionReadiness?.submission_readiness_score !== undefined ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
+                <MetricCard title="Readiness Level" value={submissionReadiness?.submission_readiness_level || "-"} />
+                <MetricCard title="Carrier Confidence" value={submissionReadiness?.carrier_confidence || "-"} />
+                <MetricCard title="Submission Quality" value={submissionReadiness?.submission_quality || "-"} />
+              </div>
 
-      <ListCard
-        title="Required Documents"
-        items={submissionReadiness?.required_documents || ["No required documents available."]}
-        color="blue"
-      />
-    </div>
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <ListCard
+                  title="Missing Items"
+                  items={submissionReadiness?.missing_items || ["No missing items available."]}
+                  color="red"
+                />
 
-    <div className="mt-6">
-      <ListCard
-        title="Recommended Actions"
-        items={submissionReadiness?.recommended_actions || ["No recommended actions available."]}
-        color="purple"
-      />
-    </div>
+                <ListCard
+                  title="Required Documents"
+                  items={submissionReadiness?.required_documents || ["No required documents available."]}
+                  color="blue"
+                />
+              </div>
 
-    <div className="mt-6">
-      <TextCard
-        title="Readiness Summary"
-        text={submissionReadiness?.readiness_summary || "No readiness summary available yet."}
-      />
-    </div>
-  </section>
-)}
+              <div className="mt-6">
+                <ListCard
+                  title="Recommended Actions"
+                  items={submissionReadiness?.recommended_actions || ["No recommended actions available."]}
+                  color="purple"
+                />
+              </div>
 
-{activeTool === "carrier-match" && (
-  <section className="glass-panel p-6 md:p-8">
-    <p className="text-sm uppercase tracking-[0.25em] text-purple-300 mb-3">
-      Carrier Match Engine
-    </p>
+              <div className="mt-6">
+                <TextCard
+                  title="Readiness Summary"
+                  text={submissionReadiness?.readiness_summary || "No readiness summary available yet."}
+                />
+              </div>
+            </section>
+          )}
 
-    <h2 className="text-2xl md:text-3xl font-bold mb-4">
-      Named Carrier Matching
-    </h2>
+          {activeTool === "carrier-match" && (
+            <section className="glass-panel p-6 md:p-8">
+              <p className="text-sm uppercase tracking-[0.25em] text-purple-300 mb-3">
+                Carrier Match Engine
+              </p>
 
-    <p className="text-slate-300 leading-8 max-w-3xl">
-      This tab is ready for the next engine. It will rank named carriers such as
-      Travelers, Liberty Mutual, Nationwide, CNA, Hanover, Auto-Owners, Progressive,
-      and regional markets based on the selected policy’s claims, litigation,
-      reserves, severity, frequency, and renewal risk profile.
-    </p>
+              <h2 className="text-2xl md:text-3xl font-bold mb-4">
+                Named Carrier Matching
+              </h2>
 
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-8">
-      <MetricCard title="Status" value="Ready for Build" />
-      <MetricCard title="Next Endpoint" value="/renewal/carrier-match" />
-      <MetricCard title="Purpose" value="Named Carrier Ranking" />
-    </div>
-  </section>
-)}
+              <p className="text-slate-300 leading-8 max-w-3xl">
+                This tab is ready for the next engine. It will rank named carriers such as
+                Travelers, Liberty Mutual, Nationwide, CNA, Hanover, Auto-Owners, Progressive,
+                and regional markets based on the selected policy’s claims, litigation,
+                reserves, severity, frequency, and renewal risk profile.
+              </p>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-8">
+                <MetricCard title="Status" value="Ready for Build" />
+                <MetricCard title="Next Endpoint" value="/renewal/carrier-match" />
+                <MetricCard title="Purpose" value="Named Carrier Ranking" />
+              </div>
+            </section>
+          )}
+
           {activeTool === "summary" && (
             <section className="glass-panel p-6 md:p-8">
               <h2 className="text-2xl md:text-3xl font-bold mb-5">AI Underwriting Summary</h2>
