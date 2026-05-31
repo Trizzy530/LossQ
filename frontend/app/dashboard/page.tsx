@@ -907,6 +907,83 @@ export default function DashboardPage() {
           <MetricCard title="Renewal Risk" value={summary?.renewal_risk || "GREEN"} />
         </section>
 
+<section className="glass-panel p-6 md:p-8 mb-8">
+  <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+    <div>
+      <p className="text-sm uppercase tracking-[0.25em] text-blue-300 mb-3">
+        Renewal Risk Engine
+      </p>
+
+      <h2 className="text-2xl md:text-3xl font-bold">
+        Renewal Risk Score
+      </h2>
+
+      <p className="text-slate-400 mt-2 max-w-3xl">
+        Policy-specific renewal risk based on claims, reserves, severity,
+        litigation, frequency, and open claim pressure.
+      </p>
+    </div>
+
+    <div className="rounded-3xl border border-white/10 bg-slate-950/70 px-8 py-6 text-center min-w-[180px]">
+      <div className="text-5xl font-black">
+        {summary?.renewal_score ?? "-"}
+      </div>
+      <div className="text-slate-400 text-sm mt-1">out of 100</div>
+
+      <div className="mt-4 inline-flex rounded-full border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-bold text-blue-200">
+        {summary?.renewal_risk_level || "Not Rated"}
+      </div>
+    </div>
+  </div>
+
+  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
+    <div className="rounded-3xl border border-white/10 bg-white/[0.05] p-5">
+      <h3 className="font-bold text-lg mb-4">Renewal Drivers</h3>
+      <ul className="space-y-3 text-slate-300">
+        {(summary?.renewal_drivers || ["No renewal drivers available."]).map(
+          (item: string, index: number) => (
+            <li key={index} className="flex gap-3">
+              <span className="mt-2 h-2 w-2 rounded-full bg-blue-400" />
+              <span>{item}</span>
+            </li>
+          )
+        )}
+      </ul>
+    </div>
+
+    <div className="rounded-3xl border border-white/10 bg-white/[0.05] p-5">
+      <h3 className="font-bold text-lg mb-4">Carrier Concerns</h3>
+      <ul className="space-y-3 text-slate-300">
+        {(summary?.carrier_concerns || ["No carrier concerns available."]).map(
+          (item: string, index: number) => (
+            <li key={index} className="flex gap-3">
+              <span className="mt-2 h-2 w-2 rounded-full bg-red-400" />
+              <span>{item}</span>
+            </li>
+          )
+        )}
+      </ul>
+    </div>
+  </div>
+
+  <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+    <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-5">
+      <h3 className="font-bold text-lg mb-3">Broker Recommendation</h3>
+      <p className="text-slate-300 leading-7">
+        {summary?.broker_recommendation ||
+          "Upload claims to generate a broker recommendation."}
+      </p>
+    </div>
+
+    <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-5">
+      <h3 className="font-bold text-lg mb-3">Renewal Summary</h3>
+      <p className="text-slate-300 leading-7">
+        {summary?.renewal_summary ||
+          "No renewal summary available yet."}
+      </p>
+    </div>
+  </div>
+</section>
         <section className="glass-panel p-6 md:p-8 mb-8">
           <h2 className="text-2xl md:text-3xl font-bold mb-5">Upload & Report Center</h2>
 
