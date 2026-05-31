@@ -480,6 +480,7 @@ def build_carrier_match_engine(claims, policy_number=None):
         ),
     }
 
+
 @router.get("/decision")
 def renewal_decision(
     policy_number: str | None = Query(default=None),
@@ -493,6 +494,115 @@ def renewal_decision(
 
     claims = query.all()
     return build_underwriter_decision_engine(claims, policy_number)
+
+def build_premium_forecast_engine(claims, policy_number=None):
+    intelligence = build_underwriting_intelligence(claims)
+    decision = build_underwriter_decision_engine(claims, policy_number)
+
+    total_claims = len(claims)
+    open_claims = len([c for c in claims if is_open(c)])
+    litigation_claims = len(
+        [c for c in claims if getattr(c, "litigation", False)]
+    )
+
+    total_incurred = sum(money(c.total_incurred) for c in claims)
+    total_reserve = sum(money(c.reserve_amount) for c in claims)
+
+    renewal_score = intelligence.get("renewal_score", 75)
+
+    current_premium = max(
+        25000,
+        int((total_incurred * 0.30) + 75000)
+    )
+
+    increase = 5
+
+    if total_claims >= 5:
+        increase += 4
+
+    if total_claims >= 10:
+        increase += 6
+
+    if open_claims > 0:
+        increase += min(open_claims * 2, 10)
+
+    if litigation_claims > 0:
+        increase += 8
+
+    if total_reserve >= 100000:
+        increase += 6
+
+    if total_reserve >= 250000:
+        increase += 6
+
+    if renewal_score < 70:
+        increase += 5
+
+    if renewal_score < 50:
+        increase += 10
+
+    increase = max(0, min(50, increase))
+
+    expected_renewal_premium = int(
+        current_premium * (1 + increase / 100)
+    )
+
+    best_case = max(0, increase - 5)
+    worst_case = min(75, increase + 15)
+
+    confidence = 80
+
+    if total_claims >= 5:
+        confidence += 2
+
+    if total_claims >= 10:
+        confidence += 3
+
+    confidence = min(95, confidence)
+
+    drivers = []
+
+    if open_claims:
+        drivers.append(f"{open_claims} open claim(s)")
+
+    if litigation_claims:
+        drivers.append(f"{litigation_claims} litigated claim(s)")
+
+    if total_reserve:
+        drivers.append(
+            f"${total_reserve:,.0f} reserve exposure"
+        )
+
+    if total_claims:
+        drivers.append(
+            f"{total_claims} total claim(s)"
+        )
+
+    if not drivers:
+        drivers.append(
+            "Minimal adverse loss activity"
+        )
+
+    summary = (
+        f"LossQ projects an expected renewal premium of "
+        f"${expected_renewal_premium:,.0f}, representing an "
+        f"estimated {increase}% increase. Forecast confidence is "
+        f"{confidence}%. Primary drivers include "
+        f"{', '.join(drivers)}."
+    )
+
+    return {
+        "policy_number": policy_number,
+        "current_premium": current_premium,
+        "expected_renewal_premium": expected_renewal_premium,
+        "expected_increase_percent": increase,
+        "best_case_percent": best_case,
+        "likely_range_percent": f"{max(0, increase-3)}-{increase+5}",
+        "worst_case_percent": worst_case,
+        "confidence_score": confidence,
+        "forecast_drivers": drivers,
+        "forecast_summary": summary,
+    }
 
 
 @router.get("/carrier-appetite")
@@ -523,6 +633,27 @@ def submission_readiness(
 
     claims = query.all()
     return build_submission_readiness_engine(claims, policy_number)
+@router.get("/premium-forecast")
+def premium_forecast(
+    policy_number: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    query = db.query(Claim).filter(
+        Claim.organization_id == current_user["organization_id"]
+    )
+
+    if policy_number:
+        query = query.filter(
+            Claim.policy_number == policy_number
+        )
+
+    claims = query.all()
+
+    return build_premium_forecast_engine(
+        claims,
+        policy_number,
+    )
 
 
 @router.get("/memo")
