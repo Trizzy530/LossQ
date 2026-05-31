@@ -437,37 +437,44 @@ const carrierMatchUrl = hasPolicy
   ? `${API}/renewal/carrier-match?policy_number=${encodeURIComponent(policyNumber)}`
   : `${API}/renewal/carrier-match`;
 
-const carrierMatchRes = await fetch(carrierMatchUrl, { headers: authHeaders() });
-
-if (carrierMatchRes.status === 401 || carrierMatchRes.status === 403) {
-  clearSession();
-  router.replace("/login?expired=1");
-  return;
-}
-const premiumForecastUrl = hasPolicy
-  ? `${API}/renewal/premium-forecast?policy_number=${encodeURIComponent(policyNumber)}`
-  : `${API}/renewal/premium-forecast`;
-
-const premiumForecastRes = await fetch(
-  premiumForecastUrl,
-  { headers: authHeaders() }
-);
-
-if (premiumForecastRes.ok) {
-  setPremiumForecast(
-    (await safeJson(premiumForecastRes)) || {}
-  );
-} else {
-  setPremiumForecast({});
-  setSubmissionBuilder({});
-}
+const carrierMatchRes = await fetch(carrierMatchUrl, {
+  headers: authHeaders(),
+});
 
 if (carrierMatchRes.ok) {
   setCarrierMatch((await safeJson(carrierMatchRes)) || {});
 } else {
   setCarrierMatch({});
 }
-      const timelineUrl = hasPolicy
+
+const premiumForecastUrl = hasPolicy
+  ? `${API}/renewal/premium-forecast?policy_number=${encodeURIComponent(policyNumber)}`
+  : `${API}/renewal/premium-forecast`;
+
+const premiumForecastRes = await fetch(premiumForecastUrl, {
+  headers: authHeaders(),
+});
+
+if (premiumForecastRes.ok) {
+  setPremiumForecast((await safeJson(premiumForecastRes)) || {});
+} else {
+  setPremiumForecast({});
+}
+
+const submissionBuilderUrl = hasPolicy
+  ? `${API}/submission-builder/?policy_number=${encodeURIComponent(policyNumber)}`
+  : `${API}/submission-builder/`;
+
+const submissionBuilderRes = await fetch(submissionBuilderUrl, {
+  headers: authHeaders(),
+});
+
+if (submissionBuilderRes.ok) {
+  setSubmissionBuilder((await safeJson(submissionBuilderRes)) || {});
+} else {
+  setSubmissionBuilder({});
+} 
+     const timelineUrl = hasPolicy
         ? `${API}/timeline/analytics?policy_number=${encodeURIComponent(policyNumber)}`
         : `${API}/timeline/analytics`;
 
