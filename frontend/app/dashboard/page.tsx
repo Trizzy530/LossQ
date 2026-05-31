@@ -1,479 +1,804 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
-
-type CarrierProfile = {
-  id?: string | number;
-  business_name: string;
-  carrier_name?: string;
-  policy_number: string;
-  effective_date?: string;
-  expiration_date?: string;
-  line_of_business?: string;
-  premium?: string | number;
-  contact_name?: string;
-  contact_email?: string;
-  notes?: string;
-};
-
-type Claim = {
-  id?: string | number;
-  claim_number?: string;
-  claimant?: string;
-  date_of_loss?: string;
-  status?: string;
-  loss_type?: string;
-  paid?: number;
-  reserve?: number;
-  incurred?: number;
-};
-
-type DashboardData = {
-  claims?: Claim[];
-  underwriting_summary?: string;
-  total_claims?: number;
-  total_paid?: number;
-  total_reserve?: number;
-  total_incurred?: number;
-};
+import { useEffect, useState, type ReactNode } from "react";
+import {
+  BarChart,
+  Bar,
+  LineChart,
+  Line,
+  PieChart,
+  Pie,
+  Cell,
+  XAxis,
+  YAxis,
+  CartesianGrid,
+  Tooltip,
+  ResponsiveContainer,
+} from "recharts";
 
 const API =
-  process.env.NEXT_PUBLIC_API_BASE_URL ||
-  process.env.NEXT_PUBLIC_BACKEND_URL ||
-  "https://lossq-production.up.railway.app";
+  process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
 
-const emptyProfile: CarrierProfile = {
-  business_name: "",
-  carrier_name: "",
-  policy_number: "",
-  effective_date: "",
-  expiration_date: "",
-  line_of_business: "",
-  premium: "",
-  contact_name: "",
-  contact_email: "",
-  notes: "",
-};
+const SESSION_TIMEOUT_MS = 1000 * 60 * 60 * 24;
+const PROFILE_CACHE_KEY = "lossq_account_profiles";
+
+type AnyObject = Record<string, any>;
+
+async function safeJson(res: Response) {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
+
+function objectToChartData(data: Record<string, number>) {
+  return Object.entries(data || {}).map(([name, value]) => ({
+    name,
+    value: Number(value || 0),
+  }));
+}
+
+function normalizeProfiles(data: any): AnyObject[] {
+  if (Array.isArray(data)) return data;
+  if (Array.isArray(data?.profiles)) return data.profiles;
+  if (Array.isArray(data?.accounts)) return data.accounts;
+  if (data && typeof data === "object" && data.policy_number) return [data];
+  return [];
+}
+
+function getCachedProfiles(): AnyObject[] {
+  if (typeof window === "undefined") return [];
+
+  try {
+    const raw = localStorage.getItem(PROFILE_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : [];
+    return Array.isArray(parsed) ? parsed : [];
+  } catch {
+    return [];
+  }
+}
+
+function setCachedProfiles(profiles: AnyObject[]) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profiles));
+}
+
+function mergeProfiles(existing: AnyObject[], incoming: AnyObject[]) {
+  const map = new Map<string, AnyObject>();
+
+  existing.forEach((item) => {
+    const key = item?.policy_number || item?.id;
+    if (key) map.set(String(key), item);
+  });
+
+  incoming.forEach((item) => {
+    const key = item?.policy_number || item?.id;
+    if (key) {
+      map.set(String(key), {
+        ...(map.get(String(key)) || {}),
+        ...item,
+      });
+    }
+  });
+
+  return Array.from(map.values());
+}
 
 export default function DashboardPage() {
   const router = useRouter();
-  const fileInputRef = useRef<HTMLInputElement | null>(null);
 
-  const [token, setToken] = useState<string | null>(null);
-  const [sessionChecking, setSessionChecking] = useState(true);
-  const [loading, setLoading] = useState(true);
-  const [backendError, setBackendError] = useState("");
+  const [claims, setClaims] = useState<any[]>([]);
+  const [summary, setSummary] = useState<any>({});
+  const [timeline, setTimeline] = useState<any>({});
+  const [profile, setProfile] = useState<any>({});
+  const [profiles, setProfiles] = useState<any[]>([]);
+  const [files, setFiles] = useState<FileList | null>(null);
 
-  const [profiles, setProfiles] = useState<CarrierProfile[]>([]);
-  const [selectedPolicyNumber, setSelectedPolicyNumber] = useState("");
-  const [profile, setProfile] = useState<CarrierProfile>(emptyProfile);
+  const [message, setMessage] = useState("");
+  const [authReady, setAuthReady] = useState(false);
+  const [dashboardLoading, setDashboardLoading] = useState(true);
+  const [dashboardError, setDashboardError] = useState("");
 
-  const [dashboard, setDashboard] = useState<DashboardData>({});
-  const [claims, setClaims] = useState<Claim[]>([]);
-  const [aiSummary, setAiSummary] = useState("");
-  const [renewalMemo, setRenewalMemo] = useState("");
+  const [copilotOpen, setCopilotOpen] = useState(false);
   const [copilotQuestion, setCopilotQuestion] = useState("");
   const [copilotAnswer, setCopilotAnswer] = useState("");
-
-  const [uploading, setUploading] = useState(false);
-  const [saving, setSaving] = useState(false);
-  const [lookingUp, setLookingUp] = useState(false);
-  const [memoLoading, setMemoLoading] = useState(false);
-  const [packetLoading, setPacketLoading] = useState(false);
   const [copilotLoading, setCopilotLoading] = useState(false);
 
-  function getAuthHeaders(contentType = true): HeadersInit {
-    const headers: HeadersInit = {};
-    if (contentType) headers["Content-Type"] = "application/json";
-    if (token) headers["Authorization"] = `Bearer ${token}`;
-    return headers;
+  const [renewalMemo, setRenewalMemo] = useState("");
+  const [memoLoading, setMemoLoading] = useState(false);
+
+  useEffect(() => {
+    async function validateSession() {
+      const token = localStorage.getItem("lossq_token");
+      const loginTime = localStorage.getItem("lossq_login_time");
+
+      if (!token) {
+        router.replace("/login?fresh=1");
+        return;
+      }
+
+      if (!loginTime) {
+        localStorage.setItem("lossq_login_time", Date.now().toString());
+      }
+
+      if (loginTime) {
+        const expired = Date.now() - Number(loginTime) > SESSION_TIMEOUT_MS;
+
+        if (expired) {
+          clearSession();
+          router.replace("/login?expired=1");
+          return;
+        }
+      }
+
+      try {
+        const validateRes = await fetch(`${API}/auth/validate`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (validateRes.status === 401 || validateRes.status === 403) {
+          clearSession();
+          router.replace("/login?expired=1");
+          return;
+        }
+      } catch {
+        setMessage("Session validation skipped. Backend validation unavailable.");
+      }
+
+      setAuthReady(true);
+      await loadDashboard();
+    }
+
+    validateSession();
+  }, []);
+
+  function clearSession() {
+    localStorage.removeItem("lossq_token");
+    localStorage.removeItem("lossq_user");
+    localStorage.removeItem("lossq_login_time");
+    sessionStorage.removeItem("lossq_welcome");
   }
 
-  async function apiFetch(path: string, options: RequestInit = {}) {
-    const res = await fetch(`${API_BASE}${path}`, {
-      ...options,
-      headers: {
-        ...(options.headers || {}),
-      },
+  function getToken() {
+    if (typeof window === "undefined") return null;
+    return localStorage.getItem("lossq_token");
+  }
+
+  function authHeaders(): Record<string, string> {
+    const token = getToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  function updateProfileList(incomingProfiles: AnyObject[]) {
+    setProfiles((prev) => {
+      const merged = mergeProfiles(prev, incomingProfiles);
+      setCachedProfiles(merged);
+      return merged;
     });
-
-    if (res.status === 401 || res.status === 403) {
-      logout();
-      throw new Error("Session expired. Please log in again.");
-    }
-
-    if (!res.ok) {
-      const text = await res.text();
-      throw new Error(text || `Request failed: ${res.status}`);
-    }
-
-    const contentType = res.headers.get("content-type");
-    if (contentType?.includes("application/json")) return res.json();
-    return res.blob();
-  }
-
-  async function loadDashboard(policyNumber?: string) {
-    try {
-      setBackendError("");
-      setLoading(true);
-
-      const suffix = policyNumber
-        ? `?policy_number=${encodeURIComponent(policyNumber)}`
-        : "";
-
-      const data = await apiFetch(`/dashboard${suffix}`, {
-        headers: getAuthHeaders(false),
-      });
-
-      setDashboard(data || {});
-      setClaims(data?.claims || []);
-      setAiSummary(data?.underwriting_summary || data?.summary || "");
-    } catch (err: any) {
-      setBackendError(err?.message || "Dashboard failed to load.");
-    } finally {
-      setLoading(false);
-    }
   }
 
   async function loadProfileList() {
+    const cached = getCachedProfiles();
+
+    if (cached.length > 0) {
+      setProfiles(cached);
+    }
+
     try {
-      const data = await apiFetch("/account-profile/all", {
-        headers: getAuthHeaders(false),
+      const profilesRes = await fetch(`${API}/account-profile/all`, {
+        headers: authHeaders(),
       });
 
-      const list = Array.isArray(data) ? data : data?.profiles || [];
-      setProfiles(list);
-
-      if (list.length && !selectedPolicyNumber) {
-        const first = list[0];
-        setSelectedPolicyNumber(first.policy_number);
-        setProfile(first);
-        await loadDashboard(first.policy_number);
+      if (profilesRes.status === 401 || profilesRes.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return cached;
       }
-    } catch (err: any) {
-      setBackendError(err?.message || "Carrier profiles failed to load.");
+
+      if (profilesRes.ok) {
+        const profilesData = await safeJson(profilesRes);
+        const normalized = normalizeProfiles(profilesData);
+
+        if (normalized.length > 0) {
+          const merged = mergeProfiles(cached, normalized);
+          setProfiles(merged);
+          setCachedProfiles(merged);
+          return merged;
+        }
+      }
+    } catch {
+      if (cached.length > 0) {
+        setMessage("Loaded saved account workspace. Backend profile list unavailable.");
+      }
+    }
+
+    return cached;
+  }
+
+  function newBlankProfile() {
+    setProfile({
+      business_name: "",
+      carrier_name: "",
+      agency_name: "",
+      policy_number: "",
+      effective_date: "",
+      expiration_date: "",
+      evaluation_date: "",
+    });
+
+    setClaims([]);
+    setSummary({});
+    setTimeline({});
+    setRenewalMemo("");
+    setCopilotAnswer("");
+    setMessage("New blank account profile started.");
+  }
+
+  async function loadDashboard(policyNumberOverride?: string) {
+    if (!getToken()) {
+      router.replace("/login?fresh=1");
+      return;
+    }
+
+    setDashboardLoading(true);
+    setDashboardError("");
+
+    try {
+      await loadProfileList();
+
+      let activeProfile = profile;
+
+      if (policyNumberOverride) {
+        const selectedRes = await fetch(
+          `${API}/account-profile/policy/${encodeURIComponent(policyNumberOverride)}`,
+          { headers: authHeaders() }
+        );
+
+        if (selectedRes.status === 401 || selectedRes.status === 403) {
+          clearSession();
+          router.replace("/login?expired=1");
+          return;
+        }
+
+        if (selectedRes.ok) {
+          activeProfile = await safeJson(selectedRes);
+          setProfile(activeProfile || {});
+          if (activeProfile?.policy_number) {
+            updateProfileList([activeProfile]);
+          }
+        } else {
+          const cachedMatch = getCachedProfiles().find(
+            (item) => item?.policy_number === policyNumberOverride
+          );
+
+          if (cachedMatch) {
+            activeProfile = cachedMatch;
+            setProfile(cachedMatch);
+          }
+        }
+      } else {
+        const profileRes = await fetch(`${API}/account-profile/`, {
+          headers: authHeaders(),
+        });
+
+        if (profileRes.status === 401 || profileRes.status === 403) {
+          clearSession();
+          router.replace("/login?expired=1");
+          return;
+        }
+
+        if (profileRes.ok) {
+          activeProfile = await safeJson(profileRes);
+          setProfile(activeProfile || {});
+          if (activeProfile?.policy_number) {
+            updateProfileList([activeProfile]);
+          }
+        } else {
+          const cachedProfiles = getCachedProfiles();
+          if (cachedProfiles.length > 0 && !activeProfile?.policy_number) {
+            activeProfile = cachedProfiles[0];
+            setProfile(cachedProfiles[0]);
+          }
+        }
+      }
+
+      const policyNumber =
+        policyNumberOverride ||
+        activeProfile?.policy_number ||
+        profile?.policy_number ||
+        "";
+
+      const hasPolicy = policyNumber && policyNumber !== "Policy Not Set";
+
+      const claimsUrl = hasPolicy
+        ? `${API}/claims/?policy_number=${encodeURIComponent(policyNumber)}`
+        : `${API}/claims/`;
+
+      const claimsRes = await fetch(claimsUrl, { headers: authHeaders() });
+
+      if (claimsRes.status === 401 || claimsRes.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (claimsRes.ok) {
+        const claimsData = await safeJson(claimsRes);
+        setClaims(Array.isArray(claimsData) ? claimsData : []);
+      } else {
+        setClaims([]);
+      }
+
+      const summaryUrl = hasPolicy
+        ? `${API}/summary/underwriting?policy_number=${encodeURIComponent(policyNumber)}`
+        : `${API}/summary/underwriting`;
+
+      const summaryRes = await fetch(summaryUrl, { headers: authHeaders() });
+
+      if (summaryRes.status === 401 || summaryRes.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (summaryRes.ok) {
+        setSummary((await safeJson(summaryRes)) || {});
+      } else {
+        setSummary({});
+      }
+
+      const timelineUrl = hasPolicy
+        ? `${API}/timeline/analytics?policy_number=${encodeURIComponent(policyNumber)}`
+        : `${API}/timeline/analytics`;
+
+      const timelineRes = await fetch(timelineUrl, { headers: authHeaders() });
+
+      if (timelineRes.status === 401 || timelineRes.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (timelineRes.ok) {
+        setTimeline((await safeJson(timelineRes)) || {});
+      } else {
+        setTimeline({});
+      }
+    } catch {
+      setDashboardError("Dashboard could not load. Confirm backend is running.");
+      setClaims([]);
+      setSummary({});
+      setTimeline({});
+    } finally {
+      setDashboardLoading(false);
     }
   }
 
   async function selectAccount(policyNumber: string) {
-    setSelectedPolicyNumber(policyNumber);
-
-    const found = profiles.find((p) => p.policy_number === policyNumber);
-    if (found) setProfile(found);
-
+    if (!policyNumber) return;
+    setMessage(`Loading policy ${policyNumber}...`);
+    setCopilotAnswer("");
     await loadDashboard(policyNumber);
+    setMessage(`Loaded policy ${policyNumber}.`);
   }
 
-  async function deleteProfile() {
-    if (!profile.policy_number) return;
-
-    const confirmed = window.confirm(
-      `Delete ${profile.business_name || "this profile"}?`
-    );
+  async function deleteProfile(policyNumber: string) {
+    const confirmed = confirm(`Delete profile ${policyNumber}?`);
     if (!confirmed) return;
 
     try {
-      await apiFetch(
-        `/account-profile/${encodeURIComponent(profile.policy_number)}`,
+      const res = await fetch(
+        `${API}/account-profile/${encodeURIComponent(policyNumber)}`,
         {
           method: "DELETE",
-          headers: getAuthHeaders(false),
+          headers: authHeaders(),
         }
       );
 
-      setProfile(emptyProfile);
-      setSelectedPolicyNumber("");
-      await loadProfileList();
-    } catch (err: any) {
-      alert(err?.message || "Profile delete failed.");
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (!res.ok) {
+        setMessage("Failed to delete profile.");
+        return;
+      }
+
+      setProfiles((prev) => {
+        const next = prev.filter((p) => p.policy_number !== policyNumber);
+        setCachedProfiles(next);
+        return next;
+      });
+
+      if (profile?.policy_number === policyNumber) {
+        newBlankProfile();
+      }
+
+      setMessage(`Deleted profile ${policyNumber}.`);
+    } catch {
+      setProfiles((prev) => {
+        const next = prev.filter((p) => p.policy_number !== policyNumber);
+        setCachedProfiles(next);
+        return next;
+      });
+
+      if (profile?.policy_number === policyNumber) {
+        newBlankProfile();
+      }
+
+      setMessage(`Deleted local profile ${policyNumber}. Backend delete unavailable.`);
     }
   }
 
   async function saveProfile() {
-    try {
-      setSaving(true);
+    const payload = {
+      business_name: profile.business_name || "",
+      carrier_name: profile.carrier_name || "",
+      agency_name: profile.agency_name || "",
+      policy_number: profile.policy_number || "",
+      effective_date: profile.effective_date || "",
+      expiration_date: profile.expiration_date || "",
+      evaluation_date: profile.evaluation_date || "",
+    };
 
-      const saved = await apiFetch("/account-profile/", {
-        method: "POST",
-        headers: getAuthHeaders(true),
-        body: JSON.stringify(profile),
+    if (!payload.policy_number) {
+      setMessage("Policy number is required before saving.");
+      return;
+    }
+
+    try {
+      const res = await fetch(`${API}/account-profile/`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(),
+        },
+        body: JSON.stringify(payload),
       });
 
-      const savedProfile = saved?.profile || saved || profile;
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (!res.ok) {
+        updateProfileList([payload]);
+        setMessage("Saved profile locally. Backend save failed.");
+        return;
+      }
+
+      const savedData = await safeJson(res);
+      const savedProfile = savedData?.policy_number ? savedData : payload;
+
       setProfile(savedProfile);
-      setSelectedPolicyNumber(savedProfile.policy_number || profile.policy_number);
-      await loadProfileList();
-    } catch (err: any) {
-      alert(err?.message || "Profile save failed.");
-    } finally {
-      setSaving(false);
+      updateProfileList([savedProfile]);
+      setMessage("Account profile saved.");
+      await loadDashboard(savedProfile.policy_number);
+    } catch {
+      updateProfileList([payload]);
+      setMessage("Saved profile locally. Backend save unavailable.");
     }
   }
 
   async function lookupPolicy() {
     if (!profile.policy_number) {
-      alert("Enter a policy number first.");
+      setMessage("Enter a policy number first.");
       return;
     }
 
     try {
-      setLookingUp(true);
-
-      const data = await apiFetch(
-        `/carrier-profiles/lookup/${encodeURIComponent(profile.policy_number)}`,
-        {
-          headers: getAuthHeaders(false),
-        }
+      const res = await fetch(
+        `${API}/account-profile/policy/${encodeURIComponent(profile.policy_number)}`,
+        { headers: authHeaders() }
       );
 
-      setProfile((prev) => ({
-        ...prev,
-        ...(data?.profile || data || {}),
-      }));
-    } catch (err: any) {
-      alert(err?.message || "Policy lookup failed.");
-    } finally {
-      setLookingUp(false);
-    }
-  }
-
-  async function uploadFiles(files: FileList | null) {
-    if (!files?.length) return;
-
-    try {
-      setUploading(true);
-
-      const formData = new FormData();
-      Array.from(files).forEach((file) => formData.append("files", file));
-
-      if (selectedPolicyNumber) {
-        formData.append("policy_number", selectedPolicyNumber);
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
       }
 
-      const headers: HeadersInit = {};
-      if (token) headers["Authorization"] = `Bearer ${token}`;
+      if (!res.ok) {
+        const cachedMatch = getCachedProfiles().find(
+          (item) => item?.policy_number === profile.policy_number
+        );
 
-      await apiFetch("/upload/loss-run", {
-        method: "POST",
-        headers,
-        body: formData,
-      });
+        if (cachedMatch) {
+          setProfile(cachedMatch);
+          setCopilotAnswer("");
+          await loadDashboard(cachedMatch.policy_number);
+          setMessage("Account profile loaded from saved workspace.");
+          return;
+        }
 
-      await loadProfileList();
-      await loadDashboard(selectedPolicyNumber);
-    } catch (err: any) {
-      alert(err?.message || "Upload failed.");
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
+        setMessage("No account found for that policy number.");
+        return;
+      }
+
+      const data = await safeJson(res);
+      setProfile(data || {});
+      if (data?.policy_number) {
+        updateProfileList([data]);
+      }
+      setCopilotAnswer("");
+      await loadDashboard(data?.policy_number);
+      setMessage("Account profile loaded.");
+    } catch {
+      const cachedMatch = getCachedProfiles().find(
+        (item) => item?.policy_number === profile.policy_number
+      );
+
+      if (cachedMatch) {
+        setProfile(cachedMatch);
+        setCopilotAnswer("");
+        await loadDashboard(cachedMatch.policy_number);
+        setMessage("Account profile loaded from saved workspace.");
+        return;
+      }
+
+      setMessage("Lookup failed.");
     }
   }
 
-  async function downloadBlob(path: string, filename: string) {
-    const blob = await apiFetch(path, {
-      headers: getAuthHeaders(false),
+  async function uploadFiles() {
+    if (!files || files.length === 0) {
+      setMessage("Please select one or more PDF, Excel, or CSV files first.");
+      return;
+    }
+
+    if (!profile.policy_number || profile.policy_number === "Policy Not Set") {
+      setMessage("Select or enter a policy number before uploading.");
+      return;
+    }
+
+    setMessage("Uploading and analyzing loss runs...");
+
+    const formData = new FormData();
+    formData.append("policy_number", profile.policy_number);
+
+    let endpoint = `${API}/upload/loss-run`;
+
+    if (files.length === 1) {
+      formData.append("file", files[0]);
+    } else {
+      endpoint = `${API}/upload/loss-runs`;
+      Array.from(files).forEach((file) => formData.append("files", file));
+    }
+
+    const res = await fetch(endpoint, {
+      method: "POST",
+      headers: authHeaders(),
+      body: formData,
     });
 
-    const url = window.URL.createObjectURL(blob);
+    const data = await safeJson(res);
+
+    if (res.status === 401 || res.status === 403) {
+      clearSession();
+      router.replace("/login?expired=1");
+      return;
+    }
+
+    if (!res.ok) {
+      setMessage(`Upload failed: ${JSON.stringify(data)}`);
+      return;
+    }
+
+    setMessage(`Upload complete. Saved ${data?.saved_claims || 0} claim(s).`);
+    await loadDashboard(profile.policy_number);
+  }
+
+  async function downloadPdf(url: string, filename: string) {
+    const res = await fetch(url, { headers: authHeaders() });
+
+    if (res.status === 401 || res.status === 403) {
+      clearSession();
+      router.replace("/login?expired=1");
+      return;
+    }
+
+    if (!res.ok) {
+      setMessage("Could not generate report.");
+      return;
+    }
+
+    const blob = await res.blob();
+    const objectUrl = window.URL.createObjectURL(blob);
+
     const a = document.createElement("a");
-    a.href = url;
+    a.href = objectUrl;
     a.download = filename;
-    document.body.appendChild(a);
     a.click();
-    a.remove();
-    window.URL.revokeObjectURL(url);
+
+    window.URL.revokeObjectURL(objectUrl);
   }
 
   async function exportCarrierLossRun() {
-    if (!selectedPolicyNumber) return alert("Select a carrier profile first.");
+    const policy = profile?.policy_number
+      ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
+      : "";
 
-    await downloadBlob(
-      `/reports/carrier-loss-run?policy_number=${encodeURIComponent(
-        selectedPolicyNumber
-      )}`,
-      `LossQ-carrier-loss-run-${selectedPolicyNumber}.pdf`
+    await downloadPdf(
+      `${API}/reports/loss-run-template-pdf${policy}`,
+      "lossq_carrier_loss_run.pdf"
     );
   }
 
   async function exportExecutiveReport() {
-    if (!selectedPolicyNumber) return alert("Select a carrier profile first.");
+    const policy = profile?.policy_number
+      ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
+      : "";
 
-    await downloadBlob(
-      `/reports/executive?policy_number=${encodeURIComponent(
-        selectedPolicyNumber
-      )}`,
-      `LossQ-executive-report-${selectedPolicyNumber}.pdf`
+    await downloadPdf(
+      `${API}/reports/underwriting-pdf${policy}`,
+      "lossq_executive_report.pdf"
     );
   }
 
   async function generateRenewalMemo() {
-    if (!selectedPolicyNumber) return alert("Select a carrier profile first.");
+    if (!profile?.policy_number) {
+      setRenewalMemo("Select a policy/account first.");
+      return;
+    }
+
+    setMemoLoading(true);
+    setRenewalMemo(`Generating renewal memo for ${profile.policy_number}...`);
 
     try {
-      setMemoLoading(true);
+      const policy = `?policy_number=${encodeURIComponent(profile.policy_number)}`;
 
-      const data = await apiFetch("/summary/renewal-memo", {
-        method: "POST",
-        headers: getAuthHeaders(true),
-        body: JSON.stringify({ policy_number: selectedPolicyNumber }),
+      const res = await fetch(`${API}/renewal/memo${policy}`, {
+        headers: authHeaders(),
       });
 
-      setRenewalMemo(data?.memo || data?.renewal_memo || "");
-    } catch (err: any) {
-      alert(err?.message || "Renewal memo failed.");
+      const data = await safeJson(res);
+
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (!res.ok) {
+        setRenewalMemo(JSON.stringify(data));
+        return;
+      }
+
+      setRenewalMemo(
+        `Policy analyzed: ${data?.policy_number || profile.policy_number}\nClaims used: ${
+          data?.claims_used ?? claims.length
+        }\n\n${data?.memo || "No memo generated."}`
+      );
+    } catch {
+      setRenewalMemo("Memo failed.");
     } finally {
       setMemoLoading(false);
     }
   }
 
   async function generateCarrierPacket() {
-    if (!selectedPolicyNumber) return alert("Select a carrier profile first.");
+    await generateRenewalMemo();
+    await exportCarrierLossRun();
+    setMessage("Carrier packet generated.");
+  }
 
-    try {
-      setPacketLoading(true);
+  function copyRenewalMemo() {
+    navigator.clipboard.writeText(renewalMemo || "");
+    setMessage("Renewal memo copied.");
+  }
 
-      await downloadBlob(
-        `/carrier-packet?policy_number=${encodeURIComponent(
-          selectedPolicyNumber
-        )}`,
-        `LossQ-carrier-packet-${selectedPolicyNumber}.pdf`
-      );
-    } catch (err: any) {
-      alert(err?.message || "Carrier packet failed.");
-    } finally {
-      setPacketLoading(false);
+  async function askCopilot(questionOverride?: string) {
+    const question = questionOverride || copilotQuestion;
+
+    if (!question.trim()) {
+      setCopilotAnswer("Ask a question first.");
+      return;
     }
-  }
 
-  async function copyRenewalMemo() {
-    if (!renewalMemo) return;
-    await navigator.clipboard.writeText(renewalMemo);
-    alert("Renewal memo copied.");
-  }
+    if (!profile?.policy_number) {
+      setCopilotAnswer(
+        "Select a policy/account first so Copilot analyzes the correct claims."
+      );
+      setCopilotOpen(true);
+      return;
+    }
 
-  async function askCopilot() {
-    if (!copilotQuestion.trim()) return;
+    setCopilotOpen(true);
+    setCopilotLoading(true);
+    setCopilotAnswer(`Thinking about policy ${profile.policy_number}...`);
 
     try {
-      setCopilotLoading(true);
-
-      const data = await apiFetch("/copilot/ask", {
+      const res = await fetch(`${API}/copilot/ask`, {
         method: "POST",
-        headers: getAuthHeaders(true),
+        headers: {
+          "Content-Type": "application/json",
+          ...authHeaders(),
+        },
         body: JSON.stringify({
-          question: copilotQuestion,
-          policy_number: selectedPolicyNumber,
+          question,
+          policy_number: profile.policy_number,
         }),
       });
 
-      setCopilotAnswer(data?.answer || data?.response || "");
-    } catch (err: any) {
-      alert(err?.message || "Copilot failed.");
+      const data = await safeJson(res);
+
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (!res.ok) {
+        setCopilotAnswer(JSON.stringify(data));
+        return;
+      }
+
+      setCopilotAnswer(
+        `Policy analyzed: ${data?.policy_number || profile.policy_number}\nClaims used: ${
+          data?.claims_used ?? claims.length
+        }\n\n${data?.answer || "No answer returned."}`
+      );
+      setCopilotQuestion(question);
+    } catch {
+      setCopilotAnswer("Copilot failed.");
     } finally {
       setCopilotLoading(false);
     }
   }
 
   function logout() {
-    localStorage.removeItem("lossq_token");
-    localStorage.removeItem("lossq_session_started_at");
-    sessionStorage.clear();
-    router.push("/login");
+    clearSession();
+    router.replace("/login?fresh=1");
   }
 
-  function newCompanyProfile() {
-    setProfile(emptyProfile);
-    setSelectedPolicyNumber("");
+  const totalClaims = claims.length;
+  const openClaims = claims.filter((c) => c.status === "Open").length;
+  const totalIncurred = claims.reduce(
+    (sum, c) => sum + Number(c.total_incurred || 0),
+    0
+  );
+  const flaggedClaims = claims.filter((c) => c.flag).length;
+
+  const lossTrendData = objectToChartData(timeline?.incurred_by_year || {});
+  const agingData = objectToChartData(timeline?.open_claim_aging || {});
+  const severityData = objectToChartData(timeline?.severity_heatmap || {});
+  const lineData = objectToChartData(timeline?.incurred_by_line || {});
+
+  if (!authReady) {
+    return <LoadingScreen title="Checking session..." subtitle="Validating your LossQ access" />;
   }
 
-  useEffect(() => {
-    const storedToken = localStorage.getItem("lossq_token");
-    const sessionStarted = localStorage.getItem("lossq_session_started_at");
+  if (dashboardLoading) {
+    return <LoadingScreen title="Loading LossQ..." subtitle="Preparing underwriting workspace" />;
+  }
 
-    if (!storedToken) {
-      router.push("/login");
-      return;
-    }
-
-    if (sessionStarted) {
-      const age = Date.now() - Number(sessionStarted);
-      const maxAge = 24 * 60 * 60 * 1000;
-
-      if (age > maxAge) {
-        logout();
-        return;
-      }
-    } else {
-      localStorage.setItem("lossq_session_started_at", String(Date.now()));
-    }
-
-    setToken(storedToken);
-    setSessionChecking(false);
-  }, [router]);
-
-  useEffect(() => {
-    if (!token) return;
-
-    Promise.all([loadProfileList(), loadDashboard()]).finally(() =>
-      setLoading(false)
-    );
-  }, [token]);
-
-  const totals = useMemo(() => {
-    const totalClaims = claims.length;
-    const paid = claims.reduce((sum, c) => sum + Number(c.paid || 0), 0);
-    const reserve = claims.reduce((sum, c) => sum + Number(c.reserve || 0), 0);
-    const incurred = claims.reduce(
-      (sum, c) => sum + Number(c.incurred || c.paid || 0),
-      0
-    );
-
-    return {
-      totalClaims: dashboard.total_claims || totalClaims,
-      paid: dashboard.total_paid || paid,
-      reserve: dashboard.total_reserve || reserve,
-      incurred: dashboard.total_incurred || incurred,
-    };
-  }, [claims, dashboard]);
-
-  if (sessionChecking) {
+  if (dashboardError) {
     return (
-      <main className="min-h-screen bg-[#030712] text-white flex items-center justify-center">
-        <div className="rounded-3xl border border-white/10 bg-white/5 p-8 shadow-2xl backdrop-blur-xl">
-          <div className="h-10 w-10 animate-spin rounded-full border-2 border-blue-400 border-t-transparent mx-auto mb-4" />
-          <p className="text-slate-300">Checking secure session...</p>
-        </div>
-      </main>
-    );
-  }
+      <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
+        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,#1d4ed855,transparent_35%),radial-gradient(circle_at_bottom_right,#0ea5e955,transparent_30%)]" />
+        <div className="relative bg-white/10 backdrop-blur-xl border border-red-400/40 rounded-3xl p-10 max-w-lg w-full text-center shadow-2xl">
+          <h1 className="text-3xl font-bold mb-4 text-red-300">Dashboard Error</h1>
+          <p className="text-slate-300 mb-6">{dashboardError}</p>
 
-  if (loading) {
-    return (
-      <main className="min-h-screen bg-[#030712] text-white flex items-center justify-center">
-        <div className="rounded-3xl border border-blue-400/20 bg-white/5 p-8 shadow-[0_0_80px_rgba(59,130,246,.25)] backdrop-blur-xl">
-          <div className="h-10 w-10 animate-spin rounded-full border-2 border-blue-400 border-t-transparent mx-auto mb-4" />
-          <p className="text-slate-300">Loading LossQ dashboard...</p>
-        </div>
-      </main>
-    );
-  }
-
-  if (backendError) {
-    return (
-      <main className="min-h-screen bg-[#030712] text-white flex items-center justify-center p-6">
-        <div className="max-w-lg rounded-3xl border border-red-400/20 bg-red-500/10 p-8 backdrop-blur-xl">
-          <h1 className="text-2xl font-bold mb-3">Backend connection issue</h1>
-          <p className="text-slate-300 mb-6">{backendError}</p>
           <button
-            onClick={() => {
-              setBackendError("");
-              loadProfileList();
-              loadDashboard(selectedPolicyNumber);
-            }}
-            className="rounded-xl bg-blue-500 px-5 py-3 font-semibold hover:bg-blue-400"
+            onClick={() => loadDashboard()}
+            className="bg-blue-600 hover:bg-blue-500 px-6 py-3 rounded-xl font-semibold shadow-lg shadow-blue-600/30"
           >
             Retry
+          </button>
+
+          <button
+            onClick={logout}
+            className="block mx-auto mt-4 text-slate-400 hover:text-white text-sm"
+          >
+            Return to login
           </button>
         </div>
       </main>
@@ -481,351 +806,531 @@ export default function DashboardPage() {
   }
 
   return (
-    <main className="min-h-screen bg-[#030712] text-white">
-      <div className="fixed inset-0 -z-10 bg-[radial-gradient(circle_at_top_left,rgba(37,99,235,.35),transparent_35%),radial-gradient(circle_at_top_right,rgba(14,165,233,.20),transparent_30%),linear-gradient(180deg,#030712,#020617)]" />
+    <main className="min-h-screen bg-[#020617] text-white overflow-hidden">
+      <div className="fixed inset-0 bg-[radial-gradient(circle_at_top_left,#1d4ed866,transparent_28%),radial-gradient(circle_at_top_right,#0ea5e955,transparent_30%),radial-gradient(circle_at_bottom,#312e8155,transparent_35%)]" />
+      <div className="fixed inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:72px_72px] opacity-20" />
 
-      <header className="sticky top-0 z-30 border-b border-white/10 bg-black/30 backdrop-blur-xl">
-        <div className="mx-auto flex max-w-7xl items-center justify-between px-6 py-4">
+      <div className="relative max-w-7xl mx-auto px-5 md:px-8 py-8 pb-32">
+        <header className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between mb-8">
           <div>
-            <h1 className="text-2xl font-black tracking-tight">
-              LossQ Underwriting AI
+            <div className="inline-flex items-center gap-2 rounded-full border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-200 mb-5">
+              <span className="h-2 w-2 rounded-full bg-blue-400 shadow-[0_0_18px_#60a5fa]" />
+              AI Underwriting Command Center
+            </div>
+
+            <h1 className="text-4xl md:text-6xl font-black tracking-tight">
+              LossQ Dashboard
             </h1>
-            <p className="text-sm text-slate-400">
-              Claims intelligence, renewal strategy, and carrier-ready loss-run analytics
+
+            <p className="text-slate-300 mt-3 max-w-2xl">
+              Modern claims intelligence, renewal strategy, carrier reporting, and AI underwriting analysis in one workspace.
             </p>
           </div>
 
-          <div className="flex gap-3">
-            <button
-              onClick={() => router.push("/carrier-workspace")}
-              className="rounded-xl border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-200 hover:bg-blue-500/20"
-            >
-              Carrier Workspace
+          <div className="flex flex-wrap gap-3">
+            <NavButton href="/">Landing</NavButton>
+            <NavButton href="/settings">Settings</NavButton>
+            <button onClick={() => setCopilotOpen(true)} className="btn-primary">
+              Open Copilot
             </button>
-            <button
-              onClick={logout}
-              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-semibold hover:bg-white/10"
-            >
+            <button onClick={logout} className="btn-danger">
               Logout
             </button>
           </div>
-        </div>
-      </header>
+        </header>
 
-      <section className="mx-auto max-w-7xl px-6 py-8">
-        <div className="mb-8 rounded-[2rem] border border-white/10 bg-white/[0.06] p-8 shadow-[0_0_100px_rgba(37,99,235,.18)] backdrop-blur-xl">
-          <div className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between">
-            <div>
-              <div className="mb-3 inline-flex rounded-full border border-blue-400/30 bg-blue-500/10 px-4 py-1 text-sm text-blue-200">
-                AI-powered underwriting command center
-              </div>
-              <h2 className="max-w-3xl text-4xl font-black tracking-tight md:text-5xl">
-                Turn messy loss runs into clean carrier intelligence.
-              </h2>
-              <p className="mt-4 max-w-2xl text-slate-300">
-                Upload, analyze, summarize, export, and prepare renewal-ready
-                carrier packets from one modern dashboard.
-              </p>
-            </div>
-
-            <div className="grid min-w-[280px] gap-3">
-              <button
-                onClick={() => fileInputRef.current?.click()}
-                className="rounded-2xl bg-blue-500 px-6 py-4 font-bold shadow-[0_0_35px_rgba(59,130,246,.35)] hover:bg-blue-400"
-              >
-                {uploading ? "Uploading..." : "Upload Loss Runs"}
-              </button>
-
-              <input
-                ref={fileInputRef}
-                type="file"
-                multiple
-                accept=".pdf,.xlsx,.xls,.csv"
-                onChange={(e) => uploadFiles(e.target.files)}
-                className="hidden"
-              />
-
-              <button
-                onClick={generateCarrierPacket}
-                className="rounded-2xl border border-white/10 bg-white/10 px-6 py-4 font-bold hover:bg-white/15"
-              >
-                {packetLoading ? "Generating..." : "Generate Carrier Packet"}
-              </button>
-            </div>
+        {message && (
+          <div className="glass-panel mb-6 p-4 text-slate-200 border-blue-400/20">
+            {message}
           </div>
-        </div>
+        )}
 
-        <div className="grid gap-5 md:grid-cols-4">
-          <MetricCard label="Total Claims" value={totals.totalClaims} />
-          <MetricCard label="Paid Losses" value={money(totals.paid)} />
-          <MetricCard label="Reserves" value={money(totals.reserve)} />
-          <MetricCard label="Total Incurred" value={money(totals.incurred)} />
-        </div>
-
-        <div className="mt-8 grid gap-6 lg:grid-cols-[420px_1fr]">
-          <GlassPanel title="Carrier Profile">
-            <label className="mb-2 block text-sm text-slate-400">
-              Saved Carrier Profiles
-            </label>
-
-            <select
-              value={selectedPolicyNumber}
-              onChange={(e) => selectAccount(e.target.value)}
-              className="mb-4 w-full rounded-2xl border border-white/10 bg-slate-950/80 px-4 py-3 text-white outline-none focus:border-blue-400"
-            >
-              <option value="">Select carrier profile</option>
-              {profiles.map((p) => (
-                <option key={p.policy_number} value={p.policy_number}>
-                  {p.business_name || "Unnamed Business"} — {p.policy_number}
-                </option>
-              ))}
-            </select>
-
-            <div className="mb-5 rounded-2xl border border-blue-400/20 bg-blue-500/10 p-4">
-              <p className="text-sm text-slate-400">Selected Profile</p>
-              <h3 className="text-xl font-bold">
-                {profile.business_name || "New Company Profile"}
-              </h3>
-              <p className="text-sm text-slate-300">
-                {profile.carrier_name || "No carrier entered"} ·{" "}
-                {profile.policy_number || "No policy number"}
+        <section className="glass-panel p-6 md:p-8 mb-8">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-end lg:justify-between">
+            <div className="flex-1">
+              <h2 className="text-2xl md:text-3xl font-bold">Carrier Profile Workspace</h2>
+              <p className="text-slate-400 mt-2">
+                Select a saved carrier profile or create a new company profile.
               </p>
+
+              <div className="mt-6 max-w-2xl">
+                <label className="block text-sm text-blue-200 mb-2">
+                  Saved Carrier Profiles
+                </label>
+
+                <select
+                  value={profile?.policy_number || ""}
+                  onChange={(e) => selectAccount(e.target.value)}
+                  className="w-full rounded-2xl bg-slate-950/70 border border-white/10 px-4 py-4 text-white outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20"
+                >
+                  <option value="">Select saved profile...</option>
+                  {profiles.map((item) => (
+                    <option key={item.id || item.policy_number} value={item.policy_number}>
+                      {(item.business_name || "Unnamed Business") +
+                        " — " +
+                        (item.policy_number || "No Policy Number")}
+                    </option>
+                  ))}
+                </select>
+              </div>
             </div>
 
-            <ProfileInput
-              label="Business Name"
-              value={profile.business_name}
-              onChange={(v) => setProfile({ ...profile, business_name: v })}
-            />
-            <ProfileInput
-              label="Carrier Name"
-              value={profile.carrier_name || ""}
-              onChange={(v) => setProfile({ ...profile, carrier_name: v })}
-            />
-            <ProfileInput
-              label="Policy Number"
-              value={profile.policy_number}
-              onChange={(v) => setProfile({ ...profile, policy_number: v })}
-            />
-            <ProfileInput
-              label="Effective Date"
-              type="date"
-              value={profile.effective_date || ""}
-              onChange={(v) => setProfile({ ...profile, effective_date: v })}
-            />
-            <ProfileInput
-              label="Expiration Date"
-              type="date"
-              value={profile.expiration_date || ""}
-              onChange={(v) => setProfile({ ...profile, expiration_date: v })}
-            />
-            <ProfileInput
-              label="Line of Business"
-              value={profile.line_of_business || ""}
-              onChange={(v) => setProfile({ ...profile, line_of_business: v })}
-            />
-
-            <textarea
-              value={profile.notes || ""}
-              onChange={(e) => setProfile({ ...profile, notes: e.target.value })}
-              placeholder="Carrier notes, underwriting details, renewal strategy..."
-              className="mt-3 min-h-[110px] w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 text-sm outline-none focus:border-blue-400"
-            />
-
-            <div className="mt-5 grid grid-cols-2 gap-3">
-              <button onClick={newCompanyProfile} className="btn-secondary">
+            <div className="flex flex-wrap gap-3">
+              <button onClick={newBlankProfile} className="btn-secondary">
                 New Company Profile
               </button>
-              <button onClick={saveProfile} className="btn-primary">
-                {saving ? "Saving..." : "Save Profile"}
-              </button>
-              <button onClick={lookupPolicy} className="btn-secondary">
-                {lookingUp ? "Looking up..." : "Lookup"}
-              </button>
-              <button onClick={deleteProfile} className="btn-danger">
-                Delete Profile
-              </button>
+
+              {profile?.policy_number && (
+                <button
+                  type="button"
+                  onClick={() => deleteProfile(profile.policy_number)}
+                  className="btn-danger"
+                >
+                  Delete Profile
+                </button>
+              )}
             </div>
-          </GlassPanel>
-
-          <div className="grid gap-6">
-            <GlassPanel title="AI Underwriting Summary">
-              <p className="whitespace-pre-wrap text-slate-300">
-                {aiSummary || "Upload loss runs or select a profile to generate underwriting intelligence."}
-              </p>
-            </GlassPanel>
-
-            <GlassPanel title="Reports & Exports">
-              <div className="grid gap-3 md:grid-cols-3">
-                <button onClick={exportCarrierLossRun} className="btn-secondary">
-                  Export Carrier Loss Run
-                </button>
-                <button onClick={exportExecutiveReport} className="btn-secondary">
-                  Export Executive Report
-                </button>
-                <button onClick={generateRenewalMemo} className="btn-primary">
-                  {memoLoading ? "Generating..." : "Generate Renewal Memo"}
-                </button>
-              </div>
-            </GlassPanel>
-
-            <GlassPanel title="Renewal Memo">
-              <div className="mb-4 flex justify-end">
-                <button onClick={copyRenewalMemo} className="btn-secondary">
-                  Copy Renewal Memo
-                </button>
-              </div>
-              <div className="min-h-[180px] whitespace-pre-wrap rounded-2xl border border-white/10 bg-black/30 p-5 text-slate-300">
-                {renewalMemo || "No renewal memo generated yet."}
-              </div>
-            </GlassPanel>
           </div>
-        </div>
 
-        <div className="mt-8 grid gap-6 lg:grid-cols-2">
-          <GlassPanel title="Claims Table">
-            <div className="overflow-x-auto">
-              <table className="w-full text-left text-sm">
-                <thead className="text-slate-400">
-                  <tr className="border-b border-white/10">
-                    <th className="py-3">Claim #</th>
-                    <th className="py-3">Date</th>
-                    <th className="py-3">Type</th>
-                    <th className="py-3">Status</th>
-                    <th className="py-3 text-right">Incurred</th>
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 mt-8">
+            <ProfileDetail label="Business" value={profile?.business_name || "-"} />
+            <ProfileDetail label="Policy" value={profile?.policy_number || "-"} />
+            <ProfileDetail label="Carrier" value={profile?.carrier_name || "-"} />
+            <ProfileDetail label="Agency" value={profile?.agency_name || "-"} />
+          </div>
+        </section>
+
+        <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+          <MetricCard title="Total Claims" value={totalClaims} />
+          <MetricCard title="Open Claims" value={openClaims} />
+          <MetricCard title="Total Incurred" value={`$${Number(totalIncurred).toLocaleString()}`} />
+          <MetricCard title="Renewal Risk" value={summary?.renewal_risk || "GREEN"} />
+        </section>
+
+        <section className="glass-panel p-6 md:p-8 mb-8">
+          <h2 className="text-2xl md:text-3xl font-bold mb-5">Upload & Report Center</h2>
+
+          <div className="flex flex-wrap gap-4 items-center">
+            <input
+              type="file"
+              multiple
+              accept=".pdf,.xlsx,.csv"
+              onChange={(e) => setFiles(e.target.files)}
+              className="text-sm text-slate-300 file:mr-4 file:rounded-xl file:border-0 file:bg-blue-600 file:px-4 file:py-3 file:text-white file:font-semibold"
+            />
+
+            <button onClick={uploadFiles} className="btn-primary">Upload & Analyze</button>
+            <button onClick={exportCarrierLossRun} className="btn-success">Export Carrier Loss Run</button>
+            <button onClick={exportExecutiveReport} className="btn-success">Export Executive Report</button>
+            <button onClick={generateCarrierPacket} className="btn-purple">Generate Carrier Packet</button>
+            <a href="/carrier-workspace" className="btn-purple">Carrier Workspace</a>
+          </div>
+        </section>
+
+        <section className="glass-panel p-6 md:p-8 mb-8">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between mb-6">
+            <h2 className="text-2xl md:text-3xl font-bold">Carrier Account Profile</h2>
+
+            <div className="flex gap-3">
+              <button onClick={lookupPolicy} className="btn-secondary">Lookup</button>
+              <button onClick={saveProfile} className="btn-success">Save Profile</button>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+            <Input label="Business Name" value={profile?.business_name || ""} onChange={(v) => setProfile({ ...profile, business_name: v })} />
+            <Input label="Carrier Name" value={profile?.carrier_name || ""} onChange={(v) => setProfile({ ...profile, carrier_name: v })} />
+            <Input label="Agency Name" value={profile?.agency_name || ""} onChange={(v) => setProfile({ ...profile, agency_name: v })} />
+            <Input label="Policy Number" value={profile?.policy_number || ""} onChange={(v) => setProfile({ ...profile, policy_number: v })} />
+            <Input label="Effective Date" value={profile?.effective_date || ""} onChange={(v) => setProfile({ ...profile, effective_date: v })} />
+            <Input label="Expiration Date" value={profile?.expiration_date || ""} onChange={(v) => setProfile({ ...profile, expiration_date: v })} />
+            <Input label="Evaluation Date" value={profile?.evaluation_date || ""} onChange={(v) => setProfile({ ...profile, evaluation_date: v })} />
+          </div>
+        </section>
+
+        <section className="glass-panel p-6 md:p-8 mb-8">
+          <h2 className="text-2xl md:text-3xl font-bold mb-5">AI Underwriting Summary</h2>
+          <p className="text-slate-300 leading-8">{summary?.summary || "No summary available."}</p>
+          <p className="text-blue-200 mt-6">{summary?.recommendation || "Upload claims to generate intelligence."}</p>
+        </section>
+
+        <details className="glass-panel p-6 md:p-8 mb-8">
+          <summary className="cursor-pointer text-2xl font-bold">AI Renewal Memo</summary>
+
+          <div className="mt-6">
+            <div className="flex gap-4 mb-5">
+              <button onClick={generateRenewalMemo} disabled={memoLoading} className="btn-purple disabled:opacity-50">
+                {memoLoading ? "Generating..." : "Generate Renewal Memo"}
+              </button>
+
+              {renewalMemo && (
+                <button onClick={copyRenewalMemo} className="btn-secondary">
+                  Copy Memo
+                </button>
+              )}
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-5 max-h-[420px] overflow-y-auto">
+              <pre className="whitespace-pre-wrap text-slate-300 leading-7 text-sm">
+                {renewalMemo || "Generate a memo above."}
+              </pre>
+            </div>
+          </div>
+        </details>
+
+        <details className="glass-panel p-6 md:p-8 mb-8">
+          <summary className="cursor-pointer text-2xl md:text-3xl font-bold">
+            Interactive Claim Development Charts
+          </summary>
+
+          <div className="mt-6">
+            <p className="text-slate-400 mb-6">
+              Visualize loss trends, claim aging, severity distribution, and line-of-business concentration.
+            </p>
+
+            <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+              <MetricCard title="Reserve Pressure" value={timeline?.reserve_pressure || "Low"} />
+              <MetricCard title="Open Claims" value={timeline?.open_claims || 0} />
+              <MetricCard title="Total Reserve" value={`$${Number(timeline?.total_reserve || 0).toLocaleString()}`} />
+              <MetricCard title="Total Incurred" value={`$${Number(timeline?.total_incurred || 0).toLocaleString()}`} />
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-5 mb-6">
+              <h3 className="font-semibold mb-2">Trend Intelligence</h3>
+              <p className="text-slate-300">{timeline?.trend_note || "No trend intelligence available yet."}</p>
+            </div>
+
+            <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
+              <ChartCard title="Incurred Loss Trend">
+                <ResponsiveContainer width="100%" height={280}>
+                  <LineChart data={lossTrendData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <XAxis dataKey="name" stroke="#94a3b8" />
+                    <YAxis stroke="#94a3b8" />
+                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
+                    <Line type="monotone" dataKey="value" stroke="#38bdf8" strokeWidth={4} dot={{ fill: "#38bdf8", strokeWidth: 2, r: 5 }} />
+                  </LineChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="Open Claim Aging">
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={agingData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <XAxis dataKey="name" stroke="#94a3b8" />
+                    <YAxis stroke="#94a3b8" />
+                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
+                    <Bar dataKey="value" fill="#f59e0b" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="Severity Distribution">
+                <ResponsiveContainer width="100%" height={280}>
+                  <PieChart>
+                    <Pie data={severityData} dataKey="value" nameKey="name" outerRadius={100} label>
+                      {severityData.map((_, index) => {
+                        const colors = ["#22c55e", "#eab308", "#f97316", "#ef4444"];
+                        return <Cell key={`cell-${index}`} fill={colors[index % colors.length]} />;
+                      })}
+                    </Pie>
+                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
+                  </PieChart>
+                </ResponsiveContainer>
+              </ChartCard>
+
+              <ChartCard title="Incurred by Line of Business">
+                <ResponsiveContainer width="100%" height={280}>
+                  <BarChart data={lineData}>
+                    <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                    <XAxis dataKey="name" stroke="#94a3b8" />
+                    <YAxis stroke="#94a3b8" />
+                    <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
+                    <Bar dataKey="value" fill="#8b5cf6" radius={[8, 8, 0, 0]} />
+                  </BarChart>
+                </ResponsiveContainer>
+              </ChartCard>
+            </div>
+          </div>
+        </details>
+
+        <section className="glass-panel p-6 md:p-8">
+          <h2 className="text-2xl md:text-3xl font-bold mb-6">Claims Analysis</h2>
+
+          <div className="overflow-x-auto">
+            <table className="w-full min-w-[900px]">
+              <thead>
+                <tr className="border-b border-white/10 text-left text-slate-300">
+                  <th className="pb-4">Claim #</th>
+                  <th className="pb-4">Line</th>
+                  <th className="pb-4">Status</th>
+                  <th className="pb-4">Paid</th>
+                  <th className="pb-4">Reserve</th>
+                  <th className="pb-4">Total</th>
+                  <th className="pb-4">Policy</th>
+                  <th className="pb-4">Flag</th>
+                </tr>
+              </thead>
+
+              <tbody>
+                {claims.length === 0 ? (
+                  <tr>
+                    <td colSpan={8} className="py-6 text-slate-400">
+                      No claims found for this policy.
+                    </td>
                   </tr>
-                </thead>
-                <tbody>
-                  {claims.length ? (
-                    claims.map((claim, index) => (
-                      <tr key={claim.id || index} className="border-b border-white/5">
-                        <td className="py-3">{claim.claim_number || "—"}</td>
-                        <td className="py-3">{claim.date_of_loss || "—"}</td>
-                        <td className="py-3">{claim.loss_type || "—"}</td>
-                        <td className="py-3">{claim.status || "—"}</td>
-                        <td className="py-3 text-right">
-                          {money(Number(claim.incurred || claim.paid || 0))}
+                ) : (
+                  [...claims]
+                    .sort((a, b) => {
+                      const statusOrder: Record<string, number> = {
+                        Open: 0,
+                        Pending: 1,
+                        Reopened: 2,
+                        Closed: 3,
+                      };
+
+                      const aStatus = statusOrder[a.status] ?? 9;
+                      const bStatus = statusOrder[b.status] ?? 9;
+
+                      if (aStatus !== bStatus) return aStatus - bStatus;
+
+                      return Number(b.total_incurred || 0) - Number(a.total_incurred || 0);
+                    })
+                    .map((claim) => (
+                      <tr key={claim.id || claim.claim_number} className="border-b border-white/10 text-slate-300">
+                        <td className="py-4">
+                          {claim.id ? (
+                            <a href={`/claims/${claim.id}`} className="text-blue-300 hover:text-blue-200 underline">
+                              {claim.claim_number || "Unnamed Claim"}
+                            </a>
+                          ) : (
+                            claim.claim_number || "Unnamed Claim"
+                          )}
+                        </td>
+                        <td>{claim.line_of_business || "-"}</td>
+                        <td>{claim.status || "-"}</td>
+                        <td>${Number(claim.paid_amount || 0).toLocaleString()}</td>
+                        <td>${Number(claim.reserve_amount || 0).toLocaleString()}</td>
+                        <td>${Number(claim.total_incurred || 0).toLocaleString()}</td>
+                        <td>{claim.policy_number || "-"}</td>
+                        <td>
+                          {claim.flag ? (
+                            <span className="text-red-300">{claim.flag}</span>
+                          ) : (
+                            <span className="text-slate-500">None</span>
+                          )}
                         </td>
                       </tr>
                     ))
-                  ) : (
-                    <tr>
-                      <td className="py-6 text-slate-400" colSpan={5}>
-                        No claims loaded yet.
-                      </td>
-                    </tr>
-                  )}
-                </tbody>
-              </table>
-            </div>
-          </GlassPanel>
+                )}
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </div>
 
-          <GlassPanel title="Loss Analytics">
-            <div className="space-y-5">
-              <Bar label="Paid" value={totals.paid} max={totals.incurred || 1} />
-              <Bar label="Reserve" value={totals.reserve} max={totals.incurred || 1} />
-              <Bar label="Incurred" value={totals.incurred} max={totals.incurred || 1} />
-            </div>
-          </GlassPanel>
-        </div>
+      <button
+        onClick={() => setCopilotOpen(!copilotOpen)}
+        className="fixed bottom-6 right-6 z-50 rounded-full bg-blue-600 hover:bg-blue-500 px-6 py-4 font-semibold shadow-2xl shadow-blue-600/40"
+      >
+        {copilotOpen ? "Close Copilot" : "Ask Copilot"}
+      </button>
 
-        <div className="mt-8">
-          <GlassPanel title="LossQ Copilot">
-            <div className="grid gap-4 md:grid-cols-[1fr_auto]">
+      {copilotOpen && (
+        <div className="fixed bottom-24 right-6 z-50 w-[420px] max-w-[calc(100vw-3rem)] bg-slate-950/95 backdrop-blur-xl border border-blue-400/30 rounded-3xl shadow-2xl shadow-blue-900/40 overflow-hidden">
+          <div className="bg-white/5 px-5 py-4 flex justify-between border-b border-white/10">
+            <div>
+              <h2 className="font-semibold">AI Underwriting Copilot</h2>
+              <p className="text-xs text-slate-400">
+                Account: {profile?.business_name || "No account selected"} | Policy: {profile?.policy_number || "-"}
+              </p>
+            </div>
+
+            <button onClick={() => setCopilotOpen(false)} className="text-slate-400 hover:text-white">
+              ✕
+            </button>
+          </div>
+
+          <div className="p-5 max-h-[520px] overflow-y-auto">
+            {[
+              "What are the biggest renewal concerns?",
+              "Summarize litigation exposure.",
+              "What claims should concern carriers?",
+              "What should the broker explain before submission?",
+            ].map((q) => (
+              <button
+                key={q}
+                onClick={() => askCopilot(q)}
+                className="w-full text-left bg-white/5 hover:bg-white/10 border border-white/10 rounded-xl px-3 py-2 text-sm mb-2"
+              >
+                {q}
+              </button>
+            ))}
+
+            <div className="flex gap-2 mt-4">
               <input
                 value={copilotQuestion}
                 onChange={(e) => setCopilotQuestion(e.target.value)}
-                placeholder="Ask about loss trends, renewal risk, reserves, claim frequency, or carrier strategy..."
-                className="rounded-2xl border border-white/10 bg-black/30 px-4 py-4 outline-none focus:border-blue-400"
+                placeholder="Ask a question..."
+                className="flex-1 bg-slate-950 border border-white/10 rounded-xl px-3 py-2 text-sm outline-none focus:border-blue-400"
               />
-              <button onClick={askCopilot} className="btn-primary">
-                {copilotLoading ? "Thinking..." : "Ask Copilot"}
+
+              <button onClick={() => askCopilot()} disabled={copilotLoading} className="btn-primary disabled:opacity-50">
+                {copilotLoading ? "..." : "Ask"}
               </button>
             </div>
 
             {copilotAnswer && (
-              <div className="mt-5 whitespace-pre-wrap rounded-2xl border border-blue-400/20 bg-blue-500/10 p-5 text-slate-200">
-                {copilotAnswer}
+              <div className="bg-white/5 border border-white/10 rounded-2xl p-4 mt-4">
+                <p className="text-slate-300 whitespace-pre-line text-sm leading-7">
+                  {copilotAnswer}
+                </p>
               </div>
             )}
-          </GlassPanel>
+          </div>
         </div>
-      </section>
+      )}
+
+      <style jsx global>{`
+        .glass-panel {
+          border-radius: 1.5rem;
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: rgba(15, 23, 42, 0.68);
+          backdrop-filter: blur(18px);
+          box-shadow: 0 24px 80px rgba(2, 6, 23, 0.45);
+        }
+
+        .btn-primary {
+          border-radius: 0.9rem;
+          background: linear-gradient(135deg, #2563eb, #0ea5e9);
+          padding: 0.75rem 1.15rem;
+          font-weight: 700;
+          color: white;
+          box-shadow: 0 14px 35px rgba(37, 99, 235, 0.25);
+          transition: 0.2s ease;
+        }
+
+        .btn-primary:hover {
+          transform: translateY(-1px);
+          filter: brightness(1.08);
+        }
+
+        .btn-secondary {
+          border-radius: 0.9rem;
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: rgba(255, 255, 255, 0.07);
+          padding: 0.75rem 1.15rem;
+          font-weight: 700;
+          color: white;
+          transition: 0.2s ease;
+        }
+
+        .btn-secondary:hover {
+          background: rgba(255, 255, 255, 0.12);
+        }
+
+        .btn-success {
+          border-radius: 0.9rem;
+          background: linear-gradient(135deg, #059669, #22c55e);
+          padding: 0.75rem 1.15rem;
+          font-weight: 700;
+          color: white;
+          box-shadow: 0 14px 35px rgba(34, 197, 94, 0.2);
+        }
+
+        .btn-purple {
+          border-radius: 0.9rem;
+          background: linear-gradient(135deg, #7c3aed, #a855f7);
+          padding: 0.75rem 1.15rem;
+          font-weight: 700;
+          color: white;
+          box-shadow: 0 14px 35px rgba(168, 85, 247, 0.2);
+        }
+
+        .btn-danger {
+          border-radius: 0.9rem;
+          background: linear-gradient(135deg, #dc2626, #f43f5e);
+          padding: 0.75rem 1.15rem;
+          font-weight: 700;
+          color: white;
+          box-shadow: 0 14px 35px rgba(244, 63, 94, 0.2);
+        }
+      `}</style>
     </main>
   );
 }
 
-function MetricCard({ label, value }: { label: string; value: string | number }) {
+function LoadingScreen({ title, subtitle }: { title: string; subtitle: string }) {
   return (
-    <div className="rounded-3xl border border-white/10 bg-white/[0.06] p-6 shadow-[0_0_50px_rgba(37,99,235,.10)] backdrop-blur-xl">
-      <p className="text-sm text-slate-400">{label}</p>
-      <h3 className="mt-2 text-3xl font-black">{value}</h3>
+    <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,#1d4ed866,transparent_35%)]" />
+      <div className="relative text-center rounded-3xl border border-white/10 bg-white/10 backdrop-blur-xl p-10 shadow-2xl">
+        <div className="mx-auto mb-5 h-12 w-12 rounded-full border-4 border-blue-400/30 border-t-blue-400 animate-spin" />
+        <div className="text-3xl font-bold mb-3">{title}</div>
+        <div className="text-slate-400">{subtitle}</div>
+      </div>
+    </main>
+  );
+}
+
+function NavButton({ href, children }: { href: string; children: ReactNode }) {
+  return (
+    <a href={href} className="btn-secondary">
+      {children}
+    </a>
+  );
+}
+
+function ProfileDetail({ label, value }: { label: string; value: any }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
+      <div className="text-xs uppercase tracking-[0.2em] text-blue-300 mb-2">{label}</div>
+      <div className="font-bold break-words">{value || "-"}</div>
     </div>
   );
 }
 
-function GlassPanel({
-  title,
-  children,
-}: {
-  title: string;
-  children: React.ReactNode;
-}) {
-  return (
-    <section className="rounded-3xl border border-white/10 bg-white/[0.06] p-6 shadow-[0_0_70px_rgba(15,23,42,.4)] backdrop-blur-xl">
-      <h2 className="mb-5 text-xl font-black">{title}</h2>
-      {children}
-    </section>
-  );
-}
-
-function ProfileInput({
+function Input({
   label,
   value,
   onChange,
-  type = "text",
 }: {
   label: string;
   value: string;
   onChange: (value: string) => void;
-  type?: string;
 }) {
   return (
-    <label className="mt-3 block">
-      <span className="mb-1 block text-sm text-slate-400">{label}</span>
+    <div>
+      <label className="block text-sm text-blue-200 mb-2">{label}</label>
       <input
-        type={type}
         value={value}
         onChange={(e) => onChange(e.target.value)}
-        className="w-full rounded-2xl border border-white/10 bg-black/30 px-4 py-3 outline-none focus:border-blue-400"
+        className="w-full bg-slate-950/70 border border-white/10 rounded-2xl px-4 py-3 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20"
       />
-    </label>
-  );
-}
-
-function Bar({ label, value, max }: { label: string; value: number; max: number }) {
-  const width = Math.min(100, Math.round((value / max) * 100));
-
-  return (
-    <div>
-      <div className="mb-2 flex justify-between text-sm">
-        <span className="text-slate-300">{label}</span>
-        <span className="text-slate-400">{money(value)}</span>
-      </div>
-      <div className="h-4 rounded-full bg-white/10">
-        <div
-          className="h-4 rounded-full bg-blue-500 shadow-[0_0_25px_rgba(59,130,246,.55)]"
-          style={{ width: `${width}%` }}
-        />
-      </div>
     </div>
   );
 }
 
-function money(value: number) {
-  return new Intl.NumberFormat("en-US", {
-    style: "currency",
-    currency: "USD",
-    maximumFractionDigits: 0,
-  }).format(value || 0);
+function MetricCard({ title, value }: { title: string; value: any }) {
+  return (
+    <div className="rounded-3xl border border-white/10 bg-white/[0.07] backdrop-blur-xl p-6 shadow-2xl shadow-slate-950/30">
+      <div className="text-slate-400 mb-3 text-sm">{title}</div>
+      <div className="text-2xl font-black break-words">{value || "-"}</div>
+    </div>
+  );
+}
+
+function ChartCard({
+  title,
+  children,
+}: {
+  title: string;
+  children: ReactNode;
+}) {
+  return (
+    <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-5">
+      <h3 className="font-bold mb-4">{title}</h3>
+      {children}
+    </div>
+  );
 }
