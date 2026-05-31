@@ -110,6 +110,7 @@ export default function DashboardPage() {
   const [decision, setDecision] = useState<any>({});
   const [carrierAppetite, setCarrierAppetite] = useState<any>({});
   const [submissionReadiness, setSubmissionReadiness] = useState<any>({});
+  const [carrierMatch, setCarrierMatch] = useState<any>({});
   const [timeline, setTimeline] = useState<any>({});
   const [profile, setProfile] = useState<any>({});
   const [profiles, setProfiles] = useState<any[]>([]);
@@ -254,6 +255,7 @@ export default function DashboardPage() {
     setDecision({});
     setCarrierAppetite({});
     setSubmissionReadiness({});
+    setCarrierMatch({});
     setTimeline({});
     setRenewalMemo("");
     setCopilotAnswer("");
@@ -427,7 +429,23 @@ export default function DashboardPage() {
       } else {
         setSubmissionReadiness({});
       }
+const carrierMatchUrl = hasPolicy
+  ? `${API}/renewal/carrier-match?policy_number=${encodeURIComponent(policyNumber)}`
+  : `${API}/renewal/carrier-match`;
 
+const carrierMatchRes = await fetch(carrierMatchUrl, { headers: authHeaders() });
+
+if (carrierMatchRes.status === 401 || carrierMatchRes.status === 403) {
+  clearSession();
+  router.replace("/login?expired=1");
+  return;
+}
+
+if (carrierMatchRes.ok) {
+  setCarrierMatch((await safeJson(carrierMatchRes)) || {});
+} else {
+  setCarrierMatch({});
+}
       const timelineUrl = hasPolicy
         ? `${API}/timeline/analytics?policy_number=${encodeURIComponent(policyNumber)}`
         : `${API}/timeline/analytics`;
@@ -452,6 +470,7 @@ export default function DashboardPage() {
       setDecision({});
       setCarrierAppetite({});
       setSubmissionReadiness({});
+      setCarrierMatch({});
       setTimeline({});
     } finally {
       setDashboardLoading(false);
@@ -469,6 +488,7 @@ export default function DashboardPage() {
     setDecision({});
     setCarrierAppetite({});
     setSubmissionReadiness({});
+    setCarrierMatch({});
     setTimeline({});
 
     await loadDashboard(policyNumber);
@@ -1273,29 +1293,72 @@ export default function DashboardPage() {
           )}
 
           {activeTool === "carrier-match" && (
-            <section className="glass-panel p-6 md:p-8">
-              <p className="text-sm uppercase tracking-[0.25em] text-purple-300 mb-3">
-                Carrier Match Engine
-              </p>
+  <section className="glass-panel p-6 md:p-8">
+    <p className="text-sm uppercase tracking-[0.25em] text-purple-300 mb-3">
+      Carrier Match Engine
+    </p>
 
-              <h2 className="text-2xl md:text-3xl font-bold mb-4">
-                Named Carrier Matching
-              </h2>
+    <h2 className="text-2xl md:text-3xl font-bold mb-6">
+      Named Carrier Matching
+    </h2>
 
-              <p className="text-slate-300 leading-8 max-w-3xl">
-                This tab is ready for the next engine. It will rank named carriers such as
-                Travelers, Liberty Mutual, Nationwide, CNA, Hanover, Auto-Owners, Progressive,
-                and regional markets based on the selected policy’s claims, litigation,
-                reserves, severity, frequency, and renewal risk profile.
-              </p>
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+      <MetricCard
+        title="Recommended Carrier"
+        value={carrierMatch?.recommended_carrier || "-"}
+      />
+      <MetricCard
+        title="Match Score"
+        value={
+          carrierMatch?.recommended_score !== undefined
+            ? `${carrierMatch.recommended_score}/100`
+            : "-"
+        }
+      />
+      <MetricCard
+        title="Carriers Ranked"
+        value={carrierMatch?.top_carriers?.length || 0}
+      />
+    </div>
 
-              <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mt-8">
-                <MetricCard title="Status" value="Ready for Build" />
-                <MetricCard title="Next Endpoint" value="/renewal/carrier-match" />
-                <MetricCard title="Purpose" value="Named Carrier Ranking" />
-              </div>
-            </section>
-          )}
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+      <ListCard
+        title="Top Carrier Matches"
+        items={
+          carrierMatch?.top_carriers?.length
+            ? carrierMatch.top_carriers.map(
+                (item: any) =>
+                  `${item.carrier} — ${item.match_score}/100 — ${item.fit}`
+              )
+            : ["No carrier matches available yet."]
+        }
+        color="purple"
+      />
+
+      <ListCard
+        title="Carrier Match Reasons"
+        items={
+          carrierMatch?.top_carriers?.length
+            ? carrierMatch.top_carriers.map(
+                (item: any) => `${item.carrier}: ${item.reason}`
+              )
+            : ["No carrier match reasons available yet."]
+        }
+        color="blue"
+      />
+    </div>
+
+    <div className="mt-6">
+      <TextCard
+        title="Carrier Match Summary"
+        text={
+          carrierMatch?.carrier_match_summary ||
+          "No carrier match summary available yet."
+        }
+      />
+    </div>
+  </section>
+)}
 
           {activeTool === "summary" && (
             <section className="glass-panel p-6 md:p-8">
