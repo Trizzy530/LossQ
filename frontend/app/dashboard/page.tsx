@@ -34,6 +34,7 @@ type ToolKey =
   | "carrier-appetite"
   | "submission-readiness"
   | "carrier-match"
+  | "premium-forecast"
   | "summary"
   | "memo"
   | "charts"
@@ -111,6 +112,7 @@ export default function DashboardPage() {
   const [carrierAppetite, setCarrierAppetite] = useState<any>({});
   const [submissionReadiness, setSubmissionReadiness] = useState<any>({});
   const [carrierMatch, setCarrierMatch] = useState<any>({});
+  const [premiumForecast, setPremiumForecast] = useState<any>({});
   const [timeline, setTimeline] = useState<any>({});
   const [profile, setProfile] = useState<any>({});
   const [profiles, setProfiles] = useState<any[]>([]);
@@ -439,6 +441,22 @@ if (carrierMatchRes.status === 401 || carrierMatchRes.status === 403) {
   clearSession();
   router.replace("/login?expired=1");
   return;
+}
+const premiumForecastUrl = hasPolicy
+  ? `${API}/renewal/premium-forecast?policy_number=${encodeURIComponent(policyNumber)}`
+  : `${API}/renewal/premium-forecast`;
+
+const premiumForecastRes = await fetch(
+  premiumForecastUrl,
+  { headers: authHeaders() }
+);
+
+if (premiumForecastRes.ok) {
+  setPremiumForecast(
+    (await safeJson(premiumForecastRes)) || {}
+  );
+} else {
+  setPremiumForecast({});
 }
 
 if (carrierMatchRes.ok) {
@@ -939,6 +957,9 @@ if (carrierMatchRes.ok) {
           <ToolButton active={activeTool === "memo"} onClick={() => setActiveTool("memo")}>Renewal Memo</ToolButton>
           <ToolButton active={activeTool === "charts"} onClick={() => setActiveTool("charts")}>Charts</ToolButton>
           <ToolButton active={activeTool === "claims"} onClick={() => setActiveTool("claims")}>Claims</ToolButton>
+	  <ToolButton active={activeTool === "premium-forecast"} onClick={() => setActiveTool("premium-forecast")}>
+           Premium Forecast
+          </ToolButton>
 
           <div className="mt-auto space-y-3">
             <NavButton href="/">Landing</NavButton>
@@ -985,6 +1006,9 @@ if (carrierMatchRes.ok) {
               <MobileToolButton active={activeTool === "carrier-appetite"} onClick={() => setActiveTool("carrier-appetite")}>Carrier Appetite</MobileToolButton>
               <MobileToolButton active={activeTool === "submission-readiness"} onClick={() => setActiveTool("submission-readiness")}>Submission Readiness</MobileToolButton>
               <MobileToolButton active={activeTool === "carrier-match"} onClick={() => setActiveTool("carrier-match")}>Carrier Match</MobileToolButton>
+<MobileToolButton active={activeTool === "premium-forecast"} onClick={() => setActiveTool("premium-forecast")}>
+  Premium Forecast
+</MobileToolButton>
               <MobileToolButton active={activeTool === "summary"} onClick={() => setActiveTool("summary")}>Summary</MobileToolButton>
               <MobileToolButton active={activeTool === "memo"} onClick={() => setActiveTool("memo")}>Memo</MobileToolButton>
               <MobileToolButton active={activeTool === "charts"} onClick={() => setActiveTool("charts")}>Charts</MobileToolButton>
@@ -1360,6 +1384,80 @@ if (carrierMatchRes.ok) {
   </section>
 )}
 
+{activeTool === "premium-forecast" && (
+  <section className="glass-panel p-6 md:p-8">
+    <p className="text-sm uppercase tracking-[0.25em] text-green-300 mb-3">
+      Premium Forecast Engine
+    </p>
+
+    <h2 className="text-2xl md:text-3xl font-bold mb-6">
+      Renewal Premium Projection
+    </h2>
+
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+      <MetricCard
+        title="Current Premium"
+        value={`$${Number(
+          premiumForecast?.current_premium || 0
+        ).toLocaleString()}`}
+      />
+
+      <MetricCard
+        title="Expected Renewal"
+        value={`$${Number(
+          premiumForecast?.expected_renewal_premium || 0
+        ).toLocaleString()}`}
+      />
+
+      <MetricCard
+        title="Expected Increase"
+        value={`${premiumForecast?.expected_increase_percent || 0}%`}
+      />
+
+      <MetricCard
+        title="Confidence"
+        value={`${premiumForecast?.confidence_score || 0}%`}
+      />
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+      <MetricCard
+        title="Best Case"
+        value={`${premiumForecast?.best_case_percent || 0}%`}
+      />
+
+      <MetricCard
+        title="Likely Range"
+        value={premiumForecast?.likely_range_percent || "-"}
+      />
+
+      <MetricCard
+        title="Worst Case"
+        value={`${premiumForecast?.worst_case_percent || 0}%`}
+      />
+    </div>
+
+    <ListCard
+      title="Forecast Drivers"
+      items={
+        premiumForecast?.forecast_drivers || [
+          "No forecast drivers available."
+        ]
+      }
+      color="blue"
+    />
+
+    <div className="mt-6">
+      <TextCard
+        title="Forecast Summary"
+        text={
+          premiumForecast?.forecast_summary ||
+          "No forecast summary available."
+        }
+      />
+    </div>
+  </section>
+)}
           {activeTool === "summary" && (
             <section className="glass-panel p-6 md:p-8">
               <h2 className="text-2xl md:text-3xl font-bold mb-5">AI Underwriting Summary</h2>
