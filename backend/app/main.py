@@ -60,6 +60,7 @@ app.include_router(renewal.router)
 app.include_router(account_profile.router)
 app.include_router(timeline.router)
 app.include_router(carrier_packet.router)
+app.include_router(admin_users.router)
 
 @app.get("/version")
 def version():
