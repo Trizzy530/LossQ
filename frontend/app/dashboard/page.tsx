@@ -379,12 +379,19 @@ export default function DashboardPage() {
   }
 
   async function selectAccount(policyNumber: string) {
-    if (!policyNumber) return;
-    setMessage(`Loading policy ${policyNumber}...`);
-    setCopilotAnswer("");
-    await loadDashboard(policyNumber);
-    setMessage(`Loaded policy ${policyNumber}.`);
-  }
+  if (!policyNumber) return;
+
+  setMessage(`Loading policy ${policyNumber}...`);
+  setCopilotAnswer("");
+  setRenewalMemo("");
+  setClaims([]);
+  setSummary({});
+  setTimeline({});
+
+  await loadDashboard(policyNumber);
+
+  setMessage(`Loaded policy ${policyNumber}.`);
+}
 
   async function deleteProfile(policyNumber: string) {
     const confirmed = confirm(`Delete profile ${policyNumber}?`);
