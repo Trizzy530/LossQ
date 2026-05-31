@@ -38,10 +38,10 @@ type DashboardData = {
   total_incurred?: number;
 };
 
-const API_BASE =
+const API =
   process.env.NEXT_PUBLIC_API_BASE_URL ||
   process.env.NEXT_PUBLIC_BACKEND_URL ||
-  https://lossq-production.up.railway.app
+  "https://lossq-production.up.railway.app";
 
 const emptyProfile: CarrierProfile = {
   business_name: "",
