@@ -7,7 +7,6 @@ from datetime import datetime
 from typing import List, Any
 
 from app.database import SessionLocal
-from app.auth_utils import get_current_user
 from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
@@ -51,7 +50,7 @@ def parse_date(value: Any):
 
     raw = str(value).strip()
 
-    if not raw:
+    if not raw or raw.lower() in ["needs review", "not set", "none", "nan"]:
         return None
 
     formats = [
@@ -93,17 +92,24 @@ def days_between(start_value: Any, end_value: Any):
 
 def pick(data: dict, keys: list[str], default=None):
     for key in keys:
-        if key in data and data[key] not in [None, ""]:
+        if key in data and data[key] not in [None, "", "Needs Review", "Not Set"]:
             return data[key]
     return default
 
 
+def clean_profile_value(value):
+    if value is None:
+        return ""
+
+    cleaned = str(value).strip()
+
+    if cleaned.lower() in ["", "none", "nan", "needs review", "not set"]:
+        return ""
+
+    return cleaned
+
+
 def ensure_claim_timeline_columns(db: Session):
-    """
-    Safe lightweight migration for existing deployments.
-    Postgres supports ADD COLUMN IF NOT EXISTS.
-    SQLite fallback is ignored if unsupported.
-    """
     statements = [
         "ALTER TABLE claims ADD COLUMN IF NOT EXISTS date_reported VARCHAR",
         "ALTER TABLE claims ADD COLUMN IF NOT EXISTS date_closed VARCHAR",
@@ -120,7 +126,13 @@ def ensure_claim_timeline_columns(db: Session):
     db.commit()
 
 
-def normalize_claim_data(raw: dict, policy_number: str, current_user: dict):
+def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: dict):
+    extracted_policy_number = clean_profile_value(
+        pick(raw, ["policy_number", "policy_no", "policy"], "")
+    )
+
+    final_policy_number = extracted_policy_number or fallback_policy_number
+
     date_of_loss = parse_date(
         pick(raw, ["date_of_loss", "loss_date", "date_of_accident", "accident_date"])
     )
@@ -141,7 +153,7 @@ def normalize_claim_data(raw: dict, policy_number: str, current_user: dict):
     return {
         "claim_number": pick(raw, ["claim_number", "claim_no", "claim_id"], "Unknown"),
         "policy_id": raw.get("policy_id"),
-        "policy_number": policy_number,
+        "policy_number": final_policy_number,
 
         "line_of_business": pick(raw, ["line_of_business", "lob", "coverage_line"]),
         "claim_type": pick(raw, ["claim_type", "type"]),
@@ -158,8 +170,12 @@ def normalize_claim_data(raw: dict, policy_number: str, current_user: dict):
         "description": pick(raw, ["description", "claim_description", "narrative"]),
 
         "paid_amount": float(pick(raw, ["paid_amount", "paid", "total_paid"], 0) or 0),
-        "reserve_amount": float(pick(raw, ["reserve_amount", "reserve", "outstanding_reserve"], 0) or 0),
-        "total_incurred": float(pick(raw, ["total_incurred", "incurred", "total"], 0) or 0),
+        "reserve_amount": float(
+            pick(raw, ["reserve_amount", "reserve", "outstanding_reserve"], 0) or 0
+        ),
+        "total_incurred": float(
+            pick(raw, ["total_incurred", "incurred", "total"], 0) or 0
+        ),
 
         "litigation": bool(pick(raw, ["litigation", "is_litigated"], False)),
         "litigation_status": pick(raw, ["litigation_status"]),
@@ -180,42 +196,60 @@ def extract_profile_data(parsed_claims: list[dict], fallback_policy_number: str)
         "business_name": "",
         "carrier_name": "",
         "agency_name": "",
-        "policy_number": fallback_policy_number,
+        "policy_number": clean_profile_value(fallback_policy_number),
         "effective_date": "",
         "expiration_date": "",
         "evaluation_date": datetime.now().date().isoformat(),
     }
 
     for item in parsed_claims:
-        profile["business_name"] = profile["business_name"] or pick(
-            item, ["business_name", "insured_name", "named_insured", "account_name"], ""
+        business_name = clean_profile_value(
+            pick(item, ["business_name", "insured_name", "named_insured", "account_name"], "")
         )
 
-        profile["carrier_name"] = profile["carrier_name"] or pick(
-            item, ["carrier_name", "insurance_carrier", "carrier"], ""
+        carrier_name = clean_profile_value(
+            pick(item, ["carrier_name", "insurance_carrier", "carrier"], "")
         )
 
-        profile["agency_name"] = profile["agency_name"] or pick(
-            item, ["agency_name", "broker_name", "agency"], ""
+        agency_name = clean_profile_value(
+            pick(item, ["agency_name", "broker_name", "agency"], "")
         )
 
-        profile["policy_number"] = profile["policy_number"] or pick(
-            item, ["policy_number", "policy_no", "policy"], fallback_policy_number
+        policy_number = clean_profile_value(
+            pick(item, ["policy_number", "policy_no", "policy"], "")
         )
 
-        profile["effective_date"] = profile["effective_date"] or parse_date(
+        effective_date = parse_date(
             pick(item, ["effective_date", "policy_effective_date"])
-        ) or ""
+        )
 
-        profile["expiration_date"] = profile["expiration_date"] or parse_date(
+        expiration_date = parse_date(
             pick(item, ["expiration_date", "policy_expiration_date", "expiry_date"])
-        ) or ""
+        )
+
+        if business_name and not profile["business_name"]:
+            profile["business_name"] = business_name
+
+        if carrier_name and not profile["carrier_name"]:
+            profile["carrier_name"] = carrier_name
+
+        if agency_name and not profile["agency_name"]:
+            profile["agency_name"] = agency_name
+
+        if policy_number and not profile["policy_number"]:
+            profile["policy_number"] = policy_number
+
+        if effective_date and not profile["effective_date"]:
+            profile["effective_date"] = effective_date
+
+        if expiration_date and not profile["expiration_date"]:
+            profile["expiration_date"] = expiration_date
 
     return profile
 
 
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
-    policy_number = profile_data.get("policy_number")
+    policy_number = clean_profile_value(profile_data.get("policy_number"))
 
     if not policy_number:
         return None
@@ -229,19 +263,21 @@ def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
 
     if existing:
         for field, value in profile_data.items():
-            if value and hasattr(existing, field):
-                setattr(existing, field, value)
+            cleaned_value = clean_profile_value(value)
+
+            if cleaned_value and hasattr(existing, field):
+                setattr(existing, field, cleaned_value)
 
         return existing
 
     new_profile = AccountProfile(
-        business_name=profile_data.get("business_name") or "",
-        carrier_name=profile_data.get("carrier_name") or "",
-        agency_name=profile_data.get("agency_name") or "",
+        business_name=profile_data.get("business_name") or "Business Name Not Set",
+        carrier_name=profile_data.get("carrier_name") or "Carrier Not Set",
+        agency_name=profile_data.get("agency_name") or "Agency Not Set",
         policy_number=policy_number,
-        effective_date=profile_data.get("effective_date") or "",
-        expiration_date=profile_data.get("expiration_date") or "",
-        evaluation_date=profile_data.get("evaluation_date") or "",
+        effective_date=profile_data.get("effective_date") or "Not Set",
+        expiration_date=profile_data.get("expiration_date") or "Not Set",
+        evaluation_date=profile_data.get("evaluation_date") or datetime.now().date().isoformat(),
         organization_id=current_user["organization_id"],
     )
 
@@ -256,17 +292,27 @@ async def upload_loss_run(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("upload")),
 ):
-    current_user: dict = Depends(require_permission("upload")),
+    return await save_uploaded_files(
+        files=[file],
+        policy_number=policy_number,
+        db=db,
+        current_user=current_user,
+    )
 
 
-@router.post("/loss-run")
+@router.post("/loss-runs")
 async def upload_multiple_loss_runs(
     files: List[UploadFile] = File(...),
     policy_number: str = Form(...),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("upload")),
 ):
-    current_user: dict = Depends(require_permission("upload")),
+    return await save_uploaded_files(
+        files=files,
+        policy_number=policy_number,
+        db=db,
+        current_user=current_user,
+    )
 
 
 async def save_uploaded_files(files, policy_number, db, current_user):
@@ -289,9 +335,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         for claim_data in parsed_claims:
             normalized = normalize_claim_data(
-                claim_data,
-                policy_number,
-                current_user,
+                raw=claim_data,
+                fallback_policy_number=policy_number,
+                current_user=current_user,
             )
 
             db.add(Claim(**normalized))
@@ -317,15 +363,15 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         })
 
     profile_data = extract_profile_data(all_parsed_claims, policy_number)
-    upsert_account_profile(db, profile_data, current_user)
+    profile = upsert_account_profile(db, profile_data, current_user)
 
     db.commit()
 
     return {
         "message": "Loss run file(s) uploaded successfully",
         "saved_claims": total_saved,
-        "policy_number": policy_number,
-        "profile_auto_populated": True,
+        "policy_number": profile_data.get("policy_number") or policy_number,
+        "profile_auto_populated": bool(profile),
         "profile": profile_data,
         "uploaded_files": uploaded_files,
     }
