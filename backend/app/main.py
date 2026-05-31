@@ -20,6 +20,7 @@ from app.routes import (
     timeline,
     carrier_packet,
     admin_users,
+    submission_builder
 )
 
 from app.models.user import User
@@ -61,6 +62,7 @@ app.include_router(account_profile.router)
 app.include_router(timeline.router)
 app.include_router(carrier_packet.router)
 app.include_router(admin_users.router)
+app.include_router(submission_builder.router)
 
 @app.get("/version")
 def version():
