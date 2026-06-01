@@ -135,26 +135,6 @@ def ensure_claim_timeline_columns(db: Session):
     except Exception as e:
         db.rollback()
         print(f"Claim timeline column check failed: {e}")
-    try:
-        result = db.execute(text("PRAGMA table_info(claims)"))
-        existing_columns = [row[1] for row in result.fetchall()]
-
-        for column_name, column_type in required_columns.items():
-            if column_name not in existing_columns:
-                db.execute(
-                    text(f"ALTER TABLE claims ADD COLUMN {column_name} {column_type}")
-                )
-
-        db.commit()
-    except Exception:
-        db.rollback()
-    for statement in statements:
-        try:
-            db.execute(text(statement))
-        except Exception:
-            pass
-
-    db.commit()
 
 
 def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: dict):
