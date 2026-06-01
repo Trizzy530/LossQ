@@ -1,5 +1,22 @@
 from pypdf import PdfReader
 import re
+def normalize_whitespace(value):
+    if not value:
+        return ""
+    value = str(value).replace("\r", "\n")
+    value = re.sub(r"[ \t]+", " ", value)
+    value = re.sub(r"\n{3,}", "\n\n", value)
+    return value.strip()
+
+
+def clean_text(value):
+    if not value:
+        return ""
+    cleaned = str(value).replace("\n", " ").replace("\r", " ").strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" :-|")
+    if cleaned.lower() in ["none", "nan", "needs review", "not set", "unknown"]:
+        return ""
+    return cleaned
 
 
 def extract_text_from_pdf(file_path):
