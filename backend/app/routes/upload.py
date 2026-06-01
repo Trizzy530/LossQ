@@ -1,6 +1,6 @@
 from fastapi import APIRouter, UploadFile, File, Depends, Form
 from sqlalchemy.orm import Session
-from sqlalchemy import text
+from sqlalchemy import text, inspect
 import shutil
 import os
 from datetime import datetime
@@ -119,6 +119,22 @@ def ensure_claim_timeline_columns(db: Session):
         "claim_age": "INTEGER",
     }
 
+    try:
+        inspector = inspect(db.bind)
+        existing_columns = [
+            column["name"] for column in inspector.get_columns("claims")
+        ]
+
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                db.execute(
+                    text(f"ALTER TABLE claims ADD COLUMN {column_name} {column_type}")
+                )
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Claim timeline column check failed: {e}")
     try:
         result = db.execute(text("PRAGMA table_info(claims)"))
         existing_columns = [row[1] for row in result.fetchall()]
