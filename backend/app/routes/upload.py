@@ -300,7 +300,7 @@ async def upload_loss_run(
 @router.post("/loss-runs")
 async def upload_multiple_loss_runs(
     files: List[UploadFile] = File(...),
-    policy_number: str = Form(...),
+    policy_number: str = Form(default=""),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("upload")),
 ):
@@ -330,7 +330,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         parsed_claims, parsed_profile = parse_file(file_path, file.filename)
 
-        if parsed_profile:
+                if parsed_profile:
             for key, value in parsed_profile.items():
                 if value and not direct_profile.get(key):
                     direct_profile[key] = value
@@ -343,6 +343,23 @@ async def save_uploaded_files(files, policy_number, db, current_user):
                 fallback_policy_number=policy_number,
                 current_user=current_user,
             )
+
+            existing_claim = (
+                db.query(Claim)
+                .filter(
+                    Claim.organization_id == current_user["organization_id"],
+                    Claim.claim_number == normalized.get("claim_number"),
+                    Claim.policy_number == normalized.get("policy_number"),
+                )
+                .first()
+            )
+
+            if existing_claim:
+                print(
+                    f"Skipping duplicate claim: "
+                    f"{normalized.get('claim_number')}"
+                )
+                continue
 
             db.add(Claim(**normalized))
 
