@@ -14,172 +14,93 @@ def extract_text_from_pdf(file_path):
         pass
     return normalize_whitespace(text)
 
-
-def normalize_whitespace(value):
-    if not value:
-        return ""
-    value = str(value).replace("\r", "\n")
-    value = re.sub(r"[ \t]+", " ", value)
-    value = re.sub(r"\n{3,}", "\n\n", value)
-    return value.strip()
-
-
-def clean_text(value):
-    if not value:
-        return ""
-    cleaned = str(value).replace("\n", " ").replace("\r", " ").strip()
-    cleaned = re.sub(r"\s+", " ", cleaned).strip(" :-|")
-    if cleaned.lower() in ["none", "nan", "needs review", "not set", "unknown"]:
-        return ""
-    return cleaned
-
-
-def money_to_float(value):
-    if not value:
-        return 0.0
-    cleaned = str(value).replace("$", "").replace(",", "").replace("(", "-").replace(")", "").strip()
-    try:
-        return float(cleaned)
-    except Exception:
-        return 0.0
-
-
-def money_values(text):
-    return [money_to_float(x) for x in re.findall(r"\$?\(?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?", text)]
-
-
-def find_money(labels, block):
-    for label in labels:
-        match = re.search(
-            rf"{re.escape(label)}\s*[:\-]?\s*\$?\s*([\d,]+(?:\.\d+)?)",
-            block,
-            re.IGNORECASE,
-        )
-        if match:
-            return money_to_float(match.group(1))
-    return 0.0
-
-
-def find_text_after_label(labels, text, max_chars=90):
-    for label in labels:
-        patterns = [
-            rf"{re.escape(label)}\s*[:\-]\s*([^\n\r]{{1,{max_chars}}})",
-            rf"{re.escape(label)}\s+([A-Za-z0-9 ,.&/#'\-]{{1,{max_chars}}})",
-        ]
-        for pattern in patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                value = clean_text(match.group(1))
-                for stop in [
-                    "Policy Number", "Policy No", "Policy Period", "Effective",
-                    "Expiration", "Carrier", "Agency", "Producer", "Claim Number",
-                    "Loss Date", "Valuation Date", "Claimant", "Status",
-                ]:
-                    value = re.split(stop, value, flags=re.IGNORECASE)[0].strip()
-                return clean_text(value)
-    return ""
-
-
-def find_date_after_label(labels, text):
-    date_pattern = r"(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})"
-    for label in labels:
-        match = re.search(rf"{re.escape(label)}\s*[:\-]?\s*{date_pattern}", text, re.IGNORECASE)
-        if match:
-            return clean_text(match.group(1))
-    return ""
-
-
-def find_any_date(text):
-    match = re.search(r"(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})", text)
-    return clean_text(match.group(1)) if match else ""
-
-
-def find_policy_period(text):
-    date = r"(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})"
-    patterns = [
-        rf"Policy\s*Period\s*[:\-]?\s*{date}\s*(?:to|through|thru|\-|\u2013|\u2014)\s*{date}",
-        rf"Effective\s*[:\-]?\s*{date}\s*(?:to|through|thru|\-|\u2013|\u2014)\s*{date}",
-        rf"Coverage\s*Period\s*[:\-]?\s*{date}\s*(?:to|through|thru|\-|\u2013|\u2014)\s*{date}",
-        rf"Policy\s*Term\s*[:\-]?\s*{date}\s*(?:to|through|thru|\-|\u2013|\u2014)\s*{date}",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE)
-        if match:
-            return clean_text(match.group(1)), clean_text(match.group(2))
-    return "", ""
-
-
-def guess_carrier_from_text(text):
-    known = [
-    ("National General", [
-        "national general"
-    ]),
-
-    ("Berkley Mid-Atlantic Group", [
-        "berkley mid-atlantic",
-        "berkley mid atlantic",
-        "mid-atlantic group"
-    ]),
-
-    ("Evanston Insurance Company", [
-        "evanston insurance",
-        "evanston"
-    ]),
-
-    ("Continental Western Insurance Company", [
-        "continental western"
-    ]),
-
-    ("Firemen's Insurance Company", [
-        "firemen"
-    ]),
-
-    ("Travelers", ["travelers"]),
-    ("Liberty Mutual", ["liberty mutual"]),
-    ("Nationwide", ["nationwide"]),
-    ("The Hartford", ["hartford"]),
-    ("CNA", ["cna insurance", " cna "]),
-    ("Hanover", ["hanover"]),
-    ("Auto-Owners", ["auto owners", "auto-owners"]),
-    ("Progressive Commercial", ["progressive"]),
-    ("Zurich", ["zurich"]),
-    ("Chubb", ["chubb"]),
-    ("AIG", [" aig "]),
-]
-    lower = f" {text.lower()} "
-    for name, terms in known:
-        if any(term in lower for term in terms):
-            return name
-    return ""
-
-
 def extract_profile_from_text(text):
     text = normalize_whitespace(text)
     effective, expiration = find_policy_period(text)
 
     carrier = (
-    guess_carrier_from_text(text)
-    or find_text_after_label(
-        [
-            "Carrier Name",
-            "Insurance Carrier",
-            "Insurance Company",
-            "Company Name",
-            "Carrier",
-            "Insurer",
-            "Writing Company",
-        ],
-        text,
+        guess_carrier_from_text(text)
+        or find_text_after_label(
+            [
+                "Carrier Name",
+                "Insurance Carrier",
+                "Insurance Company",
+                "Company Name",
+                "Carrier",
+                "Insurer",
+                "Writing Company",
+            ],
+            text,
+        )
     )
-)
+
+    return {
+        "business_name": find_text_after_label(
+            [
+                "Named Insured",
+                "Insured Name",
+                "Insured",
+                "Business Name",
+                "Account Name",
+                "Policyholder",
+                "Customer Name",
+                "Client Name",
+            ],
+            text,
+        ),
+        "carrier_name": carrier,
+        "agency_name": find_text_after_label(
+            [
+                "Agency Name",
+                "Agency",
+                "Broker Name",
+                "Broker",
+                "Producer",
+                "Agent Name",
+                "Agent",
+            ],
+            text,
+        ),
         "policy_number": find_text_after_label(
             ["Policy Number", "Policy No.", "Policy No", "Policy #", "Policy ID"],
             text,
             max_chars=60,
         ),
-        "effective_date": effective or find_date_after_label(["Effective Date", "Policy Effective Date", "Eff Date", "Effective"], text),
-        "expiration_date": expiration or find_date_after_label(["Expiration Date", "Policy Expiration Date", "Exp Date", "Expiration"], text),
-        "evaluation_date": find_date_after_label(["Evaluation Date", "Valuation Date", "Loss Run Date", "Loss Runs as of", "As Of", "Run Date", "Report Date"], text),
+        "effective_date": effective
+        or find_date_after_label(
+            [
+                "Effective Date",
+                "Policy Effective Date",
+                "Policy Inception",
+                "Eff Date",
+                "Effective",
+            ],
+            text,
+        ),
+        "expiration_date": expiration
+        or find_date_after_label(
+            [
+                "Expiration Date",
+                "Policy Expiration Date",
+                "Cancellation Date",
+                "Exp Date",
+                "Expiration",
+            ],
+            text,
+        ),
+        "evaluation_date": find_date_after_label(
+            [
+                "Evaluation Date",
+                "Valuation Date",
+                "Loss Run Date",
+                "Loss Runs as of",
+                "As Of",
+                "Run Date",
+                "Report Date",
+                "Print Date",
+            ],
+            text,
+        ),
     }
 
 
