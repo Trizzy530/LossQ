@@ -330,7 +330,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         parsed_claims, parsed_profile = parse_file(file_path, file.filename)
 
-                if parsed_profile:
+        if parsed_profile:
             for key, value in parsed_profile.items():
                 if value and not direct_profile.get(key):
                     direct_profile[key] = value
