@@ -18,6 +18,23 @@ def clean_text(value):
         return ""
     return cleaned
 
+def find_policy_period(text):
+    date = r"(\d{1,2}[\/\-]\d{1,2}[\/\-]\d{2,4}|\d{4}[\/\-]\d{1,2}[\/\-]\d{1,2})"
+
+    patterns = [
+        rf"Policy\s*Period\s*[:\-]?\s*{date}\s*(?:to|through|thru|\-)\s*{date}",
+        rf"Effective\s*[:\-]?\s*{date}\s*(?:to|through|thru|\-)\s*{date}",
+        rf"Coverage\s*Period\s*[:\-]?\s*{date}\s*(?:to|through|thru|\-)\s*{date}",
+        rf"Policy\s*Term\s*[:\-]?\s*{date}\s*(?:to|through|thru|\-)\s*{date}",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text, re.IGNORECASE)
+        if match:
+            return clean_text(match.group(1)), clean_text(match.group(2))
+
+    return "", ""
+
 
 def extract_text_from_pdf(file_path):
     text = ""
