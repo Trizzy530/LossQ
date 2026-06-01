@@ -5,8 +5,6 @@ from sqlalchemy import text
 from app.database import SessionLocal
 from app.models.claim import Claim
 from app.auth_utils import get_current_user
-from app.role_utils import require_permission
-
 
 router = APIRouter(prefix="/claims", tags=["Claims"])
 
@@ -17,6 +15,23 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def ensure_claim_timeline_columns(db: Session):
+    statements = [
+        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS date_reported VARCHAR",
+        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS date_closed VARCHAR",
+        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS open_days INTEGER",
+        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS claim_age INTEGER",
+    ]
+
+    for statement in statements:
+        try:
+            db.execute(text(statement))
+        except Exception:
+            pass
+
+    db.commit()
 
 
 def score_claim(claim):
@@ -91,7 +106,9 @@ def build_claim_ai_analysis(claim):
     elif reserve >= 25000:
         reserve_concern = "Moderate"
 
-    litigation_exposure = "Elevated litigation exposure detected" if claim.litigation else "None detected"
+    litigation_exposure = (
+        "Elevated litigation exposure detected" if claim.litigation else "None detected"
+    )
 
     renewal_impact = "Low renewal impact"
     if severity in ["Severe", "Catastrophic"]:
@@ -135,27 +152,12 @@ def build_claim_ai_analysis(claim):
         "ai_summary": ai_summary,
     }
 
-def ensure_claim_timeline_columns(db: Session):
-    statements = [
-        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS date_reported VARCHAR",
-        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS date_closed VARCHAR",
-        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS open_days INTEGER",
-        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS claim_age INTEGER",
-    ]
-
-    for statement in statements:
-        try:
-            db.execute(text(statement))
-        except Exception:
-            pass
-
-    db.commit()
 
 @router.get("/")
 def get_claims(
     policy_number: str | None = Query(default=None),
     db: Session = Depends(get_db),
-   current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(get_current_user),
 ):
     ensure_claim_timeline_columns(db)
 
@@ -164,9 +166,7 @@ def get_claims(
     )
 
     if policy_number:
-        query = query.filter(
-            Claim.policy_number == policy_number
-        )
+        query = query.filter(Claim.policy_number == policy_number)
 
     return query.order_by(Claim.id.desc()).all()
 
@@ -189,10 +189,7 @@ def get_claim_detail(
     )
 
     if not claim:
-        raise HTTPException(
-            status_code=404,
-            detail="Claim not found"
-        )
+        raise HTTPException(status_code=404, detail="Claim not found")
 
     analysis = build_claim_ai_analysis(claim)
 

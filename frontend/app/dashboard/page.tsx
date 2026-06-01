@@ -688,16 +688,17 @@ if (submissionBuilderRes.ok) {
   }
 
   async function uploadFiles() {
-    if (!files || files.length === 0) {
-      setMessage("Please select one or more PDF, Excel, or CSV files first.");
-      return;
-    }
+  if (!files || files.length === 0) {
+    setMessage("Please select one or more PDF, Excel, or CSV files first.");
+    return;
+  }
 
-    if (!profile.policy_number || profile.policy_number === "Policy Not Set") {
-      setMessage("Select or enter a policy number before uploading.");
-      return;
-    }
+  if (!profile.policy_number || profile.policy_number === "Policy Not Set") {
+    setMessage("Select or enter a policy number before uploading.");
+    return;
+  }
 
+  try {
     setMessage("Uploading and analyzing loss runs...");
 
     const formData = new FormData();
@@ -727,60 +728,78 @@ if (submissionBuilderRes.ok) {
     }
 
     if (!res.ok) {
-      setMessage(`Upload failed: ${JSON.stringify(data)}`);
+      setMessage(
+        `Upload failed. Backend returned ${res.status}: ${JSON.stringify(data)}`
+      );
       return;
     }
 
     setMessage(`Upload complete. Saved ${data?.saved_claims || 0} claim(s).`);
-    await loadDashboard(profile.policy_number);
-  }
 
-  async function downloadPdf(url: string, filename: string) {
-    const res = await fetch(url, { headers: authHeaders() });
-
-    if (res.status === 401 || res.status === 403) {
-      clearSession();
-      router.replace("/login?expired=1");
-      return;
+    if (data?.profile?.policy_number) {
+      setProfile(data.profile);
+      updateProfileList([data.profile]);
+      await loadDashboard(data.profile.policy_number);
+    } else {
+      await loadDashboard(profile.policy_number);
     }
-
-    if (!res.ok) {
-      setMessage("Could not generate report.");
-      return;
-    }
-
-    const blob = await res.blob();
-    const objectUrl = window.URL.createObjectURL(blob);
-
-    const a = document.createElement("a");
-    a.href = objectUrl;
-    a.download = filename;
-    a.click();
-
-    window.URL.revokeObjectURL(objectUrl);
-  }
-
-  async function exportCarrierLossRun() {
-    const policy = profile?.policy_number
-      ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
-      : "";
-
-    await downloadPdf(
-      `${API}/reports/loss-run-template-pdf${policy}`,
-      "lossq_carrier_loss_run.pdf"
+  } catch (error: any) {
+    setMessage(
+      `Upload failed before completion. Backend may have crashed. Error: ${
+        error?.message || "Unknown error"
+      }`
     );
   }
+}
 
-  async function exportExecutiveReport() {
-    const policy = profile?.policy_number
-      ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
-      : "";
+async function downloadPdf(url: string, filename: string) {
+  const res = await fetch(url, { headers: authHeaders() });
 
-    await downloadPdf(
-      `${API}/reports/underwriting-pdf${policy}`,
-      "lossq_executive_report.pdf"
-    );
+  if (res.status === 401 || res.status === 403) {
+    clearSession();
+    router.replace("/login?expired=1");
+    return;
   }
+
+  if (!res.ok) {
+    setMessage("Could not generate report.");
+    return;
+  }
+
+  const blob = await res.blob();
+  const objectUrl = window.URL.createObjectURL(blob);
+
+  const a = document.createElement("a");
+  a.href = objectUrl;
+  a.download = filename;
+  a.click();
+
+  window.URL.revokeObjectURL(objectUrl);
+}
+
+async function exportCarrierLossRun() {
+  const policy = profile?.policy_number
+    ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
+    : "";
+
+  await downloadPdf(
+    `${API}/reports/loss-run-template-pdf${policy}`,
+    "lossq_carrier_loss_run.pdf"
+  );
+}
+
+async function exportExecutiveReport() {
+  const policy = profile?.policy_number
+    ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
+    : "";
+
+  await downloadPdf(
+    `${API}/reports/underwriting-pdf${policy}`,
+    "lossq_executive_report.pdf"
+  );
+}
+
+
 
   async function generateRenewalMemo() {
     if (!profile?.policy_number) {
