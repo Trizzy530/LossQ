@@ -1060,10 +1060,10 @@ if (submissionBuilderRes.ok) {
               <section className="glass-panel p-6 md:p-8">
                 <h2 className="text-2xl md:text-3xl font-bold mb-4">Account Snapshot</h2>
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <ProfileDetail label="Business" value={profile?.business_name || "-"} />
-                  <ProfileDetail label="Policy" value={profile?.policy_number || "-"} />
+                  <ProfileDetail label="Insured" value={profile?.business_name || "-"} />
+                  <ProfileDetail label="Writing Carrier" value={profile?.policy_number || "-"} />
                   <ProfileDetail label="Carrier" value={profile?.carrier_name || "-"} />
-                  <ProfileDetail label="Agency" value={profile?.agency_name || "-"} />
+                  <ProfileDetail label="Producing Agency" value={profile?.agency_name || "-"} />
                 </div>
               </section>
             </>
@@ -1130,9 +1130,9 @@ if (submissionBuilderRes.ok) {
                 </div>
 
                 <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                  <Input label="Business Name" value={profile?.business_name || ""} onChange={(v) => setProfile({ ...profile, business_name: v })} />
-                  <Input label="Carrier Name" value={profile?.carrier_name || ""} onChange={(v) => setProfile({ ...profile, carrier_name: v })} />
-                  <Input label="Agency Name" value={profile?.agency_name || ""} onChange={(v) => setProfile({ ...profile, agency_name: v })} />
+                  <Input label="Insured" value={profile?.business_name || ""} onChange={(v) => setProfile({ ...profile, business_name: v })} />
+                  <Input label="Writing Carrier" value={profile?.carrier_name || ""} onChange={(v) => setProfile({ ...profile, carrier_name: v })} />
+                  <Input label="Producing Agency" value={profile?.agency_name || ""} onChange={(v) => setProfile({ ...profile, agency_name: v })} />
                   <Input label="Policy Number" value={profile?.policy_number || ""} onChange={(v) => setProfile({ ...profile, policy_number: v })} />
                   <Input label="Effective Date" value={profile?.effective_date || ""} onChange={(v) => setProfile({ ...profile, effective_date: v })} />
                   <Input label="Expiration Date" value={profile?.expiration_date || ""} onChange={(v) => setProfile({ ...profile, expiration_date: v })} />

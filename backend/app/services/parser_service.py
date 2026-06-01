@@ -111,23 +111,41 @@ def find_policy_period(text):
 
 def guess_carrier_from_text(text):
     known = [
-        ("Berkley Mid-Atlantic Group", ["berkley mid-atlantic", "berkley mid atlantic", "mid-atlantic"]),
-        ("Continental Western Insurance Company", ["continental western"]),
-        ("Firemen's Insurance Company", ["firemen"]),
-        ("Travelers", ["travelers"]),
-        ("Liberty Mutual", ["liberty mutual"]),
-        ("Nationwide", ["nationwide"]),
-        ("The Hartford", ["hartford"]),
-        ("CNA", [" cna ", "\ncna ", "cna insurance"]),
-        ("Hanover", ["hanover"]),
-        ("Auto-Owners", ["auto-owners", "auto owners"]),
-        ("Progressive Commercial", ["progressive"]),
-        ("Zurich", ["zurich"]),
-        ("Chubb", ["chubb"]),
-        ("AIG", [" aig ", "\naig "]),
-        ("Selective", ["selective"]),
-        ("Westfield", ["westfield"]),
-    ]
+    ("National General", [
+        "national general"
+    ]),
+
+    ("Berkley Mid-Atlantic Group", [
+        "berkley mid-atlantic",
+        "berkley mid atlantic",
+        "mid-atlantic group"
+    ]),
+
+    ("Evanston Insurance Company", [
+        "evanston insurance",
+        "evanston"
+    ]),
+
+    ("Continental Western Insurance Company", [
+        "continental western"
+    ]),
+
+    ("Firemen's Insurance Company", [
+        "firemen"
+    ]),
+
+    ("Travelers", ["travelers"]),
+    ("Liberty Mutual", ["liberty mutual"]),
+    ("Nationwide", ["nationwide"]),
+    ("The Hartford", ["hartford"]),
+    ("CNA", ["cna insurance", " cna "]),
+    ("Hanover", ["hanover"]),
+    ("Auto-Owners", ["auto owners", "auto-owners"]),
+    ("Progressive Commercial", ["progressive"]),
+    ("Zurich", ["zurich"]),
+    ("Chubb", ["chubb"]),
+    ("AIG", [" aig "]),
+]
     lower = f" {text.lower()} "
     for name, terms in known:
         if any(term in lower for term in terms):
@@ -139,21 +157,21 @@ def extract_profile_from_text(text):
     text = normalize_whitespace(text)
     effective, expiration = find_policy_period(text)
 
-    carrier = find_text_after_label(
-        ["Carrier Name", "Insurance Carrier", "Insurance Company", "Company Name", "Carrier", "Insurer"],
+    carrier = (
+    guess_carrier_from_text(text)
+    or find_text_after_label(
+        [
+            "Carrier Name",
+            "Insurance Carrier",
+            "Insurance Company",
+            "Company Name",
+            "Carrier",
+            "Insurer",
+            "Writing Company",
+        ],
         text,
-    ) or guess_carrier_from_text(text)
-
-    return {
-        "business_name": find_text_after_label(
-            ["Named Insured", "Insured Name", "Insured", "Business Name", "Account Name", "Policyholder", "Customer Name", "Client Name"],
-            text,
-        ),
-        "carrier_name": carrier,
-        "agency_name": find_text_after_label(
-            ["Agency Name", "Agency", "Broker Name", "Broker", "Producer", "Agent"],
-            text,
-        ),
+    )
+)
         "policy_number": find_text_after_label(
             ["Policy Number", "Policy No.", "Policy No", "Policy #", "Policy ID"],
             text,
