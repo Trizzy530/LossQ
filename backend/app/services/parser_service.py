@@ -449,6 +449,38 @@ def parse_claims_from_text(text):
     claims = []
     seen = set()
 
+    explicit_claim_pattern = re.compile(
+        r"Claim\s*Number\s*[:\-]?\s*([A-Z]{1,5}[-\s]?\d{3,15}|\d{6,15})",
+        re.IGNORECASE,
+    )
+
+    matches = list(explicit_claim_pattern.finditer(text))
+
+    if matches:
+        for index, match in enumerate(matches):
+            claim_number = clean_text(match.group(1)).upper()
+            start = match.start()
+            end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
+
+            block = text[start:end]
+
+            if claim_number in seen:
+                continue
+
+            claim = build_claim(profile, claim_number, block)
+
+            if (
+                claim["total_incurred"] == 0
+                and claim["paid_amount"] == 0
+                and claim["reserve_amount"] == 0
+            ):
+                continue
+
+            claims.append(claim)
+            seen.add(claim_number)
+
+        return claims
+
     matches = claim_number_candidates(text)
 
     for index, match in enumerate(matches):
