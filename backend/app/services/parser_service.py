@@ -354,11 +354,22 @@ def build_claim(profile, claim_number, block):
 
     values = money_values(block)
 
-    if total == 0 and len(values) >= 3:
-        paid = paid or values[-3]
-        reserve = reserve or values[-2]
-        total = values[-1]
-    elif total == 0:
+    # Many loss runs have columns like:
+    # Paid | Reserve | Recovered | Expense | Incurred
+    # The last money value is usually Total/Gross/Net Incurred.
+    # The first two money values are usually Paid and Reserve.
+    if values:
+        if paid == 0 and len(values) >= 1:
+            paid = values[0]
+
+        if reserve == 0 and len(values) >= 2:
+            reserve = values[1]
+
+        if total == 0:
+            total = values[-1]
+
+    # If total is still blank, calculate it safely.
+    if total == 0:
         total = paid + reserve
 
     lower = str(block or "").lower()
