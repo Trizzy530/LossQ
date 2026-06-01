@@ -41,9 +41,11 @@ def money_to_float(value):
 def money_values(text):
     return [
         money_to_float(x)
-        for x in re.findall(r"\$?\(?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?", text or "")
+        for x in re.findall(
+            r"\$\s*\(?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?",
+            text or ""
+        )
     ]
-
 
 def find_money(labels, block):
     for label in labels:
@@ -303,13 +305,12 @@ def detect_line(block):
 def claim_number_candidates(text):
     pattern = (
         r"\b("
-        r"\d{1,3}\s?[A-Z]{1,4}\s?\d{6,15}"
+        r"[A-Z]{1,5}[-\s]?\d{3,15}"
         r"|GL[-\s]?\d+"
         r"|AUTO[-\s]?\d+"
         r"|WC[-\s]?\d+"
         r"|PROP[-\s]?\d+"
         r"|CLM[-\s]?\d+"
-        r"|[A-Z]{2,5}[-\s]?\d{5,15}"
         r"|\d{6,15}"
         r")\b"
     )
