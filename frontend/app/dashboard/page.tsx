@@ -693,10 +693,6 @@ if (submissionBuilderRes.ok) {
     return;
   }
 
-  if (!profile.policy_number || profile.policy_number === "Policy Not Set") {
-    setMessage("Select or enter a policy number before uploading.");
-    return;
-  }
 
   try {
     setMessage("Uploading and analyzing loss runs...");

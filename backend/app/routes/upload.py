@@ -286,7 +286,7 @@ def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
 @router.post("/loss-run")
 async def upload_loss_run(
     file: UploadFile = File(...),
-    policy_number: str = Form(...),
+    policy_number: str = Form(default=""),
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("upload")),
 ):
@@ -296,7 +296,6 @@ async def upload_loss_run(
         db=db,
         current_user=current_user,
     )
-
 
 @router.post("/loss-runs")
 async def upload_multiple_loss_runs(
