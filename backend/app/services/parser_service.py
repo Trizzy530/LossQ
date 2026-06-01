@@ -48,6 +48,39 @@ def extract_text_from_pdf(file_path):
         pass
     return normalize_whitespace(text)
 
+def guess_carrier_from_text(text):
+    known = [
+        ("National General", ["national general"]),
+        ("Berkley Mid-Atlantic Group", [
+            "berkley mid-atlantic",
+            "berkley mid atlantic",
+            "mid-atlantic group",
+        ]),
+        ("Evanston Insurance Company", ["evanston insurance", "evanston"]),
+        ("Continental Western Insurance Company", ["continental western"]),
+        ("Firemen's Insurance Company", ["firemen"]),
+        ("Travelers", ["travelers"]),
+        ("Liberty Mutual", ["liberty mutual"]),
+        ("Nationwide", ["nationwide"]),
+        ("The Hartford", ["hartford"]),
+        ("CNA", ["cna insurance", " cna "]),
+        ("Hanover", ["hanover"]),
+        ("Auto-Owners", ["auto owners", "auto-owners"]),
+        ("Progressive Commercial", ["progressive"]),
+        ("Zurich", ["zurich"]),
+        ("Chubb", ["chubb"]),
+        ("AIG", [" aig "]),
+    ]
+
+    lower = f" {text.lower()} "
+
+    for name, terms in known:
+        if any(term in lower for term in terms):
+            return name
+
+    return ""
+
+
 def extract_profile_from_text(text):
     text = normalize_whitespace(text)
     effective, expiration = find_policy_period(text)
