@@ -60,13 +60,7 @@ def parse_date(value: Any):
     if not raw or raw.lower() in ["needs review", "not set", "none", "nan"]:
         return None
 
-    formats = [
-        "%Y-%m-%d",
-        "%m/%d/%Y",
-        "%m/%d/%y",
-        "%m-%d-%Y",
-        "%m-%d-%y",
-    ]
+    formats = ["%Y-%m-%d", "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%m-%d-%y"]
 
     for fmt in formats:
         try:
@@ -121,15 +115,11 @@ def ensure_claim_timeline_columns(db: Session):
 
     try:
         inspector = inspect(db.bind)
-        existing_columns = [
-            column["name"] for column in inspector.get_columns("claims")
-        ]
+        existing_columns = [column["name"] for column in inspector.get_columns("claims")]
 
         for column_name, column_type in required_columns.items():
             if column_name not in existing_columns:
-                db.execute(
-                    text(f"ALTER TABLE claims ADD COLUMN {column_name} {column_type}")
-                )
+                db.execute(text(f"ALTER TABLE claims ADD COLUMN {column_name} {column_type}"))
 
         db.commit()
     except Exception as e:
@@ -142,7 +132,7 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
         pick(raw, ["policy_number", "policy_no", "policy"], "")
     )
 
-    final_policy_number = extracted_policy_number or fallback_policy_number
+    final_policy_number = extracted_policy_number or clean_profile_value(fallback_policy_number)
 
     date_of_loss = parse_date(
         pick(raw, ["date_of_loss", "loss_date", "date_of_accident", "accident_date"])
@@ -196,7 +186,11 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
     }
 
 
-def extract_profile_data(parsed_claims: list[dict], fallback_policy_number: str, direct_profile: dict | None = None):
+def extract_profile_data(
+    parsed_claims: list[dict],
+    fallback_policy_number: str,
+    direct_profile: dict | None = None,
+):
     direct_profile = direct_profile or {}
 
     profile = {
@@ -297,6 +291,7 @@ async def upload_loss_run(
         current_user=current_user,
     )
 
+
 @router.post("/loss-runs")
 async def upload_multiple_loss_runs(
     files: List[UploadFile] = File(...),
@@ -316,6 +311,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
 
     total_saved = 0
+    total_duplicates_skipped = 0
     uploaded_files = []
     all_parsed_claims = []
     direct_profile = {}
@@ -337,6 +333,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         all_parsed_claims.extend(parsed_claims)
 
+        file_saved = 0
+        file_duplicates = 0
+
         for claim_data in parsed_claims:
             normalized = normalize_claim_data(
                 raw=claim_data,
@@ -344,30 +343,41 @@ async def save_uploaded_files(files, policy_number, db, current_user):
                 current_user=current_user,
             )
 
-            existing_claim = (
-                db.query(Claim)
-                .filter(
-                    Claim.organization_id == current_user["organization_id"],
-                    Claim.claim_number == normalized.get("claim_number"),
-                    Claim.policy_number == normalized.get("policy_number"),
-                )
-                .first()
+            claim_number = str(normalized.get("claim_number") or "").strip().upper()
+            policy_value = str(normalized.get("policy_number") or "").strip()
+
+            normalized["claim_number"] = claim_number
+            normalized["policy_number"] = policy_value
+
+            duplicate_query = db.query(Claim).filter(
+                Claim.organization_id == current_user["organization_id"],
+                Claim.claim_number == claim_number,
             )
 
-            if existing_claim:
-                print(
-                    f"Skipping duplicate claim: "
-                    f"{normalized.get('claim_number')}"
+            if policy_value:
+                duplicate_query = duplicate_query.filter(
+                    (Claim.policy_number == policy_value)
+                    | (Claim.policy_number == None)
+                    | (Claim.policy_number == "")
                 )
+
+            existing_claim = duplicate_query.first()
+
+            if existing_claim:
+                print(f"Skipping duplicate claim: {claim_number}")
+                file_duplicates += 1
+                total_duplicates_skipped += 1
                 continue
 
             db.add(Claim(**normalized))
+            file_saved += 1
+            total_saved += 1
 
         upload_record = UploadHistory(
             filename=file.filename,
             stored_path=file_path,
             content_type=file.content_type,
-            claims_saved=len(parsed_claims),
+            claims_saved=file_saved,
             uploaded_at=datetime.now().isoformat(),
             uploaded_by_user_id=current_user["user_id"],
             organization_id=current_user["organization_id"],
@@ -375,11 +385,10 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         db.add(upload_record)
 
-        total_saved += len(parsed_claims)
-
         uploaded_files.append({
             "filename": file.filename,
-            "claims_saved": len(parsed_claims),
+            "claims_saved": file_saved,
+            "duplicates_skipped": file_duplicates,
             "policy_number": policy_number,
         })
 
@@ -396,6 +405,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     return {
         "message": "Loss run file(s) uploaded successfully",
         "saved_claims": total_saved,
+        "duplicates_skipped": total_duplicates_skipped,
         "policy_number": profile_data.get("policy_number") or policy_number,
         "profile_auto_populated": bool(profile),
         "profile": profile_data,
