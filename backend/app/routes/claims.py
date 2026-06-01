@@ -1,7 +1,6 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect
-from datetime import datetime
 
 from app.database import SessionLocal
 from app.models.claim import Claim
@@ -18,15 +17,12 @@ def get_db():
         db.close()
 
 
-def ensure_claim_management_columns(db: Session):
+def ensure_claim_timeline_columns(db: Session):
     required_columns = {
         "date_reported": "VARCHAR",
         "date_closed": "VARCHAR",
         "open_days": "INTEGER",
         "claim_age": "INTEGER",
-        "is_deleted": "BOOLEAN DEFAULT FALSE",
-        "deleted_at": "VARCHAR",
-        "delete_reason": "VARCHAR",
     }
 
     try:
@@ -44,25 +40,26 @@ def ensure_claim_management_columns(db: Session):
         db.commit()
     except Exception as e:
         db.rollback()
-        print(f"Claim column check failed: {e}")
-
-
-def money(value):
+        print(f"Claim timeline column check failed: {e}")
     try:
-        return float(value or 0)
+        result = db.execute(text("PRAGMA table_info(claims)"))
+        existing_columns = [row[1] for row in result.fetchall()]
+
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                db.execute(
+                    text(f"ALTER TABLE claims ADD COLUMN {column_name} {column_type}")
+                )
+
+        db.commit()
     except Exception:
-        return 0.0
-
-
-def is_claim_deleted(claim):
-    return bool(getattr(claim, "is_deleted", False))
-
+        db.rollback()
 
 def score_claim(claim):
     score = 0
-    total = money(claim.total_incurred)
-    reserve = money(claim.reserve_amount)
-    paid = money(claim.paid_amount)
+    total = float(claim.total_incurred or 0)
+    reserve = float(claim.reserve_amount or 0)
+    paid = float(claim.paid_amount or 0)
 
     if total >= 250000:
         score += 50
@@ -100,9 +97,9 @@ def score_claim(claim):
 def build_claim_ai_analysis(claim):
     score, severity = score_claim(claim)
 
-    total = money(claim.total_incurred)
-    reserve = money(claim.reserve_amount)
-    paid = money(claim.paid_amount)
+    total = float(claim.total_incurred or 0)
+    reserve = float(claim.reserve_amount or 0)
+    paid = float(claim.paid_amount or 0)
 
     risk_factors = []
 
@@ -180,12 +177,10 @@ def build_claim_ai_analysis(claim):
 @router.get("/")
 def get_claims(
     policy_number: str | None = Query(default=None),
-    include_deleted: bool = Query(default=False),
-    deleted_only: bool = Query(default=False),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    ensure_claim_management_columns(db)
+    ensure_claim_timeline_columns(db)
 
     query = db.query(Claim).filter(
         Claim.organization_id == current_user["organization_id"]
@@ -193,13 +188,6 @@ def get_claims(
 
     if policy_number:
         query = query.filter(Claim.policy_number == policy_number)
-
-    if deleted_only:
-        query = query.filter(Claim.is_deleted == True)
-    elif not include_deleted:
-        query = query.filter(
-            (Claim.is_deleted == False) | (Claim.is_deleted.is_(None))
-        )
 
     return query.order_by(Claim.id.desc()).all()
 
@@ -210,7 +198,7 @@ def get_claim_detail(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    ensure_claim_management_columns(db)
+    ensure_claim_timeline_columns(db)
 
     claim = (
         db.query(Claim)
@@ -229,73 +217,4 @@ def get_claim_detail(
     return {
         "claim": claim,
         **analysis,
-    }
-
-
-@router.delete("/{claim_id}")
-def soft_delete_claim(
-    claim_id: int,
-    reason: str | None = Query(default="Deleted by user"),
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    ensure_claim_management_columns(db)
-
-    claim = (
-        db.query(Claim)
-        .filter(
-            Claim.id == claim_id,
-            Claim.organization_id == current_user["organization_id"],
-        )
-        .first()
-    )
-
-    if not claim:
-        raise HTTPException(status_code=404, detail="Claim not found")
-
-    claim.is_deleted = True
-    claim.deleted_at = datetime.now().isoformat()
-    claim.delete_reason = reason or "Deleted by user"
-
-    db.commit()
-
-    return {
-        "message": "Claim deleted from active analysis.",
-        "claim_id": claim_id,
-        "claim_number": claim.claim_number,
-        "is_deleted": True,
-    }
-
-
-@router.post("/{claim_id}/restore")
-def restore_claim(
-    claim_id: int,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    ensure_claim_management_columns(db)
-
-    claim = (
-        db.query(Claim)
-        .filter(
-            Claim.id == claim_id,
-            Claim.organization_id == current_user["organization_id"],
-        )
-        .first()
-    )
-
-    if not claim:
-        raise HTTPException(status_code=404, detail="Claim not found")
-
-    claim.is_deleted = False
-    claim.deleted_at = None
-    claim.delete_reason = None
-
-    db.commit()
-
-    return {
-        "message": "Claim restored to active analysis.",
-        "claim_id": claim_id,
-        "claim_number": claim.claim_number,
-        "is_deleted": False,
     }
