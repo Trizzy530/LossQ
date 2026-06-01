@@ -281,8 +281,24 @@ def extract_profile_from_text(text):
     }
 
 
-def detect_line(block):
+def detect_line(block, claim_number=""):
     lower = str(block or "").lower()
+    claim = str(claim_number or "").upper()
+
+    if claim.startswith("WC"):
+        return "Workers Compensation"
+
+    if claim.startswith("CA") or claim.startswith("AUTO"):
+        return "Commercial Auto"
+
+    if claim.startswith("GL"):
+        return "General Liability"
+
+    if claim.startswith("CARGO"):
+        return "Cargo"
+
+    if "workers compensation" in lower or "employee injury" in lower or "compensation" in lower:
+        return "Workers Compensation"
 
     if "general liability" in lower or "slip" in lower or "premises" in lower:
         return "General Liability"
@@ -290,17 +306,13 @@ def detect_line(block):
     if "commercial auto" in lower or "auto" in lower or "vehicle" in lower or "collision" in lower:
         return "Commercial Auto"
 
-    if "workers" in lower or "employee injury" in lower or "compensation" in lower:
-        return "Workers Compensation"
-
-    if "cargo" in lower or "freight" in lower:
+    if "motor truck cargo" in lower or "cargo" in lower or "freight" in lower:
         return "Cargo"
 
     if "property" in lower or "water damage" in lower or "fire" in lower:
         return "Property"
 
     return "Unknown"
-
 
 def claim_number_candidates(text):
     pattern = (
@@ -398,8 +410,8 @@ def build_claim(profile, claim_number, block):
         **profile,
         "claim_number": clean_text(claim_number).upper(),
         "policy_id": 1,
-        "line_of_business": detect_line(block),
-        "claim_type": detect_line(block),
+        "line_of_business": detect_line(block, claim_number),
+        "claim_type": detect_line(block, claim_number),
         "cause_of_loss": find_text_after_label(
             ["Cause of Loss", "Loss Cause", "Cause"],
             block,
@@ -450,7 +462,7 @@ def parse_claims_from_text(text):
     seen = set()
 
     explicit_claim_pattern = re.compile(
-        r"Claim\s*Number\s*[:\-]?\s*([A-Z]{1,5}[-\s]?\d{3,15}|\d{6,15})",
+        r"(?:Claim\s*Number|Claim\s*No|Claim\s*#)\s*[:\-]?\s*([A-Z]{1,10}[-\s]?\d{3,15}|\d{6,15})",
         re.IGNORECASE,
     )
 
@@ -459,9 +471,8 @@ def parse_claims_from_text(text):
     if matches:
         for index, match in enumerate(matches):
             claim_number = clean_text(match.group(1)).upper()
-            start = match.start()
+            start = max(match.start() - 120, 0)
             end = matches[index + 1].start() if index + 1 < len(matches) else len(text)
-
             block = text[start:end]
 
             if claim_number in seen:
@@ -480,6 +491,31 @@ def parse_claims_from_text(text):
             seen.add(claim_number)
 
         return claims
+
+    matches = claim_number_candidates(text)
+
+    for index, match in enumerate(matches):
+        claim_number = clean_text(match.group(1)).upper()
+        start = max(match.start() - 150, 0)
+        end = matches[index + 1].start() if index + 1 < len(matches) else min(match.end() + 1200, len(text))
+        block = text[start:end]
+
+        if claim_number in seen:
+            continue
+
+        claim = build_claim(profile, claim_number, block)
+
+        if (
+            claim["total_incurred"] == 0
+            and claim["paid_amount"] == 0
+            and claim["reserve_amount"] == 0
+        ):
+            continue
+
+        claims.append(claim)
+        seen.add(claim_number)
+
+    return claims
 
     matches = claim_number_candidates(text)
 
