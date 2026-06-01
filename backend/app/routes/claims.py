@@ -18,21 +18,26 @@ def get_db():
 
 
 def ensure_claim_timeline_columns(db: Session):
-    statements = [
-        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS date_reported VARCHAR",
-        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS date_closed VARCHAR",
-        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS open_days INTEGER",
-        "ALTER TABLE claims ADD COLUMN IF NOT EXISTS claim_age INTEGER",
-    ]
+    required_columns = {
+        "date_reported": "VARCHAR",
+        "date_closed": "VARCHAR",
+        "open_days": "INTEGER",
+        "claim_age": "INTEGER",
+    }
 
-    for statement in statements:
-        try:
-            db.execute(text(statement))
-        except Exception:
-            pass
+    try:
+        result = db.execute(text("PRAGMA table_info(claims)"))
+        existing_columns = [row[1] for row in result.fetchall()]
 
-    db.commit()
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                db.execute(
+                    text(f"ALTER TABLE claims ADD COLUMN {column_name} {column_type}")
+                )
 
+        db.commit()
+    except Exception:
+        db.rollback()
 
 def score_claim(claim):
     score = 0
