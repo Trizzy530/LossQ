@@ -1499,9 +1499,73 @@ async function exportExecutiveReport() {
       Submission Builder Engine
     </p>
 
-    <h2 className="text-2xl md:text-3xl font-bold mb-6">
+    <h2 className="text-2xl md:text-3xl font-bold mb-4">
       Carrier Submission Package
     </h2>
+
+    <p className="text-slate-400 mb-6">
+      Select an active carrier profile, then generate a complete underwriting submission package for that account.
+    </p>
+
+    <div className="rounded-3xl border border-white/10 bg-slate-950/60 p-5 mb-8">
+      <label className="block text-sm text-blue-200 mb-2">
+        Select Account / Policy
+      </label>
+
+      <div className="flex flex-col md:flex-row gap-4">
+        <select
+          value={profile?.policy_number || ""}
+          onChange={(e) => selectAccount(e.target.value)}
+          className="flex-1 rounded-2xl bg-slate-950/70 border border-white/10 px-4 py-4 text-white outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20"
+        >
+          <option value="">Select active profile...</option>
+
+          {profiles.map((item) => (
+            <option key={item.id || item.policy_number} value={item.policy_number}>
+              {(item.business_name || "Unnamed Business") +
+                " — " +
+                (item.carrier_name || "No Carrier") +
+                " — " +
+                (item.policy_number || "No Policy")}
+            </option>
+          ))}
+        </select>
+
+        <button
+          onClick={() => loadDashboard(profile?.policy_number)}
+          className="btn-primary"
+        >
+          Generate Package
+        </button>
+      </div>
+
+      <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
+        <ProfileDetail label="Insured" value={profile?.business_name || "-"} />
+        <ProfileDetail label="Carrier" value={profile?.carrier_name || "-"} />
+        <ProfileDetail label="Policy" value={profile?.policy_number || "-"} />
+      </div>
+    </div>
+
+    <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+      <MetricCard title="Renewal Score" value={summary?.renewal_score ?? "-"} />
+      <MetricCard title="Risk Level" value={summary?.renewal_risk_level || "Not Rated"} />
+      <MetricCard
+        title="Premium Forecast"
+        value={
+          premiumForecast?.expected_increase_percent !== undefined
+            ? `${premiumForecast.expected_increase_percent}%`
+            : "-"
+        }
+      />
+      <MetricCard
+        title="Submission Readiness"
+        value={
+          submissionReadiness?.submission_readiness_score !== undefined
+            ? `${submissionReadiness.submission_readiness_score}/100`
+            : "-"
+        }
+      />
+    </div>
 
     <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
       <TextCard
@@ -1539,6 +1603,25 @@ async function exportExecutiveReport() {
       />
     </div>
 
+    <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+      <TextCard
+        title="Carrier Appetite"
+        text={
+          carrierAppetite?.placement_summary ||
+          carrierAppetite?.market_strategy ||
+          "No carrier appetite summary available yet."
+        }
+      />
+
+      <TextCard
+        title="Premium Forecast"
+        text={
+          premiumForecast?.forecast_summary ||
+          "No premium forecast summary available yet."
+        }
+      />
+    </div>
+
     <div className="mt-6">
       <TextCard
         title="Carrier Submission Email"
@@ -1563,9 +1646,22 @@ async function exportExecutiveReport() {
         color="purple"
       />
     </div>
+
+    <div className="mt-8 flex flex-wrap gap-4">
+      <button onClick={exportExecutiveReport} className="btn-success">
+        Export Executive Report
+      </button>
+
+      <button onClick={generateCarrierPacket} className="btn-purple">
+        Generate Carrier Packet
+      </button>
+
+      <button onClick={() => setActiveTool("memo")} className="btn-secondary">
+        Open Renewal Memo
+      </button>
+    </div>
   </section>
 )}
-
 
           {activeTool === "summary" && (
             <section className="glass-panel p-6 md:p-8">
