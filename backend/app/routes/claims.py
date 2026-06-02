@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect
+from datetime import datetime
 
 from app.database import SessionLocal
 from app.models.claim import Claim
@@ -25,6 +26,28 @@ def ensure_claim_timeline_columns(db: Session):
         "claim_age": "INTEGER",
     }
 
+def ensure_claim_delete_columns(db: Session):
+    required_columns = {
+        "is_deleted": "BOOLEAN DEFAULT FALSE",
+        "deleted_at": "TIMESTAMP",
+    }
+
+    try:
+        inspector = inspect(db.bind)
+        existing_columns = [
+            column["name"] for column in inspector.get_columns("claims")
+        ]
+
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                db.execute(
+                    text(f"ALTER TABLE claims ADD COLUMN {column_name} {column_type}")
+                )
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Claim delete column check failed: {e}")
     try:
         inspector = inspect(db.bind)
         existing_columns = [
@@ -181,10 +204,12 @@ def get_claims(
     current_user: dict = Depends(get_current_user),
 ):
     ensure_claim_timeline_columns(db)
+    ensure_claim_delete_columns(db)
 
     query = db.query(Claim).filter(
-        Claim.organization_id == current_user["organization_id"]
-    )
+    Claim.organization_id == current_user["organization_id"],
+    Claim.is_deleted == False,
+)
 
     if policy_number:
         query = query.filter(Claim.policy_number == policy_number)
@@ -199,6 +224,67 @@ def get_claim_detail(
     current_user: dict = Depends(get_current_user),
 ):
     ensure_claim_timeline_columns(db)
+    ensure_claim_delete_columns(db)
+
+    claim = (
+    db.query(Claim)
+    .filter(
+        Claim.id == claim_id,
+        Claim.organization_id == current_user["organization_id"],
+        Claim.is_deleted == False,
+    )
+    .first()
+)
+
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+
+    analysis = build_claim_ai_analysis(claim)
+
+    return {
+        "claim": claim,
+        **analysis,
+    }
+
+@router.delete("/{claim_id}")
+def delete_claim(
+    claim_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    ensure_claim_delete_columns(db)
+
+    claim = (
+        db.query(Claim)
+        .filter(
+            Claim.id == claim_id,
+            Claim.organization_id == current_user["organization_id"],
+            Claim.is_deleted == False,
+        )
+        .first()
+    )
+
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+
+    claim.is_deleted = True
+    claim.deleted_at = datetime.utcnow()
+
+    db.commit()
+
+    return {
+        "message": "Claim deleted successfully",
+        "claim_id": claim_id,
+    }
+
+
+@router.post("/{claim_id}/restore")
+def restore_claim(
+    claim_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    ensure_claim_delete_columns(db)
 
     claim = (
         db.query(Claim)
@@ -212,9 +298,12 @@ def get_claim_detail(
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
 
-    analysis = build_claim_ai_analysis(claim)
+    claim.is_deleted = False
+    claim.deleted_at = None
+
+    db.commit()
 
     return {
-        "claim": claim,
-        **analysis,
+        "message": "Claim restored successfully",
+        "claim_id": claim_id,
     }

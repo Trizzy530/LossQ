@@ -1,5 +1,7 @@
 from sqlalchemy import Column, Integer, String, Float, Boolean, ForeignKey
 from app.database import Base
+from sqlalchemy import DateTime
+from datetime import datetime
 
 class Claim(Base):
     __tablename__ = "claims"
@@ -38,3 +40,6 @@ class Claim(Base):
     organization_id = Column(Integer, ForeignKey("organizations.id"))
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"))
     uploaded_at = Column(String)
+    
+is_deleted = Column(Boolean, default=False)
+deleted_at = Column(DateTime, nullable=True)
