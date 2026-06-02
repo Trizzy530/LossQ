@@ -596,7 +596,7 @@ def executive_report_pdf(
         ],
         colWidths=[1.6 * inch, 1.6 * inch, 1.6 * inch, 1.6 * inch],
     )
-        apply_clean_table_style(metrics, "#0f172a")
+    apply_clean_table_style(metrics, "#0f172a")
     story.append(metrics)
     story.append(Spacer(1, 14))
 
