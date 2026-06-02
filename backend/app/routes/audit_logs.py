@@ -2,9 +2,15 @@ from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 
 from app.auth_utils import get_current_user
-from app.database import get_db
+from app.database import SessionLocal
 from app.models.audit_log import AuditLog
 
+def get_db():
+    db = SessionLocal()
+    try:
+        yield db
+    finally:
+        db.close()
 
 router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 
