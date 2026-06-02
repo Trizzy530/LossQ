@@ -789,12 +789,15 @@ async function exportExecutiveReport() {
     ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
     : "";
 
-  await downloadPdf(
-    `${API}/reports/underwriting-pdf${policy}`,
-    "lossq_executive_report.pdf"
-  );
-}
+  setMessage("Generating executive underwriting report...");
 
+  await downloadPdf(
+    `${API}/reports/executive-report-pdf${policy}`,
+    "lossq_executive_underwriting_report.pdf"
+  );
+
+  setMessage("Executive underwriting report generated.");
+}
 
 
   async function generateRenewalMemo() {
@@ -838,7 +841,7 @@ async function exportExecutiveReport() {
     }
   }
 
-  async function generateCarrierPacket() {
+ async function generateCarrierPacket() {
   const policy = profile?.policy_number
     ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
     : "";
