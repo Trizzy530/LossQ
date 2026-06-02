@@ -28,6 +28,7 @@ from app.models.organization import Organization
 from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
+from app.models.audit_log import AuditLog
 
 load_dotenv()
 

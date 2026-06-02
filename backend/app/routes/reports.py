@@ -24,6 +24,7 @@ from app.models.claim import Claim
 from app.models.account_profile import AccountProfile
 from app.auth_utils import get_current_user
 from app.routes.claims import build_claim_ai_analysis
+from app.services.audit import record_audit_event
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
@@ -862,6 +863,23 @@ def executive_report_pdf(
         onLaterPages=add_report_footer,
     )
 
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="executive_report_generated",
+        resource_type="report",
+        resource_id=safe_policy,
+        details={
+            "report_type": "executive_underwriting_report",
+            "policy_number": profile["policy_number"],
+            "business_name": profile["business_name"],
+            "renewal_score": renewal_score,
+            "risk_level": risk_level,
+            "claim_count": totals["claim_count"],
+            "total_incurred": totals["total_incurred"],
+        },
+    )
+
     return FileResponse(
         file_path,
         media_type="application/pdf",
@@ -1091,6 +1109,23 @@ def carrier_packet_pdf(
 
         
     doc.build(story)
+
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="carrier_packet_generated",
+        resource_type="report",
+        resource_id=safe_policy,
+        details={
+            "report_type": "carrier_submission_packet",
+            "policy_number": profile["policy_number"],
+            "business_name": profile["business_name"],
+            "renewal_score": renewal_score,
+            "risk_level": risk_level,
+            "claim_count": totals["claim_count"],
+            "total_incurred": totals["total_incurred"],
+        },
+    )
 
     return FileResponse(
         file_path,

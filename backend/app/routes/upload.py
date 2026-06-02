@@ -17,6 +17,7 @@ from app.services.parser_service import (
 )
 from app.services.excel_parser_service import parse_claims_from_excel
 from app.role_utils import require_permission
+from app.services.audit import record_audit_event
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
