@@ -966,7 +966,7 @@ async function exportExecutiveReport() {
       <div className="fixed inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:72px_72px] opacity-20" />
 
       <div className="relative flex min-h-screen">
-        <aside className="hidden lg:flex w-72 shrink-0 flex-col border-r border-white/10 bg-slate-950/70 backdrop-blur-xl p-5">
+        <aside className="hidden lg:flex fixed left-0 top-0 h-screen w-72 shrink-0 flex-col border-r border-white/10 bg-slate-950/90 backdrop-blur-xl p-5 z-40 overflow-y-auto">
           <div className="mb-8">
             <div className="text-2xl font-black">LossQ</div>
             <div className="text-sm text-slate-400 mt-1">AI Underwriting Suite</div>
@@ -1000,7 +1000,7 @@ async function exportExecutiveReport() {
           </div>
         </aside>
 
-        <section className="flex-1 px-5 md:px-8 py-8 pb-32 max-w-7xl mx-auto w-full">
+        <section className="flex-1 px-5 md:px-8 py-8 pb-32 max-w-7xl mx-auto w-full lg:ml-72">
           <header className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between mb-8">
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-200 mb-5">
