@@ -428,7 +428,7 @@ def build_premium_forecast_page(story, styles, totals, renewal_score, risk_level
 
 
 def build_key_renewal_drivers_page(story, styles, totals):
-    story.append(PageBreak())
+    story.append(Spacer(1, 22))
     story.append(Paragraph("Key Renewal Drivers", styles["LossQSection"]))
 
     open_claims = int(totals.get("open_claims") or 0)
@@ -522,7 +522,7 @@ def build_carrier_appetite_page(story, styles, renewal_score, risk_level):
 
 
 def build_broker_action_plan_page(story, styles, totals):
-    story.append(PageBreak())
+        story.append(Spacer(1, 22))
     story.append(Paragraph("Broker Action Plan", styles["LossQSection"]))
 
     actions = [
@@ -640,8 +640,7 @@ def executive_report_pdf(
     build_carrier_appetite_page(story, styles, renewal_score, risk_level)
     build_broker_action_plan_page(story, styles, totals)
 
-    story.append(PageBreak())
-    story.append(Paragraph("Renewal Intelligence", styles["LossQSection"]))
+    story.append(Spacer(1, 14))
 
     drivers = []
     if totals["open_claims"] > 0:
