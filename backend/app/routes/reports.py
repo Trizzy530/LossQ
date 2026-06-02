@@ -299,19 +299,55 @@ def add_cover(story, styles, title, subtitle, profile):
 
     story.append(PageBreak())
 
-class RenewalGauge(Flowable):
-    def __init__(self, score, width=1.55 * inch, height=0.95 * inch):
+class RenewalScoreBanner(Flowable):
+    def __init__(self, score, risk_level, width=6.5 * inch, height=1.38 * inch):
         Flowable.__init__(self)
         self.score = max(0, min(100, int(score or 0)))
+        self.risk_level = safe_text(risk_level).upper()
         self.width = width
         self.height = height
 
     def draw(self):
+        import math
+
         c = self.canv
 
-        center_x = self.width / 2
-        center_y = 0.22 * inch
-        radius = 0.52 * inch
+        if self.score >= 80:
+            bg = colors.HexColor("#16a34a")
+            border = colors.HexColor("#166534")
+            subtitle = "STRONG RENEWAL POSITION"
+        elif self.score >= 60:
+            bg = colors.HexColor("#eab308")
+            border = colors.HexColor("#854d0e")
+            subtitle = "MODERATE RENEWAL RISK"
+        elif self.score >= 40:
+            bg = colors.HexColor("#dc2626")
+            border = colors.HexColor("#991b1b")
+            subtitle = "ELEVATED RENEWAL RISK"
+        else:
+            bg = colors.HexColor("#dc2626")
+            border = colors.HexColor("#991b1b")
+            subtitle = "HIGH RENEWAL RISK"
+
+        c.setFillColor(bg)
+        c.roundRect(0, 0, self.width, self.height, 10, fill=1, stroke=0)
+
+        c.setStrokeColor(border)
+        c.setLineWidth(1)
+        c.roundRect(0, 0, self.width, self.height, 10, fill=0, stroke=1)
+
+        gauge_left = 0.28 * inch
+        score_left = 1.78 * inch
+        divider_x = 4.38 * inch
+        risk_left = 4.78 * inch
+
+        c.setStrokeColor(colors.white)
+        c.setLineWidth(1.2)
+        c.line(divider_x, 0.18 * inch, divider_x, self.height - 0.18 * inch)
+
+        center_x = gauge_left + 0.58 * inch
+        center_y = 0.47 * inch
+        radius = 0.48 * inch
 
         c.setStrokeColor(colors.white)
         c.setLineWidth(7)
@@ -324,22 +360,102 @@ class RenewalGauge(Flowable):
             180,
         )
 
-        # Lower score points toward high risk side.
+        c.setLineWidth(4)
+        for tick_angle in [30, 90, 150]:
+            start_x = center_x + math.cos(math.radians(tick_angle)) * (radius - 0.09 * inch)
+            start_y = center_y + math.sin(math.radians(tick_angle)) * (radius - 0.09 * inch)
+            end_x = center_x + math.cos(math.radians(tick_angle)) * radius
+            end_y = center_y + math.sin(math.radians(tick_angle)) * radius
+            c.line(start_x, start_y, end_x, end_y)
+
         angle = 180 - (self.score / 100) * 180
-        import math
         needle_length = 0.42 * inch
         end_x = center_x + math.cos(math.radians(angle)) * needle_length
         end_y = center_y + math.sin(math.radians(angle)) * needle_length
 
-        c.setStrokeColor(colors.white)
         c.setLineWidth(5)
         c.line(center_x, center_y, end_x, end_y)
-
-        c.setFillColor(colors.white)
         c.circle(center_x, center_y, 0.09 * inch, fill=1, stroke=0)
 
+        c.setFillColor(colors.white)
         c.setFont("Helvetica-Bold", 7)
-        c.drawCentredString(center_x, 0.02 * inch, "RISK GAUGE")
+        c.drawCentredString(center_x, 0.09 * inch, "RISK GAUGE")
+
+        c.setFont("Helvetica-Bold", 14)
+        c.drawCentredString(score_left + 1.18 * inch, 0.98 * inch, "RENEWAL SCORE")
+
+        c.setFont("Helvetica-Bold", 42)
+        c.drawCentredString(score_left + 1.18 * inch, 0.40 * inch, f"{self.score}/100")
+
+        c.setFont("Helvetica-Bold", 14)
+        c.drawCentredString(risk_left + 0.72 * inch, 0.98 * inch, "RISK LEVEL")
+
+        c.setFont("Helvetica-Bold", 25)
+        c.drawCentredString(risk_left + 0.72 * inch, 0.58 * inch, self.risk_level)
+
+        c.setFont("Helvetica-Bold", 8)
+        c.drawCentredString(risk_left + 0.72 * inch, 0.30 * inch, subtitle)
+
+
+def build_report_header(story, styles, profile):
+    logo_path = os.path.join(REPORT_DIR, "lossq-logo-style2.png")
+
+    if os.path.exists(logo_path):
+        logo = Image(
+            logo_path,
+            width=2.55 * inch,
+            height=0.72 * inch,
+        )
+
+        logo_table = Table(
+            [[logo]],
+            colWidths=[6.5 * inch],
+        )
+
+        logo_table.setStyle(
+            TableStyle(
+                [
+                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ]
+            )
+        )
+
+        story.append(logo_table)
+        story.append(Spacer(1, 8))
+    else:
+        story.append(Paragraph("LossQ", styles["LossQTitle"]))
+
+    title = Paragraph(
+        '<para align="center"><font color="#0f172a" size="25"><b>Executive Underwriting Report</b></font></para>',
+        styles["LossQBody"],
+    )
+
+    policy_line = Paragraph(
+        f'<para align="center"><font color="#475569" size="11">'
+        f'{safe_text(profile["business_name"])} &nbsp; | &nbsp; '
+        f'Policy Period: {safe_text(profile["effective_date"])} - {safe_text(profile["expiration_date"])}'
+        f'</font></para>',
+        styles["LossQBody"],
+    )
+
+    story.append(title)
+    story.append(Spacer(1, 6))
+    story.append(policy_line)
+    story.append(Spacer(1, 10))
+
+    line = Table([[""]], colWidths=[6.5 * inch], rowHeights=[0.01 * inch])
+    line.setStyle(
+        TableStyle(
+            [
+                ("LINEBELOW", (0, 0), (-1, -1), 0.75, colors.HexColor("#cbd5e1")),
+            ]
+        )
+    )
+
+    story.append(line)
+    story.append(Spacer(1, 14))
+
 
 def renewal_badge_color(score):
     if score >= 80:
@@ -350,69 +466,9 @@ def renewal_badge_color(score):
 
 
 def build_renewal_score_banner(story, styles, renewal_score, risk_level):
-    badge_color = renewal_badge_color(renewal_score)
-
-    if renewal_score >= 80:
-        risk_subtitle = "STRONG RENEWAL POSITION"
-    elif renewal_score >= 60:
-        risk_subtitle = "MODERATE RENEWAL RISK"
-    elif renewal_score >= 40:
-        risk_subtitle = "ELEVATED RENEWAL RISK"
-    else:
-        risk_subtitle = "HIGH RENEWAL RISK"
-
-    gauge = RenewalGauge(renewal_score)
-
-    score_text = Paragraph(
-        f"""
-        <para align="center">
-            <font size="12"><b>RENEWAL SCORE</b></font><br/>
-            <font size="34"><b>{renewal_score}/100</b></font>
-        </para>
-        """,
-        styles["LossQWhite"],
-    )
-
-    risk_text = Paragraph(
-        f"""
-        <para align="center">
-            <font size="12"><b>RISK LEVEL</b></font><br/>
-            <font size="23"><b>{safe_text(risk_level).upper()}</b></font><br/>
-            <font size="9"><b>{risk_subtitle}</b></font>
-        </para>
-        """,
-        styles["LossQWhite"],
-    )
-
-    banner = Table(
-        [[gauge, score_text, risk_text]],
-        colWidths=[1.45 * inch, 3.05 * inch, 2.0 * inch],
-        rowHeights=[1.45 * inch],
-    )
-
-    banner.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(badge_color)),
-                ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-
-                ("LEFTPADDING", (0, 0), (-1, -1), 14),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 14),
-                ("TOPPADDING", (0, 0), (-1, -1), 18),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 18),
-
-                ("LINEBEFORE", (2, 0), (2, 0), 1.5, colors.white),
-                ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#991b1b")),
-            ]
-        )
-    )
-
-    story.append(Spacer(1, 8))
-    story.append(banner)
+    story.append(Spacer(1, 6))
+    story.append(RenewalScoreBanner(renewal_score, risk_level))
     story.append(Spacer(1, 20))
-
 
 def build_premium_forecast_page(story, styles, totals, renewal_score, risk_level):
     story.append(PageBreak())
@@ -644,7 +700,10 @@ def executive_report_pdf(
         f"{renewal_score}/100 with a {risk_level} renewal risk level."
     )
 
+    build_report_header(story, styles, profile)
+
     build_renewal_score_banner(story, styles, renewal_score, risk_level)
+    
 
     story.append(Paragraph("Executive Summary", styles["LossQSection"]))
     story.append(Paragraph(summary_text, styles["LossQBody"]))
