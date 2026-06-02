@@ -693,20 +693,30 @@ if (submissionBuilderRes.ok) {
     return;
   }
 
-
   try {
-    setMessage("Uploading and analyzing loss runs...");
+    const selectedFiles = Array.from(files);
+    const uploadedFileNames = selectedFiles.map((file) => file.name).join(", ");
+
+    setMessage(`Uploading and analyzing: ${uploadedFileNames}`);
 
     const formData = new FormData();
-    formData.append("policy_number", profile.policy_number);
+
+    /*
+      IMPORTANT:
+      Do NOT automatically send profile.policy_number here.
+
+      Sending the old selected profile policy number forces the backend
+      to attach the new upload to the previous account, which makes the
+      dashboard jump back to the last file/account.
+    */
 
     let endpoint = `${API}/upload/loss-run`;
 
-    if (files.length === 1) {
-      formData.append("file", files[0]);
+    if (selectedFiles.length === 1) {
+      formData.append("file", selectedFiles[0]);
     } else {
       endpoint = `${API}/upload/loss-runs`;
-      Array.from(files).forEach((file) => formData.append("files", file));
+      selectedFiles.forEach((file) => formData.append("files", file));
     }
 
     const res = await fetch(endpoint, {
@@ -730,14 +740,24 @@ if (submissionBuilderRes.ok) {
       return;
     }
 
-    setMessage(`Upload complete. Saved ${data?.saved_claims || 0} claim(s).`);
+    const newPolicyNumber =
+      data?.profile?.policy_number ||
+      data?.policy_number ||
+      "";
 
-    if (data?.profile?.policy_number) {
+    setMessage(
+      `Upload complete. Saved ${data?.saved_claims || 0} claim(s). New file: ${uploadedFileNames}`
+    );
+
+    if (data?.profile) {
       setProfile(data.profile);
       updateProfileList([data.profile]);
-      await loadDashboard(data.profile.policy_number);
+    }
+
+    if (newPolicyNumber) {
+      await loadDashboard(newPolicyNumber);
     } else {
-      await loadDashboard(profile.policy_number);
+      await loadDashboard("");
     }
   } catch (error: any) {
     setMessage(
