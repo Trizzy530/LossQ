@@ -522,7 +522,7 @@ def build_carrier_appetite_page(story, styles, renewal_score, risk_level):
 
 
 def build_broker_action_plan_page(story, styles, totals):
-        story.append(Spacer(1, 22))
+    story.append(Spacer(1, 22))
     story.append(Paragraph("Broker Action Plan", styles["LossQSection"]))
 
     actions = [
