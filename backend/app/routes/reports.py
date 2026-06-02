@@ -318,11 +318,21 @@ def build_renewal_score_banner(story, styles, renewal_score, risk_level):
     else:
         risk_subtitle = "HIGH RENEWAL RISK"
 
+    gauge_text = Paragraph(
+        """
+        <para align="center">
+            <font size="42"><b>◜●◝</b></font><br/>
+            <font size="8"><b>RISK GAUGE</b></font>
+        </para>
+        """,
+        styles["LossQWhite"],
+    )
+
     score_text = Paragraph(
         f"""
         <para align="center">
-            <font size="13"><b>RENEWAL SCORE</b></font><br/>
-            <font size="38"><b>{renewal_score}/100</b></font>
+            <font size="14"><b>RENEWAL SCORE</b></font><br/>
+            <font size="46"><b>{renewal_score}/100</b></font>
         </para>
         """,
         styles["LossQWhite"],
@@ -331,7 +341,7 @@ def build_renewal_score_banner(story, styles, renewal_score, risk_level):
     risk_text = Paragraph(
         f"""
         <para align="center">
-            <font size="13"><b>RISK LEVEL</b></font><br/>
+            <font size="14"><b>RISK LEVEL</b></font><br/>
             <font size="30"><b>{safe_text(risk_level).upper()}</b></font><br/>
             <font size="11"><b>{risk_subtitle}</b></font>
         </para>
@@ -340,9 +350,9 @@ def build_renewal_score_banner(story, styles, renewal_score, risk_level):
     )
 
     banner = Table(
-        [[score_text, risk_text]],
-        colWidths=[3.25 * inch, 3.25 * inch],
-        rowHeights=[1.15 * inch],
+        [[gauge_text, score_text, risk_text]],
+        colWidths=[1.45 * inch, 2.95 * inch, 2.1 * inch],
+        rowHeights=[1.35 * inch],
     )
 
     banner.setStyle(
@@ -352,18 +362,23 @@ def build_renewal_score_banner(story, styles, renewal_score, risk_level):
                 ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
                 ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 14),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 14),
-                ("TOPPADDING", (0, 0), (-1, -1), 14),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
-                ("LINEBEFORE", (1, 0), (1, 0), 1.2, colors.white),
-                ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#e2e8f0")),
+
+                ("LEFTPADDING", (0, 0), (-1, -1), 12),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                ("TOPPADDING", (0, 0), (-1, -1), 18),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 18),
+
+                ("LINEBEFORE", (2, 0), (2, 0), 1.5, colors.white),
+                ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#991b1b")),
+
+                ("ROUNDEDCORNERS", [14, 14, 14, 14]),
             ]
         )
     )
 
+    story.append(Spacer(1, 6))
     story.append(banner)
-    story.append(Spacer(1, 18))
+    story.append(Spacer(1, 20))
 
 def build_premium_forecast_page(story, styles, totals, renewal_score, risk_level):
     story.append(PageBreak())
