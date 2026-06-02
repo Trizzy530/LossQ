@@ -298,7 +298,227 @@ def add_cover(story, styles, title, subtitle, profile):
 
     story.append(PageBreak())
 
+def renewal_badge_color(score):
+    if score >= 80:
+        return "#16a34a"
+    if score >= 60:
+        return "#eab308"
+    return "#dc2626"
 
+
+def build_renewal_score_banner(story, styles, renewal_score, risk_level):
+    badge_color = renewal_badge_color(renewal_score)
+
+    banner = Table(
+        [
+            [
+                Paragraph(
+                    f"<b>Renewal Score</b><br/><font size='28'>{renewal_score}/100</font>",
+                    styles["LossQWhite"],
+                ),
+                Paragraph(
+                    f"<b>Risk Level</b><br/><font size='24'>{risk_level}</font>",
+                    styles["LossQWhite"],
+                ),
+            ]
+        ],
+        colWidths=[3.2 * inch, 3.2 * inch],
+    )
+
+    banner.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(badge_color)),
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 18),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 18),
+                ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#e2e8f0")),
+            ]
+        )
+    )
+
+    story.append(banner)
+    story.append(Spacer(1, 18))
+
+
+def build_premium_forecast_page(story, styles, totals, renewal_score, risk_level):
+    story.append(PageBreak())
+    story.append(Paragraph("Premium Forecast", styles["LossQSection"]))
+
+    incurred = float(totals.get("total_incurred") or 0)
+    open_claims = int(totals.get("open_claims") or 0)
+    litigation_claims = int(totals.get("litigation_claims") or 0)
+
+    if renewal_score >= 80:
+        forecast_increase = "0% - 8%"
+        confidence = "High"
+        estimated_renewal = max(25000, incurred * 0.35)
+    elif renewal_score >= 60:
+        forecast_increase = "8% - 18%"
+        confidence = "Moderate"
+        estimated_renewal = max(35000, incurred * 0.55)
+    elif renewal_score >= 40:
+        forecast_increase = "18% - 35%"
+        confidence = "Moderate"
+        estimated_renewal = max(50000, incurred * 0.75)
+    else:
+        forecast_increase = "35%+"
+        confidence = "High"
+        estimated_renewal = max(75000, incurred * 1.05)
+
+    forecast_table = Table(
+        [
+            ["Estimated Renewal Premium", "Forecast Increase %", "Confidence Score"],
+            [money(estimated_renewal), forecast_increase, confidence],
+        ],
+        colWidths=[2.15 * inch, 2.15 * inch, 2.15 * inch],
+    )
+
+    apply_clean_table_style(forecast_table, "#0f172a")
+    story.append(forecast_table)
+    story.append(Spacer(1, 16))
+
+    forecast_text = (
+        f"LossQ estimates renewal pricing pressure based on total incurred losses of "
+        f"{money(incurred)}, {open_claims} open claim(s), {litigation_claims} litigation or attorney-driven "
+        f"claim(s), and an overall renewal risk level of {risk_level}. This forecast should be reviewed "
+        f"against the actual expiring premium before final carrier negotiation."
+    )
+
+    story.append(Paragraph(forecast_text, styles["LossQBody"]))
+
+
+def build_key_renewal_drivers_page(story, styles, totals):
+    story.append(PageBreak())
+    story.append(Paragraph("Key Renewal Drivers", styles["LossQSection"]))
+
+    open_claims = int(totals.get("open_claims") or 0)
+    litigation_claims = int(totals.get("litigation_claims") or 0)
+    total_incurred = float(totals.get("total_incurred") or 0)
+    total_reserve = float(totals.get("total_reserve") or 0)
+
+    large_loss_note = "Yes" if total_incurred >= 100000 else "No"
+    reserve_concern = "Elevated" if total_reserve >= 25000 else "Manageable"
+
+    driver_table = Table(
+        [
+            ["Driver", "Result", "Underwriting Meaning"],
+            [
+                "Open Claims",
+                str(open_claims),
+                "Open claims may create uncertainty around ultimate loss development.",
+            ],
+            [
+                "Litigation",
+                str(litigation_claims),
+                "Attorney involvement can increase severity and carrier concern.",
+            ],
+            [
+                "Large Losses",
+                large_loss_note,
+                "Large incurred losses can place upward pressure on renewal pricing.",
+            ],
+            [
+                "Reserve Concerns",
+                reserve_concern,
+                f"Current reserves total {money(total_reserve)}.",
+            ],
+        ],
+        colWidths=[1.45 * inch, 1.15 * inch, 3.9 * inch],
+    )
+
+    apply_clean_table_style(driver_table, "#1d4ed8")
+    story.append(driver_table)
+    story.append(Spacer(1, 16))
+
+    story.append(
+        Paragraph(
+            "These drivers should be addressed directly in the renewal submission with updated claim status, "
+            "reserve commentary, corrective actions, and broker positioning.",
+            styles["LossQBody"],
+        )
+    )
+
+
+def build_carrier_appetite_page(story, styles, renewal_score, risk_level):
+    story.append(PageBreak())
+    story.append(Paragraph("Carrier Appetite Analysis", styles["LossQSection"]))
+
+    if renewal_score >= 80:
+        preferred = "Standard admitted markets, preferred commercial carriers"
+        standard = "Regional carriers, package markets"
+        excess = "Generally not required unless coverage complexity exists"
+        commentary = "The account should be marketable to standard carriers if submission documentation is complete."
+    elif renewal_score >= 60:
+        preferred = "Selective standard carriers with strong broker narrative"
+        standard = "Regional and program markets"
+        excess = "Consider as backup option"
+        commentary = "The account may remain marketable, but underwriters will expect clear claim explanations."
+    elif renewal_score >= 40:
+        preferred = "Limited standard appetite"
+        standard = "Program markets and specialty carriers"
+        excess = "Likely needed for competitive terms"
+        commentary = "The account may face pricing pressure and reduced appetite from preferred carriers."
+    else:
+        preferred = "Very limited"
+        standard = "Specialty markets only"
+        excess = "Strongly recommended"
+        commentary = "The account should be positioned carefully with a complete corrective action and claims narrative package."
+
+    appetite_table = Table(
+        [
+            ["Market Type", "Appetite"],
+            ["Preferred Markets", preferred],
+            ["Standard Markets", standard],
+            ["Excess Markets", excess],
+            ["Risk Level", risk_level],
+        ],
+        colWidths=[1.8 * inch, 4.7 * inch],
+    )
+
+    apply_clean_table_style(appetite_table, "#0f766e")
+    story.append(appetite_table)
+    story.append(Spacer(1, 16))
+    story.append(Paragraph(commentary, styles["LossQBody"]))
+
+
+def build_broker_action_plan_page(story, styles, totals):
+    story.append(PageBreak())
+    story.append(Paragraph("Broker Action Plan", styles["LossQSection"]))
+
+    actions = [
+        "Obtain updated claim status notes for all open claims before marketing the account.",
+        "Request reserve reviews or adjuster commentary for claims with active reserves.",
+        "Prepare large-loss explanations and corrective action summaries for carrier review.",
+        "Package litigation updates, attorney status, and expected resolution timelines.",
+        "Submit to preferred, standard, and backup specialty markets with a complete LossQ narrative package.",
+    ]
+
+    action_rows = [["#", "Recommended Action"]]
+
+    for index, action in enumerate(actions, start=1):
+        action_rows.append([str(index), Paragraph(action, styles["LossQBody"])])
+
+    action_table = Table(
+        action_rows,
+        colWidths=[0.55 * inch, 5.95 * inch],
+    )
+
+    apply_clean_table_style(action_table, "#7c3aed")
+    story.append(action_table)
+    story.append(Spacer(1, 16))
+
+    story.append(
+        Paragraph(
+            "This action plan is designed to strengthen the account's market presentation before renewal negotiation.",
+            styles["LossQBody"],
+        )
+    )
 
 
 
@@ -359,36 +579,7 @@ def executive_report_pdf(
     story.append(Paragraph(summary_text, styles["LossQBody"]))
     story.append(Spacer(1, 12))
 
-    if renewal_score >= 80:
-        badge_color = "#16a34a"
-    elif renewal_score >= 60:
-        badge_color = "#eab308"
-    else:
-        badge_color = "#dc2626"
-
-    score_badge = Table(
-        [[f"Renewal Score: {renewal_score}/100"]],
-        colWidths=[2.5 * inch],
-    )
-
-    score_badge.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(badge_color)),
-                ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
-                ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 18),
-                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("TOPPADDING", (0, 0), (-1, -1), 10),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
-                ("BOX", (0, 0), (-1, -1), 1, colors.white),
-            ]
-        )
-    )
-
-    story.append(score_badge)
-    story.append(Spacer(1, 12))
+    build_renewal_score_banner(story, styles, renewal_score, risk_level)
 
     metrics = Table(
 
@@ -405,10 +596,16 @@ def executive_report_pdf(
         ],
         colWidths=[1.6 * inch, 1.6 * inch, 1.6 * inch, 1.6 * inch],
     )
-    apply_clean_table_style(metrics, "#0f172a")
+        apply_clean_table_style(metrics, "#0f172a")
     story.append(metrics)
     story.append(Spacer(1, 14))
 
+    build_premium_forecast_page(story, styles, totals, renewal_score, risk_level)
+    build_key_renewal_drivers_page(story, styles, totals)
+    build_carrier_appetite_page(story, styles, renewal_score, risk_level)
+    build_broker_action_plan_page(story, styles, totals)
+
+    story.append(PageBreak())
     story.append(Paragraph("Renewal Intelligence", styles["LossQSection"]))
 
     drivers = []
