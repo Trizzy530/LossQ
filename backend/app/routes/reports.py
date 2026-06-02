@@ -359,7 +359,39 @@ def executive_report_pdf(
     story.append(Paragraph(summary_text, styles["LossQBody"]))
     story.append(Spacer(1, 12))
 
+    if renewal_score >= 80:
+        badge_color = "#16a34a"
+    elif renewal_score >= 60:
+        badge_color = "#eab308"
+    else:
+        badge_color = "#dc2626"
+
+    score_badge = Table(
+        [[f"Renewal Score: {renewal_score}/100"]],
+        colWidths=[2.5 * inch],
+    )
+
+    score_badge.setStyle(
+        TableStyle(
+            [
+                ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(badge_color)),
+                ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
+                ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
+                ("FONTSIZE", (0, 0), (-1, -1), 18),
+                ("ALIGN", (0, 0), (-1, -1), "CENTER"),
+                ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+                ("TOPPADDING", (0, 0), (-1, -1), 10),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+                ("BOX", (0, 0), (-1, -1), 1, colors.white),
+            ]
+        )
+    )
+
+    story.append(score_badge)
+    story.append(Spacer(1, 12))
+
     metrics = Table(
+
         [
             ["Renewal Score", "Risk Level", "Total Claims", "Open Claims"],
             [f"{renewal_score}/100", risk_level, str(totals["claim_count"]), str(totals["open_claims"])],
