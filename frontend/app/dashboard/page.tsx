@@ -1532,11 +1532,23 @@ async function exportExecutiveReport() {
         </select>
 
         <button
-          onClick={() => loadDashboard(profile?.policy_number)}
-          className="btn-primary"
-        >
-          Generate Package
-        </button>
+  onClick={async () => {
+    if (!profile?.policy_number) {
+      setMessage("Select an account/profile first.");
+      return;
+    }
+
+    setMessage(`Generating submission package for ${profile.policy_number}...`);
+
+    await loadDashboard(profile.policy_number);
+
+    setActiveTool("submission-builder");
+    setMessage(`Submission package generated for ${profile.policy_number}.`);
+  }}
+  className="btn-primary"
+>
+  Generate Package
+</button>
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
