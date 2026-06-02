@@ -260,10 +260,59 @@ export default function ClaimDetailPage() {
           </GlassPanel>
         </section>
 
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-          <ActionPanel title="Risk Factors" items={data?.risk_factors || []} />
-          <ActionPanel title="Broker Actions" items={data?.broker_actions || []} />
-        </section>
+        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+  <ActionPanel
+    title="Risk Factors"
+    items={data?.risk_factors || []}
+  />
+
+  <ActionPanel
+    title="Broker Actions"
+    items={data?.broker_actions || []}
+  />
+</section>
+
+<section className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
+  <GlassPanel>
+    <h2 className="text-3xl font-black mb-6">
+      Underwriter Narrative
+    </h2>
+
+    <p className="text-slate-200 leading-8">
+      {data?.underwriter_narrative ||
+        "No narrative available."}
+    </p>
+  </GlassPanel>
+
+  <GlassPanel>
+    <h2 className="text-3xl font-black mb-6">
+      Risk Summary
+    </h2>
+
+    <p className="text-slate-200 leading-8">
+      {data?.risk_summary ||
+        "No risk summary available."}
+    </p>
+  </GlassPanel>
+</section>
+
+<section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+  <GlassPanel>
+    <h2 className="text-3xl font-black mb-6">
+      Litigation Analysis
+    </h2>
+
+    <p className="text-slate-200 leading-8">
+      {data?.litigation_analysis ||
+        "No litigation analysis available."}
+    </p>
+  </GlassPanel>
+
+  <ActionPanel
+    title="Broker Talking Points"
+    items={data?.broker_talking_points || []}
+  />
+</section>
       </div>
     </main>
   );
