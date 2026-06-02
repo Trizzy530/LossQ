@@ -309,20 +309,40 @@ def renewal_badge_color(score):
 def build_renewal_score_banner(story, styles, renewal_score, risk_level):
     badge_color = renewal_badge_color(renewal_score)
 
+    if renewal_score >= 80:
+        risk_subtitle = "STRONG RENEWAL POSITION"
+    elif renewal_score >= 60:
+        risk_subtitle = "MODERATE RENEWAL RISK"
+    elif renewal_score >= 40:
+        risk_subtitle = "ELEVATED RENEWAL RISK"
+    else:
+        risk_subtitle = "HIGH RENEWAL RISK"
+
+    score_text = Paragraph(
+        f"""
+        <para align="center">
+            <font size="13"><b>RENEWAL SCORE</b></font><br/>
+            <font size="38"><b>{renewal_score}/100</b></font>
+        </para>
+        """,
+        styles["LossQWhite"],
+    )
+
+    risk_text = Paragraph(
+        f"""
+        <para align="center">
+            <font size="13"><b>RISK LEVEL</b></font><br/>
+            <font size="30"><b>{safe_text(risk_level).upper()}</b></font><br/>
+            <font size="11"><b>{risk_subtitle}</b></font>
+        </para>
+        """,
+        styles["LossQWhite"],
+    )
+
     banner = Table(
-        [
-            [
-                Paragraph(
-                    f"<b>Renewal Score</b><br/><font size='28'>{renewal_score}/100</font>",
-                    styles["LossQWhite"],
-                ),
-                Paragraph(
-                    f"<b>Risk Level</b><br/><font size='24'>{risk_level}</font>",
-                    styles["LossQWhite"],
-                ),
-            ]
-        ],
-        colWidths=[3.2 * inch, 3.2 * inch],
+        [[score_text, risk_text]],
+        colWidths=[3.25 * inch, 3.25 * inch],
+        rowHeights=[1.15 * inch],
     )
 
     banner.setStyle(
@@ -330,13 +350,13 @@ def build_renewal_score_banner(story, styles, renewal_score, risk_level):
             [
                 ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor(badge_color)),
                 ("TEXTCOLOR", (0, 0), (-1, -1), colors.white),
-                ("FONTNAME", (0, 0), (-1, -1), "Helvetica-Bold"),
                 ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ("TOPPADDING", (0, 0), (-1, -1), 18),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 18),
                 ("LEFTPADDING", (0, 0), (-1, -1), 14),
                 ("RIGHTPADDING", (0, 0), (-1, -1), 14),
+                ("TOPPADDING", (0, 0), (-1, -1), 14),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 14),
+                ("LINEBEFORE", (1, 0), (1, 0), 1.2, colors.white),
                 ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#e2e8f0")),
             ]
         )
@@ -344,7 +364,6 @@ def build_renewal_score_banner(story, styles, renewal_score, risk_level):
 
     story.append(banner)
     story.append(Spacer(1, 18))
-
 
 def build_premium_forecast_page(story, styles, totals, renewal_score, risk_level):
     story.append(PageBreak())
@@ -566,7 +585,7 @@ def executive_report_pdf(
         profile,
     )
 
-    story.append(Paragraph("Executive Summary", styles["LossQSection"]))
+  
 
     summary_text = (
         f"{safe_text(profile['business_name'])} currently has {totals['claim_count']} claim(s) "
@@ -576,10 +595,11 @@ def executive_report_pdf(
         f"{renewal_score}/100 with a {risk_level} renewal risk level."
     )
 
-    story.append(Paragraph(summary_text, styles["LossQBody"]))
-    story.append(Spacer(1, 12))
-
     build_renewal_score_banner(story, styles, renewal_score, risk_level)
+
+    story.append(Paragraph("Executive Summary", styles["LossQSection"]))
+    story.append(Paragraph(summary_text, styles["LossQBody"]))
+    story.append(Spacer(1, 14))
 
     metrics = Table(
 
