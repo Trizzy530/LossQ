@@ -10,7 +10,9 @@ from reportlab.platypus import (
     Paragraph,
     Spacer,
     PageBreak,
+    Image,
 )
+
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
 from datetime import datetime
@@ -249,10 +251,23 @@ def apply_clean_table_style(table, header_color="#1d4ed8"):
     )
     return table
 
-
 def add_cover(story, styles, title, subtitle, profile):
-    story.append(Spacer(1, 1.0 * inch))
-    story.append(Paragraph("LossQ", styles["LossQTitle"]))
+    story.append(Spacer(1, 0.35 * inch))
+
+    logo_path = os.path.join(REPORT_DIR, "lossq-logo-style2.png")
+
+    if os.path.exists(logo_path):
+        story.append(
+            Image(
+                logo_path,
+                width=2.8 * inch,
+                height=0.85 * inch,
+            )
+        )
+        story.append(Spacer(1, 14))
+    else:
+        story.append(Paragraph("LossQ", styles["LossQTitle"]))
+
     story.append(Paragraph(title, styles["LossQTitle"]))
     story.append(Paragraph(subtitle, styles["LossQSubtitle"]))
 
@@ -267,17 +282,24 @@ def add_cover(story, styles, title, subtitle, profile):
         ],
         colWidths=[1.7 * inch, 4.7 * inch],
     )
+
     apply_clean_table_style(cover_table)
+
     story.append(Spacer(1, 18))
     story.append(cover_table)
     story.append(Spacer(1, 24))
+
     story.append(
         Paragraph(
             "Prepared by LossQ AI Underwriting Suite for broker, carrier, and renewal strategy review.",
             styles["LossQSubtitle"],
         )
     )
+
     story.append(PageBreak())
+
+
+
 
 
 @router.get("/underwriting-pdf")
@@ -398,7 +420,7 @@ def executive_report_pdf(
                 money(c.paid_amount),
                 money(c.reserve_amount),
                 money(c.total_incurred),
-                safe_text(c.flag),
+                Paragraph(safe_text(c.flag), styles["LossQSmall"]),
             ]
         )
 
@@ -407,15 +429,15 @@ def executive_report_pdf(
 
     claim_table = Table(
         claim_rows,
-        colWidths=[
-            1.1 * inch,
-            1.2 * inch,
-            0.9 * inch,
-            0.9 * inch,
-            0.9 * inch,
-            1.0 * inch,
-            1.0 * inch,
-        ],
+         colWidths=[
+             1.0 * inch,
+             1.15 * inch,
+             0.85 * inch,
+             0.85 * inch,
+             0.85 * inch,
+             0.95 * inch,
+             1.75 * inch,
+],
     )
     apply_clean_table_style(claim_table, "#1d4ed8")
     story.append(claim_table)
