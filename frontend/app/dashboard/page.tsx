@@ -839,10 +839,19 @@ async function exportExecutiveReport() {
   }
 
   async function generateCarrierPacket() {
-    await generateRenewalMemo();
-    await exportCarrierLossRun();
-    setMessage("Carrier packet generated.");
-  }
+  const policy = profile?.policy_number
+    ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
+    : "";
+
+  setMessage("Generating carrier submission packet...");
+
+  await downloadPdf(
+    `${API}/reports/carrier-packet-pdf${policy}`,
+    "lossq_carrier_submission_packet.pdf"
+  );
+
+  setMessage("Carrier submission packet generated.");
+}
 
   function copyRenewalMemo() {
     navigator.clipboard.writeText(renewalMemo || "");
@@ -966,39 +975,97 @@ async function exportExecutiveReport() {
       <div className="fixed inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:72px_72px] opacity-20" />
 
       <div className="relative flex min-h-screen">
-        <aside className="hidden lg:flex fixed left-0 top-0 h-screen w-72 shrink-0 flex-col border-r border-white/10 bg-slate-950/90 backdrop-blur-xl p-5 z-40 overflow-y-auto">
-          <div className="mb-8">
-            <div className="text-2xl font-black">LossQ</div>
-            <div className="text-sm text-slate-400 mt-1">AI Underwriting Suite</div>
-          </div>
+        <aside
+  className="hidden lg:flex fixed left-4 top-4 bottom-4 w-72 shrink-0 flex-col rounded-3xl border border-white/10 bg-slate-950/85 backdrop-blur-2xl p-5 z-50 overflow-y-auto shadow-[0_0_50px_rgba(59,130,246,0.18)]"
+>
+  <div className="mb-8">
+    <img
+      src="/lossq-logo-style2.png"
+      alt="LossQ"
+      className="w-full rounded-2xl border border-blue-400/20 shadow-[0_0_35px_rgba(59,130,246,0.22)]"
+    />
 
-          <ToolButton active={activeTool === "overview"} onClick={() => setActiveTool("overview")}>Overview</ToolButton>
-          <ToolButton active={activeTool === "profiles"} onClick={() => setActiveTool("profiles")}>Carrier Profiles</ToolButton>
-          <ToolButton active={activeTool === "upload"} onClick={() => setActiveTool("upload")}>Upload Center</ToolButton>
-          <ToolButton active={activeTool === "renewal-risk"} onClick={() => setActiveTool("renewal-risk")}>Renewal Risk</ToolButton>
-          <ToolButton active={activeTool === "decision"} onClick={() => setActiveTool("decision")}>Underwriter Decision</ToolButton>
-          <ToolButton active={activeTool === "carrier-appetite"} onClick={() => setActiveTool("carrier-appetite")}>Carrier Appetite</ToolButton>
-          <ToolButton active={activeTool === "submission-readiness"} onClick={() => setActiveTool("submission-readiness")}>Submission Readiness</ToolButton>
-          <ToolButton active={activeTool === "carrier-match"} onClick={() => setActiveTool("carrier-match")}>Carrier Match</ToolButton>
-          <ToolButton active={activeTool === "summary"} onClick={() => setActiveTool("summary")}>AI Summary</ToolButton>
-          <ToolButton active={activeTool === "memo"} onClick={() => setActiveTool("memo")}>Renewal Memo</ToolButton>
-          <ToolButton active={activeTool === "charts"} onClick={() => setActiveTool("charts")}>Charts</ToolButton>
-          <ToolButton active={activeTool === "claims"} onClick={() => setActiveTool("claims")}>Claims</ToolButton>
-	  <ToolButton active={activeTool === "premium-forecast"} onClick={() => setActiveTool("premium-forecast")}>
-           Premium Forecast
-          </ToolButton>
-          <ToolButton active={activeTool === "submission-builder"} onClick={() => setActiveTool("submission-builder")}>
-           Submission Builder
-          </ToolButton>
+    <div className="mt-4 text-center">
+      <div className="text-xs uppercase tracking-[0.35em] text-blue-300">
+        Underwriting Intelligence Platform
+      </div>
+    </div>
+  </div>
 
+  <ToolButton active={activeTool === "overview"} onClick={() => setActiveTool("overview")}>
+    Overview
+  </ToolButton>
 
-          <div className="mt-auto space-y-3">
-            <NavButton href="/">Landing</NavButton>
-            <NavButton href="/settings">Settings</NavButton>
-            <a href="/carrier-workspace" className="btn-purple block text-center">Carrier Workspace</a>
-            <button onClick={logout} className="btn-danger w-full">Logout</button>
-          </div>
-        </aside>
+  <ToolButton active={activeTool === "profiles"} onClick={() => setActiveTool("profiles")}>
+    Carrier Profiles
+  </ToolButton>
+
+  <ToolButton active={activeTool === "upload"} onClick={() => setActiveTool("upload")}>
+    Upload Center
+  </ToolButton>
+
+  <ToolButton active={activeTool === "submission-builder"} onClick={() => setActiveTool("submission-builder")}>
+    Submission Builder
+  </ToolButton>
+
+  <ToolButton active={activeTool === "renewal-risk"} onClick={() => setActiveTool("renewal-risk")}>
+    Renewal Risk
+  </ToolButton>
+
+  <ToolButton active={activeTool === "premium-forecast"} onClick={() => setActiveTool("premium-forecast")}>
+    Premium Forecast
+  </ToolButton>
+
+  <ToolButton active={activeTool === "decision"} onClick={() => setActiveTool("decision")}>
+    Underwriter Decision
+  </ToolButton>
+
+  <ToolButton active={activeTool === "carrier-appetite"} onClick={() => setActiveTool("carrier-appetite")}>
+    Carrier Appetite
+  </ToolButton>
+
+  <ToolButton active={activeTool === "submission-readiness"} onClick={() => setActiveTool("submission-readiness")}>
+    Submission Readiness
+  </ToolButton>
+
+  <ToolButton active={activeTool === "carrier-match"} onClick={() => setActiveTool("carrier-match")}>
+    Carrier Match
+  </ToolButton>
+
+  <ToolButton active={activeTool === "summary"} onClick={() => setActiveTool("summary")}>
+    AI Summary
+  </ToolButton>
+
+  <ToolButton active={activeTool === "memo"} onClick={() => setActiveTool("memo")}>
+    Renewal Memo
+  </ToolButton>
+
+  <ToolButton active={activeTool === "charts"} onClick={() => setActiveTool("charts")}>
+    Charts
+  </ToolButton>
+
+  <ToolButton active={activeTool === "claims"} onClick={() => setActiveTool("claims")}>
+    Claims
+  </ToolButton>
+
+  <div className="mt-auto space-y-3 pt-6 border-t border-white/10">
+    <NavButton href="/settings">Settings</NavButton>
+
+    <a
+      href="/carrier-workspace"
+      className="btn-purple block text-center"
+    >
+      Carrier Workspace
+    </a>
+
+    <button
+      onClick={logout}
+      className="btn-danger w-full"
+    >
+      Logout
+    </button>
+  </div>
+</aside>
 
         <section className="flex-1 px-5 md:px-8 py-8 pb-32 max-w-7xl mx-auto w-full lg:ml-72">
           <header className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between mb-8">
