@@ -208,7 +208,7 @@ def get_claims(
 
     query = db.query(Claim).filter(
     Claim.organization_id == current_user["organization_id"],
-    Claim.is_deleted == False,
+    ((Claim.is_deleted == False) | (Claim.is_deleted == None)),
 )
 
     if policy_number:
@@ -231,7 +231,7 @@ def get_claim_detail(
     .filter(
         Claim.id == claim_id,
         Claim.organization_id == current_user["organization_id"],
-        Claim.is_deleted == False,
+        ((Claim.is_deleted == False) | (Claim.is_deleted == None)),
     )
     .first()
 )
@@ -259,7 +259,7 @@ def delete_claim(
         .filter(
             Claim.id == claim_id,
             Claim.organization_id == current_user["organization_id"],
-            Claim.is_deleted == False,
+            ((Claim.is_deleted == False) | (Claim.is_deleted == None)),
         )
         .first()
     )
