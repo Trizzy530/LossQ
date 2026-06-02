@@ -317,6 +317,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     all_parsed_claims = []
     direct_profile = {}
 
+    upload_session_id = datetime.now().strftime("%Y%m%d%H%M%S")
+    clean_input_policy = str(policy_number or "").strip()
+
     for file in files:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         safe_filename = file.filename.replace(" ", "_")
@@ -327,10 +330,29 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         parsed_claims, parsed_profile = parse_file(file_path, file.filename)
 
+        file_policy_number = clean_input_policy
+
         if parsed_profile:
+            parsed_policy = str(parsed_profile.get("policy_number") or "").strip()
+            if parsed_policy:
+                file_policy_number = parsed_policy
+
             for key, value in parsed_profile.items():
                 if value and not direct_profile.get(key):
                     direct_profile[key] = value
+
+        if not file_policy_number:
+            for claim_data in parsed_claims:
+                claim_policy = str(claim_data.get("policy_number") or "").strip()
+                if claim_policy:
+                    file_policy_number = claim_policy
+                    break
+
+        if not file_policy_number:
+            file_policy_number = f"UPLOAD-{upload_session_id}-{len(uploaded_files) + 1}"
+
+        if not direct_profile.get("policy_number"):
+            direct_profile["policy_number"] = file_policy_number
 
         all_parsed_claims.extend(parsed_claims)
 
@@ -340,12 +362,12 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         for claim_data in parsed_claims:
             normalized = normalize_claim_data(
                 raw=claim_data,
-                fallback_policy_number=policy_number,
+                fallback_policy_number=file_policy_number,
                 current_user=current_user,
             )
 
             claim_number = str(normalized.get("claim_number") or "").strip().upper()
-            policy_value = str(normalized.get("policy_number") or "").strip()
+            policy_value = str(normalized.get("policy_number") or file_policy_number).strip()
 
             normalized["claim_number"] = claim_number
             normalized["policy_number"] = policy_value
@@ -353,19 +375,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             duplicate_query = db.query(Claim).filter(
                 Claim.organization_id == current_user["organization_id"],
                 Claim.claim_number == claim_number,
+                Claim.policy_number == policy_value,
             )
-
-            if policy_value:
-                duplicate_query = duplicate_query.filter(
-                    (Claim.policy_number == policy_value)
-                    | (Claim.policy_number == None)
-                    | (Claim.policy_number == "")
-                )
 
             existing_claim = duplicate_query.first()
 
             if existing_claim:
-                print(f"Skipping duplicate claim: {claim_number}")
+                print(f"Skipping duplicate claim: {claim_number} / {policy_value}")
                 file_duplicates += 1
                 total_duplicates_skipped += 1
                 continue
@@ -390,24 +406,42 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             "filename": file.filename,
             "claims_saved": file_saved,
             "duplicates_skipped": file_duplicates,
-            "policy_number": policy_number,
+            "policy_number": file_policy_number,
         })
 
     profile_data = extract_profile_data(
         parsed_claims=all_parsed_claims,
-        fallback_policy_number=policy_number,
+        fallback_policy_number=direct_profile.get("policy_number") or clean_input_policy or f"UPLOAD-{upload_session_id}",
         direct_profile=direct_profile,
     )
+
+    if not profile_data.get("policy_number"):
+        profile_data["policy_number"] = direct_profile.get("policy_number") or f"UPLOAD-{upload_session_id}"
 
     profile = upsert_account_profile(db, profile_data, current_user)
 
     db.commit()
 
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="loss_run_uploaded",
+        resource_type="upload",
+        resource_id=profile_data.get("policy_number"),
+        details={
+            "policy_number": profile_data.get("policy_number"),
+            "saved_claims": total_saved,
+            "duplicates_skipped": total_duplicates_skipped,
+            "profile_auto_populated": bool(profile),
+            "uploaded_files": uploaded_files,
+        },
+    )
+
     return {
         "message": "Loss run file(s) uploaded successfully",
         "saved_claims": total_saved,
         "duplicates_skipped": total_duplicates_skipped,
-        "policy_number": profile_data.get("policy_number") or policy_number,
+        "policy_number": profile_data.get("policy_number"),
         "profile_auto_populated": bool(profile),
         "profile": profile_data,
         "uploaded_files": uploaded_files,
