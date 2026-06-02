@@ -156,6 +156,46 @@ def build_claim_ai_analysis(claim):
     if not broker_actions:
         broker_actions.append("No major broker action required beyond standard documentation")
 
+    underwriter_narrative = (
+        f"Claim {claim.claim_number or 'N/A'} involves "
+        f"{claim.line_of_business or 'an unspecified line of business'} exposure "
+        f"with a reported cause of loss of {claim.cause_of_loss or 'not specified'}. "
+        f"The claim currently shows paid losses of ${paid:,.2f}, reserves of ${reserve:,.2f}, "
+        f"and total incurred losses of ${total:,.2f}. "
+        f"Based on severity, reserve position, litigation status, and claim status, "
+        f"this claim is classified as {severity}."
+    )
+
+    risk_summary = (
+        f"This claim presents {severity.lower()} underwriting risk. "
+        f"Key concerns include "
+        f"{', '.join(risk_factors) if risk_factors else 'no major risk indicators detected'}."
+    )
+
+    litigation_analysis = (
+        "Litigation exposure is present and should be addressed with a defense update, "
+        "current legal status, and expected resolution timeline."
+        if claim.litigation or claim.attorney_assigned
+        else "No litigation or attorney involvement is currently identified."
+    )
+
+    broker_talking_points = []
+
+    if claim.status == "Open":
+        broker_talking_points.append("Explain current claim status and expected closure timeline")
+
+    if reserve > 0:
+        broker_talking_points.append("Provide reserve explanation and development trend")
+
+    if total >= 100000:
+        broker_talking_points.append("Prepare large-loss narrative for carrier review")
+
+    if claim.litigation or claim.attorney_assigned:
+        broker_talking_points.append("Include litigation update and defense strategy")
+
+    if not broker_talking_points:
+        broker_talking_points.append("Position claim as controlled with no major escalation indicators")
+
     ai_summary = (
         f"Claim {claim.claim_number} is classified as {severity} severity with a score of {score}. "
         f"The claim has paid losses of ${paid:,.2f}, reserves of ${reserve:,.2f}, "
@@ -173,6 +213,10 @@ def build_claim_ai_analysis(claim):
         "risk_factors": risk_factors,
         "broker_actions": broker_actions,
         "ai_summary": ai_summary,
+        "underwriter_narrative": underwriter_narrative,
+        "risk_summary": risk_summary,
+        "litigation_analysis": litigation_analysis,
+        "broker_talking_points": broker_talking_points,
     }
 
 
