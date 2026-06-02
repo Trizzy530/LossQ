@@ -11,6 +11,7 @@ from reportlab.platypus import (
     Spacer,
     PageBreak,
     Image,
+    Flowable,
 )
 
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
@@ -298,6 +299,48 @@ def add_cover(story, styles, title, subtitle, profile):
 
     story.append(PageBreak())
 
+class RenewalGauge(Flowable):
+    def __init__(self, score, width=1.55 * inch, height=0.95 * inch):
+        Flowable.__init__(self)
+        self.score = max(0, min(100, int(score or 0)))
+        self.width = width
+        self.height = height
+
+    def draw(self):
+        c = self.canv
+
+        center_x = self.width / 2
+        center_y = 0.22 * inch
+        radius = 0.52 * inch
+
+        c.setStrokeColor(colors.white)
+        c.setLineWidth(7)
+        c.arc(
+            center_x - radius,
+            center_y - radius,
+            center_x + radius,
+            center_y + radius,
+            0,
+            180,
+        )
+
+        # Lower score points toward high risk side.
+        angle = 180 - (self.score / 100) * 180
+        import math
+        needle_length = 0.42 * inch
+        end_x = center_x + math.cos(math.radians(angle)) * needle_length
+        end_y = center_y + math.sin(math.radians(angle)) * needle_length
+
+        c.setStrokeColor(colors.white)
+        c.setLineWidth(5)
+        c.line(center_x, center_y, end_x, end_y)
+
+        c.setFillColor(colors.white)
+        c.circle(center_x, center_y, 0.09 * inch, fill=1, stroke=0)
+
+        c.setFont("Helvetica-Bold", 7)
+        c.drawCentredString(center_x, 0.02 * inch, "RISK GAUGE")
+
 def renewal_badge_color(score):
     if score >= 80:
         return "#16a34a"
@@ -318,21 +361,13 @@ def build_renewal_score_banner(story, styles, renewal_score, risk_level):
     else:
         risk_subtitle = "HIGH RENEWAL RISK"
 
-    gauge_text = Paragraph(
-        """
-        <para align="center">
-            <font size="42"><b>◜●◝</b></font><br/>
-            <font size="8"><b>RISK GAUGE</b></font>
-        </para>
-        """,
-        styles["LossQWhite"],
-    )
+    gauge = RenewalGauge(renewal_score)
 
     score_text = Paragraph(
         f"""
         <para align="center">
-            <font size="14"><b>RENEWAL SCORE</b></font><br/>
-            <font size="46"><b>{renewal_score}/100</b></font>
+            <font size="12"><b>RENEWAL SCORE</b></font><br/>
+            <font size="34"><b>{renewal_score}/100</b></font>
         </para>
         """,
         styles["LossQWhite"],
@@ -341,18 +376,18 @@ def build_renewal_score_banner(story, styles, renewal_score, risk_level):
     risk_text = Paragraph(
         f"""
         <para align="center">
-            <font size="14"><b>RISK LEVEL</b></font><br/>
-            <font size="30"><b>{safe_text(risk_level).upper()}</b></font><br/>
-            <font size="11"><b>{risk_subtitle}</b></font>
+            <font size="12"><b>RISK LEVEL</b></font><br/>
+            <font size="23"><b>{safe_text(risk_level).upper()}</b></font><br/>
+            <font size="9"><b>{risk_subtitle}</b></font>
         </para>
         """,
         styles["LossQWhite"],
     )
 
     banner = Table(
-        [[gauge_text, score_text, risk_text]],
-        colWidths=[1.45 * inch, 2.95 * inch, 2.1 * inch],
-        rowHeights=[1.35 * inch],
+        [[gauge, score_text, risk_text]],
+        colWidths=[1.45 * inch, 3.05 * inch, 2.0 * inch],
+        rowHeights=[1.45 * inch],
     )
 
     banner.setStyle(
@@ -363,22 +398,21 @@ def build_renewal_score_banner(story, styles, renewal_score, risk_level):
                 ("ALIGN", (0, 0), (-1, -1), "CENTER"),
                 ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
 
-                ("LEFTPADDING", (0, 0), (-1, -1), 12),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 12),
+                ("LEFTPADDING", (0, 0), (-1, -1), 14),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 14),
                 ("TOPPADDING", (0, 0), (-1, -1), 18),
                 ("BOTTOMPADDING", (0, 0), (-1, -1), 18),
 
                 ("LINEBEFORE", (2, 0), (2, 0), 1.5, colors.white),
                 ("BOX", (0, 0), (-1, -1), 1, colors.HexColor("#991b1b")),
-
-                ("ROUNDEDCORNERS", [14, 14, 14, 14]),
             ]
         )
     )
 
-    story.append(Spacer(1, 6))
+    story.append(Spacer(1, 8))
     story.append(banner)
     story.append(Spacer(1, 20))
+
 
 def build_premium_forecast_page(story, styles, totals, renewal_score, risk_level):
     story.append(PageBreak())
@@ -668,7 +702,8 @@ def executive_report_pdf(
     )
     story.append(Paragraph(recommendation, styles["LossQBody"]))
     story.append(Spacer(1, 14))
-
+    
+    story.append(PageBreak())
     story.append(Paragraph("Top Claims by Total Incurred", styles["LossQSection"]))
 
     top_claims = sorted(claims, key=lambda c: float(c.total_incurred or 0), reverse=True)[:8]
