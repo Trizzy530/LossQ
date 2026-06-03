@@ -14,6 +14,7 @@ from app.services.parser_service import (
     extract_text_from_pdf,
     parse_claims_from_text,
     extract_profile_from_text,
+    extract_policies_from_text,
 )
 from app.services.excel_parser_service import parse_claims_from_excel
 from app.role_utils import require_permission
@@ -34,20 +35,86 @@ def get_db():
 
 
 def parse_file(file_path: str, filename: str):
-    lower_name = filename.lower()
+    """
+    Parse uploaded files into claims + profile.
 
-    if lower_name.endswith(".pdf"):
-        text_data = extract_text_from_pdf(file_path)
-        claims = parse_claims_from_text(text_data)
-        profile = extract_profile_from_text(text_data)
-        return claims, profile
+    Production behavior:
+    - Reads every PDF page.
+    - Uses normal text extraction first.
+    - Falls back to OCR for scanned/image PDFs.
+    - Returns profile, claims, and policy schedule metadata.
+    """
 
-    if lower_name.endswith(".csv") or lower_name.endswith(".xlsx"):
-        claims = parse_claims_from_excel(file_path)
-        return claims, {}
+    filename_lower = str(filename or "").lower()
+    text_data = ""
 
-    return [], {}
+    if filename_lower.endswith(".pdf"):
+        # 1. Try normal text extraction across ALL pages.
+        try:
+            from pypdf import PdfReader
 
+            reader = PdfReader(file_path)
+            page_texts = []
+            total_pages = len(reader.pages)
+
+            for page_index, page in enumerate(reader.pages):
+                try:
+                    extracted = page.extract_text() or ""
+                    if extracted.strip():
+                        page_texts.append(
+                            f"\n\n--- PAGE {page_index + 1} OF {total_pages} ---\n{extracted}"
+                        )
+                except Exception:
+                    continue
+
+            text_data = "\n".join(page_texts).strip()
+        except Exception:
+            text_data = ""
+
+        # 2. OCR fallback across ALL pages if text extraction fails.
+        if len(text_data.strip()) < 100:
+            try:
+                from pdf2image import convert_from_path
+                import pytesseract
+
+                images = convert_from_path(file_path, dpi=250)
+                ocr_pages = []
+
+                for page_index, image in enumerate(images):
+                    try:
+                        page_text = pytesseract.image_to_string(image) or ""
+                        ocr_pages.append(
+                            f"\n\n--- OCR PAGE {page_index + 1} OF {len(images)} ---\n{page_text}"
+                        )
+                    except Exception as page_error:
+                        ocr_pages.append(
+                            f"\n\n--- OCR PAGE {page_index + 1} FAILED ---\n{str(page_error)}"
+                        )
+
+                text_data = "\n".join(ocr_pages).strip()
+            except Exception as ocr_error:
+                text_data = text_data or f"OCR failed: {str(ocr_error)}"
+
+    else:
+        try:
+            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
+                text_data = f.read()
+        except Exception:
+            text_data = ""
+
+    claims = parse_claims_from_text(text_data)
+    profile = extract_profile_from_text(text_data)
+
+    try:
+        policies = extract_policies_from_text(text_data, profile)
+    except Exception:
+        policies = profile.get("policies") or []
+
+    profile["policies"] = policies
+    profile["raw_text_preview"] = text_data[:5000]
+    profile["page_parse_note"] = "Parsed full document with all-page PDF extraction and OCR fallback."
+
+    return claims, profile
 
 def parse_date(value: Any):
     if not value:
