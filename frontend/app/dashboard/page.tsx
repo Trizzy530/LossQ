@@ -1199,7 +1199,7 @@ async function exportExecutiveReport() {
         <table className="w-full min-w-[950px] text-sm">
           <thead>
             <tr className="border-b border-white/10 text-left text-slate-300">
-              <th className="py-3 pr-4">Policy Type</th>
+              <th className="py-3 pr-4">Policy Type / Coverage</th>
               <th className="py-3 pr-4">Policy Number</th>
               <th className="py-3 pr-4">Writing Carrier</th>
               <th className="py-3 pr-4">Carrier</th>
@@ -1217,7 +1217,13 @@ async function exportExecutiveReport() {
                 className="border-b border-white/10"
               >
                 <td className="py-3 pr-4 text-white">
-                  {policy.policy_type || policy.line_of_business || "-"}
+                  {policy.policy_type ||
+  policy.line_coverage ||
+  policy.line_of_business ||
+  policy.coverage ||
+  policy.lob ||
+  policy.policy_name ||
+  "Needs Review"}
                 </td>
                 <td className="py-3 pr-4 font-semibold text-blue-200">
                   {policy.policy_number || "-"}
