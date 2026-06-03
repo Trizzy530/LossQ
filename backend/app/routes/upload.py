@@ -483,9 +483,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 @router.post("/debug-loss-run")
 async def debug_loss_run_parser(
     file: UploadFile = File(...),
-):    """
-  
-  Debug route only.
+):
+    """
+    Debug route only.
     Shows exactly what the parser reads before anything is saved.
     """
 
