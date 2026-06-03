@@ -1162,16 +1162,97 @@ async function exportExecutiveReport() {
               </section>
 
               <section className="glass-panel p-6 md:p-8">
-                <h2 className="text-2xl md:text-3xl font-bold mb-4">Account Snapshot</h2>
-                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <ProfileDetail label="Insured" value={profile?.business_name || "-"} />
-                  <ProfileDetail label="Writing Carrier" value={profile?.policy_number || "-"} />
-                  <ProfileDetail label="Carrier" value={profile?.carrier_name || "-"} />
-                  <ProfileDetail label="Producing Agency" value={profile?.agency_name || "-"} />
-                </div>
-              </section>
-            </>
-          )}
+  <h2 className="text-2xl md:text-3xl font-bold mb-4">Account Snapshot</h2>
+
+  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+    <ProfileDetail label="Insured" value={profile?.business_name || "-"} />
+    <ProfileDetail
+      label="Writing Carrier"
+      value={profile?.writing_carrier || profile?.carrier_name || "-"}
+    />
+    <ProfileDetail label="Carrier" value={profile?.carrier_name || "-"} />
+    <ProfileDetail
+      label="Account Number"
+      value={profile?.account_number || profile?.customer_number || "-"}
+    />
+    <ProfileDetail label="Producing Agency" value={profile?.agency_name || "-"} />
+    <ProfileDetail label="Policy" value={profile?.policy_number || "-"} />
+    <ProfileDetail label="Effective Date" value={profile?.effective_date || "-"} />
+    <ProfileDetail label="Expiration Date" value={profile?.expiration_date || "-"} />
+  </div>
+
+  {Array.isArray(profile?.policies) && profile.policies.length > 0 && (
+    <div className="mt-8 rounded-3xl border border-white/10 bg-slate-950/50 p-5">
+      <div className="mb-4">
+        <p className="text-xs uppercase tracking-[0.25em] text-blue-300">
+          Policies on Account
+        </p>
+        <h3 className="mt-2 text-xl font-bold text-white">
+          Policy Schedule
+        </h3>
+        <p className="mt-1 text-sm text-slate-400">
+          All policies found for this insured/account from the uploaded loss run.
+        </p>
+      </div>
+
+      <div className="overflow-x-auto">
+        <table className="w-full min-w-[950px] text-sm">
+          <thead>
+            <tr className="border-b border-white/10 text-left text-slate-300">
+              <th className="py-3 pr-4">Policy Type</th>
+              <th className="py-3 pr-4">Policy Number</th>
+              <th className="py-3 pr-4">Writing Carrier</th>
+              <th className="py-3 pr-4">Carrier</th>
+              <th className="py-3 pr-4">Effective</th>
+              <th className="py-3 pr-4">Expiration</th>
+              <th className="py-3 pr-4">Claims</th>
+              <th className="py-3 pr-4">Total Incurred</th>
+            </tr>
+          </thead>
+
+          <tbody>
+            {profile.policies.map((policy: any, index: number) => (
+              <tr
+                key={policy.policy_number || index}
+                className="border-b border-white/10"
+              >
+                <td className="py-3 pr-4 text-white">
+                  {policy.policy_type || policy.line_of_business || "-"}
+                </td>
+                <td className="py-3 pr-4 font-semibold text-blue-200">
+                  {policy.policy_number || "-"}
+                </td>
+                <td className="py-3 pr-4">
+                  {policy.writing_carrier || profile?.writing_carrier || profile?.carrier_name || "-"}
+                </td>
+                <td className="py-3 pr-4">
+                  {policy.carrier || profile?.carrier_name || "-"}
+                </td>
+                <td className="py-3 pr-4">
+                  {policy.effective_date || "-"}
+                </td>
+                <td className="py-3 pr-4">
+                  {policy.expiration_date || "-"}
+                </td>
+                <td className="py-3 pr-4">
+                  {policy.claim_count ?? 0}
+                </td>
+                <td className="py-3 pr-4">
+                  ${Number(policy.total_incurred || 0).toLocaleString()}
+                 </td>
+              </tr>
+            ))}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  )}
+</section>
+          </>
+        )}
+
+          
+       
 
           {activeTool === "profiles" && (
             <>
@@ -1954,10 +2035,12 @@ async function exportExecutiveReport() {
               </div>
             </section>
           )}
-        </section>
-      </div>
+         </section>
+	</div>
+      
 
-      <button
+	<button
+
         onClick={() => setCopilotOpen(!copilotOpen)}
         className="fixed bottom-6 right-6 z-50 rounded-full bg-blue-600 hover:bg-blue-500 px-6 py-4 font-semibold shadow-2xl shadow-blue-600/40"
       >
