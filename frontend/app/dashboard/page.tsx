@@ -527,54 +527,53 @@ if (submissionBuilderRes.ok) {
   }
 
   async function deleteProfile(policyNumber: string) {
-    const confirmed = confirm(`Delete profile ${policyNumber}?`);
-    if (!confirmed) return;
+  const confirmed = confirm(`Delete profile ${policyNumber}?`);
+  if (!confirmed) return;
 
-    try {
-      const res = await fetch(
-        `${API}/account-profile/${encodeURIComponent(policyNumber)}`,
-        {
-          method: "DELETE",
-          headers: authHeaders(),
-        }
-      );
+  const removeProfileLocally = () => {
+    setProfiles((prev) => {
+      const next = prev.filter((p) => p.policy_number !== policyNumber);
+      setCachedProfiles(next);
+      return next;
+    });
 
-      if (res.status === 401 || res.status === 403) {
-        clearSession();
-        router.replace("/login?expired=1");
-        return;
-      }
-
-      if (!res.ok) {
-        setMessage("Failed to delete profile.");
-        return;
-      }
-
-      setProfiles((prev) => {
-        const next = prev.filter((p) => p.policy_number !== policyNumber);
-        setCachedProfiles(next);
-        return next;
-      });
-
-      if (profile?.policy_number === policyNumber) {
-        newBlankProfile();
-      }
-
-      setMessage(`Deleted profile ${policyNumber}.`);
-    } catch {
-      setProfiles((prev) => {
-        const next = prev.filter((p) => p.policy_number !== policyNumber);
-        setCachedProfiles(next);
-        return next;
-      });
-
-      if (profile?.policy_number === policyNumber) {
-        newBlankProfile();
-      }
-
-      setMessage(`Deleted local profile ${policyNumber}. Backend delete unavailable.`);
+    if (profile?.policy_number === policyNumber) {
+      newBlankProfile();
     }
+  };
+
+  try {
+    setMessage(`Deleting profile ${policyNumber}...`);
+
+    const res = await fetch(
+      `${API}/account-profile/${encodeURIComponent(policyNumber)}`,
+      {
+        method: "DELETE",
+        headers: authHeaders(),
+      }
+    );
+
+    if (res.status === 401 || res.status === 403) {
+      clearSession();
+      router.replace("/login?expired=1");
+      return;
+    }
+
+    if (!res.ok) {
+      removeProfileLocally();
+      setMessage(
+        `Removed profile ${policyNumber} from workspace. Backend returned ${res.status}.`
+      );
+      return;
+    }
+
+    removeProfileLocally();
+    setMessage(`Deleted profile ${policyNumber}.`);
+  } catch {
+    removeProfileLocally();
+    setMessage(`Deleted local profile ${policyNumber}. Backend delete unavailable.`);
   }
+}
 
   async function saveProfile() {
     const payload = {
