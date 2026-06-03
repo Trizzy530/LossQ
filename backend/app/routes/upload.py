@@ -264,11 +264,22 @@ def extract_profile_data(
     profile = {
         "business_name": clean_profile_value(direct_profile.get("business_name")),
         "carrier_name": clean_profile_value(direct_profile.get("carrier_name")),
+        "writing_carrier": clean_profile_value(
+            direct_profile.get("writing_carrier") or direct_profile.get("carrier_name")
+        ),
         "agency_name": clean_profile_value(direct_profile.get("agency_name")),
+        "account_number": clean_profile_value(
+            direct_profile.get("account_number") or direct_profile.get("customer_number")
+        ),
+        "customer_number": clean_profile_value(
+            direct_profile.get("customer_number") or direct_profile.get("account_number")
+        ),
+        "producer_number": clean_profile_value(direct_profile.get("producer_number")),
         "policy_number": clean_profile_value(direct_profile.get("policy_number")),
         "effective_date": parse_date(direct_profile.get("effective_date")) or "",
         "expiration_date": parse_date(direct_profile.get("expiration_date")) or "",
         "evaluation_date": parse_date(direct_profile.get("evaluation_date")) or datetime.now().date().isoformat(),
+        "policies": direct_profile.get("policies") or [],
     }
 
     for item in parsed_claims:
@@ -282,10 +293,23 @@ def extract_profile_data(
                 pick(item, ["carrier_name", "insurance_carrier", "carrier"], "")
             )
 
+        if not profile["writing_carrier"]:
+            profile["writing_carrier"] = clean_profile_value(
+                pick(item, ["writing_carrier", "carrier_name", "insurance_carrier", "carrier"], "")
+            )
+
         if not profile["agency_name"]:
             profile["agency_name"] = clean_profile_value(
-                pick(item, ["agency_name", "broker_name", "agency"], "")
+                pick(item, ["agency_name", "broker_name", "agency", "producer_name"], "")
             )
+
+        if not profile["account_number"]:
+            profile["account_number"] = clean_profile_value(
+                pick(item, ["account_number", "customer_number", "account_no", "customer_no"], "")
+            )
+
+        if not profile["customer_number"]:
+            profile["customer_number"] = profile["account_number"]
 
         if not profile["policy_number"]:
             profile["policy_number"] = clean_profile_value(
@@ -305,8 +329,13 @@ def extract_profile_data(
     if not profile["policy_number"]:
         profile["policy_number"] = clean_profile_value(fallback_policy_number)
 
-    return profile
+    if not profile["writing_carrier"]:
+        profile["writing_carrier"] = profile["carrier_name"]
 
+    if not profile["policies"]:
+        profile["policies"] = direct_profile.get("policies") or []
+
+    return profile
 
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
     policy_number = clean_profile_value(profile_data.get("policy_number"))
