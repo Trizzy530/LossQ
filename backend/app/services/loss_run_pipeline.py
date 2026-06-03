@@ -460,6 +460,8 @@ def extract_policy_schedule(text: str, profile: dict[str, Any]) -> list[dict[str
 
 
 def extract_document_totals(text: str) -> dict[str, Any]:
+    lines = lines_from_text(text)
+
     totals = {
         "total_claims": None,
         "open_claims": None,
@@ -470,51 +472,79 @@ def extract_document_totals(text: str) -> dict[str, Any]:
         "total_incurred": None,
     }
 
-    patterns = {
-        "total_claims": [
-            r"Total\s+Claims\s*[:\-]?\s*(\d+)",
-            r"Claims\s+Reported\s*[:\-]?\s*(\d+)",
-        ],
-        "open_claims": [
-            r"Open\s+Claims\s*[:\-]?\s*(\d+)",
-        ],
-        "closed_claims": [
-            r"Closed\s+Claims\s*[:\-]?\s*(\d+)",
-        ],
-        "litigation_claims": [
-            r"Litigation\s+Claims\s*[:\-]?\s*(\d+)",
-            r"Claims\s+in\s+Litigation\s*[:\-]?\s*(\d+)",
-        ],
-        "total_paid": [
-            r"Total\s+Paid\s*[:\-]?\s*\$?([\d,]+(?:\.\d{2})?)",
-            r"Paid\s+Total\s*[:\-]?\s*\$?([\d,]+(?:\.\d{2})?)",
-        ],
-        "total_reserve": [
-            r"Total\s+Reserve\s*[:\-]?\s*\$?([\d,]+(?:\.\d{2})?)",
-            r"Case\s+Reserve\s*[:\-]?\s*\$?([\d,]+(?:\.\d{2})?)",
-            r"Outstanding\s+Reserve\s*[:\-]?\s*\$?([\d,]+(?:\.\d{2})?)",
-        ],
-        "total_incurred": [
-            r"Total\s+Incurred\s*[:\-]?\s*\$?([\d,]+(?:\.\d{2})?)",
-            r"Net\s+Incurred\s*[:\-]?\s*\$?([\d,]+(?:\.\d{2})?)",
-            r"Gross\s+Incurred\s*[:\-]?\s*\$?([\d,]+(?:\.\d{2})?)",
-        ],
-    }
+    # Vertical summary table:
+    # Total Claims
+    # Open Claims
+    # Closed Claims
+    # Litigation Claims
+    # Total Paid
+    # Case Reserve
+    # Total Incurred
+    # 9
+    # 4
+    # 5
+    # 2
+    # $168,500.00
+    # $93,000.00
+    # $261,500.00
+    for i, line in enumerate(lines):
+        if line.upper() == "TOTAL CLAIMS":
+            expected_headers = [
+                "TOTAL CLAIMS",
+                "OPEN CLAIMS",
+                "CLOSED CLAIMS",
+                "LITIGATION CLAIMS",
+                "TOTAL PAID",
+                "CASE RESERVE",
+                "TOTAL INCURRED",
+            ]
 
-    for key, key_patterns in patterns.items():
-        for pattern in key_patterns:
-            match = re.search(pattern, text, re.IGNORECASE)
-            if match:
-                if "claims" in key:
-                    totals[key] = int(match.group(1))
-                else:
-                    totals[key] = money(match.group(1))
-                break
+            headers = [x.upper() for x in lines[i : i + 7]]
+
+            if headers == expected_headers and i + 13 < len(lines):
+                values = lines[i + 7 : i + 14]
+
+                try:
+                    totals["total_claims"] = int(values[0])
+                    totals["open_claims"] = int(values[1])
+                    totals["closed_claims"] = int(values[2])
+                    totals["litigation_claims"] = int(values[3])
+                    totals["total_paid"] = money(values[4])
+                    totals["total_reserve"] = money(values[5])
+                    totals["total_incurred"] = money(values[6])
+                    return totals
+                except Exception:
+                    pass
+
+    # Customer history summary:
+    # Total
+    # All Lines
+    # 9 / 4
+    # $168,500.00
+    # $93,000.00
+    # $261,500.00
+    for i, line in enumerate(lines):
+        if line.upper() == "TOTAL" and i + 5 < len(lines):
+            if lines[i + 1].upper() == "ALL LINES":
+                claim_match = re.search(r"(\d+)\s*/\s*(\d+)", lines[i + 2])
+
+                if claim_match:
+                    totals["total_claims"] = int(claim_match.group(1))
+                    totals["open_claims"] = int(claim_match.group(2))
+                    totals["total_paid"] = money(lines[i + 3])
+                    totals["total_reserve"] = money(lines[i + 4])
+                    totals["total_incurred"] = money(lines[i + 5])
+                    return totals
 
     return totals
 
 
-def extract_claim_rows(text: str, profile: dict[str, Any], policies: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def extract_claim_rows(
+    text: str,
+    profile: dict[str, Any],
+    policies: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    lines = lines_from_text(text)
     claims: list[dict[str, Any]] = []
     seen: set[str] = set()
 
@@ -524,162 +554,216 @@ def extract_claim_rows(text: str, profile: dict[str, Any], policies: list[dict[s
         if policy.get("policy_number")
     }
 
-    policy_numbers = list(policy_map.keys())
-    policy_type_group = "|".join([re.escape(x) for x in POLICY_TYPE_KEYWORDS])
+    policy_type_upper = [x.upper() for x in POLICY_TYPE_KEYWORDS]
 
-    lines = [clean_text(line) for line in text.splitlines() if clean_text(line)]
+    def add_claim(
+        claim_number: str,
+        policy_number: str,
+        line_type: str,
+        status: str,
+        paid: float,
+        reserve: float,
+        incurred: float,
+        litigation: bool,
+        description: str = "",
+        loss_date: str = "",
+    ):
+        claim_number_clean = clean_text(claim_number).upper()
+        policy_number_clean = clean_text(policy_number).upper()
 
-    claim_patterns = [
-        re.compile(
-            rf"(?P<claim>[A-Z]{{1,10}}[-]?[A-Z]{{0,5}}[-]?\d{{2,6}}[-]?\d{{2,8}})\s+"
-            rf"(?P<policy>[A-Z0-9][A-Z0-9\-]{{4,35}})\s+"
-            rf"(?P<coverage>{policy_type_group})\s+"
-            rf"(?P<status>Open|Closed|Reopened|Pending)\s+"
-            rf"\$?(?P<paid>[\d,]+(?:\.\d{{2}})?)\s+"
-            rf"\$?(?P<reserve>[\d,]+(?:\.\d{{2}})?)\s+"
-            rf"\$?(?P<incurred>[\d,]+(?:\.\d{{2}})?)",
-            re.IGNORECASE,
-        ),
-        re.compile(
-            rf"(?P<claim>[A-Z0-9\-]{{5,30}})\s+"
-            rf"(?P<status>Open|Closed|Reopened|Pending)\s+"
-            rf"(?P<policy>[A-Z0-9][A-Z0-9\-]{{4,35}})\s+"
-            rf"(?P<coverage>{policy_type_group})\s+"
-            rf"\$?(?P<paid>[\d,]+(?:\.\d{{2}})?)\s+"
-            rf"\$?(?P<reserve>[\d,]+(?:\.\d{{2}})?)\s+"
-            rf"\$?(?P<incurred>[\d,]+(?:\.\d{{2}})?)",
-            re.IGNORECASE,
-        ),
-    ]
-
-    def add_claim(match):
-        claim_number = clean_text(match.group("claim")).upper()
-
-        if claim_number in seen:
+        if not claim_number_clean:
             return
 
-        policy_number = clean_text(match.group("policy")).upper()
-        if not looks_like_policy_number(policy_number):
+        if claim_number_clean in seen:
             return
 
-        status = clean_text(match.group("status")).title()
-        line = normalize_policy_type(match.group("coverage"))
+        if not looks_like_policy_number(policy_number_clean):
+            return
 
-        paid = money(match.group("paid"))
-        reserve = money(match.group("reserve"))
-        incurred = money(match.group("incurred"))
+        seen.add(claim_number_clean)
 
-        if incurred <= 0 and paid + reserve > 0:
-            incurred = paid + reserve
+        final_line = normalize_policy_type(
+            line_type
+            or policy_map.get(policy_number_clean, {}).get("policy_type")
+            or infer_policy_type_from_policy_number(policy_number_clean)
+        )
 
-        seen.add(claim_number)
+        final_incurred = float(incurred or paid + reserve or 0)
+
+        flag = ""
+
+        if final_incurred >= 100000:
+            flag = "High severity claim"
+
+        if litigation:
+            flag = "Litigation exposure" if not flag else f"{flag} | Litigation exposure"
 
         claims.append(
             {
                 **profile,
-                "claim_number": claim_number,
-                "policy_number": policy_number,
-                "line_of_business": line,
-                "claim_type": line,
+                "claim_number": claim_number_clean,
+                "policy_number": policy_number_clean,
+                "line_of_business": final_line,
+                "claim_type": final_line,
                 "cause_of_loss": "Needs Review",
                 "claimant_type": "Needs Review",
-                "date_of_loss": "",
+                "date_of_loss": loss_date,
                 "date_reported": "",
                 "date_closed": "",
-                "status": status,
-                "description": "Parsed from loss run.",
-                "paid_amount": paid,
-                "reserve_amount": reserve,
-                "total_incurred": incurred,
-                "net_incurred": incurred,
-                "litigation": False,
-                "litigation_status": "Needs Review",
-                "attorney_assigned": False,
-                "suit_filed": False,
+                "status": clean_text(status).title(),
+                "description": description or "Parsed from loss run.",
+                "paid_amount": float(paid or 0),
+                "reserve_amount": float(reserve or 0),
+                "total_incurred": final_incurred,
+                "net_incurred": final_incurred,
+                "litigation": bool(litigation),
+                "litigation_status": "Litigation detected" if litigation else "None",
+                "attorney_assigned": bool(litigation),
+                "suit_filed": bool(litigation),
                 "venue_state": "Needs Review",
                 "injury_type": "Needs Review",
-                "flag": "",
+                "flag": flag,
             }
         )
 
-    for line in lines:
-        if "TOTAL" in line.upper() and "CLAIM" in line.upper():
+    for i, line in enumerate(lines):
+        upper_line = line.upper()
+
+        if not re.fullmatch(r"[A-Z]{2,5}-[A-Z]{2,5}-\d{2}-\d{5}", upper_line):
             continue
 
-        for pattern in claim_patterns:
-            match = pattern.search(line)
-            if match:
-                add_claim(match)
+        idx = i
+        claim_number = lines[idx]
+        idx += 1
+
+        if (
+            idx < len(lines)
+            and re.fullmatch(r"\d{1,3}", lines[idx])
+            and idx + 1 < len(lines)
+            and looks_like_policy_number(lines[idx + 1])
+        ):
+            claim_number = claim_number + lines[idx]
+            idx += 1
+
+        if idx >= len(lines):
+            continue
+
+        policy_number = lines[idx]
+
+        if not looks_like_policy_number(policy_number):
+            continue
+
+        idx += 1
+
+        if idx >= len(lines):
+            continue
+
+        line_type = lines[idx]
+
+        if line_type.upper() not in policy_type_upper:
+            continue
+
+        idx += 1
+
+        loss_date = ""
+
+        if idx < len(lines) and is_date_line(lines[idx]):
+            loss_date = normalize_date(lines[idx])
+            idx += 1
+
+        if idx >= len(lines):
+            continue
+
+        status = lines[idx]
+
+        if status.upper() not in {"OPEN", "CLOSED", "REOPENED", "PENDING"}:
+            continue
+
+        idx += 1
+
+        if idx + 2 >= len(lines):
+            continue
+
+        if not is_money_line(lines[idx]):
+            continue
+
+        paid = money(lines[idx])
+        idx += 1
+
+        if not is_money_line(lines[idx]):
+            continue
+
+        reserve = money(lines[idx])
+        idx += 1
+
+        if not is_money_line(lines[idx]):
+            continue
+
+        incurred = money(lines[idx])
+        idx += 1
+
+        litigation = False
+
+        if idx < len(lines):
+            litigation_value = lines[idx].upper()
+
+            if litigation_value in {"YES", "Y", "TRUE"}:
+                litigation = True
+                idx += 1
+            elif litigation_value in {"NO", "N", "FALSE"}:
+                litigation = False
+                idx += 1
+
+        description_parts = []
+
+        while idx < len(lines):
+            next_line = lines[idx]
+            next_upper = next_line.upper()
+
+            if re.fullmatch(r"[A-Z]{2,5}-[A-Z]{2,5}-\d{2}-\d{5}", next_upper):
                 break
 
-    if not claims:
-        for line in lines:
-            upper = line.upper()
+            if next_upper.startswith("PAGE "):
+                break
 
-            if not any(policy_number in upper for policy_number in policy_numbers):
+            if next_upper.startswith("POLICY-LEVEL"):
+                break
+
+            if next_upper in {
+                "STATE AUTO INSURANCE GROUP",
+                "CLAIM DETAIL CONTINUED",
+                "CLAIM NUMBER",
+                "POLICY NUMBER",
+                "LINE / COVERAGE",
+                "LOSS DATE",
+                "STATUS",
+                "PAID",
+                "RESERVE",
+                "TOTAL INCURRED",
+                "LITIGATION",
+                "DESCRIPTION",
+            }:
+                idx += 1
                 continue
 
-            money_values = re.findall(r"\$?[\d,]+(?:\.\d{2})?", line)
-            if len(money_values) < 1:
-                continue
+            description_parts.append(next_line)
+            idx += 1
 
-            claim_match = re.search(r"\b[A-Z]{1,10}[-]?[A-Z]{0,5}[-]?\d{2,6}[-]?\d{2,8}\b", line)
-            if not claim_match:
-                continue
-
-            claim_number = claim_match.group(0).upper()
-            if claim_number in seen:
-                continue
-
-            policy_number = ""
-            for candidate in policy_numbers:
-                if candidate in upper:
-                    policy_number = candidate
-                    break
-
-            if not policy_number:
-                continue
-
-            policy = policy_map.get(policy_number, {})
-            line_type = policy.get("policy_type") or infer_policy_type_from_policy_number(policy_number)
-
-            status = "Closed" if "CLOSED" in upper else "Open" if "OPEN" in upper else "Needs Review"
-
-            paid = money(money_values[-3]) if len(money_values) >= 3 else 0
-            reserve = money(money_values[-2]) if len(money_values) >= 2 else 0
-            incurred = money(money_values[-1]) if len(money_values) >= 1 else paid + reserve
-
-            seen.add(claim_number)
-
-            claims.append(
-                {
-                    **profile,
-                    "claim_number": claim_number,
-                    "policy_number": policy_number,
-                    "line_of_business": line_type,
-                    "claim_type": line_type,
-                    "cause_of_loss": "Needs Review",
-                    "claimant_type": "Needs Review",
-                    "date_of_loss": "",
-                    "date_reported": "",
-                    "date_closed": "",
-                    "status": status,
-                    "description": "Parsed from loss run.",
-                    "paid_amount": paid,
-                    "reserve_amount": reserve,
-                    "total_incurred": incurred,
-                    "net_incurred": incurred,
-                    "litigation": "LITIGATION" in upper or "ATTORNEY" in upper or "SUIT" in upper,
-                    "litigation_status": "Litigation detected" if ("LITIGATION" in upper or "ATTORNEY" in upper or "SUIT" in upper) else "None",
-                    "attorney_assigned": "ATTORNEY" in upper,
-                    "suit_filed": "SUIT" in upper,
-                    "venue_state": "Needs Review",
-                    "injury_type": "Needs Review",
-                    "flag": "Litigation exposure" if ("LITIGATION" in upper or "ATTORNEY" in upper or "SUIT" in upper) else "",
-                }
-            )
+        add_claim(
+            claim_number=claim_number,
+            policy_number=policy_number,
+            line_type=line_type,
+            status=status,
+            paid=paid,
+            reserve=reserve,
+            incurred=incurred,
+            litigation=litigation,
+            description=" ".join(description_parts),
+            loss_date=loss_date,
+        )
 
     return claims
+
 
 
 def update_policy_claim_totals(policies: list[dict[str, Any]], claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
