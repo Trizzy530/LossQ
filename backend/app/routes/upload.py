@@ -478,3 +478,40 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         "profile": profile_data,
         "uploaded_files": uploaded_files,
     }
+
+
+@router.post("/debug-loss-run")
+async def debug_loss_run_parser(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Debug route only.
+    Shows exactly what the parser reads before anything is saved.
+    """
+
+    upload_dir = "uploads"
+    os.makedirs(upload_dir, exist_ok=True)
+
+    safe_filename = file.filename or "debug_loss_run.pdf"
+    file_path = os.path.join(upload_dir, f"DEBUG-{safe_filename}")
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    result = parse_loss_run_file(file_path, safe_filename)
+
+    profile = result.get("profile") or {}
+    policies = result.get("policies") or []
+    claims = result.get("claims") or []
+    validation = result.get("validation") or {}
+
+    return {
+        "profile": profile,
+        "policy_count": len(policies),
+        "policies": policies,
+        "claim_count": len(claims),
+        "claims": claims,
+        "validation": validation,
+        "raw_text_preview": result.get("raw_text_preview", "")[:3000],
+    }
