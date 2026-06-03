@@ -19,6 +19,7 @@ from app.services.parser_service import (
 from app.services.excel_parser_service import parse_claims_from_excel
 from app.role_utils import require_permission
 from app.services.audit import record_audit_event
+from app.services.loss_run_pipeline import parse_loss_run_file
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
@@ -35,84 +36,16 @@ def get_db():
 
 
 def parse_file(file_path: str, filename: str):
-    """
-    Parse uploaded files into claims + profile.
+    result = parse_loss_run_file(file_path, filename)
 
-    Production behavior:
-    - Reads every PDF page.
-    - Uses normal text extraction first.
-    - Falls back to OCR for scanned/image PDFs.
-    - Returns profile, claims, and policy schedule metadata.
-    """
-
-    filename_lower = str(filename or "").lower()
-    text_data = ""
-
-    if filename_lower.endswith(".pdf"):
-        # 1. Try normal text extraction across ALL pages.
-        try:
-            from pypdf import PdfReader
-
-            reader = PdfReader(file_path)
-            page_texts = []
-            total_pages = len(reader.pages)
-
-            for page_index, page in enumerate(reader.pages):
-                try:
-                    extracted = page.extract_text() or ""
-                    if extracted.strip():
-                        page_texts.append(
-                            f"\n\n--- PAGE {page_index + 1} OF {total_pages} ---\n{extracted}"
-                        )
-                except Exception:
-                    continue
-
-            text_data = "\n".join(page_texts).strip()
-        except Exception:
-            text_data = ""
-
-        # 2. OCR fallback across ALL pages if text extraction fails.
-        if len(text_data.strip()) < 100:
-            try:
-                from pdf2image import convert_from_path
-                import pytesseract
-
-                images = convert_from_path(file_path, dpi=250)
-                ocr_pages = []
-
-                for page_index, image in enumerate(images):
-                    try:
-                        page_text = pytesseract.image_to_string(image) or ""
-                        ocr_pages.append(
-                            f"\n\n--- OCR PAGE {page_index + 1} OF {len(images)} ---\n{page_text}"
-                        )
-                    except Exception as page_error:
-                        ocr_pages.append(
-                            f"\n\n--- OCR PAGE {page_index + 1} FAILED ---\n{str(page_error)}"
-                        )
-
-                text_data = "\n".join(ocr_pages).strip()
-            except Exception as ocr_error:
-                text_data = text_data or f"OCR failed: {str(ocr_error)}"
-
-    else:
-        try:
-            with open(file_path, "r", encoding="utf-8", errors="ignore") as f:
-                text_data = f.read()
-        except Exception:
-            text_data = ""
-
-    claims = parse_claims_from_text(text_data)
-    profile = extract_profile_from_text(text_data)
-
-    try:
-        policies = extract_policies_from_text(text_data, profile)
-    except Exception:
-        policies = profile.get("policies") or []
+    profile = result.get("profile") or {}
+    policies = result.get("policies") or []
+    claims = result.get("claims") or []
+    validation = result.get("validation") or {}
 
     profile["policies"] = policies
-    profile["raw_text_preview"] = text_data[:5000]
-    profile["page_parse_note"] = "Parsed full document with all-page PDF extraction and OCR fallback."
+    profile["validation"] = validation
+    profile["raw_text_preview"] = result.get("raw_text_preview", "")[:5000]
 
     return claims, profile
 
@@ -280,6 +213,8 @@ def extract_profile_data(
         "expiration_date": parse_date(direct_profile.get("expiration_date")) or "",
         "evaluation_date": parse_date(direct_profile.get("evaluation_date")) or datetime.now().date().isoformat(),
         "policies": direct_profile.get("policies") or [],
+        "validation": direct_profile.get("validation") or {},
+        "raw_text_preview": direct_profile.get("raw_text_preview") or "",
     }
 
     for item in parsed_claims:
@@ -331,9 +266,6 @@ def extract_profile_data(
 
     if not profile["writing_carrier"]:
         profile["writing_carrier"] = profile["carrier_name"]
-
-    if not profile["policies"]:
-        profile["policies"] = direct_profile.get("policies") or []
 
     return profile
 
@@ -445,7 +377,11 @@ async def save_uploaded_files(files, policy_number, db, current_user):
                     break
 
         if not file_policy_number:
-            file_policy_number = f"UPLOAD-{upload_session_id}-{len(uploaded_files) + 1}"
+            file_policy_number = (
+                direct_profile.get("policy_number")
+                or direct_profile.get("account_number")
+                or f"UPLOAD-{upload_session_id}-{len(uploaded_files) + 1}"
+            )
 
         if not direct_profile.get("policy_number"):
             direct_profile["policy_number"] = file_policy_number
