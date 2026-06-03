@@ -190,6 +190,29 @@ export default function SettingsPage() {
             </button>
           </div>
         </div>
+<div className="rounded-2xl border border-white/10 bg-slate-950/60 p-5">
+  <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+    <div>
+      <p className="text-xs uppercase tracking-[0.25em] text-blue-300">
+        Compliance Monitoring
+      </p>
+      <h3 className="mt-2 text-lg font-bold text-white">
+        Audit Logs
+      </h3>
+      <p className="mt-2 text-sm text-slate-400">
+        Review report generation, uploads, user activity, and security events
+        recorded across your organization.
+      </p>
+    </div>
+
+    <button
+      onClick={() => router.push("/admin/audit-logs")}
+      className="rounded-xl bg-blue-600 px-4 py-2 text-sm font-semibold text-white hover:bg-blue-500"
+    >
+      View Audit Logs
+    </button>
+  </div>
+</div>
 
         <div className="bg-slate-900 border border-slate-800 rounded-2xl p-6">
           <h2 className="text-2xl font-semibold mb-5">
