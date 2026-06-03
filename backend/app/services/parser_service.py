@@ -191,27 +191,392 @@ def guess_carrier_from_text(text):
 
     return ""
 
+def reject_fake_carrier(value):
+    text = clean_text(value or "")
+    upper = text.upper()
 
-def extract_profile_from_text(text):
-    text = normalize_whitespace(text)
-    effective, expiration = find_policy_period(text)
+    fake_terms = [
+        "LOSS RUN",
+        "EXPERIENCE DETAIL",
+        "INTERNAL COPY",
+        "CLAIM DETAIL",
+        "LOSS EXPERIENCE",
+        "SUMMARY LOSS RUN",
+        "REPORT DATE",
+        "RUN DATE",
+        "PAGE ",
+        "POLICY DETAIL",
+    ]
 
-    carrier = (
-        guess_carrier_from_text(text)
-        or find_text_after_label(
-            [
-                "Writing Company",
-                "Carrier Name",
-                "Insurance Carrier",
-                "Insurance Company",
-                "Company Name",
-                "Carrier",
-                "Insurer",
-            ],
-            text,
-        )
+    if not text:
+        return ""
+
+    if any(term in upper for term in fake_terms):
+        return ""
+
+    return text
+
+
+def detect_real_carrier(text):
+    text = text or ""
+
+    known_carriers = [
+        "Vanliner Insurance Company",
+        "biBERK Insurance Services",
+        "GEICO",
+        "Progressive",
+        "Travelers",
+        "The Hartford",
+        "Hartford",
+        "Nationwide",
+        "Liberty Mutual",
+        "State Farm",
+        "Zurich",
+        "Chubb",
+        "CNA",
+        "Berkshire Hathaway",
+    ]
+
+    for carrier in known_carriers:
+        if carrier.lower() in text.lower():
+            return carrier
+
+    label_value = find_text_after_label(
+        [
+            "Writing Carrier",
+            "Carrier",
+            "Insurance Company",
+            "Insurer",
+            "Company",
+        ],
+        text,
+        max_chars=90,
     )
 
+    return reject_fake_carrier(label_value)
+
+
+def find_account_number(text):
+    account = find_text_after_label(
+        [
+            "Account Number",
+            "Account No.",
+            "Account No",
+            "Account #",
+            "Customer Number",
+            "Customer No.",
+            "Client Number",
+            "Insured Account",
+        ],
+        text,
+        max_chars=80,
+    )
+
+    account = clean_text(account or "")
+
+    if not account:
+        match = re.search(
+            r"\b(?:ACCT|ACCOUNT|CUST|CLIENT)[-\s#:]*([A-Z0-9][A-Z0-9\-]{4,30})\b",
+            text or "",
+            re.IGNORECASE,
+        )
+        if match:
+            account = clean_text(match.group(1))
+
+    return account
+
+
+def find_policy_period_dates(text):
+    text = text or ""
+
+    period_patterns = [
+        r"(?:Policy\s*Period|Policy\s*Term|Coverage\s*Period)\s*[:\-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*(?:to|through|thru|\-)\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+        r"(?:Effective|Eff\.?\s*Date)\s*[:\-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}).{0,40}(?:Expiration|Exp\.?\s*Date)\s*[:\-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+    ]
+
+    for pattern in period_patterns:
+        match = re.search(pattern, text, re.IGNORECASE | re.DOTALL)
+        if match:
+            return clean_text(match.group(1)), clean_text(match.group(2))
+
+    return "", ""
+
+
+def extract_policy_rows(text):
+    rows = []
+    seen = set()
+
+    patterns = [
+        r"\b(?P<line>Commercial\s*Auto|Auto|AL|General\s*Liability|GL|Motor\s*Truck\s*Cargo|Cargo|Workers\s*Compensation|WC)\b.{0,80}?\b(?P<policy>[A-Z]{1,8}[-\s]?[A-Z0-9]{2,12}[-\s]?[A-Z0-9]{2,12})\b",
+        r"\b(?P<policy>VL[-\s]?(?:AL|CA|AUTO|GL|CARGO|MTC|WC)[-\s]?\d{3,10})\b.{0,80}?\b(?P<line>Commercial\s*Auto|Auto|AL|General\s*Liability|GL|Motor\s*Truck\s*Cargo|Cargo|Workers\s*Compensation|WC)\b",
+    ]
+
+    for pattern in patterns:
+        for match in re.finditer(pattern, text or "", re.IGNORECASE):
+            policy = clean_text(match.group("policy")).replace(" ", "-").upper()
+            line = normalize_line_name(match.group("line"))
+
+            key = (policy, line)
+            if key in seen:
+                continue
+
+            seen.add(key)
+            rows.append(
+                {
+                    "policy_number": policy,
+                    "line_of_business": line,
+                }
+            )
+
+    return rows
+
+
+def normalize_line_name(value):
+    text = str(value or "").strip().lower()
+
+    if text in ["al", "auto", "commercial auto"] or "auto" in text:
+        return "Commercial Auto"
+
+    if text == "gl" or "general liability" in text:
+        return "General Liability"
+
+    if text in ["cargo", "mtc"] or "motor truck cargo" in text:
+        return "Motor Truck Cargo"
+
+    if text == "wc" or "workers compensation" in text or "workers comp" in text:
+        return "Workers Compensation"
+
+    return clean_text(value or "Unknown")
+
+
+def money_to_float(value):
+    if value is None:
+        return 0.0
+
+    text = str(value).replace("$", "").replace(",", "").replace("(", "-").replace(")", "")
+    text = re.sub(r"[^0-9.\-]", "", text)
+
+    try:
+        return float(text or 0)
+    except Exception:
+        return 0.0
+
+
+def parse_messy_claim_rows(text, profile):
+    claims = []
+    seen = set()
+
+    claim_pattern = re.compile(
+        r"\b(?P<claim>VL[-\s]?(?:AL|CA|AUTO|GL|CARGO|MTC|WC)[-\s]?\d{3,10}|[A-Z]{2,8}[-\s]?\d{4,12})\b",
+        re.IGNORECASE,
+    )
+
+    matches = list(claim_pattern.finditer(text or ""))
+
+    for index, match in enumerate(matches):
+        claim_number = clean_text(match.group("claim")).replace(" ", "-").upper()
+
+        if claim_number in seen:
+            continue
+
+        start = max(match.start() - 120, 0)
+        end = matches[index + 1].start() if index + 1 < len(matches) else min(match.end() + 900, len(text))
+        block = text[start:end]
+
+        lower_block = block.lower()
+
+        if not any(word in lower_block for word in ["paid", "reserve", "incurred", "closed", "open", "claim", "litigation", "$"]):
+            continue
+
+        money_matches = re.findall(r"\$?\(?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?", block)
+
+        money_values_clean = [
+            money_to_float(value)
+            for value in money_matches
+            if money_to_float(value) > 0
+        ]
+
+        paid = 0.0
+        reserve = 0.0
+        total = 0.0
+
+        paid_match = re.search(
+            r"(?:Paid|Paid\s*Loss|Amount\s*Paid|Loss\s*Paid)\s*[:\-]?\s*(\$?\(?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?)",
+            block,
+            re.IGNORECASE,
+        )
+
+        reserve_match = re.search(
+            r"(?:Reserve|Case\s*Reserve|Outstanding\s*Reserve|Open\s*Reserve)\s*[:\-]?\s*(\$?\(?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?)",
+            block,
+            re.IGNORECASE,
+        )
+
+        total_match = re.search(
+            r"(?:Total\s*Incurred|Incurred|Gross\s*Incurred|Net\s*Incurred)\s*[:\-]?\s*(\$?\(?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?)",
+            block,
+            re.IGNORECASE,
+        )
+
+        if paid_match:
+            paid = money_to_float(paid_match.group(1))
+
+        if reserve_match:
+            reserve = money_to_float(reserve_match.group(1))
+
+        if total_match:
+            total = money_to_float(total_match.group(1))
+
+        if total == 0 and len(money_values_clean) >= 3:
+            paid = paid or money_values_clean[-3]
+            reserve = reserve or money_values_clean[-2]
+            total = money_values_clean[-1]
+        elif total == 0 and paid + reserve > 0:
+            total = paid + reserve
+
+        if paid == 0 and reserve == 0 and total == 0:
+            continue
+
+        status = "Open" if re.search(r"\bopen\b", block, re.IGNORECASE) else "Closed"
+        if re.search(r"\bclosed\b", block, re.IGNORECASE):
+            status = "Closed"
+
+        litigation = bool(re.search(r"litigation|attorney|suit|counsel|lawsuit", block, re.IGNORECASE))
+
+        claim = {
+            **profile,
+            "claim_number": claim_number,
+            "policy_id": 1,
+            "line_of_business": detect_line(block, claim_number),
+            "claim_type": detect_line(block, claim_number),
+            "cause_of_loss": find_text_after_label(["Cause of Loss", "Loss Cause", "Cause"], block, 80) or "Needs Review",
+            "claimant_type": find_text_after_label(["Claimant Type", "Claimant"], block, 80) or "Needs Review",
+            "date_of_loss": find_date_after_label(["Date of Loss", "Loss Date", "DOL"], block) or "",
+            "date_reported": find_date_after_label(["Date Reported", "Reported Date", "Report Date"], block) or "",
+            "date_closed": find_date_after_label(["Date Closed", "Closed Date"], block) or "",
+            "status": status,
+            "description": clean_text(block[:1000]),
+            "paid_amount": paid,
+            "reserve_amount": reserve,
+            "total_incurred": total,
+            "litigation": litigation,
+            "litigation_status": "Litigation detected" if litigation else "None",
+            "attorney_assigned": litigation,
+            "suit_filed": litigation,
+            "venue_state": "Needs Review",
+            "injury_type": "Needs Review",
+            "flag": "Litigation exposure" if litigation else "",
+        }
+
+        claims.append(claim)
+        seen.add(claim_number)
+
+    return claims
+
+
+def extract_profile_from_text(text):
+    text = normalize_whitespace(text or "")
+
+    carrier = detect_real_carrier(text)
+
+    effective, expiration = find_policy_period_dates(text)
+
+    policy_rows = extract_policy_rows(text)
+    primary_policy = ""
+
+    if policy_rows:
+        primary_policy = policy_rows[0].get("policy_number") or ""
+
+    profile = {
+        "business_name": find_text_after_label(
+            [
+                "Named Insured",
+                "Insured Name",
+                "Insured",
+                "Account Name",
+                "Customer Name",
+                "Client Name",
+            ],
+            text,
+            max_chars=100,
+        ),
+        "carrier_name": carrier,
+        "agency_name": find_text_after_label(
+            [
+                "Agent Name",
+                "Agency Name",
+                "Agency",
+                "Broker Name",
+                "Broker",
+                "Producer",
+            ],
+            text,
+            max_chars=100,
+        ),
+        "policy_number": primary_policy
+        or find_text_after_label(
+            ["Policy Number", "Policy No.", "Policy No", "Policy #", "Policy ID"],
+            text,
+            max_chars=60,
+        ),
+        "effective_date": effective
+        or find_date_after_label(
+            [
+                "Effective Date",
+                "Policy Effective Date",
+                "Policy Inception",
+                "Eff Date",
+                "Effective",
+            ],
+            text,
+        ),
+        "expiration_date": expiration
+        or find_date_after_label(
+            [
+                "Expiration Date",
+                "Policy Expiration Date",
+                "Cancellation Date",
+                "Exp Date",
+                "Expiration",
+            ],
+            text,
+        ),
+        "evaluation_date": find_date_after_label(
+            [
+                "Evaluation Date",
+                "Report Date",
+                "Run Date",
+                "Valuation Date",
+                "Loss Run Date",
+            ],
+            text,
+        ),
+    }
+
+    account_number = find_account_number(text)
+
+    if account_number:
+        profile["account_number"] = account_number
+
+    if policy_rows:
+        profile["policies"] = policy_rows
+
+    if not profile.get("carrier_name"):
+        profile["carrier_name"] = "Unknown Carrier"
+
+    return profile
+    account_number = find_account_number(text)
+
+    if account_number:
+        profile["account_number"] = account_number
+
+    if policy_rows:
+        profile["policies"] = policy_rows
+
+    if not profile.get("carrier_name"):
+        profile["carrier_name"] = "Unknown Carrier"
+
+    return profile
     return {
         "business_name": find_text_after_label(
             [
@@ -285,29 +650,29 @@ def detect_line(block, claim_number=""):
     lower = str(block or "").lower()
     claim = str(claim_number or "").upper()
 
-    if claim.startswith("WC"):
-        return "Workers Compensation"
+    if "CARGO" in claim or "MTC" in claim:
+        return "Motor Truck Cargo"
 
-    if claim.startswith("CA") or claim.startswith("AUTO"):
-        return "Commercial Auto"
-
-    if claim.startswith("GL"):
+    if "GL" in claim:
         return "General Liability"
 
-    if claim.startswith("CARGO"):
-        return "Cargo"
-
-    if "workers compensation" in lower or "employee injury" in lower or "compensation" in lower:
+    if "WC" in claim:
         return "Workers Compensation"
 
-    if "general liability" in lower or "slip" in lower or "premises" in lower:
-        return "General Liability"
-
-    if "commercial auto" in lower or "auto" in lower or "vehicle" in lower or "collision" in lower:
+    if "AL" in claim or "CA" in claim or "AUTO" in claim:
         return "Commercial Auto"
 
-    if "motor truck cargo" in lower or "cargo" in lower or "freight" in lower:
-        return "Cargo"
+    if "motor truck cargo" in lower or "cargo" in lower:
+        return "Motor Truck Cargo"
+
+    if "commercial auto" in lower or "auto liability" in lower or "vehicle" in lower:
+        return "Commercial Auto"
+
+    if "general liability" in lower or "premises" in lower or "gl " in lower:
+        return "General Liability"
+
+    if "workers compensation" in lower or "workers comp" in lower:
+        return "Workers Compensation"
 
     if "property" in lower or "water damage" in lower or "fire" in lower:
         return "Property"
@@ -317,18 +682,17 @@ def detect_line(block, claim_number=""):
 def claim_number_candidates(text):
     pattern = (
         r"\b("
-        r"[A-Z]{1,5}[-\s]?\d{3,15}"
-        r"|GL[-\s]?\d+"
-        r"|AUTO[-\s]?\d+"
-        r"|WC[-\s]?\d+"
-        r"|PROP[-\s]?\d+"
-        r"|CLM[-\s]?\d+"
-        r"|\d{6,15}"
+        r"VL[-\s]?(?:AL|CA|AUTO|GL|CARGO|MTC|WC)[-\s]?\d{3,10}"
+        r"|[A-Z]{2,8}[-\s]?(?:AL|CA|AUTO|GL|CARGO|MTC|WC)[-\s]?\d{3,10}"
+        r"|GL[-\s]?\d{4,12}"
+        r"|AUTO[-\s]?\d{4,12}"
+        r"|WC[-\s]?\d{4,12}"
+        r"|PROP[-\s]?\d{4,12}"
+        r"|CLM[-\s]?\d{4,12}"
         r")\b"
     )
 
     return list(re.finditer(pattern, text or "", re.IGNORECASE))
-
 
 def build_claim(profile, claim_number, block):
     paid = find_money(
@@ -460,6 +824,11 @@ def parse_claims_from_text(text):
     profile = extract_profile_from_text(text)
     claims = []
     seen = set()
+
+    messy_claims = parse_messy_claim_rows(text, profile)
+
+    if messy_claims:
+        return messy_claims
 
     explicit_claim_pattern = re.compile(
         r"(?:Claim\s*Number|Claim\s*No|Claim\s*#)\s*[:\-]?\s*([A-Z]{1,10}[-\s]?\d{3,15}|\d{6,15})",
