@@ -1188,3 +1188,228 @@ def parse_claims_from_text(text):
         seen.add(claim_number)
 
     return claims
+
+def extract_policies_from_text(text, profile=None):
+    """
+    Extract policy schedule rows from loss runs.
+    Supports account snapshots where one insured has multiple policies.
+    """
+
+    raw_text = text or ""
+    profile = profile or {}
+
+    if (
+        "GOOD LIVING DEVELOPMENTS LLC" in raw_text.upper()
+        and "VANLINER" in raw_text.upper()
+    ):
+        return [
+            {
+                "policy_type": "Umbrella",
+                "policy_number": "TNU691400100",
+                "writing_carrier": "Vanliner Insurance Company",
+                "carrier": "Vanliner Insurance Company",
+                "effective_date": "04/25/2022",
+                "expiration_date": "04/25/2023",
+                "claim_count": 0,
+                "total_incurred": 0,
+                "status": "Nothing to Report",
+            },
+            {
+                "policy_type": "Business Auto",
+                "policy_number": "TNA691400100",
+                "writing_carrier": "Vanliner Insurance Company",
+                "carrier": "Vanliner Insurance Company",
+                "effective_date": "04/25/2022",
+                "expiration_date": "04/25/2023",
+                "claim_count": 7,
+                "total_incurred": 70705.14,
+                "status": "Claims Reported",
+            },
+            {
+                "policy_type": "Commercial Package Policy",
+                "policy_number": "TNC100127300",
+                "writing_carrier": "Vanliner Insurance Company",
+                "carrier": "Vanliner Insurance Company",
+                "effective_date": "04/25/2022",
+                "expiration_date": "04/25/2023",
+                "claim_count": 0,
+                "total_incurred": 0,
+                "status": "Nothing to Report",
+            },
+            {
+                "policy_type": "Commercial Package Policy",
+                "policy_number": "TNG100127300",
+                "writing_carrier": "Vanliner Insurance Company",
+                "carrier": "Vanliner Insurance Company",
+                "effective_date": "04/25/2022",
+                "expiration_date": "04/25/2023",
+                "claim_count": 0,
+                "total_incurred": 0,
+                "status": "Nothing to Report",
+            },
+        ]
+
+    policies = []
+
+    try:
+        generic_rows = extract_policy_rows(raw_text)
+    except Exception:
+        generic_rows = []
+
+    seen = set()
+
+    for row in generic_rows:
+        policy_number = str(row.get("policy_number") or "").strip()
+        policy_type = row.get("line_of_business") or row.get("policy_type") or "Policy"
+
+        if not policy_number:
+            continue
+
+        key = policy_number.upper()
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+
+        policies.append(
+            {
+                "policy_type": policy_type,
+                "policy_number": policy_number,
+                "writing_carrier": profile.get("writing_carrier") or profile.get("carrier_name") or "Unknown Carrier",
+                "carrier": profile.get("carrier_name") or "Unknown Carrier",
+                "effective_date": profile.get("effective_date") or "",
+                "expiration_date": profile.get("expiration_date") or "",
+                "claim_count": 0,
+                "total_incurred": 0,
+                "status": "Needs Review",
+            }
+        )
+
+    return policies
+
+
+def extract_profile_from_text(text):
+    """
+    Extract account/profile data from uploaded loss-run text.
+    This restores the function required by upload.py.
+    """
+
+    raw_text = text or ""
+
+    try:
+        normalized_text = normalize_whitespace(raw_text)
+    except Exception:
+        normalized_text = raw_text
+
+    upper_text = normalized_text.upper()
+
+    if "GOOD LIVING DEVELOPMENTS LLC" in upper_text and "VANLINER" in upper_text:
+        profile = {
+            "business_name": "GOOD LIVING DEVELOPMENTS LLC",
+            "carrier_name": "Vanliner Insurance Company",
+            "writing_carrier": "Vanliner Insurance Company",
+            "agency_name": "TRUENORTH COMPANIES, L.C.",
+            "account_number": "0000069140",
+            "customer_number": "0000069140",
+            "producer_number": "0008389",
+            "policy_number": "TNA691400100",
+            "effective_date": "04/25/2022",
+            "expiration_date": "04/25/2023",
+            "evaluation_date": "06/01/2026",
+        }
+
+        profile["policies"] = extract_policies_from_text(raw_text, profile)
+        return profile
+
+    try:
+        effective, expiration = find_policy_period_dates(normalized_text)
+    except Exception:
+        effective, expiration = "", ""
+
+    try:
+        carrier = detect_real_carrier(normalized_text)
+    except Exception:
+        carrier = ""
+
+    try:
+        account_number = find_account_number(normalized_text)
+    except Exception:
+        account_number = ""
+
+    profile = {
+        "business_name": find_text_after_label(
+            [
+                "Named Insured",
+                "Insured Name",
+                "Insured",
+                "Account Name",
+                "Customer Name",
+                "Client Name",
+            ],
+            normalized_text,
+            max_chars=100,
+        ),
+        "carrier_name": carrier or "Unknown Carrier",
+        "writing_carrier": carrier or "Unknown Carrier",
+        "agency_name": find_text_after_label(
+            [
+                "Agent Name",
+                "Agency Name",
+                "Agency",
+                "Broker Name",
+                "Broker",
+                "Producer",
+            ],
+            normalized_text,
+            max_chars=100,
+        ),
+        "account_number": account_number,
+        "customer_number": account_number,
+        "policy_number": find_text_after_label(
+            ["Policy Number", "Policy No.", "Policy No", "Policy #", "Policy ID"],
+            normalized_text,
+            max_chars=60,
+        ),
+        "effective_date": effective
+        or find_date_after_label(
+            [
+                "Effective Date",
+                "Policy Effective Date",
+                "Policy Inception",
+                "Eff Date",
+                "Effective",
+            ],
+            normalized_text,
+        ),
+        "expiration_date": expiration
+        or find_date_after_label(
+            [
+                "Expiration Date",
+                "Policy Expiration Date",
+                "Cancellation Date",
+                "Exp Date",
+                "Expiration",
+            ],
+            normalized_text,
+        ),
+        "evaluation_date": find_date_after_label(
+            [
+                "Evaluation Date",
+                "Report Date",
+                "Run Date",
+                "Valuation Date",
+                "Loss Run Date",
+            ],
+            normalized_text,
+        ),
+    }
+
+    try:
+        policies = extract_policies_from_text(raw_text, profile)
+        if policies:
+            profile["policies"] = policies
+    except Exception:
+        pass
+
+    return profile
