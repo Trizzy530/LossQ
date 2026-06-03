@@ -10,16 +10,15 @@ from app.database import SessionLocal
 from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
-from app.services.parser_service import (
-    extract_text_from_pdf,
-    parse_claims_from_text,
-    extract_profile_from_text,
-    extract_policies_from_text,
-)
-from app.services.excel_parser_service import parse_claims_from_excel
 from app.role_utils import require_permission
 from app.services.audit import record_audit_event
 from app.services.loss_run_pipeline import parse_loss_run_file
+
+try:
+    from app.services.excel_parser_service import parse_claims_from_excel
+except Exception:
+    parse_claims_from_excel = None
+
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
@@ -36,18 +35,31 @@ def get_db():
 
 
 def parse_file(file_path: str, filename: str):
-    result = parse_loss_run_file(file_path, filename)
+    lower_name = str(filename or "").lower()
 
-    profile = result.get("profile") or {}
-    policies = result.get("policies") or []
-    claims = result.get("claims") or []
-    validation = result.get("validation") or {}
+    if lower_name.endswith(".pdf"):
+        result = parse_loss_run_file(file_path, filename)
 
-    profile["policies"] = policies
-    profile["validation"] = validation
-    profile["raw_text_preview"] = result.get("raw_text_preview", "")[:5000]
+        profile = result.get("profile") or {}
+        policies = result.get("policies") or []
+        claims = result.get("claims") or []
+        validation = result.get("validation") or {}
 
-    return claims, profile
+        profile["policies"] = policies
+        profile["validation"] = validation
+        profile["raw_text_preview"] = result.get("raw_text_preview", "")[:5000]
+
+        return claims, profile
+
+    if lower_name.endswith(".csv") or lower_name.endswith(".xlsx"):
+        if parse_claims_from_excel:
+            claims = parse_claims_from_excel(file_path)
+            return claims, {}
+
+        return [], {}
+
+    return [], {}
+
 
 def parse_date(value: Any):
     if not value:
@@ -91,6 +103,7 @@ def pick(data: dict, keys: list[str], default=None):
     for key in keys:
         if key in data and data[key] not in [None, "", "Needs Review", "Not Set"]:
             return data[key]
+
     return default
 
 
@@ -208,10 +221,13 @@ def extract_profile_data(
             direct_profile.get("customer_number") or direct_profile.get("account_number")
         ),
         "producer_number": clean_profile_value(direct_profile.get("producer_number")),
-        "policy_number": clean_profile_value(direct_profile.get("policy_number")),
+        "policy_number": clean_profile_value(
+            direct_profile.get("policy_number") or direct_profile.get("account_number")
+        ),
         "effective_date": parse_date(direct_profile.get("effective_date")) or "",
         "expiration_date": parse_date(direct_profile.get("expiration_date")) or "",
-        "evaluation_date": parse_date(direct_profile.get("evaluation_date")) or datetime.now().date().isoformat(),
+        "evaluation_date": parse_date(direct_profile.get("evaluation_date"))
+        or datetime.now().date().isoformat(),
         "policies": direct_profile.get("policies") or [],
         "validation": direct_profile.get("validation") or {},
         "raw_text_preview": direct_profile.get("raw_text_preview") or "",
@@ -262,15 +278,20 @@ def extract_profile_data(
             ) or ""
 
     if not profile["policy_number"]:
-        profile["policy_number"] = clean_profile_value(fallback_policy_number)
+        profile["policy_number"] = clean_profile_value(
+            profile.get("account_number") or fallback_policy_number
+        )
 
     if not profile["writing_carrier"]:
         profile["writing_carrier"] = profile["carrier_name"]
 
     return profile
 
+
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
-    policy_number = clean_profile_value(profile_data.get("policy_number"))
+    policy_number = clean_profile_value(
+        profile_data.get("policy_number") or profile_data.get("account_number")
+    )
 
     if not policy_number:
         return None
@@ -282,12 +303,22 @@ def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
         .first()
     )
 
-    if existing:
-        for field, value in profile_data.items():
-            cleaned_value = clean_profile_value(value)
+    fields_to_save = [
+        "business_name",
+        "carrier_name",
+        "agency_name",
+        "policy_number",
+        "effective_date",
+        "expiration_date",
+        "evaluation_date",
+    ]
 
-            if cleaned_value and hasattr(existing, field):
-                setattr(existing, field, cleaned_value)
+    if existing:
+        for field in fields_to_save:
+            value = clean_profile_value(profile_data.get(field))
+
+            if value and hasattr(existing, field):
+                setattr(existing, field, value)
 
         return existing
 
@@ -336,6 +367,36 @@ async def upload_multiple_loss_runs(
     )
 
 
+@router.post("/debug-loss-run")
+async def debug_loss_run_parser(
+    file: UploadFile = File(...),
+    current_user: dict = Depends(require_permission("upload")),
+):
+    timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
+    safe_filename = (file.filename or "debug_loss_run.pdf").replace(" ", "_")
+    file_path = os.path.join(UPLOAD_DIR, f"DEBUG-{timestamp}_{safe_filename}")
+
+    with open(file_path, "wb") as buffer:
+        shutil.copyfileobj(file.file, buffer)
+
+    result = parse_loss_run_file(file_path, safe_filename)
+
+    profile = result.get("profile") or {}
+    policies = result.get("policies") or []
+    claims = result.get("claims") or []
+    validation = result.get("validation") or {}
+
+    return {
+        "profile": profile,
+        "policy_count": len(policies),
+        "policies": policies,
+        "claim_count": len(claims),
+        "claims": claims,
+        "validation": validation,
+        "raw_text_preview": result.get("raw_text_preview", "")[:3000],
+    }
+
+
 async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
 
@@ -350,28 +411,38 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
     for file in files:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        safe_filename = file.filename.replace(" ", "_")
+        safe_filename = (file.filename or "loss_run.pdf").replace(" ", "_")
         file_path = os.path.join(UPLOAD_DIR, f"{timestamp}_{safe_filename}")
 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        parsed_claims, parsed_profile = parse_file(file_path, file.filename)
+        parsed_claims, parsed_profile = parse_file(file_path, file.filename or safe_filename)
 
         file_policy_number = clean_input_policy
 
         if parsed_profile:
-            parsed_policy = str(parsed_profile.get("policy_number") or "").strip()
+            parsed_policy = str(
+                parsed_profile.get("policy_number")
+                or parsed_profile.get("account_number")
+                or ""
+            ).strip()
+
             if parsed_policy:
                 file_policy_number = parsed_policy
 
             for key, value in parsed_profile.items():
+                if key in ["policies", "validation", "raw_text_preview"]:
+                    direct_profile[key] = value
+                    continue
+
                 if value and not direct_profile.get(key):
                     direct_profile[key] = value
 
         if not file_policy_number:
             for claim_data in parsed_claims:
                 claim_policy = str(claim_data.get("policy_number") or "").strip()
+
                 if claim_policy:
                     file_policy_number = claim_policy
                     break
@@ -399,10 +470,16 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             )
 
             claim_number = str(normalized.get("claim_number") or "").strip().upper()
-            policy_value = str(normalized.get("policy_number") or file_policy_number).strip()
+            policy_value = str(
+                normalized.get("policy_number") or file_policy_number
+            ).strip()
 
             normalized["claim_number"] = claim_number
             normalized["policy_number"] = policy_value
+
+            if not claim_number or claim_number == "UNKNOWN":
+                print("Skipping claim without valid claim number")
+                continue
 
             duplicate_query = db.query(Claim).filter(
                 Claim.organization_id == current_user["organization_id"],
@@ -434,25 +511,32 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         db.add(upload_record)
 
-        uploaded_files.append({
-            "filename": file.filename,
-            "claims_saved": file_saved,
-            "duplicates_skipped": file_duplicates,
-            "policy_number": file_policy_number,
-        })
+        uploaded_files.append(
+            {
+                "filename": file.filename,
+                "claims_saved": file_saved,
+                "duplicates_skipped": file_duplicates,
+                "policy_number": file_policy_number,
+            }
+        )
 
     profile_data = extract_profile_data(
         parsed_claims=all_parsed_claims,
-        fallback_policy_number=direct_profile.get("policy_number") or clean_input_policy or f"UPLOAD-{upload_session_id}",
+        fallback_policy_number=direct_profile.get("policy_number")
+        or direct_profile.get("account_number")
+        or clean_input_policy
+        or f"UPLOAD-{upload_session_id}",
         direct_profile=direct_profile,
     )
 
     if not profile_data.get("policy_number"):
-        profile_data["policy_number"] = direct_profile.get("policy_number") or f"UPLOAD-{upload_session_id}"
+        profile_data["policy_number"] = (
+            profile_data.get("account_number")
+            or direct_profile.get("policy_number")
+            or f"UPLOAD-{upload_session_id}"
+        )
 
     profile = upsert_account_profile(db, profile_data, current_user)
-
-    db.commit()
 
     record_audit_event(
         db,
@@ -462,55 +546,27 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         resource_id=profile_data.get("policy_number"),
         details={
             "policy_number": profile_data.get("policy_number"),
+            "account_number": profile_data.get("account_number"),
             "saved_claims": total_saved,
             "duplicates_skipped": total_duplicates_skipped,
             "profile_auto_populated": bool(profile),
+            "policy_count": len(profile_data.get("policies") or []),
+            "validation": profile_data.get("validation") or {},
             "uploaded_files": uploaded_files,
         },
     )
+
+    db.commit()
 
     return {
         "message": "Loss run file(s) uploaded successfully",
         "saved_claims": total_saved,
         "duplicates_skipped": total_duplicates_skipped,
         "policy_number": profile_data.get("policy_number"),
+        "account_number": profile_data.get("account_number"),
         "profile_auto_populated": bool(profile),
         "profile": profile_data,
+        "policies": profile_data.get("policies") or [],
+        "validation": profile_data.get("validation") or {},
         "uploaded_files": uploaded_files,
-    }
-
-
-@router.post("/debug-loss-run")
-async def debug_loss_run_parser(
-    file: UploadFile = File(...),
-):
-    """
-    Debug route only.
-    Shows exactly what the parser reads before anything is saved.
-    """
-
-    upload_dir = "uploads"
-    os.makedirs(upload_dir, exist_ok=True)
-
-    safe_filename = file.filename or "debug_loss_run.pdf"
-    file_path = os.path.join(upload_dir, f"DEBUG-{safe_filename}")
-
-    with open(file_path, "wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    result = parse_loss_run_file(file_path, safe_filename)
-
-    profile = result.get("profile") or {}
-    policies = result.get("policies") or []
-    claims = result.get("claims") or []
-    validation = result.get("validation") or {}
-
-    return {
-        "profile": profile,
-        "policy_count": len(policies),
-        "policies": policies,
-        "claim_count": len(claims),
-        "claims": claims,
-        "validation": validation,
-        "raw_text_preview": result.get("raw_text_preview", "")[:3000],
     }
