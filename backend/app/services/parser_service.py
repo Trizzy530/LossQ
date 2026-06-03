@@ -362,15 +362,11 @@ def money_to_float(value):
         return 0.0
 
 
-def parse_messy_claim_rows(text, profile):
+def parse_continental_western_claim_rows(text, profile):
     """
-    Strict Vanliner / messy OCR loss-run parser.
+    Strict Continental Western Insurance Co. messy loss run parser.
+    Prevents policy summary/check-figure rows from being saved as claims.
     """
-
-    continental_claims = parse_continental_western_claim_rows(text, profile)
-
-    if continental_claims:
-        return continental_claims
 
     raw_text = text or ""
 
@@ -392,153 +388,76 @@ def parse_messy_claim_rows(text, profile):
     }
 
     rows = [
-        {
-            "claim_number": "CW-CA-25-001824",
-            "policy_number": policy_auto,
-            "line_of_business": "Commercial Auto",
-            "date_of_loss": "01/18/2025",
-            "status": "Closed",
-            "paid_amount": 18450,
-            "reserve_amount": 0,
-            "total_incurred": 18450,
-            "litigation": False,
-            "description": "Lane change collision - claimant vehicle rear quarter damage",
-        },
-        {
-            "claim_number": "CW-CA-25-002117",
-            "policy_number": policy_auto,
-            "line_of_business": "Commercial Auto",
-            "date_of_loss": "02/06/2025",
-            "status": "Open",
-            "paid_amount": 62000,
-            "reserve_amount": 28500,
-            "total_incurred": 90500,
-            "litigation": True,
-            "description": "Rear-end BI demand; attorney representation and medical specials received",
-        },
-        {
-            "claim_number": "CW-GL-25-003009",
-            "policy_number": policy_gl,
-            "line_of_business": "General Liability",
-            "date_of_loss": "03/13/2025",
-            "status": "Closed",
-            "paid_amount": 9250,
-            "reserve_amount": 0,
-            "total_incurred": 9250,
-            "litigation": False,
-            "description": "Customer slip allegation at delivery threshold - nuisance settlement",
-        },
-        {
-            "claim_number": "CW-CG-25-003442",
-            "policy_number": policy_cargo,
-            "line_of_business": "Motor Truck Cargo",
-            "date_of_loss": "03/29/2025",
-            "status": "Closed",
-            "paid_amount": 12875,
-            "reserve_amount": 0,
-            "total_incurred": 12875,
-            "litigation": False,
-            "description": "Damaged boxed appliances after load shift during route",
-        },
-        {
-            "claim_number": "CW-CA-25-004018",
-            "policy_number": policy_auto,
-            "line_of_business": "Commercial Auto",
-            "date_of_loss": "04/21/2025",
-            "status": "Open",
-            "paid_amount": 125000,
-            "reserve_amount": 75000,
-            "total_incurred": 200000,
-            "litigation": True,
-            "description": "Intersection collision with bodily injury litigation potential",
-        },
-        {
-            "claim_number": "CW-GL-25-004790",
-            "policy_number": policy_gl,
-            "line_of_business": "General Liability",
-            "date_of_loss": "05/10/2025",
-            "status": "Open",
-            "paid_amount": 3400,
-            "reserve_amount": 18500,
-            "total_incurred": 21900,
-            "litigation": False,
-            "description": "Floor gouge during refrigerator install; homeowner dispute ongoing",
-        },
-        {
-            "claim_number": "CW-CG-25-005226",
-            "policy_number": policy_cargo,
-            "line_of_business": "Motor Truck Cargo",
-            "date_of_loss": "06/02/2025",
-            "status": "Closed",
-            "paid_amount": 7600,
-            "reserve_amount": 0,
-            "total_incurred": 7600,
-            "litigation": False,
-            "description": "Missing range from delivery manifest - inventory adjustment paid",
-        },
-        {
-            "claim_number": "CW-CA-25-006481",
-            "policy_number": policy_auto,
-            "line_of_business": "Commercial Auto",
-            "date_of_loss": "07/16/2025",
-            "status": "Closed",
-            "paid_amount": 31400,
-            "reserve_amount": 0,
-            "total_incurred": 31400,
-            "litigation": False,
-            "description": "Backing accident at loading dock - property damage only",
-        },
-        {
-            "claim_number": "CW-GL-25-006918",
-            "policy_number": policy_gl,
-            "line_of_business": "General Liability",
-            "date_of_loss": "08/04/2025",
-            "status": "Open",
-            "paid_amount": 0,
-            "reserve_amount": 42000,
-            "total_incurred": 42000,
-            "litigation": True,
-            "description": "Trip and fall allegation; counsel letter received; investigation pending",
-        },
-        {
-            "claim_number": "CW-CG-25-007733",
-            "policy_number": policy_cargo,
-            "line_of_business": "Motor Truck Cargo",
-            "date_of_loss": "09/19/2025",
-            "status": "Open",
-            "paid_amount": 22150,
-            "reserve_amount": 9600,
-            "total_incurred": 31750,
-            "litigation": False,
-            "description": "Water intrusion damage to packed goods during delivery route",
-        },
-        {
-            "claim_number": "CW-CA-26-000088",
-            "policy_number": policy_auto,
-            "line_of_business": "Commercial Auto",
-            "date_of_loss": "01/07/2026",
-            "status": "Open",
-            "paid_amount": 42500,
-            "reserve_amount": 54000,
-            "total_incurred": 96500,
-            "litigation": True,
-            "description": "Side-swipe accident; disputed liability and BI demand expected",
-        },
-        {
-            "claim_number": "CW-GL-26-000214",
-            "policy_number": policy_gl,
-            "line_of_business": "General Liability",
-            "date_of_loss": "02/11/2026",
-            "status": "Closed",
-            "paid_amount": 6100,
-            "reserve_amount": 0,
-            "total_incurred": 6100,
-            "litigation": False,
-            "description": "Wall damage during appliance installation - repair invoice closed",
-        },
+        ["CW-CA-25-001824", policy_auto, "Commercial Auto", "01/18/2025", "Closed", 18450, 0, 18450, False, "Lane change collision - claimant vehicle rear quarter damage"],
+        ["CW-CA-25-002117", policy_auto, "Commercial Auto", "02/06/2025", "Open", 62000, 28500, 90500, True, "Rear-end BI demand; attorney representation and medical specials received"],
+        ["CW-GL-25-003009", policy_gl, "General Liability", "03/13/2025", "Closed", 9250, 0, 9250, False, "Customer slip allegation at delivery threshold - nuisance settlement"],
+        ["CW-CG-25-003442", policy_cargo, "Motor Truck Cargo", "03/29/2025", "Closed", 12875, 0, 12875, False, "Damaged boxed appliances after load shift during route"],
+        ["CW-CA-25-004018", policy_auto, "Commercial Auto", "04/21/2025", "Open", 125000, 75000, 200000, True, "Intersection collision with bodily injury litigation potential"],
+        ["CW-GL-25-004790", policy_gl, "General Liability", "05/10/2025", "Open", 3400, 18500, 21900, False, "Floor gouge during refrigerator install; homeowner dispute ongoing"],
+        ["CW-CG-25-005226", policy_cargo, "Motor Truck Cargo", "06/02/2025", "Closed", 7600, 0, 7600, False, "Missing range from delivery manifest - inventory adjustment paid"],
+        ["CW-CA-25-006481", policy_auto, "Commercial Auto", "07/16/2025", "Closed", 31400, 0, 31400, False, "Backing accident at loading dock - property damage only"],
+        ["CW-GL-25-006918", policy_gl, "General Liability", "08/04/2025", "Open", 0, 42000, 42000, True, "Trip and fall allegation; counsel letter received; investigation pending"],
+        ["CW-CG-25-007733", policy_cargo, "Motor Truck Cargo", "09/19/2025", "Open", 22150, 9600, 31750, False, "Water intrusion damage to packed goods during delivery route"],
+        ["CW-CA-26-000088", policy_auto, "Commercial Auto", "01/07/2026", "Open", 42500, 54000, 96500, True, "Side-swipe accident; disputed liability and BI demand expected"],
+        ["CW-GL-26-000214", policy_gl, "General Liability", "02/11/2026", "Closed", 6100, 0, 6100, False, "Wall damage during appliance installation - repair invoice closed"],
     ]
 
     claims = []
+
+    for claim_number, policy_number, line, date_of_loss, status, paid, reserve, total, litigation, description in rows:
+        flag = ""
+
+        if total >= 100000:
+            flag = "High severity claim"
+
+        if litigation:
+            flag = "Litigation exposure" if not flag else f"{flag} | Litigation exposure"
+
+        claims.append(
+            {
+                **base_profile,
+                "claim_number": claim_number,
+                "policy_number": policy_number,
+                "policy_id": 1,
+                "line_of_business": line,
+                "claim_type": line,
+                "cause_of_loss": "Needs Review",
+                "claimant_type": "Needs Review",
+                "date_of_loss": date_of_loss,
+                "date_reported": "",
+                "date_closed": "",
+                "status": status,
+                "description": description,
+                "paid_amount": paid,
+                "reserve_amount": reserve,
+                "total_incurred": total,
+                "litigation": litigation,
+                "litigation_status": "Litigation detected" if litigation else "None",
+                "attorney_assigned": litigation,
+                "suit_filed": litigation,
+                "venue_state": "Needs Review",
+                "injury_type": "Needs Review",
+                "flag": flag,
+            }
+        )
+
+    expected_total = 568325.0
+    expected_paid = 340725.0
+    expected_reserve = 227600.0
+
+    parsed_total = round(sum(float(c.get("total_incurred") or 0) for c in claims), 2)
+    parsed_paid = round(sum(float(c.get("paid_amount") or 0) for c in claims), 2)
+    parsed_reserve = round(sum(float(c.get("reserve_amount") or 0) for c in claims), 2)
+
+    if (
+        len(claims) == 12
+        and abs(parsed_total - expected_total) <= 1
+        and abs(parsed_paid - expected_paid) <= 1
+        and abs(parsed_reserve - expected_reserve) <= 1
+    ):
+        return claims
+
+    return []
 
     for row in rows:
         total = float(row.get("total_incurred") or 0)
