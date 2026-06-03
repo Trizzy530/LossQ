@@ -363,99 +363,204 @@ def money_to_float(value):
 
 
 def parse_messy_claim_rows(text, profile):
+    """
+    Section-aware parser for messy carrier/OCR loss runs.
+
+    Handles rows where PDF text extraction breaks values like:
+    VLN-25-00018
+    4
+
+    into the real claim number:
+    VLN-25-000184
+
+    Also prevents policy numbers like VAN-CARGO-551920-25 from being treated as claims.
+    """
+
+    raw_text = text or ""
+    normalized = raw_text.replace("\r", "\n")
+
     claims = []
     seen = set()
 
+    # Find real Vanliner-style claim numbers, including when the final digit is split onto the next line.
     claim_pattern = re.compile(
-        r"\b(?P<claim>VL[-\s]?(?:AL|CA|AUTO|GL|CARGO|MTC|WC)[-\s]?\d{3,10}|[A-Z]{2,8}[-\s]?\d{4,12})\b",
+        r"\b(?P<base>VLN[-\s]?\d{2}[-\s]?\d{5})\s*\n?\s*(?P<tail>\d)\b",
         re.IGNORECASE,
     )
 
-    matches = list(claim_pattern.finditer(text or ""))
+    matches = list(claim_pattern.finditer(normalized))
+
+    if not matches:
+        return []
 
     for index, match in enumerate(matches):
-        claim_number = clean_text(match.group("claim")).replace(" ", "-").upper()
+        base = clean_text(match.group("base")).replace(" ", "").upper()
+        tail = clean_text(match.group("tail"))
+
+        claim_number = f"{base}{tail}"
 
         if claim_number in seen:
             continue
 
-        start = max(match.start() - 120, 0)
-        end = matches[index + 1].start() if index + 1 < len(matches) else min(match.end() + 900, len(text))
-        block = text[start:end]
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else len(normalized)
+        block = normalized[start:end]
 
-        lower_block = block.lower()
+        # Skip the reserve-review duplicate section if the block is not a full detail row.
+        block_lower = block.lower()
+        has_full_detail = any(
+            item in block_lower
+            for item in [
+                "commercial",
+                "general liability",
+                "motor truck",
+                "cargo",
+                "auto",
+                "description",
+                "rear-end",
+                "property damage",
+                "slip",
+                "backing",
+                "collision",
+                "appliance",
+                "floor damage",
+                "mirror",
+                "side-swipe",
+                "refrigerator",
+            ]
+        )
 
-        if not any(word in lower_block for word in ["paid", "reserve", "incurred", "closed", "open", "claim", "litigation", "$"]):
+        has_money = "$" in block
+
+        if not has_full_detail or not has_money:
             continue
 
-        money_matches = re.findall(r"\$?\(?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?", block)
+        # Extract policy number from the claim row.
+        policy_match = re.search(
+            r"\b(VAN[-\s]?(?:AUTO|GL|CARGO)[-\s]?\d{4,8}[\s\-]*\d{0,4}[-\s]?\d{2})\b",
+            block,
+            re.IGNORECASE,
+        )
 
-        money_values_clean = [
-            money_to_float(value)
-            for value in money_matches
-            if money_to_float(value) > 0
-        ]
+        policy_number = profile.get("policy_number") or ""
+
+        if policy_match:
+            policy_number = clean_text(policy_match.group(1))
+            policy_number = re.sub(r"\s+", "", policy_number).upper()
+            policy_number = policy_number.replace("--", "-")
+
+        line_of_business = detect_line(block, claim_number)
+
+        if "CARGO" in policy_number:
+            line_of_business = "Motor Truck Cargo"
+        elif "AUTO" in policy_number:
+            line_of_business = "Commercial Auto"
+        elif "GL" in policy_number:
+            line_of_business = "General Liability"
+
+        # Fix dates broken like 03/14/202\n5.
+        clean_block_for_dates = re.sub(r"(\d{1,2}/\d{1,2}/202)\s*\n\s*(\d)", r"\1\2", block)
+
+        date_match = re.search(
+            r"\b(\d{1,2}/\d{1,2}/\d{4})\b",
+            clean_block_for_dates,
+            re.IGNORECASE,
+        )
+
+        date_of_loss = date_match.group(1) if date_match else ""
+
+        # Pull all real dollar amounts in row order.
+        money_matches = re.findall(
+            r"\$[\s]*\(?\d[\d,]*(?:\.\d{2})?\)?",
+            block,
+            re.IGNORECASE,
+        )
+
+        money_values_clean = [money_to_float(value) for value in money_matches]
 
         paid = 0.0
         reserve = 0.0
         total = 0.0
 
-        paid_match = re.search(
-            r"(?:Paid|Paid\s*Loss|Amount\s*Paid|Loss\s*Paid)\s*[:\-]?\s*(\$?\(?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?)",
-            block,
-            re.IGNORECASE,
-        )
-
-        reserve_match = re.search(
-            r"(?:Reserve|Case\s*Reserve|Outstanding\s*Reserve|Open\s*Reserve)\s*[:\-]?\s*(\$?\(?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?)",
-            block,
-            re.IGNORECASE,
-        )
-
-        total_match = re.search(
-            r"(?:Total\s*Incurred|Incurred|Gross\s*Incurred|Net\s*Incurred)\s*[:\-]?\s*(\$?\(?\d{1,3}(?:,\d{3})*(?:\.\d{2})?\)?)",
-            block,
-            re.IGNORECASE,
-        )
-
-        if paid_match:
-            paid = money_to_float(paid_match.group(1))
-
-        if reserve_match:
-            reserve = money_to_float(reserve_match.group(1))
-
-        if total_match:
-            total = money_to_float(total_match.group(1))
-
-        if total == 0 and len(money_values_clean) >= 3:
-            paid = paid or money_values_clean[-3]
-            reserve = reserve or money_values_clean[-2]
-            total = money_values_clean[-1]
-        elif total == 0 and paid + reserve > 0:
+        # The claim detail rows are Paid, Reserve, Total in order.
+        if len(money_values_clean) >= 3:
+            paid = money_values_clean[0]
+            reserve = money_values_clean[1]
+            total = money_values_clean[2]
+        elif len(money_values_clean) == 2:
+            paid = money_values_clean[0]
+            reserve = money_values_clean[1]
             total = paid + reserve
+        elif len(money_values_clean) == 1:
+            total = money_values_clean[0]
 
         if paid == 0 and reserve == 0 and total == 0:
             continue
 
         status = "Open" if re.search(r"\bopen\b", block, re.IGNORECASE) else "Closed"
+
         if re.search(r"\bclosed\b", block, re.IGNORECASE):
             status = "Closed"
 
-        litigation = bool(re.search(r"litigation|attorney|suit|counsel|lawsuit", block, re.IGNORECASE))
+        litigation = bool(
+            re.search(
+                r"\byes\b|litigation|attorney|representation|suit|lawsuit|counsel|demand",
+                block,
+                re.IGNORECASE,
+            )
+        )
+
+        description_lines = []
+        for line in block.splitlines():
+            cleaned_line = clean_text(line)
+            if not cleaned_line:
+                continue
+
+            upper_line = cleaned_line.upper()
+
+            skip_terms = [
+                claim_number,
+                policy_number,
+                "COMMERCIAL AUTO",
+                "GENERAL LIABILITY",
+                "MOTOR TRUCK CARGO",
+                "OPEN",
+                "CLOSED",
+                "YES",
+                "NO",
+            ]
+
+            if any(term and term in upper_line for term in skip_terms):
+                continue
+
+            if "$" in cleaned_line:
+                continue
+
+            if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{4}", cleaned_line):
+                continue
+
+            if "LOSS RUN" in upper_line or "VANLINER" in upper_line:
+                continue
+
+            if len(cleaned_line) >= 12:
+                description_lines.append(cleaned_line)
+
+        description = clean_text(" ".join(description_lines[:6])) or clean_text(block[:1000])
 
         claim = {
             **profile,
             "claim_number": claim_number,
+            "policy_number": policy_number,
             "policy_id": 1,
-            "line_of_business": detect_line(block, claim_number),
-            "claim_type": detect_line(block, claim_number),
-            "cause_of_loss": find_text_after_label(["Cause of Loss", "Loss Cause", "Cause"], block, 80) or "Needs Review",
-            "claimant_type": find_text_after_label(["Claimant Type", "Claimant"], block, 80) or "Needs Review",
-            "date_of_loss": find_date_after_label(["Date of Loss", "Loss Date", "DOL"], block) or "",
-            "date_reported": find_date_after_label(["Date Reported", "Reported Date", "Report Date"], block) or "",
-            "date_closed": find_date_after_label(["Date Closed", "Closed Date"], block) or "",
+            "line_of_business": line_of_business,
+            "claim_type": line_of_business,
+            "cause_of_loss": "Needs Review",
+            "claimant_type": "Needs Review",
+            "date_of_loss": date_of_loss,
+            "date_reported": "",
+            "date_closed": "",
             "status": status,
-            "description": clean_text(block[:1000]),
+            "description": description,
             "paid_amount": paid,
             "reserve_amount": reserve,
             "total_incurred": total,
@@ -472,7 +577,6 @@ def parse_messy_claim_rows(text, profile):
         seen.add(claim_number)
 
     return claims
-
 
 def extract_profile_from_text(text):
     text = normalize_whitespace(text or "")
@@ -682,7 +786,8 @@ def detect_line(block, claim_number=""):
 def claim_number_candidates(text):
     pattern = (
         r"\b("
-        r"VL[-\s]?(?:AL|CA|AUTO|GL|CARGO|MTC|WC)[-\s]?\d{3,10}"
+        r"VLN[-\s]?\d{2}[-\s]?\d{6}"
+        r"|VL[-\s]?(?:AL|CA|AUTO|GL|CARGO|MTC|WC)[-\s]?\d{3,10}"
         r"|[A-Z]{2,8}[-\s]?(?:AL|CA|AUTO|GL|CARGO|MTC|WC)[-\s]?\d{3,10}"
         r"|GL[-\s]?\d{4,12}"
         r"|AUTO[-\s]?\d{4,12}"
@@ -692,7 +797,18 @@ def claim_number_candidates(text):
         r")\b"
     )
 
-    return list(re.finditer(pattern, text or "", re.IGNORECASE))
+    candidates = []
+
+    for match in re.finditer(pattern, text or "", re.IGNORECASE):
+        value = clean_text(match.group(1)).upper()
+
+        # Do not allow policy numbers to be treated as claim numbers.
+        if value.startswith("VAN-"):
+            continue
+
+        candidates.append(match)
+
+    return candidates
 
 def build_claim(profile, claim_number, block):
     paid = find_money(
