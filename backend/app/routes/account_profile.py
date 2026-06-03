@@ -132,6 +132,32 @@ def upsert_account_profile(
 
     return profile
 
+@router.delete("/delete")
+def delete_account_profile_by_query(
+    policy_number: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    profile = (
+        db.query(AccountProfile)
+        .filter(
+            AccountProfile.organization_id == current_user["organization_id"],
+            AccountProfile.policy_number == policy_number,
+        )
+        .first()
+    )
+
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    db.delete(profile)
+    db.commit()
+
+    return {
+        "message": "Profile deleted",
+        "policy_number": policy_number,
+    }
+
 @router.delete("/{policy_number}")
 def delete_profile(
     policy_number: str,

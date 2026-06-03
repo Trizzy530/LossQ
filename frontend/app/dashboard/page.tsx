@@ -546,12 +546,12 @@ if (submissionBuilderRes.ok) {
     setMessage(`Deleting profile ${policyNumber}...`);
 
     const res = await fetch(
-      `${API}/account-profile/${encodeURIComponent(policyNumber)}`,
-      {
-        method: "DELETE",
-        headers: authHeaders(),
-      }
-    );
+  `${API}/account-profile/delete?policy_number=${encodeURIComponent(policyNumber)}`,
+  {
+    method: "DELETE",
+    headers: authHeaders(),
+  }
+);
 
     if (res.status === 401 || res.status === 403) {
       clearSession();
