@@ -49,3 +49,23 @@ body {
     rgba(59, 130, 246, 1)
   );
 }
+
+html,
+body {
+  background: #020617;
+  color: white;
+  min-height: 100%;
+}
+
+body {
+  margin: 0;
+  overflow-x: hidden;
+}
+
+#__next {
+  min-height: 100vh;
+}
+
+* {
+  box-sizing: border-box;
+}
