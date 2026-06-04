@@ -687,26 +687,22 @@ if (submissionBuilderRes.ok) {
   }
 
   async function uploadFiles() {
-  if (!files || files.length === 0) {
+  const selectedFiles = files ? Array.from(files) : [];
+
+  if (selectedFiles.length === 0) {
     setMessage("Please select one or more PDF, Excel, or CSV files first.");
     return;
   }
 
   try {
-    const selectedFiles = Array.from(files);
-    const uploadedFileNames = selectedFiles.map((file) => file.name).join(", ");
-
-    setMessage(`Uploading and analyzing: ${uploadedFileNames}`);
+    setMessage("Uploading and analyzing loss runs...");
 
     const formData = new FormData();
 
     /*
       IMPORTANT:
-      Do NOT automatically send profile.policy_number here.
-
-      Sending the old selected profile policy number forces the backend
-      to attach the new upload to the previous account, which makes the
-      dashboard jump back to the last file/account.
+      Do not force the old selected policy number into a new upload.
+      The parser should decide the account number, policy schedule, and claim policies.
     */
 
     let endpoint = `${API}/upload/loss-run`;
@@ -733,31 +729,44 @@ if (submissionBuilderRes.ok) {
     }
 
     if (!res.ok) {
-      setMessage(
-        `Upload failed. Backend returned ${res.status}: ${JSON.stringify(data)}`
-      );
+      setMessage(`Upload failed. Backend returned ${res.status}: ${JSON.stringify(data)}`);
       return;
     }
 
-    const newPolicyNumber =
-      data?.profile?.policy_number ||
-      data?.policy_number ||
-      "";
+    const uploadedFileNames = selectedFiles.map((file) => file.name).join(", ");
 
     setMessage(
       `Upload complete. Saved ${data?.saved_claims || 0} claim(s). New file: ${uploadedFileNames}`
     );
 
     if (data?.profile) {
-      setProfile(data.profile);
-      updateProfileList([data.profile]);
+      const uploadedProfile = {
+        ...data.profile,
+        policies: data?.policies || data?.profile?.policies || [],
+        validation: data?.validation || data?.profile?.validation || {},
+      };
+
+      setProfile(uploadedProfile);
+      updateProfileList([uploadedProfile]);
     }
 
-    if (newPolicyNumber) {
-      await loadDashboard(newPolicyNumber);
-    } else {
-      await loadDashboard("");
+    /*
+      Fetch all org claims after upload.
+      The dashboard will filter them locally by profile.policies.
+      This is required because the account policy is SA-ACCT-580219,
+      but claims belong to SA-AUTO, SA-GL, SA-CARGO, and SA-WC.
+    */
+    const claimsRes = await fetch(`${API}/claims/`, {
+      headers: authHeaders(),
+    });
+
+    const claimsData = await safeJson(claimsRes);
+
+    if (claimsRes.ok && Array.isArray(claimsData)) {
+      setClaims(claimsData);
     }
+
+    setActiveTool("overview");
   } catch (error: any) {
     setMessage(
       `Upload failed before completion. Backend may have crashed. Error: ${
@@ -944,14 +953,57 @@ async function exportExecutiveReport() {
     router.replace("/login?fresh=1");
   }
 
-  const totalClaims = claims.length;
-  const openClaims = claims.filter((c) => c.status === "Open").length;
-  const totalIncurred = claims.reduce(
-    (sum, c) => sum + Number(c.total_incurred || 0),
-    0
-  );
-  const flaggedClaims = claims.filter((c) => c.flag).length;
+const policySchedule = Array.isArray(profile?.policies) ? profile.policies : [];
 
+const activePolicyNumbers = policySchedule
+  .map((item: any) => String(item?.policy_number || "").trim().toUpperCase())
+  .filter(Boolean);
+
+const activeAccountPolicyNumber = String(profile?.policy_number || "")
+  .trim()
+  .toUpperCase();
+
+const hasActiveAccount = Boolean(
+  profile?.business_name ||
+    profile?.carrier_name ||
+    profile?.policy_number ||
+    activePolicyNumbers.length > 0
+);
+
+const visibleClaims = hasActiveAccount
+  ? claims.filter((claim: any) => {
+      const claimPolicy = String(claim?.policy_number || "").trim().toUpperCase();
+
+      if (activePolicyNumbers.length > 0) {
+        return activePolicyNumbers.includes(claimPolicy);
+      }
+
+      if (activeAccountPolicyNumber) {
+        return claimPolicy === activeAccountPolicyNumber;
+      }
+
+      return false;
+    })
+  : [];
+
+const totalClaims = visibleClaims.length;
+const openClaims = visibleClaims.filter(
+  (c: any) => String(c.status || "").toLowerCase() === "open"
+).length;
+
+const totalIncurred = visibleClaims.reduce(
+  (sum: number, c: any) => sum + Number(c.total_incurred || 0),
+  0
+);
+
+const flaggedClaims = visibleClaims.filter((c: any) => c.flag).length;
+
+const totalClaimsDisplay = hasActiveAccount ? totalClaims : "-";
+const openClaimsDisplay = hasActiveAccount ? openClaims : "-";
+const totalIncurredDisplay = hasActiveAccount
+  ? `$${Number(totalIncurred).toLocaleString()}`
+  : "-";
+const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
   const lossTrendData = objectToChartData(timeline?.incurred_by_year || {});
   const agingData = objectToChartData(timeline?.open_claim_aging || {});
   const severityData = objectToChartData(timeline?.severity_heatmap || {});
@@ -1148,9 +1200,9 @@ async function exportExecutiveReport() {
           {activeTool === "overview" && (
             <>
               <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Total Claims" value={totalClaims} />
-                <MetricCard title="Open Claims" value={openClaims} />
-                <MetricCard title="Total Incurred" value={`$${Number(totalIncurred).toLocaleString()}`} />
+                <MetricCard title="Total Claims" value={totalClaimsDisplay} />
+                <MetricCard title="Open Claims" value={openClaimsDisplay} />
+                <MetricCard title="Total Incurred" value={totalIncurredDisplay} />
                 <MetricCard title="Renewal Score" value={summary?.renewal_score ?? "-"} />
               </section>
 
@@ -1162,101 +1214,94 @@ async function exportExecutiveReport() {
               </section>
 
               <section className="glass-panel p-6 md:p-8">
-  <h2 className="text-2xl md:text-3xl font-bold mb-4">Account Snapshot</h2>
+                <h2 className="text-2xl md:text-3xl font-bold mb-4">Account Snapshot</h2>
 
-  <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-    <ProfileDetail label="Insured" value={profile?.business_name || "-"} />
-    <ProfileDetail
-      label="Writing Carrier"
-      value={profile?.writing_carrier || profile?.carrier_name || "-"}
-    />
-    <ProfileDetail label="Carrier" value={profile?.carrier_name || "-"} />
-    <ProfileDetail
-      label="Account Number"
-      value={profile?.account_number || profile?.customer_number || "-"}
-    />
-    <ProfileDetail label="Producing Agency" value={profile?.agency_name || "-"} />
-    <ProfileDetail label="Policy" value={profile?.policy_number || "-"} />
-    <ProfileDetail label="Effective Date" value={profile?.effective_date || "-"} />
-    <ProfileDetail label="Expiration Date" value={profile?.expiration_date || "-"} />
-  </div>
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <ProfileDetail label="Insured" value={profile?.business_name || "-"} />
+                  <ProfileDetail
+                    label="Writing Carrier"
+                    value={profile?.writing_carrier || profile?.carrier_name || "-"}
+                  />
+                  <ProfileDetail label="Carrier" value={profile?.carrier_name || "-"} />
+                  <ProfileDetail
+                    label="Account Number"
+                    value={profile?.account_number || profile?.customer_number || "-"}
+                  />
+                  <ProfileDetail label="Producing Agency" value={profile?.agency_name || "-"} />
+                  <ProfileDetail label="Account / Policy" value={profile?.policy_number || "-"} />
+                  <ProfileDetail label="Effective Date" value={profile?.effective_date || "-"} />
+                  <ProfileDetail label="Expiration Date" value={profile?.expiration_date || "-"} />
+                </div>
 
-  {Array.isArray(profile?.policies) && profile.policies.length > 0 && (
-    <div className="mt-8 rounded-3xl border border-white/10 bg-slate-950/50 p-5">
-      <div className="mb-4">
-        <p className="text-xs uppercase tracking-[0.25em] text-blue-300">
-          Policies on Account
-        </p>
-        <h3 className="mt-2 text-xl font-bold text-white">
-          Policy Schedule
-        </h3>
-        <p className="mt-1 text-sm text-slate-400">
-          All policies found for this insured/account from the uploaded loss run.
-        </p>
-      </div>
+                {policySchedule.length > 0 && (
+                  <div className="mt-8 rounded-3xl border border-white/10 bg-slate-950/50 p-5">
+                    <div className="mb-4">
+                      <p className="text-xs uppercase tracking-[0.25em] text-blue-300">
+                        Policies on Account
+                      </p>
+                      <h3 className="mt-2 text-xl font-bold text-white">Policy Schedule</h3>
+                      <p className="mt-1 text-sm text-slate-400">
+                        Policy Number, Line / Coverage, policy period, claim count, and total incurred.
+                      </p>
+                    </div>
 
-      <div className="overflow-x-auto">
-        <table className="w-full min-w-[950px] text-sm">
-          <thead>
-            <tr className="border-b border-white/10 text-left text-slate-300">
-              <th className="py-3 pr-4">Policy Type / Coverage</th>
-              <th className="py-3 pr-4">Policy Number</th>
-              <th className="py-3 pr-4">Writing Carrier</th>
-              <th className="py-3 pr-4">Carrier</th>
-              <th className="py-3 pr-4">Effective</th>
-              <th className="py-3 pr-4">Expiration</th>
-              <th className="py-3 pr-4">Claims</th>
-              <th className="py-3 pr-4">Total Incurred</th>
-            </tr>
-          </thead>
+                    <div className="overflow-x-auto">
+                      <table className="w-full min-w-[950px] text-sm">
+                        <thead>
+                          <tr className="border-b border-white/10 text-left text-slate-300">
+                            <th className="py-3 pr-4">Policy Type / Coverage</th>
+                            <th className="py-3 pr-4">Policy Number</th>
+                            <th className="py-3 pr-4">Writing Carrier</th>
+                            <th className="py-3 pr-4">Carrier</th>
+                            <th className="py-3 pr-4">Effective</th>
+                            <th className="py-3 pr-4">Expiration</th>
+                            <th className="py-3 pr-4">Claims</th>
+                            <th className="py-3 pr-4">Total Incurred</th>
+                          </tr>
+                        </thead>
 
-          <tbody>
-            {profile.policies.map((policy: any, index: number) => (
-              <tr
-                key={policy.policy_number || index}
-                className="border-b border-white/10"
-              >
-                <td className="py-3 pr-4 text-white">
-                  {policy.policy_type ||
-  policy.line_coverage ||
-  policy.line_of_business ||
-  policy.coverage ||
-  policy.lob ||
-  policy.policy_name ||
-  "Needs Review"}
-                </td>
-                <td className="py-3 pr-4 font-semibold text-blue-200">
-                  {policy.policy_number || "-"}
-                </td>
-                <td className="py-3 pr-4">
-                  {policy.writing_carrier || profile?.writing_carrier || profile?.carrier_name || "-"}
-                </td>
-                <td className="py-3 pr-4">
-                  {policy.carrier || profile?.carrier_name || "-"}
-                </td>
-                <td className="py-3 pr-4">
-                  {policy.effective_date || "-"}
-                </td>
-                <td className="py-3 pr-4">
-                  {policy.expiration_date || "-"}
-                </td>
-                <td className="py-3 pr-4">
-                  {policy.claim_count ?? 0}
-                </td>
-                <td className="py-3 pr-4">
-                  ${Number(policy.total_incurred || 0).toLocaleString()}
-                 </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </div>
-  )}
-</section>
-          </>
-        )}
-
+                        <tbody>
+                          {policySchedule.map((policy: any, index: number) => (
+                            <tr
+                              key={policy.policy_number || index}
+                              className="border-b border-white/10"
+                            >
+                              <td className="py-3 pr-4 text-white">
+                                {policy.policy_type ||
+                                  policy.line_coverage ||
+                                  policy.line_of_business ||
+                                  policy.coverage ||
+                                  policy.lob ||
+                                  "Needs Review"}
+                              </td>
+                              <td className="py-3 pr-4 font-semibold text-blue-200">
+                                {policy.policy_number || "-"}
+                              </td>
+                              <td className="py-3 pr-4">
+                                {policy.writing_carrier ||
+                                  profile?.writing_carrier ||
+                                  profile?.carrier_name ||
+                                  "-"}
+                              </td>
+                              <td className="py-3 pr-4">
+                                {policy.carrier || profile?.carrier_name || "-"}
+                              </td>
+                              <td className="py-3 pr-4">{policy.effective_date || "-"}</td>
+                              <td className="py-3 pr-4">{policy.expiration_date || "-"}</td>
+                              <td className="py-3 pr-4">{policy.claim_count ?? 0}</td>
+                              <td className="py-3 pr-4">
+                                ${Number(policy.total_incurred || 0).toLocaleString()}
+                              </td>
+                            </tr>
+                          ))}
+                        </tbody>
+                      </table>
+                    </div>
+                  </div>
+                )}
+              </section>
+            </>
+          )}
           
        
 
@@ -1964,10 +2009,10 @@ async function exportExecutiveReport() {
               <h2 className="text-2xl md:text-3xl font-bold mb-6">Claims Analysis</h2>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Total Claims" value={totalClaims} />
-                <MetricCard title="Open Claims" value={openClaims} />
-                <MetricCard title="Flagged Claims" value={flaggedClaims} />
-                <MetricCard title="Total Incurred" value={`$${Number(totalIncurred).toLocaleString()}`} />
+                <MetricCard title="Total Claims" value={totalClaimsDisplay} />
+		<MetricCard title="Open Claims" value={openClaimsDisplay} />
+		<MetricCard title="Flagged Claims" value={flaggedClaimsDisplay} />
+		<MetricCard title="Total Incurred" value={totalIncurredDisplay} />
               </div>
 
               <div className="overflow-x-auto">
@@ -1985,67 +2030,50 @@ async function exportExecutiveReport() {
                     </tr>
                   </thead>
 
-                  <tbody>
-                    {claims.length === 0 ? (
-                      <tr>
-                        <td colSpan={8} className="py-6 text-slate-400">
-                          No claims found for this policy.
-                        </td>
-                      </tr>
-                    ) : (
-                      [...claims]
-                        .sort((a, b) => {
-                          const statusOrder: Record<string, number> = {
-                            Open: 0,
-                            Pending: 1,
-                            Reopened: 2,
-                            Closed: 3,
-                          };
+<tbody>
+  {visibleClaims.map((claim: any) => (
+    <tr
+      key={claim.id || claim.claim_number}
+      className="border-b border-white/10 text-slate-300"
+    >
+      <td className="py-4">
+        {claim.id ? (
+          <a
+            href={`/claims/${claim.id}`}
+            className="text-blue-300 hover:text-blue-200 underline"
+          >
+            {claim.claim_number || "Unnamed Claim"}
+          </a>
+        ) : (
+          claim.claim_number || "Unnamed Claim"
+        )}
+      </td>
 
-                          const aStatus = statusOrder[a.status] ?? 9;
-                          const bStatus = statusOrder[b.status] ?? 9;
+      <td>{claim.line_of_business || "-"}</td>
+      <td>{claim.status || "-"}</td>
+      <td>${Number(claim.paid_amount || 0).toLocaleString()}</td>
+      <td>${Number(claim.reserve_amount || 0).toLocaleString()}</td>
+      <td>${Number(claim.total_incurred || 0).toLocaleString()}</td>
+      <td>{claim.policy_number || "-"}</td>
 
-                          if (aStatus !== bStatus) return aStatus - bStatus;
+      <td>
+        {claim.flag ? (
+          <span className="text-red-300">{claim.flag}</span>
+        ) : (
+          <span className="text-slate-500">None</span>
+        )}
+      </td>
+    </tr>
+  ))}
+</tbody>
+</table>
+</div>
+</section>
+)}
+</section>
+</div>
 
-                          return Number(b.total_incurred || 0) - Number(a.total_incurred || 0);
-                        })
-                        .map((claim) => (
-                          <tr key={claim.id || claim.claim_number} className="border-b border-white/10 text-slate-300">
-                            <td className="py-4">
-                              {claim.id ? (
-                                <a href={`/claims/${claim.id}`} className="text-blue-300 hover:text-blue-200 underline">
-                                  {claim.claim_number || "Unnamed Claim"}
-                                </a>
-                              ) : (
-                                claim.claim_number || "Unnamed Claim"
-                              )}
-                            </td>
-                            <td>{claim.line_of_business || "-"}</td>
-                            <td>{claim.status || "-"}</td>
-                            <td>${Number(claim.paid_amount || 0).toLocaleString()}</td>
-                            <td>${Number(claim.reserve_amount || 0).toLocaleString()}</td>
-                            <td>${Number(claim.total_incurred || 0).toLocaleString()}</td>
-                            <td>{claim.policy_number || "-"}</td>
-                            <td>
-                              {claim.flag ? (
-                                <span className="text-red-300">{claim.flag}</span>
-                              ) : (
-                                <span className="text-slate-500">None</span>
-                              )}
-                            </td>
-                          </tr>
-                        ))
-                    )}
-                  </tbody>
-                </table>
-              </div>
-            </section>
-          )}
-         </section>
-	</div>
-      
-
-	<button
+<button
 
         onClick={() => setCopilotOpen(!copilotOpen)}
         className="fixed bottom-6 right-6 z-50 rounded-full bg-blue-600 hover:bg-blue-500 px-6 py-4 font-semibold shadow-2xl shadow-blue-600/40"
