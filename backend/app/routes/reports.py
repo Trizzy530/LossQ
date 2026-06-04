@@ -6864,20 +6864,30 @@ def claim_attr(claim, *names, default=""):
 
 
 def get_creator(current_user: dict | None):
+    """Return a professional first/last-name preparer label, not an email address."""
     user = current_user or {}
-    creator = (
+
+    first = clean(user.get("first_name") or user.get("given_name") or "")
+    last = clean(user.get("last_name") or user.get("family_name") or "")
+    full_from_parts = f"{first} {last}".strip()
+
+    full_name = clean(
         user.get("full_name")
         or user.get("name")
         or user.get("display_name")
-        or user.get("username")
-        or user.get("email")
-        or user.get("sub")
-        or "LossQ User"
+        or full_from_parts
     )
-    email = user.get("email") or ""
-    if email and email not in creator:
-        return f"{creator} ({email})"
-    return creator
+
+    # Current LossQ admin account. Use the owner/preparer's professional name
+    # instead of displaying a login email in executive reports.
+    email = clean(user.get("email") or user.get("username") or user.get("sub") or "").lower()
+    if email in {"tmckenzie49@gmail.com", "tristanm@goodlivingdevelopments.com"}:
+        return "Tristan Mckenzie"
+
+    if full_name and "@" not in full_name:
+        return full_name
+
+    return "LossQ User"
 
 
 def get_logo_path():
@@ -7136,15 +7146,78 @@ def draw_header_footer(canvas, doc, report_title: str, prepared_by: str):
     canvas.drawRightString(width - 0.5 * inch, 0.24 * inch, f"{datetime.utcnow().strftime('%m/%d/%Y')}  |  Page {doc.page}")
     canvas.restoreState()
 
+def _break_long_tokens(value: str, chunk: int = 14) -> str:
+    """Add safe break points inside long policy/claim numbers so PDF table text never overlaps."""
+    raw = clean(value)
+    if not raw:
+        return "-"
+
+    parts = []
+    for token in raw.split(" "):
+        if len(token) <= chunk:
+            parts.append(token)
+            continue
+
+        if "-" in token:
+            pieces = token.split("-")
+            rebuilt = []
+            for idx, piece in enumerate(pieces):
+                if idx == 0:
+                    rebuilt.append(piece)
+                else:
+                    rebuilt.append("-" + piece)
+            token = "<br/>".join(rebuilt)
+        else:
+            token = "<br/>".join(token[i : i + chunk] for i in range(0, len(token), chunk))
+        parts.append(token)
+
+    return " ".join(parts)
+
+
+def _cell(value, font_size=8, bold=False, text_color=None, align=0):
+    style = ParagraphStyle(
+        name="LossQTableCell",
+        parent=getSampleStyleSheet()["BodyText"],
+        fontName="Helvetica-Bold" if bold else "Helvetica",
+        fontSize=font_size,
+        leading=font_size + 2.4,
+        textColor=text_color or colors.HexColor("#111827"),
+        alignment=align,
+        wordWrap="CJK",
+        splitLongWords=1,
+        allowWidows=0,
+        allowOrphans=0,
+    )
+    prepared = _break_long_tokens(value, chunk=12 if font_size <= 7.2 else 14)
+    prepared = html.escape(prepared).replace("&lt;br/&gt;", "<br/>").replace("\n", "<br/>")
+    return Paragraph(prepared, style)
+
+
+def _wrap_table_data(data, header=True, font_size=8):
+    wrapped = []
+    for row_index, row in enumerate(data or []):
+        wrapped_row = []
+        for value in row:
+            is_header = header and row_index == 0
+            wrapped_row.append(
+                _cell(
+                    value,
+                    font_size=font_size,
+                    bold=is_header,
+                    text_color=WHITE if is_header else colors.HexColor("#111827"),
+                )
+            )
+        wrapped.append(wrapped_row)
+    return wrapped
+
+
 def table(data, widths=None, header=True, font_size=8, header_color=NAVY):
-    tbl = Table(data, colWidths=widths, repeatRows=1 if header else 0)
+    wrapped_data = _wrap_table_data(data, header=header, font_size=font_size)
+    tbl = Table(wrapped_data, colWidths=widths, repeatRows=1 if header else 0, hAlign="CENTER")
     style = [
         ("BACKGROUND", (0, 0), (-1, 0), header_color if header else WHITE),
         ("TEXTCOLOR", (0, 0), (-1, 0), WHITE if header else NAVY),
-        ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), font_size),
-        ("LEADING", (0, 0), (-1, -1), font_size + 2),
-        ("GRID", (0, 0), (-1, -1), 0.25, BORDER),
+        ("GRID", (0, 0), (-1, -1), 0.35, BORDER),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, SOFT]),
         ("LEFTPADDING", (0, 0), (-1, -1), 5),
@@ -7156,14 +7229,11 @@ def table(data, widths=None, header=True, font_size=8, header_color=NAVY):
         style.extend(
             [
                 ("BACKGROUND", (0, 0), (-1, -1), WHITE),
-                ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
-                ("TEXTCOLOR", (0, 0), (0, -1), SLATE),
                 ("ROWBACKGROUNDS", (0, 0), (-1, -1), [WHITE, SOFT]),
             ]
         )
     tbl.setStyle(TableStyle(style))
     return tbl
-
 
 def kpi_cards(cards, styles, columns=4):
     row = []
@@ -7718,11 +7788,11 @@ def executive_report_pdf(
     story.append(p(carrier_match.get("carrier_match_summary") or appetite.get("placement_summary") or "No carrier match summary available.", styles))
 
     story.append(heading("Policy Schedule", styles))
-    story.append(table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.45 * inch, 1.75 * inch, 1.45 * inch, 1.0 * inch, 1.0 * inch], header_color=NAVY))
+    story.append(table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.35 * inch, 1.95 * inch, 1.45 * inch, 1.05 * inch, 1.05 * inch], font_size=7.4, header_color=NAVY))
 
     story.append(PageBreak())
     story.append(heading("Top Claims by Total Incurred", styles))
-    story.append(table(top_claim_rows(claims), widths=[0.9 * inch, 1.0 * inch, 0.72 * inch, 0.78 * inch, 0.78 * inch, 0.78 * inch, 1.25 * inch, 0.85 * inch], font_size=7.2, header_color=NAVY))
+    story.append(table(top_claim_rows(claims), widths=[0.82 * inch, 1.05 * inch, 0.62 * inch, 0.72 * inch, 0.78 * inch, 0.70 * inch, 1.45 * inch, 0.95 * inch], font_size=6.6, header_color=NAVY))
 
     story.append(heading("Broker Action Plan", styles))
     actions = summary.get("recommended_actions") or summary.get("renewal_drivers") or []
@@ -7786,7 +7856,7 @@ def carrier_packet_pdf(
     story.append(p(summary.get("broker_recommendation") or summary.get("renewal_summary") or f"This submission presents {insured} for carrier underwriting review based on {metrics['total_claims']} account-specific claim(s).", styles))
 
     story.append(heading("Policy Schedule", styles))
-    story.append(table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.45 * inch, 1.75 * inch, 1.45 * inch, 1.0 * inch, 1.0 * inch], header_color=NAVY))
+    story.append(table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.35 * inch, 1.95 * inch, 1.45 * inch, 1.05 * inch, 1.05 * inch], font_size=7.4, header_color=NAVY))
 
     story.append(heading("Loss Summary", styles))
     story.append(table([
@@ -7803,7 +7873,7 @@ def carrier_packet_pdf(
 
     story.append(PageBreak())
     story.append(heading("Claim Narratives and Underwriting Notes", styles))
-    story.append(table(top_claim_rows(claims, max_rows=25), widths=[0.9 * inch, 1.0 * inch, 0.72 * inch, 0.78 * inch, 0.78 * inch, 0.78 * inch, 1.25 * inch, 0.85 * inch], font_size=7.2, header_color=NAVY))
+    story.append(table(top_claim_rows(claims, max_rows=25), widths=[0.82 * inch, 1.05 * inch, 0.62 * inch, 0.72 * inch, 0.78 * inch, 0.70 * inch, 1.45 * inch, 0.95 * inch], font_size=6.6, header_color=NAVY))
 
     story.append(heading("Renewal Strategy", styles))
     strategy = summary.get("broker_recommendation") or "Provide updated loss runs, open-claim status, reserve explanations, litigation updates, and corrective-action documentation before approaching markets."
