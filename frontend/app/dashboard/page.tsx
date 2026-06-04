@@ -99,430 +99,6 @@ function getClaimIncurred(claim: any) {
   );
 }
 
-
-function getClaimPaid(claim: any) {
-  return toMoneyNumber(claim?.paid_amount || claim?.paid || claim?.total_paid || claim?.paid_loss);
-}
-
-function getClaimReserve(claim: any) {
-  return toMoneyNumber(
-    claim?.reserve_amount ||
-      claim?.reserve ||
-      claim?.total_reserved ||
-      claim?.outstanding_reserve ||
-      claim?.case_reserve
-  );
-}
-
-function getClaimStatus(claim: any) {
-  return String(claim?.status || claim?.claim_status || "").trim().toLowerCase();
-}
-
-function isOpenClaim(claim: any) {
-  return ["open", "reopened", "re-opened", "pending", "active"].includes(
-    getClaimStatus(claim)
-  );
-}
-
-function isClosedClaim(claim: any) {
-  return ["closed", "close"].includes(getClaimStatus(claim));
-}
-
-function boolLike(value: any) {
-  if (typeof value === "boolean") return value;
-  const normalized = String(value || "").trim().toLowerCase();
-  return ["true", "yes", "y", "1", "litigation", "litigated", "suit", "attorney"].includes(
-    normalized
-  );
-}
-
-function hasClaimLitigation(claim: any) {
-  return (
-    boolLike(claim?.litigation) ||
-    boolLike(claim?.is_litigated) ||
-    boolLike(claim?.attorney_assigned) ||
-    boolLike(claim?.suit_filed) ||
-    String(claim?.litigation_status || "").toLowerCase().includes("litigation") ||
-    String(claim?.description || "").toLowerCase().includes("attorney") ||
-    String(claim?.description || "").toLowerCase().includes("counsel")
-  );
-}
-
-function isFlaggedClaim(claim: any) {
-  return (
-    boolLike(claim?.flagged) ||
-    Boolean(claim?.flag) ||
-    hasClaimLitigation(claim) ||
-    getClaimIncurred(claim) >= 100000 ||
-    getClaimReserve(claim) >= 25000
-  );
-}
-
-function getClaimLineOfBusiness(claim: any) {
-  return (
-    String(
-      claim?.line_of_business ||
-        claim?.lob ||
-        claim?.coverage ||
-        claim?.coverage_line ||
-        claim?.claim_type ||
-        "Unclassified"
-    ).trim() || "Unclassified"
-  );
-}
-
-function getClaimLossDate(claim: any) {
-  return String(
-    claim?.date_of_loss ||
-      claim?.loss_date ||
-      claim?.dol ||
-      claim?.accident_date ||
-      ""
-  ).trim();
-}
-
-function getClaimYear(claim: any) {
-  const raw = getClaimLossDate(claim);
-  const match = raw.match(/(\d{4})|(\d{1,2})[\/-](\d{1,2})[\/-](\d{2,4})/);
-
-  if (!match) return "Unknown";
-
-  if (match[1]) return match[1];
-
-  const year = match[4] || "";
-  return year.length === 2 ? `20${year}` : year || "Unknown";
-}
-
-function daysSinceClaim(claim: any) {
-  const raw = getClaimLossDate(claim);
-  const parsed = raw ? new Date(raw) : null;
-
-  if (!parsed || Number.isNaN(parsed.getTime())) {
-    return 0;
-  }
-
-  return Math.max(
-    0,
-    Math.floor((Date.now() - parsed.getTime()) / (1000 * 60 * 60 * 24))
-  );
-}
-
-function incrementChartValue(
-  source: Record<string, number>,
-  key: string,
-  value: number
-) {
-  source[key] = Number(source[key] || 0) + Number(value || 0);
-}
-
-function buildLocalDashboardIntelligence(visibleClaims: any[]) {
-  const totalClaims = visibleClaims.length;
-  const openClaims = visibleClaims.filter(isOpenClaim).length;
-  const closedClaims = visibleClaims.filter(isClosedClaim).length;
-  const litigationClaims = visibleClaims.filter(hasClaimLitigation).length;
-  const flaggedClaims = visibleClaims.filter(isFlaggedClaim).length;
-  const totalPaid = visibleClaims.reduce((sum, claim) => sum + getClaimPaid(claim), 0);
-  const totalReserve = visibleClaims.reduce((sum, claim) => sum + getClaimReserve(claim), 0);
-  const totalIncurred = visibleClaims.reduce((sum, claim) => sum + getClaimIncurred(claim), 0);
-  const largestLoss = Math.max(0, ...visibleClaims.map((claim) => getClaimIncurred(claim)));
-  const averageSeverity = totalClaims ? totalIncurred / totalClaims : 0;
-  const openClaimPercentage = totalClaims ? (openClaims / totalClaims) * 100 : 0;
-  const largeClaims = visibleClaims.filter((claim) => getClaimIncurred(claim) >= 100000).length;
-  const severeClaims = visibleClaims.filter((claim) => getClaimIncurred(claim) >= 250000).length;
-  const highReserveClaims = visibleClaims.filter((claim) => getClaimReserve(claim) >= 25000).length;
-
-  const incurredByYear: Record<string, number> = {};
-  const incurredByLine: Record<string, number> = {};
-  const openClaimAging: Record<string, number> = {
-    "0-30 Days": 0,
-    "31-90 Days": 0,
-    "91-180 Days": 0,
-    "181+ Days": 0,
-  };
-  const severityDistribution: Record<string, number> = {
-    "Under $25k": 0,
-    "$25k-$99k": 0,
-    "$100k-$249k": 0,
-    "$250k+": 0,
-  };
-
-  visibleClaims.forEach((claim) => {
-    const incurred = getClaimIncurred(claim);
-    incrementChartValue(incurredByYear, getClaimYear(claim), incurred);
-    incrementChartValue(incurredByLine, getClaimLineOfBusiness(claim), incurred);
-
-    if (isOpenClaim(claim)) {
-      const age = daysSinceClaim(claim);
-      if (age <= 30) openClaimAging["0-30 Days"] += 1;
-      else if (age <= 90) openClaimAging["31-90 Days"] += 1;
-      else if (age <= 180) openClaimAging["91-180 Days"] += 1;
-      else openClaimAging["181+ Days"] += 1;
-    }
-
-    if (incurred >= 250000) severityDistribution["$250k+"] += 1;
-    else if (incurred >= 100000) severityDistribution["$100k-$249k"] += 1;
-    else if (incurred >= 25000) severityDistribution["$25k-$99k"] += 1;
-    else severityDistribution["Under $25k"] += 1;
-  });
-
-  let renewalScore = 100;
-  renewalScore -= Math.min(totalClaims * 3, 22);
-  renewalScore -= Math.min(openClaims * 7, 28);
-  renewalScore -= Math.min(litigationClaims * 12, 36);
-  renewalScore -= Math.min(flaggedClaims * 4, 20);
-  renewalScore -= Math.min(largeClaims * 10, 25);
-  renewalScore -= Math.min(severeClaims * 15, 35);
-  renewalScore -= Math.min(highReserveClaims * 5, 20);
-
-  if (totalIncurred >= 1000000) renewalScore -= 25;
-  else if (totalIncurred >= 500000) renewalScore -= 18;
-  else if (totalIncurred >= 250000) renewalScore -= 10;
-  else if (totalIncurred >= 100000) renewalScore -= 5;
-
-  if (totalReserve >= 500000) renewalScore -= 20;
-  else if (totalReserve >= 250000) renewalScore -= 14;
-  else if (totalReserve >= 100000) renewalScore -= 8;
-  else if (totalReserve >= 50000) renewalScore -= 4;
-
-  if (averageSeverity >= 250000) renewalScore -= 20;
-  else if (averageSeverity >= 100000) renewalScore -= 12;
-  else if (averageSeverity >= 50000) renewalScore -= 6;
-
-  if (openClaimPercentage >= 50) renewalScore -= 8;
-  else if (openClaimPercentage >= 25) renewalScore -= 4;
-
-  renewalScore = Math.max(0, Math.min(100, Math.round(renewalScore)));
-
-  const renewalRiskLevel =
-    renewalScore >= 80
-      ? "Low"
-      : renewalScore >= 60
-      ? "Moderate"
-      : renewalScore >= 40
-      ? "High"
-      : "Critical";
-
-  const renewalProbability = Math.max(
-    0,
-    Math.min(
-      100,
-      renewalScore -
-        (openClaims >= 3 ? 8 : 0) -
-        (litigationClaims > 0 ? 10 : 0) -
-        (severeClaims > 0 ? 10 : 0)
-    )
-  );
-
-  let appetiteScore = renewalProbability;
-  appetiteScore -= litigationClaims > 0 ? 8 : 0;
-  appetiteScore -= severeClaims > 0 ? 10 : 0;
-  appetiteScore -= openClaims >= 3 ? 6 : 0;
-  appetiteScore -= totalReserve >= 250000 ? 10 : totalReserve >= 100000 ? 5 : 0;
-  appetiteScore -= totalClaims >= 10 ? 8 : totalClaims >= 5 ? 4 : 0;
-  appetiteScore = Math.max(0, Math.min(100, Math.round(appetiteScore)));
-
-  const appetiteLevel =
-    appetiteScore >= 85
-      ? "Preferred"
-      : appetiteScore >= 70
-      ? "Strong"
-      : appetiteScore >= 55
-      ? "Moderate"
-      : appetiteScore >= 40
-      ? "Limited"
-      : "Distressed";
-
-  const expectedPremiumImpact =
-    renewalProbability >= 85
-      ? "Flat to +5%"
-      : renewalProbability >= 70
-      ? "+5% to +15%"
-      : renewalProbability >= 50
-      ? "+15% to +35%"
-      : "+35% or higher / possible non-renewal concern";
-
-  const marketabilityScore = appetiteScore;
-
-  const estimatedCurrentPremium =
-    totalClaims === 0 ? 0 : Math.max(25000, Math.round(totalIncurred * 0.55 + 60000));
-  const lossRatio = estimatedCurrentPremium ? totalIncurred / estimatedCurrentPremium : 0;
-
-  let expectedIncrease = 3;
-
-  if (lossRatio >= 2) expectedIncrease += 35;
-  else if (lossRatio >= 1.25) expectedIncrease += 25;
-  else if (lossRatio >= 0.75) expectedIncrease += 15;
-  else if (lossRatio >= 0.5) expectedIncrease += 8;
-  else if (lossRatio <= 0.2) expectedIncrease -= 2;
-
-  if (totalClaims >= 10) expectedIncrease += 12;
-  else if (totalClaims >= 5) expectedIncrease += 7;
-  else if (totalClaims >= 3) expectedIncrease += 4;
-
-  if (largestLoss >= 250000) expectedIncrease += 15;
-  else if (largestLoss >= 100000) expectedIncrease += 8;
-  else if (largestLoss >= 50000) expectedIncrease += 4;
-
-  expectedIncrease += Math.min(openClaims * 4, 16);
-  expectedIncrease += openClaimPercentage >= 50 ? 8 : openClaimPercentage >= 25 ? 4 : 0;
-  expectedIncrease += Math.min(litigationClaims * 10, 25);
-  expectedIncrease += totalReserve >= 250000 ? 12 : totalReserve >= 100000 ? 8 : totalReserve >= 25000 ? 4 : 0;
-
-  if (renewalScore < 50) expectedIncrease += 15;
-  else if (renewalScore < 70) expectedIncrease += 8;
-
-  if (marketabilityScore < 50) expectedIncrease += 10;
-  else if (marketabilityScore < 70) expectedIncrease += 5;
-
-  expectedIncrease = Math.max(-5, Math.min(95, Math.round(expectedIncrease)));
-
-  const bestCasePercent = Math.max(-5, expectedIncrease - 10);
-  const worstCasePercent = Math.min(125, expectedIncrease + 20);
-  const expectedRenewalPremium = Math.round(
-    estimatedCurrentPremium * (1 + expectedIncrease / 100)
-  );
-  const confidenceScore =
-    totalClaims === 0 ? 0 : Math.max(35, Math.min(92, 70 + (totalClaims >= 3 ? 8 : 0) + (totalReserve > 0 ? 5 : 0)));
-
-  const renewalDrivers = [
-    totalClaims > 0
-      ? `${totalClaims} account-specific claim(s) identified.`
-      : "No verified claims are attached to this account.",
-    openClaims > 0 ? `${openClaims} open claim(s) may continue to develop.` : "",
-    litigationClaims > 0 ? `${litigationClaims} litigated claim(s) create renewal uncertainty.` : "",
-    totalIncurred > 0 ? `Total incurred losses are $${totalIncurred.toLocaleString()}.` : "",
-    totalReserve > 0 ? `Outstanding reserves total $${totalReserve.toLocaleString()}.` : "",
-    largeClaims > 0 ? `${largeClaims} large claim(s) exceed $100,000.` : "",
-  ].filter(Boolean);
-
-  const carrierConcerns = [
-    openClaims > 0 ? "Open claims may continue developing before renewal." : "",
-    totalReserve >= 50000 ? "Outstanding reserves may pressure pricing and terms." : "",
-    litigationClaims > 0 ? "Litigation increases uncertainty around ultimate severity." : "",
-    totalClaims >= 5 ? "Claim frequency may raise carrier concerns." : "",
-    largeClaims > 0 ? "Large losses require corrective-action documentation." : "",
-  ].filter(Boolean);
-
-  if (carrierConcerns.length === 0) {
-    carrierConcerns.push("No major carrier concerns detected from verified claim data.");
-  }
-
-  const brokerRecommendation =
-    renewalRiskLevel === "Low"
-      ? "Proceed with standard renewal marketing and highlight favorable loss performance."
-      : renewalRiskLevel === "Moderate"
-      ? "Prepare a broker narrative explaining open claims, reserves, and corrective actions before marketing."
-      : renewalRiskLevel === "High"
-      ? "Build a detailed renewal strategy with claim narratives, reserve updates, litigation status, and loss-control documentation."
-      : "Treat as a critical renewal. Obtain updated claim narratives, litigation updates, reserve explanations, and a corrective-action plan before approaching markets.";
-
-  const renewalSummary = `The selected account has a renewal score of ${renewalScore}/100, indicating ${renewalRiskLevel.toLowerCase()} renewal risk. The score is based on ${totalClaims} claim(s), ${openClaims} open claim(s), $${totalIncurred.toLocaleString()} in total incurred losses, $${totalReserve.toLocaleString()} in reserves, and ${litigationClaims} litigated claim(s).`;
-
-  const carrierMatches = [
-    { carrier: "Travelers", base: 88, reason: "Strong middle-market appetite" },
-    { carrier: "Liberty Mutual", base: 85, reason: "Broad commercial appetite" },
-    { carrier: "Nationwide", base: 83, reason: "Good frequency tolerance" },
-    { carrier: "The Hartford", base: 82, reason: "Commercial package and middle-market underwriting" },
-    { carrier: "Chubb", base: 81, reason: "Quality risk selection and controlled loss performance" },
-    { carrier: "Hanover", base: 80, reason: "Regional underwriting flexibility" },
-    { carrier: "Zurich", base: 79, reason: "Complex commercial underwriting" },
-    { carrier: "CNA", base: 78, reason: "Strong risk-control focus" },
-    { carrier: "Progressive Commercial", base: 74, reason: "Commercial auto focus" },
-    { carrier: "Berkley", base: 72, reason: "Specialty commercial underwriting" },
-  ]
-    .map((carrier) => {
-      const score = Math.max(
-        0,
-        Math.min(
-          100,
-          Math.round(carrier.base + (appetiteScore - 70) * 0.25 + (renewalProbability - 70) * 0.15)
-        )
-      );
-
-      const fit =
-        score >= 85 ? "Excellent" : score >= 75 ? "Strong" : score >= 65 ? "Moderate" : "Limited";
-
-      return {
-        carrier: carrier.carrier,
-        match_score: score,
-        fit,
-        reason:
-          fit === "Limited"
-            ? `${carrier.reason}; limited by current loss frequency, reserves, litigation, or severity.`
-            : carrier.reason,
-      };
-    })
-    .sort((a, b) => b.match_score - a.match_score);
-
-  const forecastDrivers = [
-    `Estimated loss ratio: ${(lossRatio * 100).toFixed(1)}%`,
-    `${totalClaims} account-specific claim(s)`,
-    openClaims ? `${openClaims} open claim(s)` : "",
-    litigationClaims ? `${litigationClaims} litigated claim(s)` : "",
-    largestLoss ? `Largest loss: $${largestLoss.toLocaleString()}` : "",
-    totalReserve ? `Reserve exposure: $${totalReserve.toLocaleString()}` : "",
-    renewalScore < 70 ? `Renewal score pressure: ${renewalScore}/100` : "",
-  ].filter(Boolean);
-
-  return {
-    totalClaims,
-    openClaims,
-    closedClaims,
-    litigationClaims,
-    flaggedClaims,
-    totalPaid,
-    totalReserve,
-    totalIncurred,
-    largestLoss,
-    averageSeverity,
-    renewalScore,
-    renewalRiskLevel,
-    renewalProbability,
-    appetiteScore,
-    appetiteLevel,
-    expectedPremiumImpact,
-    marketabilityScore,
-    renewalDrivers,
-    carrierConcerns,
-    brokerRecommendation,
-    renewalSummary,
-    carrierMatches,
-    currentPremium: estimatedCurrentPremium,
-    expectedRenewalPremium,
-    expectedIncrease,
-    bestCasePercent,
-    worstCasePercent,
-    confidenceScore,
-    likelyRangePercent: `${bestCasePercent}% to ${worstCasePercent}%`,
-    forecastDrivers,
-    forecastSummary:
-      totalClaims === 0
-        ? "No premium forecast is available because no verified claims are attached to the active account."
-        : `LossQ projects an expected renewal premium of $${expectedRenewalPremium.toLocaleString()}, representing an estimated ${expectedIncrease}% change from the modeled current premium of $${estimatedCurrentPremium.toLocaleString()}. Forecast confidence is ${confidenceScore}%. The projection is driven by loss ratio, claim frequency, severity, open claim load, litigation, reserve pressure, renewal score, and claim trend.`,
-    reservePressure:
-      totalReserve >= 250000 ? "Critical" : totalReserve >= 100000 ? "High" : totalReserve >= 50000 ? "Moderate" : "Low",
-    trendNote:
-      totalClaims === 0
-        ? "No trend intelligence available because no verified claims are attached to the account."
-        : `LossQ is charting ${totalClaims} verified claim(s), ${openClaims} open claim(s), ${litigationClaims} litigated claim(s), and $${totalIncurred.toLocaleString()} in total incurred losses from the active account policy schedule.`,
-    lossTrendData: objectToChartData(incurredByYear),
-    agingData: objectToChartData(openClaimAging),
-    severityData: objectToChartData(severityDistribution),
-    lineData: objectToChartData(incurredByLine),
-  };
-}
-
-function moneyDisplay(value: any) {
-  return `$${Number(value || 0).toLocaleString()}`;
-}
-
-function dataUnavailableText(hasActiveAccount: boolean) {
-  return hasActiveAccount
-    ? "LossQ does not have verified claims attached to this account yet. Upload or review the loss run before relying on underwriting outputs."
-    : "Select or upload an account before generating underwriting intelligence.";
-}
-
-
 function normalizeProfiles(data: any): AnyObject[] {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.profiles)) return data.profiles;
@@ -1531,11 +1107,7 @@ const scheduleClaimStats = visibleClaims.reduce((acc: AnyObject, claim: any) => 
   return acc;
 }, {});
 
-const flaggedClaims = visibleClaims.filter(isFlaggedClaim).length;
-
-const localIntelligence = buildLocalDashboardIntelligence(visibleClaims);
-const hasCredibleLossData =
-  hasActiveAccount && localIntelligence.totalClaims > 0 && localIntelligence.totalIncurred > 0;
+const flaggedClaims = visibleClaims.filter((c: any) => c.flag).length;
 
 const totalClaimsDisplay = hasActiveAccount ? totalClaims : "-";
 const openClaimsDisplay = hasActiveAccount ? openClaims : "-";
@@ -1543,30 +1115,10 @@ const totalIncurredDisplay = hasActiveAccount
   ? `$${Number(totalIncurred).toLocaleString()}`
   : "-";
 const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
-
-const displayedRenewalScore = hasCredibleLossData
-  ? localIntelligence.renewalScore
-  : "-";
-const displayedRenewalRiskLevel = hasCredibleLossData
-  ? localIntelligence.renewalRiskLevel
-  : "Insufficient Data";
-const displayedRenewalProbability = hasCredibleLossData
-  ? `${localIntelligence.renewalProbability}%`
-  : "-";
-const displayedCarrierAppetiteScore = hasCredibleLossData
-  ? `${localIntelligence.appetiteScore}/100`
-  : "-";
-const displayedSubmissionReadinessScore = hasCredibleLossData
-  ? submissionReadiness?.submission_readiness_score !== undefined
-    ? `${submissionReadiness.submission_readiness_score}/100`
-    : "-"
-  : "-";
-const underwritingDataMessage = dataUnavailableText(hasActiveAccount);
-
-const lossTrendData = localIntelligence.lossTrendData;
-const agingData = localIntelligence.agingData;
-const severityData = localIntelligence.severityData;
-const lineData = localIntelligence.lineData;
+  const lossTrendData = objectToChartData(timeline?.incurred_by_year || {});
+  const agingData = objectToChartData(timeline?.open_claim_aging || {});
+  const severityData = objectToChartData(timeline?.severity_heatmap || {});
+  const lineData = objectToChartData(timeline?.incurred_by_line || {});
 
   if (!authReady) {
     return <LoadingScreen title="Checking session..." subtitle="Validating your LossQ access" />;
@@ -1762,14 +1314,14 @@ const lineData = localIntelligence.lineData;
                 <MetricCard title="Total Claims" value={totalClaimsDisplay} />
                 <MetricCard title="Open Claims" value={openClaimsDisplay} />
                 <MetricCard title="Total Incurred" value={totalIncurredDisplay} />
-                <MetricCard title="Renewal Score" value={displayedRenewalScore} />
+                <MetricCard title="Renewal Score" value={summary?.renewal_score ?? "-"} />
               </section>
 
               <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Risk Level" value={displayedRenewalRiskLevel} />
-                <MetricCard title="Renewal Probability" value={displayedRenewalProbability} />
-                <MetricCard title="Carrier Appetite" value={displayedCarrierAppetiteScore} />
-                <MetricCard title="Submission Readiness" value={displayedSubmissionReadinessScore} />
+                <MetricCard title="Risk Level" value={summary?.renewal_risk_level || "Not Rated"} />
+                <MetricCard title="Renewal Probability" value={decision?.renewal_probability !== undefined ? `${decision.renewal_probability}%` : "-"} />
+                <MetricCard title="Carrier Appetite" value={carrierAppetite?.carrier_appetite_score !== undefined ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
+                <MetricCard title="Submission Readiness" value={submissionReadiness?.submission_readiness_score !== undefined ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
               </section>
 
               <section className="glass-panel p-6 md:p-8">
@@ -1990,24 +1542,24 @@ const lineData = localIntelligence.lineData;
 
                 <div className="rounded-3xl border border-white/10 bg-slate-950/70 px-8 py-6 text-center min-w-[180px]">
                   <div className="text-5xl font-black">
-                    {displayedRenewalScore}
+                    {summary?.renewal_score ?? "-"}
                   </div>
                   <div className="text-slate-400 text-sm mt-1">out of 100</div>
 
                   <div className="mt-4 inline-flex rounded-full border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-bold text-blue-200">
-                    {displayedRenewalRiskLevel}
+                    {summary?.renewal_risk_level || "Not Rated"}
                   </div>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-                <ListCard title="Renewal Drivers" items={hasCredibleLossData ? localIntelligence.renewalDrivers : [underwritingDataMessage]} color="blue" />
-                <ListCard title="Carrier Concerns" items={hasCredibleLossData ? localIntelligence.carrierConcerns : [underwritingDataMessage]} color="red" />
+                <ListCard title="Renewal Drivers" items={summary?.renewal_drivers || ["No renewal drivers available."]} color="blue" />
+                <ListCard title="Carrier Concerns" items={summary?.carrier_concerns || ["No carrier concerns available."]} color="red" />
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-                <TextCard title="Broker Recommendation" text={hasCredibleLossData ? localIntelligence.brokerRecommendation : underwritingDataMessage} />
-                <TextCard title="Renewal Summary" text={hasCredibleLossData ? localIntelligence.renewalSummary : underwritingDataMessage} />
+                <TextCard title="Broker Recommendation" text={summary?.broker_recommendation || "Upload claims to generate a broker recommendation."} />
+                <TextCard title="Renewal Summary" text={summary?.renewal_summary || "No renewal summary available yet."} />
               </div>
             </section>
           )}
@@ -2023,21 +1575,21 @@ const lineData = localIntelligence.lineData;
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Renewal Probability" value={displayedRenewalProbability} />
-                <MetricCard title="Premium Impact" value={hasCredibleLossData ? localIntelligence.expectedPremiumImpact : "-"} />
-                <MetricCard title="Carrier Appetite" value={hasCredibleLossData ? localIntelligence.appetiteLevel : "-"} />
-                <MetricCard title="Marketability Score" value={hasCredibleLossData ? `${localIntelligence.marketabilityScore}/100` : "-"} />
+                <MetricCard title="Renewal Probability" value={decision?.renewal_probability !== undefined ? `${decision.renewal_probability}%` : "-"} />
+                <MetricCard title="Premium Impact" value={decision?.expected_premium_impact || "-"} />
+                <MetricCard title="Carrier Appetite" value={decision?.carrier_appetite || "-"} />
+                <MetricCard title="Marketability Score" value={decision?.marketability_score !== undefined ? `${decision.marketability_score}/100` : "-"} />
               </div>
 
-              <TextCard title="Submission Readiness" text={hasCredibleLossData ? decision?.submission_readiness || "Marketable with broker narrative and claim support." : underwritingDataMessage} />
+              <TextCard title="Submission Readiness" text={decision?.submission_readiness || "No submission readiness available yet."} />
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-                <ListCard title="Underwriting Concerns" items={hasCredibleLossData ? localIntelligence.carrierConcerns : [underwritingDataMessage]} color="red" />
-                <ListCard title="Best Market Types" items={hasCredibleLossData ? decision?.best_market_types || ["Regional commercial insurance markets", "Specialty underwriting programs"] : [underwritingDataMessage]} color="purple" />
+                <ListCard title="Underwriting Concerns" items={decision?.underwriting_concerns || ["No underwriting concerns available."]} color="red" />
+                <ListCard title="Best Market Types" items={decision?.best_market_types || ["No market recommendation available."]} color="purple" />
               </div>
 
               <div className="mt-6">
-                <TextCard title="Underwriter Decision Summary" text={hasCredibleLossData ? decision?.underwriter_decision_summary || localIntelligence.renewalSummary : underwritingDataMessage} />
+                <TextCard title="Underwriter Decision Summary" text={decision?.underwriter_decision_summary || "No decision summary available yet."} />
               </div>
             </section>
           )}
@@ -2053,28 +1605,28 @@ const lineData = localIntelligence.lineData;
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-                <MetricCard title="Appetite Score" value={displayedCarrierAppetiteScore} />
-                <MetricCard title="Appetite Level" value={hasCredibleLossData ? localIntelligence.appetiteLevel : "-"} />
-                <MetricCard title="Best Market" value={hasCredibleLossData ? localIntelligence.carrierMatches?.[0]?.fit || "-" : "-"} />
+                <MetricCard title="Appetite Score" value={carrierAppetite?.carrier_appetite_score !== undefined ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
+                <MetricCard title="Appetite Level" value={carrierAppetite?.carrier_appetite_level || "-"} />
+                <MetricCard title="Best Market" value={carrierAppetite?.best_fit_carriers?.[0]?.carrier_type || "-"} />
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <ListCard
                   title="Best Fit Markets"
                   items={
-                    hasCredibleLossData
-                      ? localIntelligence.carrierMatches.slice(0, 3).map(
+                    carrierAppetite?.best_fit_carriers?.length
+                      ? carrierAppetite.best_fit_carriers.map(
                           (item: any) =>
-                            `${item.carrier} — ${item.match_score}/100 — ${item.fit}`
+                            `${item.carrier_type} — ${item.match_score}/100 — ${item.fit}`
                         )
-                      : [underwritingDataMessage]
+                      : ["No best fit markets available."]
                   }
                   color="blue"
                 />
 
                 <ListCard
                   title="Appetite Reasons"
-                  items={hasCredibleLossData ? localIntelligence.carrierConcerns : [underwritingDataMessage]}
+                  items={carrierAppetite?.carrier_match_reasons || ["No carrier appetite reasons available."]}
                   color="purple"
                 />
               </div>
@@ -2082,12 +1634,12 @@ const lineData = localIntelligence.lineData;
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
                 <TextCard
                   title="Market Strategy"
-                  text={hasCredibleLossData ? carrierAppetite?.market_strategy || "Market with a broker narrative focused on claim status, reserves, litigation posture, and corrective actions." : underwritingDataMessage}
+                  text={carrierAppetite?.market_strategy || "No market strategy available yet."}
                 />
 
                 <TextCard
                   title="Placement Summary"
-                  text={hasCredibleLossData ? carrierAppetite?.placement_summary || localIntelligence.renewalSummary : underwritingDataMessage}
+                  text={carrierAppetite?.placement_summary || "No placement summary available yet."}
                 />
               </div>
             </section>
@@ -2154,19 +1706,19 @@ const lineData = localIntelligence.lineData;
     <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
       <MetricCard
         title="Recommended Carrier"
-        value={hasCredibleLossData ? localIntelligence.carrierMatches?.[0]?.carrier || "-" : "-"}
+        value={carrierMatch?.recommended_carrier || "-"}
       />
       <MetricCard
         title="Match Score"
         value={
-          hasCredibleLossData
-            ? `${localIntelligence.carrierMatches?.[0]?.match_score || 0}/100`
+          carrierMatch?.recommended_score !== undefined
+            ? `${carrierMatch.recommended_score}/100`
             : "-"
         }
       />
       <MetricCard
         title="Carriers Ranked"
-        value={hasCredibleLossData ? localIntelligence.carrierMatches.length : 0}
+        value={carrierMatch?.top_carriers?.length || 0}
       />
     </div>
 
@@ -2174,12 +1726,12 @@ const lineData = localIntelligence.lineData;
       <ListCard
         title="Top Carrier Matches"
         items={
-          hasCredibleLossData
-            ? localIntelligence.carrierMatches.slice(0, 5).map(
+          carrierMatch?.top_carriers?.length
+            ? carrierMatch.top_carriers.map(
                 (item: any) =>
                   `${item.carrier} — ${item.match_score}/100 — ${item.fit}`
               )
-            : [underwritingDataMessage]
+            : ["No carrier matches available yet."]
         }
         color="purple"
       />
@@ -2187,11 +1739,11 @@ const lineData = localIntelligence.lineData;
       <ListCard
         title="Carrier Match Reasons"
         items={
-          hasCredibleLossData
-            ? localIntelligence.carrierMatches.slice(0, 5).map(
+          carrierMatch?.top_carriers?.length
+            ? carrierMatch.top_carriers.map(
                 (item: any) => `${item.carrier}: ${item.reason}`
               )
-            : [underwritingDataMessage]
+            : ["No carrier match reasons available yet."]
         }
         color="blue"
       />
@@ -2201,10 +1753,8 @@ const lineData = localIntelligence.lineData;
       <TextCard
         title="Carrier Match Summary"
         text={
-          hasCredibleLossData
-          ? carrierMatch?.carrier_match_summary ||
-            `LossQ recommends ${localIntelligence.carrierMatches?.[0]?.carrier || "the best available market"} with a ${localIntelligence.carrierMatches?.[0]?.match_score || 0}/100 score based on verified account-specific claims.`
-          : underwritingDataMessage
+          carrierMatch?.carrier_match_summary ||
+          "No carrier match summary available yet."
         }
       />
     </div>
@@ -2224,46 +1774,52 @@ const lineData = localIntelligence.lineData;
     <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
       <MetricCard
         title="Current Premium"
-        value={hasCredibleLossData ? moneyDisplay(localIntelligence.currentPremium) : "-"}
+        value={`$${Number(
+          premiumForecast?.current_premium || 0
+        ).toLocaleString()}`}
       />
 
       <MetricCard
         title="Expected Renewal"
-        value={hasCredibleLossData ? moneyDisplay(localIntelligence.expectedRenewalPremium) : "-"}
+        value={`$${Number(
+          premiumForecast?.expected_renewal_premium || 0
+        ).toLocaleString()}`}
       />
 
       <MetricCard
         title="Expected Increase"
-        value={hasCredibleLossData ? `${localIntelligence.expectedIncrease}%` : "-"}
+        value={`${premiumForecast?.expected_increase_percent || 0}%`}
       />
 
       <MetricCard
         title="Confidence"
-        value={hasCredibleLossData ? `${localIntelligence.confidenceScore}%` : "-"}
+        value={`${premiumForecast?.confidence_score || 0}%`}
       />
     </div>
 
     <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
       <MetricCard
         title="Best Case"
-        value={hasCredibleLossData ? `${localIntelligence.bestCasePercent}%` : "-"}
+        value={`${premiumForecast?.best_case_percent || 0}%`}
       />
 
       <MetricCard
         title="Likely Range"
-        value={hasCredibleLossData ? localIntelligence.likelyRangePercent : "-"}
+        value={premiumForecast?.likely_range_percent || "-"}
       />
 
       <MetricCard
         title="Worst Case"
-        value={hasCredibleLossData ? `${localIntelligence.worstCasePercent}%` : "-"}
+        value={`${premiumForecast?.worst_case_percent || 0}%`}
       />
     </div>
 
     <ListCard
       title="Forecast Drivers"
       items={
-        hasCredibleLossData ? localIntelligence.forecastDrivers : [underwritingDataMessage]
+        premiumForecast?.forecast_drivers || [
+          "No forecast drivers available."
+        ]
       }
       color="blue"
     />
@@ -2272,7 +1828,8 @@ const lineData = localIntelligence.lineData;
       <TextCard
         title="Forecast Summary"
         text={
-          hasCredibleLossData ? localIntelligence.forecastSummary : underwritingDataMessage
+          premiumForecast?.forecast_summary ||
+          "No forecast summary available."
         }
       />
     </div>
@@ -2345,20 +1902,22 @@ const lineData = localIntelligence.lineData;
     </div>
 
     <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-      <MetricCard title="Renewal Score" value={displayedRenewalScore} />
-      <MetricCard title="Risk Level" value={displayedRenewalRiskLevel} />
+      <MetricCard title="Renewal Score" value={summary?.renewal_score ?? "-"} />
+      <MetricCard title="Risk Level" value={summary?.renewal_risk_level || "Not Rated"} />
       <MetricCard
         title="Premium Forecast"
         value={
-          hasCredibleLossData
-            ? `${localIntelligence.expectedIncrease}%`
+          premiumForecast?.expected_increase_percent !== undefined
+            ? `${premiumForecast.expected_increase_percent}%`
             : "-"
         }
       />
       <MetricCard
         title="Submission Readiness"
         value={
-          displayedSubmissionReadinessScore
+          submissionReadiness?.submission_readiness_score !== undefined
+            ? `${submissionReadiness.submission_readiness_score}/100`
+            : "-"
         }
       />
     </div>
@@ -2412,7 +1971,8 @@ const lineData = localIntelligence.lineData;
       <TextCard
         title="Premium Forecast"
         text={
-          hasCredibleLossData ? localIntelligence.forecastSummary : underwritingDataMessage
+          premiumForecast?.forecast_summary ||
+          "No premium forecast summary available yet."
         }
       />
     </div>
@@ -2461,8 +2021,8 @@ const lineData = localIntelligence.lineData;
           {activeTool === "summary" && (
             <section className="glass-panel p-6 md:p-8">
               <h2 className="text-2xl md:text-3xl font-bold mb-5">AI Underwriting Summary</h2>
-              <p className="text-slate-300 leading-8">{hasCredibleLossData ? summary?.summary || localIntelligence.renewalSummary : underwritingDataMessage}</p>
-              <p className="text-blue-200 mt-6">{hasCredibleLossData ? summary?.recommendation || localIntelligence.brokerRecommendation : "Upload or review verified claims before relying on AI intelligence."}</p>
+              <p className="text-slate-300 leading-8">{summary?.summary || "No summary available."}</p>
+              <p className="text-blue-200 mt-6">{summary?.recommendation || "Upload claims to generate intelligence."}</p>
             </section>
           )}
 
@@ -2501,15 +2061,15 @@ const lineData = localIntelligence.lineData;
               </p>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Reserve Pressure" value={hasCredibleLossData ? localIntelligence.reservePressure : "-"} />
-                <MetricCard title="Open Claims" value={hasCredibleLossData ? localIntelligence.openClaims : "-"} />
-                <MetricCard title="Total Reserve" value={hasCredibleLossData ? moneyDisplay(localIntelligence.totalReserve) : "-"} />
-                <MetricCard title="Total Incurred" value={hasCredibleLossData ? moneyDisplay(localIntelligence.totalIncurred) : "-"} />
+                <MetricCard title="Reserve Pressure" value={timeline?.reserve_pressure || "Low"} />
+                <MetricCard title="Open Claims" value={timeline?.open_claims || 0} />
+                <MetricCard title="Total Reserve" value={`$${Number(timeline?.total_reserve || 0).toLocaleString()}`} />
+                <MetricCard title="Total Incurred" value={`$${Number(timeline?.total_incurred || 0).toLocaleString()}`} />
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-5 mb-6">
                 <h3 className="font-semibold mb-2">Trend Intelligence</h3>
-                <p className="text-slate-300">{hasCredibleLossData ? localIntelligence.trendNote : underwritingDataMessage}</p>
+                <p className="text-slate-300">{timeline?.trend_note || "No trend intelligence available yet."}</p>
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
