@@ -539,6 +539,40 @@ def validate_token(credentials: HTTPAuthorizationCredentials = Depends(security)
     return {"valid": True, "user": public_user(user), "session_timeout_minutes": ACCESS_TOKEN_EXPIRE_MINUTES}
 
 
+@router.post("/bootstrap-owner")
+def bootstrap_owner(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+    allowed_owner_email = os.getenv("LOSSQ_OWNER_EMAIL", "tmckenzie49@gmail.com").strip().lower()
+    current_email = (current_user.email or "").strip().lower()
+
+    if current_email != allowed_owner_email:
+        raise HTTPException(status_code=403, detail="This account is not allowed to become owner")
+
+    organization = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    current_user.role = "owner"
+    current_user.is_active = True
+    current_user.updated_at = datetime.utcnow()
+    organization.owner_user_id = current_user.id
+    organization.updated_at = datetime.utcnow()
+    db.commit()
+    db.refresh(current_user)
+    db.refresh(organization)
+
+    return {
+        "message": "Owner account confirmed.",
+        "user": public_user(current_user),
+        "organization": {
+            "id": organization.id,
+            "name": organization.name,
+            "user_limit": organization.user_limit,
+            "owner_user_id": organization.owner_user_id,
+        },
+        "note": "Log out and log back in so your new owner role is included in your token.",
+    }
+
+
 @router.get("/debug-auth-version")
 def debug_auth_version():
     return {
