@@ -56,24 +56,6 @@ function objectToChartData(data: Record<string, number>) {
   }));
 }
 
-function hasDisplayValue(value: any) {
-  return value !== null && value !== undefined && value !== "";
-}
-
-function formatScore(value: any) {
-  return hasDisplayValue(value) ? `${value}/100` : "-";
-}
-
-function formatPercent(value: any) {
-  return hasDisplayValue(value) ? `${value}%` : "-";
-}
-
-function formatMoney(value: any) {
-  return hasDisplayValue(value)
-    ? `$${Number(value || 0).toLocaleString()}`
-    : "-";
-}
-
 
 function normalizePolicyNumber(value: any) {
   return String(value || "").trim().toUpperCase();
@@ -604,8 +586,6 @@ if (submissionBuilderRes.ok) {
       setCarrierAppetite({});
       setSubmissionReadiness({});
       setCarrierMatch({});
-      setPremiumForecast({});
-      setSubmissionBuilder({});
       setTimeline({});
     } finally {
       setDashboardLoading(false);
@@ -858,31 +838,16 @@ if (submissionBuilderRes.ok) {
       );
     }
 
-    const savedClaimCount = data?.saved_claims ?? 0;
-    let uploadedPolicyNumber =
-      data?.profile?.policy_number ||
-      data?.profile?.account_number ||
-      data?.account_number ||
-      profile?.policy_number ||
-      "";
-
     setMessage(
-      `Upload complete. Saved ${savedClaimCount} new claim(s). Existing duplicate claims may be skipped. New file: ${uploadedFileNames}`
+      `Upload complete. Saved ${data?.saved_claims || 0} claim(s). New file: ${uploadedFileNames}`
     );
 
     if (data?.profile) {
       const uploadedProfile = {
         ...data.profile,
-        policy_number:
-          data?.profile?.policy_number ||
-          data?.profile?.account_number ||
-          data?.account_number ||
-          "",
         policies: data?.policies || data?.profile?.policies || [],
         validation: data?.validation || data?.profile?.validation || {},
       };
-
-      uploadedPolicyNumber = uploadedProfile.policy_number || uploadedPolicyNumber;
 
       setProfile(uploadedProfile);
       updateProfileList([uploadedProfile]);
@@ -903,6 +868,13 @@ if (submissionBuilderRes.ok) {
     if (claimsRes.ok && Array.isArray(claimsData)) {
       setClaims(claimsData);
     }
+
+    const uploadedPolicyNumber =
+      data?.profile?.policy_number ||
+      data?.profile?.account_number ||
+      data?.account_profile?.policy_number ||
+      data?.policy_number ||
+      "";
 
     if (uploadedPolicyNumber) {
       await loadDashboard(uploadedPolicyNumber);
@@ -1095,19 +1067,65 @@ async function exportExecutiveReport() {
     router.replace("/login?fresh=1");
   }
 
-const policySchedule = Array.isArray(profile?.policies) ? profile.policies : [];
+const backendAccountProfile =
+  summary?.account_profile ||
+  submissionBuilder?.account_profile ||
+  premiumForecast?.account_profile ||
+  carrierMatch?.account_profile ||
+  carrierAppetite?.account_profile ||
+  decision?.account_profile ||
+  {};
 
-const activePolicyNumbers = policySchedule
-  .map((item: any) => normalizePolicyNumber(item?.policy_number))
-  .filter(Boolean);
+const displayProfile = {
+  ...(backendAccountProfile || {}),
+  ...(profile || {}),
+  policies:
+    profile?.policies ||
+    backendAccountProfile?.policies ||
+    summary?.account_profile?.policies ||
+    submissionBuilder?.account_profile?.policies ||
+    [],
+};
 
-const activeAccountPolicyNumber = normalizePolicyNumber(profile?.policy_number);
+const policySchedule = Array.isArray(displayProfile?.policies)
+  ? displayProfile.policies
+  : [];
+
+const backendPolicyNumbers = [
+  ...(Array.isArray(summary?.policy_numbers_used) ? summary.policy_numbers_used : []),
+  ...(Array.isArray(submissionBuilder?.policy_numbers_used)
+    ? submissionBuilder.policy_numbers_used
+    : []),
+  ...(Array.isArray(premiumForecast?.policy_numbers_used)
+    ? premiumForecast.policy_numbers_used
+    : []),
+  ...(Array.isArray(carrierMatch?.policy_numbers_used) ? carrierMatch.policy_numbers_used : []),
+  ...(Array.isArray(carrierAppetite?.policy_numbers_used)
+    ? carrierAppetite.policy_numbers_used
+    : []),
+  ...(Array.isArray(decision?.policy_numbers_used) ? decision.policy_numbers_used : []),
+];
+
+const activePolicyNumbers = Array.from(
+  new Set(
+    [
+      ...policySchedule.map((item: any) => item?.policy_number),
+      ...backendPolicyNumbers,
+    ]
+      .map((item: any) => normalizePolicyNumber(item))
+      .filter(Boolean)
+  )
+);
+
+const activeAccountPolicyNumber = normalizePolicyNumber(displayProfile?.policy_number);
 
 const hasActiveAccount = Boolean(
-  profile?.business_name ||
-    profile?.carrier_name ||
-    profile?.policy_number ||
-    activePolicyNumbers.length > 0
+  displayProfile?.business_name ||
+    displayProfile?.carrier_name ||
+    displayProfile?.policy_number ||
+    activePolicyNumbers.length > 0 ||
+    summary?.claims_used != null ||
+    submissionBuilder?.claims_used != null
 );
 
 const visibleClaims = hasActiveAccount
@@ -1126,15 +1144,39 @@ const visibleClaims = hasActiveAccount
     })
   : [];
 
-const totalClaims = visibleClaims.length;
-const openClaims = visibleClaims.filter(
-  (c: any) => String(c.status || "").toLowerCase() === "open"
-).length;
+const backendMetrics =
+  summary?.renewal_metrics ||
+  summary?.metrics ||
+  decision?.decision_metrics ||
+  carrierAppetite?.appetite_metrics ||
+  premiumForecast?.forecast_metrics ||
+  submissionBuilder?.supporting_intelligence?.summary?.renewal_metrics ||
+  submissionBuilder?.supporting_intelligence?.summary?.metrics ||
+  {};
 
-const totalIncurred = visibleClaims.reduce(
-  (sum: number, c: any) => sum + getClaimIncurred(c),
-  0
-);
+const backendClaimsUsed =
+  summary?.claims_used ??
+  submissionBuilder?.claims_used ??
+  premiumForecast?.claims_used ??
+  carrierMatch?.claims_used ??
+  carrierAppetite?.claims_used ??
+  decision?.claims_used;
+
+const totalClaims =
+  visibleClaims.length > 0
+    ? visibleClaims.length
+    : Number(backendMetrics?.total_claims ?? backendClaimsUsed ?? 0);
+
+const openClaims =
+  visibleClaims.length > 0
+    ? visibleClaims.filter((c: any) => String(c.status || "").toLowerCase() === "open")
+        .length
+    : Number(backendMetrics?.open_claims ?? 0);
+
+const totalIncurred =
+  visibleClaims.length > 0
+    ? visibleClaims.reduce((sum: number, c: any) => sum + getClaimIncurred(c), 0)
+    : Number(backendMetrics?.total_incurred ?? 0);
 
 const scheduleClaimStats = visibleClaims.reduce((acc: AnyObject, claim: any) => {
   const claimPolicy = getClaimPolicyNumber(claim);
@@ -1150,15 +1192,18 @@ const scheduleClaimStats = visibleClaims.reduce((acc: AnyObject, claim: any) => 
   return acc;
 }, {});
 
-const flaggedClaims = visibleClaims.filter((c: any) => c.flag).length;
+const flaggedClaims =
+  visibleClaims.length > 0
+    ? visibleClaims.filter((c: any) => c.flag).length
+    : Number(backendMetrics?.flagged_claims ?? 0);
 
 const totalClaimsDisplay = hasActiveAccount ? totalClaims : "-";
 const openClaimsDisplay = hasActiveAccount ? openClaims : "-";
 const totalIncurredDisplay = hasActiveAccount
-  ? `$${Number(totalIncurred).toLocaleString()}`
+  ? `$${Number(totalIncurred || 0).toLocaleString()}`
   : "-";
 const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
-  const lossTrendData = objectToChartData(timeline?.incurred_by_year || {});
+  const lossTrendData = objectToChartData(timeline?.incurred_by_year || backendMetrics?.yearly_incurred || {});
   const agingData = objectToChartData(timeline?.open_claim_aging || {});
   const severityData = objectToChartData(timeline?.severity_heatmap || {});
   const lineData = objectToChartData(timeline?.incurred_by_line || {});
@@ -1362,29 +1407,29 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
 
               <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
                 <MetricCard title="Risk Level" value={summary?.renewal_risk_level || "Not Rated"} />
-                <MetricCard title="Renewal Probability" value={formatPercent(decision?.renewal_probability)} />
-                <MetricCard title="Carrier Appetite" value={formatScore(carrierAppetite?.carrier_appetite_score)} />
-                <MetricCard title="Submission Readiness" value={formatScore(submissionReadiness?.submission_readiness_score)} />
+                <MetricCard title="Renewal Probability" value={decision?.renewal_probability != null ? `${decision.renewal_probability}%` : "-"} />
+                <MetricCard title="Carrier Appetite" value={carrierAppetite?.carrier_appetite_score != null ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
+                <MetricCard title="Submission Readiness" value={submissionReadiness?.submission_readiness_score != null ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
               </section>
 
               <section className="glass-panel p-6 md:p-8">
                 <h2 className="text-2xl md:text-3xl font-bold mb-4">Account Snapshot</h2>
 
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-                  <ProfileDetail label="Insured" value={profile?.business_name || "-"} />
+                  <ProfileDetail label="Insured" value={displayProfile?.business_name || "-"} />
                   <ProfileDetail
                     label="Writing Carrier"
-                    value={profile?.writing_carrier || profile?.carrier_name || "-"}
+                    value={displayProfile?.writing_carrier || displayProfile?.carrier_name || "-"}
                   />
-                  <ProfileDetail label="Carrier" value={profile?.carrier_name || "-"} />
+                  <ProfileDetail label="Carrier" value={displayProfile?.carrier_name || "-"} />
                   <ProfileDetail
                     label="Account Number"
-                    value={profile?.account_number || profile?.customer_number || "-"}
+                    value={displayProfile?.account_number || displayProfile?.customer_number || "-"}
                   />
-                  <ProfileDetail label="Producing Agency" value={profile?.agency_name || "-"} />
-                  <ProfileDetail label="Account / Policy" value={profile?.policy_number || "-"} />
-                  <ProfileDetail label="Effective Date" value={profile?.effective_date || "-"} />
-                  <ProfileDetail label="Expiration Date" value={profile?.expiration_date || "-"} />
+                  <ProfileDetail label="Producing Agency" value={displayProfile?.agency_name || "-"} />
+                  <ProfileDetail label="Account / Policy" value={displayProfile?.policy_number || "-"} />
+                  <ProfileDetail label="Effective Date" value={displayProfile?.effective_date || "-"} />
+                  <ProfileDetail label="Expiration Date" value={displayProfile?.expiration_date || "-"} />
                 </div>
 
                 {policySchedule.length > 0 && (
@@ -1433,12 +1478,12 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
                               </td>
                               <td className="py-3 pr-4">
                                 {policy.writing_carrier ||
-                                  profile?.writing_carrier ||
-                                  profile?.carrier_name ||
+                                  displayProfile?.writing_carrier ||
+                                  displayProfile?.carrier_name ||
                                   "-"}
                               </td>
                               <td className="py-3 pr-4">
-                                {policy.carrier || profile?.carrier_name || "-"}
+                                {policy.carrier || displayProfile?.carrier_name || "-"}
                               </td>
                               <td className="py-3 pr-4">{policy.effective_date || "-"}</td>
                               <td className="py-3 pr-4">{policy.expiration_date || "-"}</td>
@@ -1618,10 +1663,10 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Renewal Probability" value={formatPercent(decision?.renewal_probability)} />
+                <MetricCard title="Renewal Probability" value={decision?.renewal_probability != null ? `${decision.renewal_probability}%` : "-"} />
                 <MetricCard title="Premium Impact" value={decision?.expected_premium_impact || "-"} />
                 <MetricCard title="Carrier Appetite" value={decision?.carrier_appetite || "-"} />
-                <MetricCard title="Marketability Score" value={formatScore(decision?.marketability_score)} />
+                <MetricCard title="Marketability Score" value={decision?.marketability_score != null ? `${decision.marketability_score}/100` : "-"} />
               </div>
 
               <TextCard title="Submission Readiness" text={decision?.submission_readiness || "No submission readiness available yet."} />
@@ -1648,7 +1693,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-                <MetricCard title="Appetite Score" value={formatScore(carrierAppetite?.carrier_appetite_score)} />
+                <MetricCard title="Appetite Score" value={carrierAppetite?.carrier_appetite_score != null ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
                 <MetricCard title="Appetite Level" value={carrierAppetite?.carrier_appetite_level || "-"} />
                 <MetricCard title="Best Market" value={carrierAppetite?.best_fit_carriers?.[0]?.carrier_type || "-"} />
               </div>
@@ -1699,7 +1744,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Readiness Score" value={formatScore(submissionReadiness?.submission_readiness_score)} />
+                <MetricCard title="Readiness Score" value={submissionReadiness?.submission_readiness_score != null ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
                 <MetricCard title="Readiness Level" value={submissionReadiness?.submission_readiness_level || "-"} />
                 <MetricCard title="Carrier Confidence" value={submissionReadiness?.carrier_confidence || "-"} />
                 <MetricCard title="Submission Quality" value={submissionReadiness?.submission_quality || "-"} />
@@ -1754,7 +1799,9 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
       <MetricCard
         title="Match Score"
         value={
-          formatScore(carrierMatch?.recommended_score)
+          carrierMatch?.recommended_score != null
+            ? `${carrierMatch.recommended_score}/100`
+            : "-"
         }
       />
       <MetricCard
@@ -1815,29 +1862,33 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
     <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
       <MetricCard
         title="Current Premium"
-        value={formatMoney(premiumForecast?.current_premium)}
+        value={`$${Number(
+          premiumForecast?.current_premium || 0
+        ).toLocaleString()}`}
       />
 
       <MetricCard
         title="Expected Renewal"
-        value={formatMoney(premiumForecast?.expected_renewal_premium)}
+        value={`$${Number(
+          premiumForecast?.expected_renewal_premium || 0
+        ).toLocaleString()}`}
       />
 
       <MetricCard
         title="Expected Increase"
-        value={formatPercent(premiumForecast?.expected_increase_percent)}
+        value={`${premiumForecast?.expected_increase_percent || 0}%`}
       />
 
       <MetricCard
         title="Confidence"
-        value={formatPercent(premiumForecast?.confidence_score)}
+        value={`${premiumForecast?.confidence_score || 0}%`}
       />
     </div>
 
     <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
       <MetricCard
         title="Best Case"
-        value={formatPercent(premiumForecast?.best_case_percent)}
+        value={`${premiumForecast?.best_case_percent || 0}%`}
       />
 
       <MetricCard
@@ -1847,7 +1898,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
 
       <MetricCard
         title="Worst Case"
-        value={formatPercent(premiumForecast?.worst_case_percent)}
+        value={`${premiumForecast?.worst_case_percent || 0}%`}
       />
     </div>
 
@@ -1932,9 +1983,9 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
       </div>
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
-        <ProfileDetail label="Insured" value={profile?.business_name || "-"} />
-        <ProfileDetail label="Carrier" value={profile?.carrier_name || "-"} />
-        <ProfileDetail label="Policy" value={profile?.policy_number || "-"} />
+        <ProfileDetail label="Insured" value={displayProfile?.business_name || "-"} />
+        <ProfileDetail label="Carrier" value={displayProfile?.carrier_name || "-"} />
+        <ProfileDetail label="Policy" value={displayProfile?.policy_number || "-"} />
       </div>
     </div>
 
@@ -1944,12 +1995,18 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
       <MetricCard
         title="Premium Forecast"
         value={
-          formatPercent(premiumForecast?.expected_increase_percent)
+          premiumForecast?.expected_increase_percent != null
+            ? `${premiumForecast.expected_increase_percent}%`
+            : "-"
         }
       />
       <MetricCard
         title="Submission Readiness"
-        value={formatScore(submissionReadiness?.submission_readiness_score)}
+        value={
+          submissionReadiness?.submission_readiness_score != null
+            ? `${submissionReadiness.submission_readiness_score}/100`
+            : "-"
+        }
       />
     </div>
 
@@ -2240,7 +2297,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
             <div>
               <h2 className="font-semibold">AI Underwriting Copilot</h2>
               <p className="text-xs text-slate-400">
-                Account: {profile?.business_name || "No account selected"} | Policy: {profile?.policy_number || "-"}
+                Account: {profile?.business_name || "No account selected"} | Policy: {displayProfile?.policy_number || "-"}
               </p>
             </div>
 
