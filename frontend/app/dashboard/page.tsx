@@ -1115,71 +1115,10 @@ const totalIncurredDisplay = hasActiveAccount
   ? `$${Number(totalIncurred).toLocaleString()}`
   : "-";
 const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
-  const localClaimsUsed = visibleClaims.length;
-
-const localOpenClaims = visibleClaims.filter((claim: any) =>
-  ["open", "reopened", "re-opened", "pending"].includes(
-    String(claim?.status || "").trim().toLowerCase()
-  )
-).length;
-
-const localLitigationClaims = visibleClaims.filter((claim: any) => {
-  const value = claim?.litigation ?? claim?.is_litigated ?? claim?.litigation_status;
-  if (typeof value === "boolean") return value;
-  return ["true", "yes", "y", "1", "litigation", "litigated"].includes(
-    String(value || "").trim().toLowerCase()
-  );
-}).length;
-
-const localTotalIncurred = visibleClaims.reduce((sum: number, claim: any) => {
-  return sum + Number(claim?.total_incurred || claim?.incurred || 0);
-}, 0);
-
-const validationStatus = String(
-  profile?.validation?.status ||
-    summary?.validation_status ||
-    summary?.status ||
-    ""
-).toLowerCase();
-
-const backendClaimsUsed = Number(
-  summary?.claims_used ??
-    decision?.claims_used ??
-    carrierAppetite?.claims_used ??
-    carrierMatch?.claims_used ??
-    premiumForecast?.claims_used ??
-    0
-);
-
-const backendSaysInsufficient =
-  validationStatus.includes("failed") ||
-  validationStatus.includes("insufficient") ||
-  validationStatus.includes("needs review") ||
-  String(summary?.renewal_risk_level || "")
-    .toLowerCase()
-    .includes("insufficient") ||
-  String(premiumForecast?.status || "")
-    .toLowerCase()
-    .includes("insufficient") ||
-  String(carrierMatch?.status || "")
-    .toLowerCase()
-    .includes("insufficient");
-
-const hasCredibleLossData =
-  hasActiveAccount &&
-  localClaimsUsed > 0 &&
-  visibleClaims.some((claim: any) => String(claim?.claim_number || "").trim());
-
-const blockUnderwritingOutputs =
-  !hasCredibleLossData || backendSaysInsufficient;
-
-const truthGuardrailMessage = !hasActiveAccount
-  ? "Select or upload an account before generating underwriting intelligence."
-  : localClaimsUsed === 0
-  ? "LossQ does not have verified claim rows for this account yet. Renewal risk, carrier match, premium forecast, and charts are blocked to prevent misleading broker or underwriter guidance."
-  : backendSaysInsufficient
-  ? "LossQ detected incomplete or unvalidated loss run data. Review the upload and policy schedule before relying on underwriting outputs."
-  : "";
+  const lossTrendData = objectToChartData(timeline?.incurred_by_year || {});
+  const agingData = objectToChartData(timeline?.open_claim_aging || {});
+  const severityData = objectToChartData(timeline?.severity_heatmap || {});
+  const lineData = objectToChartData(timeline?.incurred_by_line || {});
 
   if (!authReady) {
     return <LoadingScreen title="Checking session..." subtitle="Validating your LossQ access" />;
@@ -1375,50 +1314,15 @@ const truthGuardrailMessage = !hasActiveAccount
                 <MetricCard title="Total Claims" value={totalClaimsDisplay} />
                 <MetricCard title="Open Claims" value={openClaimsDisplay} />
                 <MetricCard title="Total Incurred" value={totalIncurredDisplay} />
-                <MetricCard
-  title="Renewal Score"
-  value={blockUnderwritingOutputs ? "Insufficient Data" : summary?.renewal_score ?? "-"}
-/>
-              
+                <MetricCard title="Renewal Score" value={summary?.renewal_score ?? "-"} />
+              </section>
 
               <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard
-  title="Risk Level"
-  value={blockUnderwritingOutputs ? "Insufficient Data" : summary?.renewal_risk_level || "Not Rated"}
-/>
-                <MetricCard
-  title="Renewal Probability"
-  value={
-    blockUnderwritingOutputs
-      ? "Insufficient Data"
-      : decision?.renewal_probability !== undefined
-      ? `${decision.renewal_probability}%`
-      : "-"
-  }
-/>
-
-<MetricCard
-  title="Carrier Appetite"
-  value={
-    blockUnderwritingOutputs
-      ? "Insufficient Data"
-      : carrierAppetite?.carrier_appetite_score !== undefined
-      ? `${carrierAppetite.carrier_appetite_score}/100`
-      : "-"
-  }
-/>
-
-<MetricCard
-  title="Submission Readiness"
-  value={
-    blockUnderwritingOutputs
-      ? "Insufficient Data"
-      : submissionReadiness?.submission_readiness_score !== undefined
-      ? `${submissionReadiness.submission_readiness_score}/100`
-      : "-"
-  }
-/>
-          
+                <MetricCard title="Risk Level" value={summary?.renewal_risk_level || "Not Rated"} />
+                <MetricCard title="Renewal Probability" value={decision?.renewal_probability !== undefined ? `${decision.renewal_probability}%` : "-"} />
+                <MetricCard title="Carrier Appetite" value={carrierAppetite?.carrier_appetite_score !== undefined ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
+                <MetricCard title="Submission Readiness" value={submissionReadiness?.submission_readiness_score !== undefined ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
+              </section>
 
               <section className="glass-panel p-6 md:p-8">
                 <h2 className="text-2xl md:text-3xl font-bold mb-4">Account Snapshot</h2>
@@ -1618,11 +1522,7 @@ const truthGuardrailMessage = !hasActiveAccount
             </section>
           )}
 
-          {activeTool === "renewal-risk" && blockUnderwritingOutputs && (
-  <TruthGuardrailNotice message={truthGuardrailMessage} />
-)}
-
-{activeTool === "renewal-risk" && !blockUnderwritingOutputs && (
+          {activeTool === "renewal-risk" && (
             <section className="glass-panel p-6 md:p-8">
               <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
                 <div>
@@ -1664,14 +1564,7 @@ const truthGuardrailMessage = !hasActiveAccount
             </section>
           )}
 
-          {activeTool === "decision" && blockUnderwritingOutputs && (
-  <TruthGuardrailNotice
-    title="Underwriter Decision Blocked"
-    message={truthGuardrailMessage}
-  />
-)}
-
-{activeTool === "decision" && !blockUnderwritingOutputs && (
+          {activeTool === "decision" && (
             <section className="glass-panel p-6 md:p-8">
               <p className="text-sm uppercase tracking-[0.25em] text-purple-300 mb-3">
                 Underwriter Decision Engine
@@ -1701,14 +1594,7 @@ const truthGuardrailMessage = !hasActiveAccount
             </section>
           )}
 
-          {activeTool === "carrier-appetite" && blockUnderwritingOutputs && (
-  <TruthGuardrailNotice
-    title="Carrier Appetite Blocked"
-    message={truthGuardrailMessage}
-  />
-)}
-
-{activeTool === "carrier-appetite" && !blockUnderwritingOutputs && (
+          {activeTool === "carrier-appetite" && (
             <section className="glass-panel p-6 md:p-8">
               <p className="text-sm uppercase tracking-[0.25em] text-blue-300 mb-3">
                 Carrier Appetite Engine
@@ -1807,14 +1693,7 @@ const truthGuardrailMessage = !hasActiveAccount
             </section>
           )}
 
-          {activeTool === "carrier-match" && blockUnderwritingOutputs && (
-  <TruthGuardrailNotice
-    title="Carrier Match Blocked"
-    message={truthGuardrailMessage}
-  />
-)}
-
-{activeTool === "carrier-match" && !blockUnderwritingOutputs && (
+          {activeTool === "carrier-match" && (
   <section className="glass-panel p-6 md:p-8">
     <p className="text-sm uppercase tracking-[0.25em] text-purple-300 mb-3">
       Carrier Match Engine
@@ -1882,14 +1761,7 @@ const truthGuardrailMessage = !hasActiveAccount
   </section>
 )}
 
-{activeTool === "premium-forecast" && blockUnderwritingOutputs && (
-  <TruthGuardrailNotice
-    title="Premium Forecast Blocked"
-    message={truthGuardrailMessage}
-  />
-)}
-
-{activeTool === "premium-forecast" && !blockUnderwritingOutputs && (
+{activeTool === "premium-forecast" && (
   <section className="glass-panel p-6 md:p-8">
     <p className="text-sm uppercase tracking-[0.25em] text-green-300 mb-3">
       Premium Forecast Engine
@@ -2178,14 +2050,7 @@ const truthGuardrailMessage = !hasActiveAccount
             </section>
           )}
 
-          {activeTool === "charts" && blockUnderwritingOutputs && (
-  <TruthGuardrailNotice
-    title="Charts Blocked"
-    message={truthGuardrailMessage}
-  />
-)}
-
-{activeTool === "charts" && !blockUnderwritingOutputs && (
+          {activeTool === "charts" && (
             <section className="glass-panel p-6 md:p-8">
               <h2 className="text-2xl md:text-3xl font-bold mb-3">
                 Interactive Claim Development Charts
@@ -2554,34 +2419,6 @@ function Input({
         className="w-full bg-slate-950/70 border border-white/10 rounded-2xl px-4 py-3 outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20"
       />
     </div>
-  );
-}
-
-function TruthGuardrailNotice({
-  title = "Insufficient Loss Run Data",
-  message,
-}: {
-  title?: string;
-  message: string;
-}) {
-  return (
-    <section className="glass-panel p-6 md:p-8 border-red-400/30 bg-red-500/10">
-      <p className="text-sm uppercase tracking-[0.25em] text-red-300 mb-3">
-        Data Quality Guardrail
-      </p>
-
-      <h2 className="text-2xl md:text-3xl font-bold text-white mb-4">
-        {title}
-      </h2>
-
-      <p className="text-red-100 leading-7 max-w-4xl">{message}</p>
-
-      <div className="mt-6 rounded-2xl border border-red-400/20 bg-slate-950/70 p-4 text-sm text-slate-300">
-        LossQ is intentionally blocking renewal risk, premium forecast, carrier
-        match, appetite scoring, and charts until verified claims are attached to
-        the active account or child policies.
-      </div>
-    </section>
   );
 }
 
