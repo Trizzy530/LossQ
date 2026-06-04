@@ -9,14 +9,19 @@ export default function LandingPage() {
 
   useEffect(() => {
     setMounted(true);
+  }, []);
+
+  useEffect(() => {
+    if (!mounted) return;
 
     const cursor = document.getElementById("cursor");
     const ring = document.getElementById("cursorRing");
 
-    let mx = 0;
-    let my = 0;
-    let rx = 0;
-    let ry = 0;
+    let mx = window.innerWidth / 2;
+    let my = window.innerHeight / 2;
+    let rx = mx;
+    let ry = my;
+    let animationFrame = 0;
 
     function move(e: MouseEvent) {
       mx = e.clientX;
@@ -37,7 +42,7 @@ export default function LandingPage() {
         ring.style.top = `${ry}px`;
       }
 
-      requestAnimationFrame(animateRing);
+      animationFrame = requestAnimationFrame(animateRing);
     }
 
     document.addEventListener("mousemove", move);
@@ -62,9 +67,10 @@ export default function LandingPage() {
 
     return () => {
       document.removeEventListener("mousemove", move);
+      cancelAnimationFrame(animationFrame);
       observer.disconnect();
     };
-  }, []);
+  }, [mounted]);
 
   function handleSignup() {
     if (!email || !email.includes("@")) {
