@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect
 import shutil
 import os
+import json
 from datetime import datetime
 from typing import List, Any
 
@@ -139,6 +140,36 @@ def ensure_claim_timeline_columns(db: Session):
     except Exception as e:
         db.rollback()
         print(f"Claim timeline column check failed: {e}")
+
+def ensure_account_profile_columns(db: Session):
+    required_columns = {
+        "writing_carrier": "VARCHAR",
+        "account_number": "VARCHAR",
+        "customer_number": "VARCHAR",
+        "producer_number": "VARCHAR",
+        "policies": "TEXT",
+        "validation": "TEXT",
+        "raw_text_preview": "TEXT",
+    }
+
+    try:
+        inspector = inspect(db.bind)
+        existing_columns = [
+            column["name"] for column in inspector.get_columns("account_profiles")
+        ]
+
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                db.execute(
+                    text(
+                        f"ALTER TABLE account_profiles ADD COLUMN {column_name} {column_type}"
+                    )
+                )
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Account profile column check failed: {e}")
 
 
 def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: dict):
@@ -288,6 +319,30 @@ def extract_profile_data(
     return profile
 
 
+def serialize_json(value, fallback):
+    try:
+        if value is None:
+            return json.dumps(fallback)
+        if isinstance(value, str):
+            return value
+        return json.dumps(value)
+    except Exception:
+        return json.dumps(fallback)
+
+
+def serialize_json(value, fallback):
+    try:
+        if value is None:
+            return json.dumps(fallback)
+
+        if isinstance(value, str):
+            return value
+
+        return json.dumps(value)
+    except Exception:
+        return json.dumps(fallback)
+
+
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
     policy_number = clean_profile_value(
         profile_data.get("policy_number") or profile_data.get("account_number")
@@ -306,12 +361,20 @@ def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
     fields_to_save = [
         "business_name",
         "carrier_name",
+        "writing_carrier",
         "agency_name",
+        "account_number",
+        "customer_number",
+        "producer_number",
         "policy_number",
         "effective_date",
         "expiration_date",
         "evaluation_date",
+        "raw_text_preview",
     ]
+
+    policies_json = serialize_json(profile_data.get("policies") or [], [])
+    validation_json = serialize_json(profile_data.get("validation") or {}, {})
 
     if existing:
         for field in fields_to_save:
@@ -320,22 +383,39 @@ def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
             if value and hasattr(existing, field):
                 setattr(existing, field, value)
 
+        if hasattr(existing, "policies"):
+            existing.policies = policies_json
+
+        if hasattr(existing, "validation"):
+            existing.validation = validation_json
+
         return existing
 
     new_profile = AccountProfile(
         business_name=profile_data.get("business_name") or "Business Name Not Set",
         carrier_name=profile_data.get("carrier_name") or "Carrier Not Set",
+        writing_carrier=profile_data.get("writing_carrier")
+        or profile_data.get("carrier_name")
+        or "Carrier Not Set",
         agency_name=profile_data.get("agency_name") or "Agency Not Set",
+        account_number=profile_data.get("account_number") or policy_number,
+        customer_number=profile_data.get("customer_number")
+        or profile_data.get("account_number")
+        or policy_number,
+        producer_number=profile_data.get("producer_number") or "",
         policy_number=policy_number,
         effective_date=profile_data.get("effective_date") or "Not Set",
         expiration_date=profile_data.get("expiration_date") or "Not Set",
-        evaluation_date=profile_data.get("evaluation_date") or datetime.now().date().isoformat(),
+        evaluation_date=profile_data.get("evaluation_date")
+        or datetime.now().date().isoformat(),
+        policies=policies_json,
+        validation=validation_json,
+        raw_text_preview=profile_data.get("raw_text_preview") or "",
         organization_id=current_user["organization_id"],
     )
 
     db.add(new_profile)
     return new_profile
-
 
 @router.post("/loss-run")
 async def upload_loss_run(
@@ -399,6 +479,7 @@ async def debug_loss_run_parser(
 
 async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
+    ensure_account_profile_columns(db)
 
     total_saved = 0
     total_duplicates_skipped = 0
