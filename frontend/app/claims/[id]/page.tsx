@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 
 const API =
@@ -16,31 +16,221 @@ async function safeJson(res: Response) {
   }
 }
 
-function money(value: any) {
-  const numberValue = Number(value || 0);
-  return `$${numberValue.toLocaleString()}`;
-}
-
 function clean(value: any) {
   if (value === null || value === undefined || value === "") return "-";
   return String(value);
 }
 
-function FieldCard({ label, value }: { label: string; value: any }) {
+function money(value: any) {
+  const numberValue = Number(value || 0);
+  return `$${numberValue.toLocaleString()}`;
+}
+
+function numberValue(value: any) {
+  const parsed = Number(value || 0);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function boolValue(value: any) {
+  if (value === true) return true;
+  if (value === false) return false;
+
+  const normalized = String(value || "").trim().toLowerCase();
+
+  return [
+    "yes",
+    "y",
+    "true",
+    "1",
+    "litigation",
+    "attorney",
+    "attorney involved",
+    "suit",
+    "lawsuit",
+    "represented",
+  ].some((item) => normalized.includes(item));
+}
+
+function getValue(obj: AnyObject | null | undefined, keys: string[]) {
+  if (!obj) return undefined;
+
+  for (const key of keys) {
+    if (obj[key] !== undefined && obj[key] !== null && obj[key] !== "") {
+      return obj[key];
+    }
+  }
+
+  return undefined;
+}
+
+function normalizeClaimPayload(data: any): AnyObject | null {
+  if (!data) return null;
+
+  if (Array.isArray(data)) return data[0] || null;
+  if (data.claim && typeof data.claim === "object") return data.claim;
+  if (data.data && typeof data.data === "object") return data.data;
+  if (data.result && typeof data.result === "object") return data.result;
+  if (typeof data === "object") return data;
+
+  return null;
+}
+
+function getClaimDisplay(claim: AnyObject | null, fallbackId: string) {
+  const paid = numberValue(
+    getValue(claim, ["paid_amount", "paid", "total_paid", "paid_loss", "paidLoss"])
+  );
+
+  const reserve = numberValue(
+    getValue(claim, [
+      "reserve_amount",
+      "reserve",
+      "total_reserved",
+      "case_reserve",
+      "caseReserve",
+      "outstanding_reserve",
+    ])
+  );
+
+  const incurredRaw = getValue(claim, [
+    "total_incurred",
+    "incurred",
+    "gross_incurred",
+    "total",
+    "loss_total",
+  ]);
+
+  const totalIncurred = incurredRaw !== undefined ? numberValue(incurredRaw) : paid + reserve;
+
+  const litigationRaw = getValue(claim, [
+    "litigation",
+    "litigation_flag",
+    "litigation_status",
+    "attorney_involved",
+    "attorney",
+    "suit",
+    "represented",
+    "lit",
+  ]);
+
+  const litigation = boolValue(litigationRaw);
+  const status = clean(getValue(claim, ["status", "claim_status", "claimStatus"]));
+  const isOpen = status.toLowerCase().includes("open");
+
+  let severity = "Low";
+  if (totalIncurred >= 100000 || litigation) severity = "High";
+  else if (totalIncurred >= 25000 || reserve >= 15000 || isOpen) severity = "Moderate";
+
+  let reservePressure = "Low";
+  if (reserve >= 75000) reservePressure = "High";
+  else if (reserve >= 15000) reservePressure = "Moderate";
+
+  return {
+    claimNumber: clean(
+      getValue(claim, ["claim_number", "claimNo", "claim_no", "number", "claimNumber"]) ||
+        fallbackId
+    ),
+    policyNumber: clean(getValue(claim, ["policy_number", "policyNumber", "policy_no"])),
+    lineOfBusiness: clean(
+      getValue(claim, [
+        "line_of_business",
+        "lob",
+        "coverage",
+        "policy_type",
+        "line",
+        "coverage_type",
+      ])
+    ),
+    status,
+    lossDate: clean(getValue(claim, ["loss_date", "date_of_loss", "lossDt", "lossDate"])),
+    reportedDate: clean(
+      getValue(claim, ["reported_date", "report_date", "reportedDate", "date_reported"])
+    ),
+    claimant: clean(getValue(claim, ["claimant", "claimant_name", "injured_party"])),
+    causeOfLoss: clean(
+      getValue(claim, [
+        "cause_of_loss",
+        "loss_description",
+        "description",
+        "claim_description",
+        "notes",
+        "loss_cause",
+      ])
+    ),
+    paid,
+    reserve,
+    totalIncurred,
+    litigation,
+    litigationRaw,
+    severity,
+    reservePressure,
+    adjuster: clean(getValue(claim, ["adjuster", "examiner", "claim_adjuster"])),
+    state: clean(getValue(claim, ["state", "loss_state", "jurisdiction"])),
+    sourceFile: clean(getValue(claim, ["source_file", "file_name", "uploaded_file"])),
+    underwritingNotes: clean(
+      getValue(claim, [
+        "underwriting_notes",
+        "uw_notes",
+        "notes",
+        "description",
+        "loss_description",
+        "claim_description",
+      ])
+    ),
+  };
+}
+
+function MetricCard({ label, value, subtext }: { label: string; value: any; subtext?: string }) {
   return (
-    <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4">
-      <p className="text-xs uppercase tracking-[0.25em] text-blue-300 mb-2">
-        {label}
-      </p>
-      <p className="text-white font-semibold break-words">{clean(value)}</p>
+    <div className="relative overflow-hidden rounded-3xl border border-white/10 bg-white/[0.07] p-5 backdrop-blur-2xl shadow-[0_0_40px_rgba(59,130,246,0.10)]">
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-blue-300/70 to-transparent" />
+      <p className="text-xs uppercase tracking-[0.3em] text-blue-300">{label}</p>
+      <p className="mt-3 text-2xl font-black text-white">{value}</p>
+      {subtext && <p className="mt-2 text-sm text-slate-400">{subtext}</p>}
     </div>
+  );
+}
+
+function DetailCard({ label, value }: { label: string; value: any }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-4 shadow-inner shadow-blue-950/10">
+      <p className="text-xs uppercase tracking-[0.25em] text-blue-300 mb-2">{label}</p>
+      <p className="text-base font-semibold text-white break-words">{clean(value)}</p>
+    </div>
+  );
+}
+
+function Pill({ children, tone = "blue" }: { children: React.ReactNode; tone?: "blue" | "green" | "yellow" | "red" | "purple" }) {
+  const tones: Record<string, string> = {
+    blue: "border-blue-400/30 bg-blue-500/10 text-blue-200",
+    green: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200",
+    yellow: "border-amber-400/30 bg-amber-500/10 text-amber-200",
+    red: "border-red-400/30 bg-red-500/10 text-red-200",
+    purple: "border-purple-400/30 bg-purple-500/10 text-purple-200",
+  };
+
+  return (
+    <span className={`inline-flex rounded-full border px-4 py-2 text-sm font-bold ${tones[tone]}`}>
+      {children}
+    </span>
+  );
+}
+
+function Panel({ title, subtitle, children }: { title: string; subtitle?: string; children: React.ReactNode }) {
+  return (
+    <section className="relative overflow-hidden rounded-[2rem] border border-white/10 bg-white/[0.07] p-6 md:p-8 backdrop-blur-2xl shadow-[0_0_55px_rgba(15,23,42,0.40)]">
+      <div className="absolute inset-x-0 top-0 h-px bg-gradient-to-r from-transparent via-cyan-300/60 to-transparent" />
+      <div className="mb-6">
+        <h2 className="text-2xl font-black text-white">{title}</h2>
+        {subtitle && <p className="mt-2 text-sm text-slate-400">{subtitle}</p>}
+      </div>
+      {children}
+    </section>
   );
 }
 
 export default function ClaimDetailPage() {
   const router = useRouter();
   const params = useParams();
-
   const claimId = String(params?.id || "");
 
   const [claim, setClaim] = useState<AnyObject | null>(null);
@@ -55,6 +245,13 @@ export default function ClaimDetailPage() {
   function authHeaders(): Record<string, string> {
     const token = getToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  function clearSession() {
+    localStorage.removeItem("lossq_token");
+    localStorage.removeItem("lossq_user");
+    localStorage.removeItem("lossq_login_time");
+    sessionStorage.removeItem("lossq_welcome");
   }
 
   function backToClaimsTab() {
@@ -79,39 +276,69 @@ export default function ClaimDetailPage() {
       try {
         setLoading(true);
         setMessage("");
+        let foundClaim: AnyObject | null = null;
 
-        const res = await fetch(`${API}/claims/${encodeURIComponent(claimId)}`, {
+        const detailRes = await fetch(`${API}/claims/${encodeURIComponent(claimId)}`, {
           headers: authHeaders(),
         });
 
-        if (res.status === 401 || res.status === 403) {
-          localStorage.removeItem("lossq_token");
-          localStorage.removeItem("lossq_user");
-          localStorage.removeItem("lossq_login_time");
+        if (detailRes.status === 401 || detailRes.status === 403) {
+          clearSession();
           router.replace("/login?expired=1");
           return;
         }
 
-        const data = await safeJson(res);
+        if (detailRes.ok) {
+          foundClaim = normalizeClaimPayload(await safeJson(detailRes));
+        }
 
-        if (!res.ok) {
-          setMessage(`Claim could not be loaded. Backend returned ${res.status}.`);
+        const shouldFallback =
+          !foundClaim ||
+          (!foundClaim.claim_number &&
+            !foundClaim.policy_number &&
+            !foundClaim.total_incurred &&
+            !foundClaim.paid_amount &&
+            !foundClaim.reserve_amount);
+
+        if (shouldFallback) {
+          const listRes = await fetch(`${API}/claims/`, {
+            headers: authHeaders(),
+          });
+
+          if (listRes.status === 401 || listRes.status === 403) {
+            clearSession();
+            router.replace("/login?expired=1");
+            return;
+          }
+
+          if (listRes.ok) {
+            const listData = await safeJson(listRes);
+            const list = Array.isArray(listData)
+              ? listData
+              : Array.isArray(listData?.claims)
+                ? listData.claims
+                : [];
+
+            foundClaim =
+              list.find((item: AnyObject) => String(item?.id) === claimId) ||
+              list.find((item: AnyObject) => String(item?.claim_number) === claimId) ||
+              list.find((item: AnyObject) => String(item?.claimNo) === claimId) ||
+              null;
+          }
+        }
+
+        if (!foundClaim) {
           setClaim(null);
+          setMessage(
+            "Claim could not be loaded. The detail endpoint did not return this claim, and it was not found in the claims list."
+          );
           return;
         }
 
-        if (!data || typeof data !== "object") {
-          setMessage("Claim could not be loaded. No claim data returned.");
-          setClaim(null);
-          return;
-        }
-
-        setClaim(data);
+        setClaim(foundClaim);
       } catch (error: any) {
-        setMessage(
-          `Claim could not be loaded. ${error?.message || "Unknown error"}`
-        );
         setClaim(null);
+        setMessage(`Claim could not be loaded. ${error?.message || "Unknown error"}`);
       } finally {
         setLoading(false);
       }
@@ -120,13 +347,23 @@ export default function ClaimDetailPage() {
     loadClaim();
   }, [claimId]);
 
+  const display = useMemo(() => getClaimDisplay(claim, claimId), [claim, claimId]);
+
+  const litigationTone = display.litigation ? "red" : "green";
+  const statusTone = display.status.toLowerCase().includes("open") ? "yellow" : "green";
+  const severityTone =
+    display.severity === "High" ? "red" : display.severity === "Moderate" ? "yellow" : "green";
+  const reserveTone =
+    display.reservePressure === "High" ? "red" : display.reservePressure === "Moderate" ? "yellow" : "green";
+
   if (loading) {
     return (
       <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
-        <div className="text-center">
-          <div className="mx-auto mb-5 h-12 w-12 animate-spin rounded-full border-4 border-blue-400/30 border-t-blue-400" />
-          <h1 className="text-3xl font-bold">Loading Claim...</h1>
-          <p className="text-slate-400 mt-2">Pulling claim analysis data.</p>
+        <div className="fixed inset-0 bg-[radial-gradient(circle_at_top_left,#1d4ed866,transparent_28%),radial-gradient(circle_at_top_right,#0ea5e955,transparent_30%),radial-gradient(circle_at_bottom,#312e8155,transparent_35%)]" />
+        <div className="relative text-center">
+          <div className="mx-auto mb-5 h-14 w-14 animate-spin rounded-full border-4 border-blue-400/20 border-t-blue-400 shadow-[0_0_35px_rgba(96,165,250,0.55)]" />
+          <h1 className="text-3xl font-black">Loading Claim Intelligence...</h1>
+          <p className="text-slate-400 mt-2">Pulling claim detail, financials, and litigation signals.</p>
         </div>
       </main>
     );
@@ -136,28 +373,48 @@ export default function ClaimDetailPage() {
     <main className="min-h-screen bg-[#020617] text-white overflow-hidden">
       <div className="fixed inset-0 bg-[radial-gradient(circle_at_top_left,#1d4ed866,transparent_28%),radial-gradient(circle_at_top_right,#0ea5e955,transparent_30%),radial-gradient(circle_at_bottom,#312e8155,transparent_35%)]" />
       <div className="fixed inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:72px_72px] opacity-20" />
+      <div className="fixed left-1/2 top-16 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-500/10 blur-3xl" />
 
-      <section className="relative max-w-7xl mx-auto px-5 md:px-8 py-8 pb-20">
-        <div className="mb-8">
-          <button
-            onClick={backToClaimsTab}
-            className="mb-5 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-semibold text-slate-200 hover:bg-white/10"
-          >
-            ← Back to Claims Tab
-          </button>
+      <section className="relative mx-auto max-w-7xl px-5 md:px-8 py-8 pb-20">
+        <button
+          onClick={backToClaimsTab}
+          className="mb-8 rounded-2xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-slate-200 backdrop-blur-xl hover:border-blue-300/50 hover:bg-blue-500/10 hover:text-white"
+        >
+          ← Back to Claims Tab
+        </button>
 
-          <p className="text-sm uppercase tracking-[0.35em] text-blue-300 mb-3">
-            Claim Analysis
-          </p>
+        <header className="mb-8 rounded-[2rem] border border-white/10 bg-slate-950/70 p-6 md:p-8 backdrop-blur-2xl shadow-[0_0_70px_rgba(59,130,246,0.12)]">
+          <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
+            <div>
+              <div className="mb-5 inline-flex items-center gap-2 rounded-full border border-cyan-400/30 bg-cyan-500/10 px-4 py-2 text-sm text-cyan-200">
+                <span className="h-2 w-2 rounded-full bg-cyan-300 shadow-[0_0_18px_#67e8f9]" />
+                Claim Intelligence File
+              </div>
 
-          <h1 className="text-4xl md:text-6xl font-black tracking-tight">
-            {clean(claim?.claim_number || claim?.id || claimId)}
-          </h1>
+              <p className="text-sm uppercase tracking-[0.35em] text-blue-300">
+                Claim Analysis
+              </p>
 
-          <p className="text-slate-300 mt-3 max-w-3xl">
-            Individual claim detail, financials, status, and underwriting notes.
-          </p>
-        </div>
+              <h1 className="mt-3 text-4xl md:text-6xl font-black tracking-tight">
+                {display.claimNumber}
+              </h1>
+
+              <p className="mt-4 max-w-3xl text-slate-300">
+                Modern claim detail view with underwriting context, litigation factor,
+                financial pressure, reserve status, and source claim fields.
+              </p>
+            </div>
+
+            <div className="grid grid-cols-2 gap-3 min-w-[280px]">
+              <Pill tone={statusTone}>{display.status}</Pill>
+              <Pill tone={severityTone}>{display.severity} Severity</Pill>
+              <Pill tone={litigationTone}>
+                {display.litigation ? "Litigation Present" : "No Litigation"}
+              </Pill>
+              <Pill tone={reserveTone}>{display.reservePressure} Reserve Pressure</Pill>
+            </div>
+          </div>
+        </header>
 
         {message && (
           <div className="mb-6 rounded-3xl border border-red-400/30 bg-red-500/10 p-5 text-red-100">
@@ -166,103 +423,123 @@ export default function ClaimDetailPage() {
         )}
 
         {!claim && !message && (
-          <div className="rounded-3xl border border-white/10 bg-white/10 p-8">
-            No claim data found.
-          </div>
+          <Panel title="No Claim Data Found">
+            <p className="text-slate-300">LossQ could not find a matching claim for this detail page.</p>
+          </Panel>
         )}
 
         {claim && (
           <>
-            <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
-              <section className="lg:col-span-2 rounded-3xl border border-white/10 bg-white/10 backdrop-blur-xl p-6 md:p-8">
-                <h2 className="text-2xl font-bold mb-6">Claim Overview</h2>
+            <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+              <MetricCard label="Total Incurred" value={money(display.totalIncurred)} />
+              <MetricCard label="Paid" value={money(display.paid)} />
+              <MetricCard label="Reserve" value={money(display.reserve)} />
+              <MetricCard
+                label="Litigation Factor"
+                value={display.litigation ? "High" : "Low"}
+                subtext={display.litigation ? "Attorney / suit signal detected" : "No litigation signal detected"}
+              />
+            </section>
 
-                <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
-                  <FieldCard
-                    label="Claim Number"
-                    value={claim.claim_number || claim.claimNo || claim.number}
-                  />
-                  <FieldCard
-                    label="Policy Number"
-                    value={claim.policy_number || claim.policyNumber}
-                  />
-                  <FieldCard
-                    label="Line of Business"
+            <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-6">
+              <div className="lg:col-span-2">
+                <Panel title="Claim Overview" subtitle="Core claim information pulled from the selected loss-run record.">
+                  <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+                    <DetailCard label="Claim Number" value={display.claimNumber} />
+                    <DetailCard label="Policy Number" value={display.policyNumber} />
+                    <DetailCard label="Line of Business" value={display.lineOfBusiness} />
+                    <DetailCard label="Status" value={display.status} />
+                    <DetailCard label="Loss Date" value={display.lossDate} />
+                    <DetailCard label="Reported Date" value={display.reportedDate} />
+                    <DetailCard label="Claimant" value={display.claimant} />
+                    <DetailCard label="Cause of Loss" value={display.causeOfLoss} />
+                    <DetailCard label="Adjuster / Examiner" value={display.adjuster} />
+                    <DetailCard label="Jurisdiction / State" value={display.state} />
+                  </div>
+                </Panel>
+              </div>
+
+              <Panel title="Risk Signals" subtitle="Fast underwriting indicators for this individual claim.">
+                <div className="space-y-4">
+                  <DetailCard label="Severity Level" value={display.severity} />
+                  <DetailCard label="Reserve Pressure" value={display.reservePressure} />
+                  <DetailCard
+                    label="Litigation Factor"
                     value={
-                      claim.line_of_business ||
-                      claim.lob ||
-                      claim.coverage ||
-                      claim.policy_type
+                      display.litigation
+                        ? clean(display.litigationRaw || "Litigation / attorney involvement detected")
+                        : "No litigation flag detected"
                     }
                   />
-                  <FieldCard label="Status" value={claim.status} />
-                  <FieldCard
-                    label="Loss Date"
-                    value={claim.loss_date || claim.date_of_loss}
-                  />
-                  <FieldCard
-                    label="Reported Date"
-                    value={claim.reported_date || claim.report_date}
-                  />
-                  <FieldCard
-                    label="Claimant"
-                    value={claim.claimant || claim.claimant_name}
-                  />
-                  <FieldCard
-                    label="Cause of Loss"
-                    value={claim.cause_of_loss || claim.loss_description}
-                  />
+                  <DetailCard label="Source File" value={display.sourceFile} />
                 </div>
-              </section>
+              </Panel>
+            </section>
 
-              <section className="rounded-3xl border border-white/10 bg-white/10 backdrop-blur-xl p-6 md:p-8">
-                <h2 className="text-2xl font-bold mb-6">Financials</h2>
-
+            <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+              <Panel title="Financial Breakdown" subtitle="Paid, reserve, and incurred values used for severity review.">
                 <div className="grid grid-cols-1 gap-4">
-                  <FieldCard
-                    label="Paid"
-                    value={money(claim.paid_amount || claim.paid || claim.total_paid)}
-                  />
-                  <FieldCard
-                    label="Reserve"
-                    value={money(
-                      claim.reserve_amount || claim.reserve || claim.total_reserved
-                    )}
-                  />
-                  <FieldCard
-                    label="Total Incurred"
-                    value={money(
-                      claim.total_incurred ||
-                        claim.incurred ||
-                        Number(claim.paid_amount || claim.paid || 0) +
-                          Number(claim.reserve_amount || claim.reserve || 0)
-                    )}
-                  />
+                  <DetailCard label="Paid Amount" value={money(display.paid)} />
+                  <DetailCard label="Case Reserve" value={money(display.reserve)} />
+                  <DetailCard label="Total Incurred" value={money(display.totalIncurred)} />
                 </div>
-              </section>
+              </Panel>
+
+              <Panel title="Loss Narrative" subtitle="Claim description, loss cause, or underwriting notes.">
+                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-5 text-slate-300 leading-7">
+                  {display.underwritingNotes !== "-"
+                    ? display.underwritingNotes
+                    : "No underwriting notes are available for this claim yet."}
+                </div>
+              </Panel>
+            </section>
+
+            <Panel title="Underwriting Position" subtitle="LossQ working view for how this claim may affect renewal or market appetite.">
+              <div className="grid grid-cols-1 lg:grid-cols-3 gap-4">
+                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-5">
+                  <p className="text-xs uppercase tracking-[0.25em] text-blue-300 mb-3">Carrier Concern</p>
+                  <p className="text-slate-300 leading-7">
+                    {display.litigation
+                      ? "Litigation or attorney involvement may increase underwriting scrutiny and reserve review."
+                      : display.reserve > 0
+                        ? "Open reserve should be validated before renewal submission."
+                        : "No major litigation or reserve concern detected from the available fields."}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-5">
+                  <p className="text-xs uppercase tracking-[0.25em] text-blue-300 mb-3">Broker Action</p>
+                  <p className="text-slate-300 leading-7">
+                    {display.litigation
+                      ? "Request current adjuster notes, demand status, defense posture, and expected resolution."
+                      : display.reserve > 0
+                        ? "Confirm whether the reserve is current and whether closure is expected before marketing."
+                        : "Keep this claim in the loss summary and confirm final paid status."}
+                  </p>
+                </div>
+
+                <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-5">
+                  <p className="text-xs uppercase tracking-[0.25em] text-blue-300 mb-3">Renewal Impact</p>
+                  <p className="text-slate-300 leading-7">
+                    {display.severity === "High"
+                      ? "High-severity claim. Expect pricing, appetite, or underwriting questions."
+                      : display.severity === "Moderate"
+                        ? "Moderate claim impact. Include context and mitigation in the renewal story."
+                        : "Low-severity signal based on available paid, reserve, and litigation fields."}
+                  </p>
+                </div>
+              </div>
+            </Panel>
+
+            <div className="mt-6">
+              <Panel title="Raw Claim Data" subtitle="Use this only to verify exactly what the backend returned.">
+                <div className="max-h-[420px] overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-5">
+                  <pre className="text-sm text-slate-300 whitespace-pre-wrap">
+                    {JSON.stringify(claim, null, 2)}
+                  </pre>
+                </div>
+              </Panel>
             </div>
-
-            <section className="rounded-3xl border border-white/10 bg-white/10 backdrop-blur-xl p-6 md:p-8 mb-6">
-              <h2 className="text-2xl font-bold mb-5">Underwriting Notes</h2>
-
-              <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-5 text-slate-300 leading-7">
-                {claim.underwriting_notes ||
-                  claim.notes ||
-                  claim.description ||
-                  claim.loss_description ||
-                  "No underwriting notes are available for this claim yet."}
-              </div>
-            </section>
-
-            <section className="rounded-3xl border border-white/10 bg-white/10 backdrop-blur-xl p-6 md:p-8">
-              <h2 className="text-2xl font-bold mb-5">Raw Claim Data</h2>
-
-              <div className="max-h-[420px] overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-5">
-                <pre className="text-sm text-slate-300 whitespace-pre-wrap">
-                  {JSON.stringify(claim, null, 2)}
-                </pre>
-              </div>
-            </section>
           </>
         )}
       </section>
