@@ -1,8 +1,11 @@
 from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
+from sqlalchemy import func
+import json
 
 from app.database import SessionLocal
 from app.models.claim import Claim
+from app.models.account_profile import AccountProfile
 from app.auth_utils import get_current_user
 
 router = APIRouter(prefix="/summary", tags=["Summary"])
@@ -17,28 +20,158 @@ def get_db():
 
 
 def money(value):
-    return float(value or 0)
+    try:
+        return float(value or 0)
+    except Exception:
+        return 0.0
+
+
+def clean_text(value):
+    if value is None:
+        return ""
+    return str(value).strip()
+
+
+def normalize_policy(value):
+    return clean_text(value).upper()
 
 
 def claim_status(value):
-    return str(value or "").strip().lower()
+    return clean_text(value).lower()
 
 
 def is_open_claim(claim):
-    return claim_status(getattr(claim, "status", "")) == "open"
+    return claim_status(getattr(claim, "status", "")) in ["open", "reopened", "re-opened"]
 
 
 def has_litigation(claim):
-    return bool(getattr(claim, "litigation", False))
+    raw = getattr(claim, "litigation", False)
+    if isinstance(raw, bool):
+        return raw
+    return clean_text(raw).lower() in ["true", "yes", "y", "1", "litigation", "litigated"]
 
 
 def is_flagged_claim(claim):
-    flagged = getattr(claim, "flagged", False)
+    flagged = getattr(claim, "flagged", None)
+
+    if flagged is None:
+        flagged = getattr(claim, "flag", None)
+
     if isinstance(flagged, bool):
         return flagged
 
-    flagged_text = str(flagged or "").strip().lower()
-    return flagged_text in ["true", "yes", "y", "1", "flagged"]
+    flagged_text = clean_text(flagged).lower()
+    return flagged_text in ["true", "yes", "y", "1", "flagged"] or bool(flagged_text)
+
+
+def safe_profile_dict(profile):
+    if not profile:
+        return {}
+
+    data = {}
+
+    for key in [
+        "id",
+        "business_name",
+        "carrier_name",
+        "writing_carrier",
+        "agency_name",
+        "account_number",
+        "customer_number",
+        "producer_number",
+        "policy_number",
+        "effective_date",
+        "expiration_date",
+        "evaluation_date",
+        "policies",
+        "validation",
+    ]:
+        if hasattr(profile, key):
+            data[key] = getattr(profile, key)
+
+    return data
+
+
+def parse_policies(raw_policies):
+    if not raw_policies:
+        return []
+
+    if isinstance(raw_policies, list):
+        return raw_policies
+
+    if isinstance(raw_policies, str):
+        try:
+            parsed = json.loads(raw_policies)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+
+    return []
+
+
+def get_profile_for_policy(db: Session, current_user: dict, policy_number: str | None):
+    org_id = current_user["organization_id"]
+
+    if policy_number:
+        profile = (
+            db.query(AccountProfile)
+            .filter(AccountProfile.organization_id == org_id)
+            .filter(AccountProfile.policy_number == policy_number)
+            .first()
+        )
+
+        if profile:
+            return profile
+
+    return (
+        db.query(AccountProfile)
+        .filter(AccountProfile.organization_id == org_id)
+        .order_by(AccountProfile.id.desc())
+        .first()
+    )
+
+
+def get_account_policy_numbers(db: Session, current_user: dict, policy_number: str | None):
+    profile = get_profile_for_policy(db, current_user, policy_number)
+    profile_data = safe_profile_dict(profile)
+
+    policies = parse_policies(profile_data.get("policies"))
+
+    policy_numbers = []
+
+    for item in policies:
+        if isinstance(item, dict):
+            number = normalize_policy(item.get("policy_number"))
+            if number:
+                policy_numbers.append(number)
+
+    if not policy_numbers and policy_number:
+        policy_numbers.append(normalize_policy(policy_number))
+
+    if not policy_numbers and profile_data.get("policy_number"):
+        policy_numbers.append(normalize_policy(profile_data.get("policy_number")))
+
+    policy_numbers = list(dict.fromkeys([item for item in policy_numbers if item]))
+
+    return policy_numbers, profile_data
+
+
+def get_claims_for_account(db: Session, current_user: dict, policy_number: str | None = None):
+    org_id = current_user["organization_id"]
+    policy_numbers, profile_data = get_account_policy_numbers(db, current_user, policy_number)
+
+    query = db.query(Claim).filter(Claim.organization_id == org_id)
+
+    if policy_numbers:
+        query = query.filter(func.upper(Claim.policy_number).in_(policy_numbers))
+    elif policy_number:
+        query = query.filter(func.upper(Claim.policy_number) == normalize_policy(policy_number))
+    else:
+        query = query.filter(False)
+
+    claims = query.all()
+
+    return claims, policy_numbers, profile_data
 
 
 def build_renewal_risk_engine(claims):
@@ -122,9 +255,9 @@ def build_renewal_risk_engine(claims):
     renewal_drivers = []
 
     if total_claims == 0:
-        renewal_drivers.append("No policy-specific claims were found for the selected policy/account.")
+        renewal_drivers.append("No policy-specific claims were found for the selected account or child policies.")
     else:
-        renewal_drivers.append(f"{total_claims} policy-specific claim(s) identified.")
+        renewal_drivers.append(f"{total_claims} account-specific claim(s) identified.")
 
     if open_claims > 0:
         renewal_drivers.append(f"{open_claims} open claim(s) may create uncertainty at renewal.")
@@ -173,7 +306,7 @@ def build_renewal_risk_engine(claims):
         carrier_concerns.append("Large losses may require detailed corrective-action documentation.")
 
     if not carrier_concerns:
-        carrier_concerns.append("No major carrier concerns detected from the current policy-specific loss data.")
+        carrier_concerns.append("No major carrier concerns detected from the current account-specific loss data.")
 
     if renewal_risk_level == "Low":
         broker_recommendation = (
@@ -181,7 +314,7 @@ def build_renewal_risk_engine(claims):
         )
     elif renewal_risk_level == "Moderate":
         broker_recommendation = (
-            "Prepare a brief broker narrative explaining open claims, reserves, and any corrective actions before marketing."
+            "Prepare a broker narrative explaining open claims, reserves, and corrective actions before marketing."
         )
     elif renewal_risk_level == "High":
         broker_recommendation = (
@@ -189,11 +322,11 @@ def build_renewal_risk_engine(claims):
         )
     else:
         broker_recommendation = (
-            "Treat as a critical renewal. Obtain updated loss runs, detailed claim narratives, litigation updates, reserve explanations, and a corrective-action plan before approaching markets."
+            "Treat as a critical renewal. Obtain updated loss runs, claim narratives, litigation updates, reserve explanations, and a corrective-action plan before approaching markets."
         )
 
     renewal_summary = (
-        f"The selected policy/account has a renewal score of {renewal_score}/100, which indicates "
+        f"The selected account has a renewal score of {renewal_score}/100, which indicates "
         f"{renewal_risk_level.lower()} renewal risk. The score is based on {total_claims} claim(s), "
         f"{open_claims} open claim(s), ${total_incurred:,.2f} in total incurred losses, "
         f"${total_reserve:,.2f} in reserves, {litigation_claims} litigated claim(s), and "
@@ -244,7 +377,7 @@ def build_underwriting_intelligence(claims):
             and money(getattr(c, "reserve_amount", 0)) > 0
         ]
     )
-    wc_claims = len([c for c in claims if "workers" in str(getattr(c, "line_of_business", "")).lower()])
+    wc_claims = len([c for c in claims if "workers" in clean_text(getattr(c, "line_of_business", "")).lower()])
 
     score = 0
     score += open_claims * 10
@@ -279,7 +412,7 @@ def build_underwriting_intelligence(claims):
     )
 
     client_narrative = (
-        f"Your current loss history shows {total_claims} claim(s), including "
+        f"The current loss history shows {total_claims} claim(s), including "
         f"{open_claims} open claim(s). Open reserves, severe losses, and litigated claims "
         f"may affect renewal pricing."
     )
@@ -343,7 +476,7 @@ def build_underwriting_intelligence(claims):
         "missing_items": missing_items,
         "recommended_actions": recommended_actions,
         "summary": (
-            f"{total_claims} claim(s) identified. {open_claims} open and {closed_claims} closed. "
+            f"{total_claims} account-specific claim(s) identified. {open_claims} open and {closed_claims} closed. "
             f"Total paid is ${total_paid:,.2f}, reserves are ${total_reserve:,.2f}, "
             f"and total incurred is ${total_incurred:,.2f}. "
             f"{litigation_claims} litigation-related claim(s) detected."
@@ -382,13 +515,14 @@ def underwriting_summary(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    query = db.query(Claim).filter(
-        Claim.organization_id == current_user["organization_id"]
-    )
+    claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
 
-    if policy_number:
-        query = query.filter(Claim.policy_number == policy_number)
+    result = build_underwriting_intelligence(claims)
 
-    claims = query.all()
-
-    return build_underwriting_intelligence(claims)
+    return {
+        **result,
+        "policy_number": policy_number,
+        "policy_numbers_used": policy_numbers_used,
+        "claims_used": len(claims),
+        "account_profile": profile_data,
+    }

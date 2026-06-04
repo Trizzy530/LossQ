@@ -5,7 +5,10 @@ from datetime import datetime
 from app.database import SessionLocal
 from app.models.claim import Claim
 from app.auth_utils import get_current_user
-from app.routes.summary import build_underwriting_intelligence
+from app.routes.summary import (
+    build_underwriting_intelligence,
+    get_claims_for_account,
+)
 
 router = APIRouter(prefix="/renewal", tags=["Renewal"])
 
@@ -26,15 +29,35 @@ def money(value):
 
 
 def is_open(claim):
-    return str(claim.status or "").strip().lower() in ["open", "reopened", "re-opened"]
+    return str(getattr(claim, "status", "") or "").strip().lower() in ["open", "reopened", "re-opened"]
 
 
 def is_flagged(claim):
-    return bool(getattr(claim, "flag", None) or getattr(claim, "flagged", None))
+    flag_value = getattr(claim, "flag", None)
+
+    if flag_value is None:
+        flag_value = getattr(claim, "flagged", None)
+
+    if isinstance(flag_value, bool):
+        return flag_value
+
+    return bool(str(flag_value or "").strip())
+
+
+def is_litigated(claim):
+    value = getattr(claim, "litigation", False)
+
+    if isinstance(value, bool):
+        return value
+
+    return str(value or "").strip().lower() in ["true", "yes", "y", "1", "litigation", "litigated"]
 
 
 def claim_year(claim):
     raw = getattr(claim, "date_of_loss", None)
+    if not raw:
+        raw = getattr(claim, "loss_date", None)
+
     if not raw:
         return None
 
@@ -53,25 +76,25 @@ def get_loss_metrics(claims):
     total_claims = len(claims)
     open_claims = len([c for c in claims if is_open(c)])
     closed_claims = max(total_claims - open_claims, 0)
-    litigation_claims = len([c for c in claims if getattr(c, "litigation", False)])
+    litigation_claims = len([c for c in claims if is_litigated(c)])
     flagged_claims = len([c for c in claims if is_flagged(c)])
 
-    total_paid = sum(money(c.paid_amount) for c in claims)
-    total_reserve = sum(money(c.reserve_amount) for c in claims)
-    total_incurred = sum(money(c.total_incurred) for c in claims)
+    total_paid = sum(money(getattr(c, "paid_amount", 0)) for c in claims)
+    total_reserve = sum(money(getattr(c, "reserve_amount", 0)) for c in claims)
+    total_incurred = sum(money(getattr(c, "total_incurred", 0)) for c in claims)
 
-    largest_loss = max([money(c.total_incurred) for c in claims], default=0)
+    largest_loss = max([money(getattr(c, "total_incurred", 0)) for c in claims], default=0)
     average_claim_size = total_incurred / total_claims if total_claims else 0
 
-    large_claims = len([c for c in claims if money(c.total_incurred) >= 100000])
-    severe_claims = len([c for c in claims if money(c.total_incurred) >= 250000])
+    large_claims = len([c for c in claims if money(getattr(c, "total_incurred", 0)) >= 100000])
+    severe_claims = len([c for c in claims if money(getattr(c, "total_incurred", 0)) >= 250000])
 
     yearly = {}
     for claim in claims:
         year = claim_year(claim)
         if year:
             yearly.setdefault(year, 0)
-            yearly[year] += money(claim.total_incurred)
+            yearly[year] += money(getattr(claim, "total_incurred", 0))
 
     sorted_years = sorted(yearly.keys())
     trend = "Stable"
@@ -80,9 +103,9 @@ def get_loss_metrics(claims):
         first = yearly[sorted_years[0]]
         last = yearly[sorted_years[-1]]
 
-        if last > first * 1.35:
+        if first > 0 and last > first * 1.35:
             trend = "Deteriorating"
-        elif last < first * 0.75:
+        elif first > 0 and last < first * 0.75:
             trend = "Improving"
 
     open_claim_percentage = (open_claims / total_claims * 100) if total_claims else 0
@@ -174,7 +197,7 @@ def build_underwriter_decision_engine(claims, policy_number=None):
         underwriting_concerns.append(f"{metrics['flagged_claims']} flagged claim(s) require explanation.")
 
     if not underwriting_concerns:
-        underwriting_concerns.append("No major underwriting concerns detected from current loss data.")
+        underwriting_concerns.append("No major underwriting concerns detected from the selected account-specific loss data.")
 
     if renewal_probability >= 80:
         best_market_types = ["Standard admitted carriers", "Regional commercial insurance markets", "Preferred renewal markets"]
@@ -194,11 +217,12 @@ def build_underwriter_decision_engine(claims, policy_number=None):
         "submission_readiness": submission_readiness,
         "underwriting_concerns": underwriting_concerns,
         "best_market_types": best_market_types,
+        "decision_metrics": metrics,
         "underwriter_decision_summary": (
             f"LossQ estimates a {renewal_probability}% renewal probability for {policy_number or 'the selected account'}. "
             f"Expected premium impact is {expected_premium_impact}, with {carrier_appetite.lower()} carrier appetite. "
             f"The marketability score is {marketability_score}/100. This decision is based on "
-            f"{metrics['total_claims']} claim(s), {metrics['open_claims']} open claim(s), "
+            f"{metrics['total_claims']} account-specific claim(s), {metrics['open_claims']} open claim(s), "
             f"${metrics['total_incurred']:,.2f} in total incurred losses, "
             f"${metrics['total_reserve']:,.2f} in reserves, and "
             f"{metrics['litigation_claims']} litigated claim(s)."
@@ -284,7 +308,7 @@ def build_carrier_appetite_engine(claims, policy_number=None):
         "best_fit_carriers": carrier_matches[:3],
         "poor_fit_carriers": carrier_matches[-2:],
         "carrier_match_reasons": [
-            "Carrier appetite is based on frequency, severity, reserve pressure, litigation, open claim development, and loss trend.",
+            "Carrier appetite is based on the selected account's child-policy claims, frequency, severity, reserve pressure, litigation, open claim development, and loss trend.",
             f"Total claims reviewed: {metrics['total_claims']}.",
             f"Open claims reviewed: {metrics['open_claims']}.",
             f"Litigation claims reviewed: {metrics['litigation_claims']}.",
@@ -294,12 +318,13 @@ def build_carrier_appetite_engine(claims, policy_number=None):
         "market_strategy": "Target regional and middle-market carriers first. Use a clean broker narrative with claim explanations, reserve updates, and loss-control improvements.",
         "placement_summary": (
             f"LossQ estimates carrier appetite at {carrier_appetite_score}/100, rated {carrier_appetite_level}. "
-            f"This is based on {metrics['total_claims']} claim(s), {metrics['open_claims']} open claim(s), "
+            f"This is based on {metrics['total_claims']} account-specific claim(s), {metrics['open_claims']} open claim(s), "
             f"${metrics['total_incurred']:,.2f} in total incurred losses, ${metrics['total_reserve']:,.2f} in reserves, "
             f"{metrics['litigation_claims']} litigated claim(s), {metrics['large_claims']} large claim(s), "
             f"{metrics['severe_claims']} severe claim(s), average severity of ${metrics['average_claim_size']:,.2f}, "
             f"and a {metrics['trend'].lower()} loss trend."
         ),
+        "appetite_metrics": metrics,
     }
 
 
@@ -398,7 +423,7 @@ def build_submission_readiness_engine(claims, policy_number=None):
         "readiness_summary": (
             f"LossQ rates this submission {readiness_score}/100, or {readiness_level}. "
             f"Carrier confidence is {carrier_confidence}, and submission quality is {submission_quality}. "
-            f"The review considered {metrics['total_claims']} claim(s), {metrics['open_claims']} open claim(s), "
+            f"The review considered {metrics['total_claims']} account-specific claim(s), {metrics['open_claims']} open claim(s), "
             f"{metrics['litigation_claims']} litigated claim(s), {metrics['flagged_claims']} flagged claim(s), "
             f"${metrics['total_incurred']:,.2f} in total incurred losses, ${metrics['total_reserve']:,.2f} in reserves, "
             f"and a {metrics['trend'].lower()} loss trend."
@@ -428,6 +453,11 @@ def build_carrier_match_engine(claims, policy_number=None):
         {"carrier": "Auto-Owners", "base": 76, "strength": "Preferred commercial risks"},
         {"carrier": "Progressive Commercial", "base": 74, "strength": "Commercial auto focus"},
         {"carrier": "Berkley", "base": 72, "strength": "Specialty commercial underwriting"},
+        {"carrier": "The Hartford", "base": 82, "strength": "Commercial package and middle-market underwriting"},
+        {"carrier": "Zurich", "base": 79, "strength": "Complex commercial and national account underwriting"},
+        {"carrier": "Chubb", "base": 81, "strength": "Quality risk selection and controlled loss performance"},
+        {"carrier": "AmTrust", "base": 73, "strength": "Workers compensation and specialty commercial appetite"},
+        {"carrier": "Berkshire Hathaway GUARD", "base": 75, "strength": "Small and middle-market commercial appetite"},
     ]
 
     matches = []
@@ -459,11 +489,13 @@ def build_carrier_match_engine(claims, policy_number=None):
     return {
         "policy_number": policy_number,
         "top_carriers": matches[:5],
-        "recommended_carrier": matches[0]["carrier"],
-        "recommended_score": matches[0]["match_score"],
+        "recommended_carrier": matches[0]["carrier"] if matches else "N/A",
+        "recommended_score": matches[0]["match_score"] if matches else 0,
         "carrier_match_summary": (
             f"LossQ recommends {matches[0]['carrier']} as the strongest carrier fit with a "
-            f"{matches[0]['match_score']}/100 match score."
+            f"{matches[0]['match_score']}/100 match score based on the selected account's claim profile."
+            if matches
+            else "No carrier match could be generated."
         ),
     }
 
@@ -574,7 +606,7 @@ def build_premium_forecast_engine(claims, policy_number=None):
     drivers.append(f"Estimated loss ratio: {loss_ratio * 100:.1f}%")
 
     if metrics["total_claims"]:
-        drivers.append(f"{metrics['total_claims']} total claim(s)")
+        drivers.append(f"{metrics['total_claims']} account-specific claim(s)")
     if metrics["open_claims"]:
         drivers.append(f"{metrics['open_claims']} open claim(s)")
     if metrics["litigation_claims"]:
@@ -601,23 +633,27 @@ def build_premium_forecast_engine(claims, policy_number=None):
         "worst_case_percent": worst_case,
         "confidence_score": confidence,
         "forecast_drivers": drivers,
+        "forecast_metrics": metrics,
         "forecast_summary": (
             f"LossQ projects an expected renewal premium of ${expected_renewal_premium:,.0f}, "
             f"representing an estimated {increase}% change from the modeled current premium of "
             f"${estimated_current_premium:,.0f}. Forecast confidence is {confidence}%. "
-            f"The projection is driven by loss ratio, claim frequency, severity, open claim load, "
+            f"The projection is driven by account-specific loss ratio, claim frequency, severity, open claim load, "
             f"litigation, reserve pressure, renewal score, and loss trend."
         ),
     }
 
 
-def get_claims_for_user(db, current_user, policy_number=None):
-    query = db.query(Claim).filter(Claim.organization_id == current_user["organization_id"])
+def engine_response(builder, db, current_user, policy_number):
+    claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
+    result = builder(claims, policy_number)
 
-    if policy_number:
-        query = query.filter(Claim.policy_number == policy_number)
-
-    return query.all()
+    return {
+        **result,
+        "claims_used": len(claims),
+        "policy_numbers_used": policy_numbers_used,
+        "account_profile": profile_data,
+    }
 
 
 @router.get("/decision")
@@ -626,10 +662,7 @@ def renewal_decision(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return build_underwriter_decision_engine(
-        get_claims_for_user(db, current_user, policy_number),
-        policy_number,
-    )
+    return engine_response(build_underwriter_decision_engine, db, current_user, policy_number)
 
 
 @router.get("/carrier-appetite")
@@ -638,10 +671,7 @@ def carrier_appetite(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return build_carrier_appetite_engine(
-        get_claims_for_user(db, current_user, policy_number),
-        policy_number,
-    )
+    return engine_response(build_carrier_appetite_engine, db, current_user, policy_number)
 
 
 @router.get("/submission-readiness")
@@ -650,10 +680,7 @@ def submission_readiness(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return build_submission_readiness_engine(
-        get_claims_for_user(db, current_user, policy_number),
-        policy_number,
-    )
+    return engine_response(build_submission_readiness_engine, db, current_user, policy_number)
 
 
 @router.get("/premium-forecast")
@@ -662,10 +689,7 @@ def premium_forecast(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return build_premium_forecast_engine(
-        get_claims_for_user(db, current_user, policy_number),
-        policy_number,
-    )
+    return engine_response(build_premium_forecast_engine, db, current_user, policy_number)
 
 
 @router.get("/carrier-match")
@@ -674,10 +698,7 @@ def carrier_match(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return build_carrier_match_engine(
-        get_claims_for_user(db, current_user, policy_number),
-        policy_number,
-    )
+    return engine_response(build_carrier_match_engine, db, current_user, policy_number)
 
 
 @router.get("/memo")
@@ -686,7 +707,7 @@ def renewal_memo(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    claims = get_claims_for_user(db, current_user, policy_number)
+    claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
 
     intelligence = build_underwriting_intelligence(claims)
     decision = build_underwriter_decision_engine(claims, policy_number)
@@ -696,20 +717,21 @@ def renewal_memo(
 
     total_claims = len(claims)
     open_claims = len([c for c in claims if is_open(c)])
-    litigation_claims = len([c for c in claims if getattr(c, "litigation", False)])
+    litigation_claims = len([c for c in claims if is_litigated(c)])
 
-    top_claims = sorted(claims, key=lambda c: money(c.total_incurred), reverse=True)[:5]
+    top_claims = sorted(claims, key=lambda c: money(getattr(c, "total_incurred", 0)), reverse=True)[:5]
 
     top_claim_text = "\n".join(
         [
-            f"- {c.claim_number} | {c.line_of_business} | ${money(c.total_incurred):,.0f}"
+            f"- {getattr(c, 'claim_number', '')} | {getattr(c, 'line_of_business', '')} | ${money(getattr(c, 'total_incurred', 0)):,.0f}"
             for c in top_claims
         ]
     )
 
     memo = f"""
 LOSSQ AI RENEWAL MEMO
-Selected Policy: {policy_number or "All Policies"}
+Selected Account / Policy: {policy_number or "Selected Account"}
+Policy Numbers Used: {", ".join(policy_numbers_used) if policy_numbers_used else "None"}
 
 ----------------------------------------
 
@@ -812,6 +834,8 @@ Generated by LossQ AI
         "memo": memo,
         "policy_number": policy_number,
         "claims_used": total_claims,
+        "policy_numbers_used": policy_numbers_used,
+        "account_profile": profile_data,
         "decision": decision,
         "carrier_appetite": appetite,
         "submission_readiness": readiness,
