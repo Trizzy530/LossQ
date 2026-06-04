@@ -1,5 +1,5 @@
 import os
-# import resend
+import resend
 from datetime import datetime, timedelta
 from typing import Optional
 
@@ -30,6 +30,8 @@ INVITE_TOKEN_EXPIRE_MINUTES = 10080
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://lossq.com").rstrip("/")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "LossQ <onboarding@resend.dev>")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+if RESEND_API_KEY:
+    resend.api_key = RESEND_API_KEY
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
 security = HTTPBearer()
@@ -171,9 +173,56 @@ def decode_token_or_400(token: str, expected_type: str):
 
 
 def send_email(to: str, subject: str, html: str):
-    print(f"EMAIL DEBUG -> TO: {to} | SUBJECT: {subject}")
-    print(html)
-    return {"sent": True}
+    if not RESEND_API_KEY:
+        print(f"EMAIL DEBUG -> TO: {to} | SUBJECT: {subject}")
+        print(html)
+        return {"sent": False, "reason": "RESEND_API_KEY is not configured"}
+
+    try:
+        return resend.Emails.send({
+            "from": FROM_EMAIL,
+            "to": [to],
+            "subject": subject,
+            "html": html,
+        })
+    except Exception as exc:
+        print(f"EMAIL SEND FAILED -> TO: {to} | SUBJECT: {subject} | ERROR: {exc}")
+        return {"sent": False, "reason": str(exc)}
+
+
+def email_shell(title: str, preview: str, button_text: str, button_url: str, footer_note: str = ""):
+    return f"""
+    <div style="margin:0;padding:0;background:#020617;font-family:Arial,Helvetica,sans-serif;color:#e5e7eb;">
+      <div style="max-width:640px;margin:0 auto;padding:32px 20px;">
+        <div style="background:#0f172a;border:1px solid #1e3a8a;border-radius:20px;overflow:hidden;">
+          <div style="padding:28px 32px;border-bottom:1px solid #1e293b;background:linear-gradient(135deg,#020617,#0f172a,#111827);">
+            <div style="font-size:34px;font-weight:900;letter-spacing:-1px;color:#ffffff;">Loss<span style="color:#2563eb;">Q</span></div>
+            <div style="margin-top:6px;font-size:11px;letter-spacing:4px;text-transform:uppercase;color:#93c5fd;">AI Underwriting Platform</div>
+          </div>
+
+          <div style="padding:34px 32px;">
+            <h1 style="margin:0 0 12px;font-size:24px;line-height:1.25;color:#ffffff;">{title}</h1>
+            <p style="margin:0 0 26px;font-size:15px;line-height:1.7;color:#cbd5e1;">{preview}</p>
+
+            <a href="{button_url}" style="display:inline-block;background:#2563eb;color:#ffffff;text-decoration:none;font-weight:800;padding:14px 22px;border-radius:12px;">
+              {button_text}
+            </a>
+
+            <p style="margin:28px 0 0;font-size:12px;line-height:1.6;color:#94a3b8;">
+              If the button does not work, copy and paste this link into your browser:<br />
+              <span style="color:#93c5fd;word-break:break-all;">{button_url}</span>
+            </p>
+
+            {f'<p style="margin:18px 0 0;font-size:12px;line-height:1.6;color:#94a3b8;">{footer_note}</p>' if footer_note else ''}
+          </div>
+        </div>
+
+        <p style="text-align:center;margin:18px 0 0;font-size:11px;color:#64748b;">
+          © 2026 LossQ. This is a transactional account security email.
+        </p>
+      </div>
+    </div>
+    """
 
 
 def public_user(user: User):
@@ -292,7 +341,17 @@ def register_user(data: RegisterRequest, db: Session = Depends(get_db)):
     verify_token = create_token({"sub": new_user.email, "type": "email_verify"}, VERIFY_TOKEN_EXPIRE_MINUTES)
     verify_link = f"{FRONTEND_URL}/verify-email?token={verify_token}"
 
-    send_email(new_user.email, "Verify your LossQ email", f"Verify your email: {verify_link}")
+    send_email(
+        new_user.email,
+        "Verify your LossQ email",
+        email_shell(
+            title="Verify your LossQ email",
+            preview="Welcome to LossQ. Please verify your email address to help secure your account.",
+            button_text="Verify Email",
+            button_url=verify_link,
+            footer_note="This verification link expires in 24 hours.",
+        ),
+    )
 
     return {
         "access_token": access_token,
@@ -404,7 +463,17 @@ def invite_user(data: InviteUserRequest, current_user: User = Depends(require_ad
         INVITE_TOKEN_EXPIRE_MINUTES,
     )
     invite_link = f"{FRONTEND_URL}/accept-invite?token={invite_token}"
-    send_email(clean_email, "You have been invited to LossQ", f"Accept invite: {invite_link}")
+    send_email(
+        clean_email,
+        "You have been invited to LossQ",
+        email_shell(
+            title="You have been invited to LossQ",
+            preview=f"{current_user.email} invited you to join {organization.name} on LossQ as a {invite_role}.",
+            button_text="Accept Invite",
+            button_url=invite_link,
+            footer_note="This invite expires in 7 days. If you were not expecting this invite, you can ignore this email.",
+        ),
+    )
 
     return {"message": "Invite created.", "invite_email": clean_email, "invite_role": invite_role, "invite_link": invite_link, "expires_minutes": INVITE_TOKEN_EXPIRE_MINUTES}
 
@@ -497,7 +566,17 @@ def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
 
     reset_token = create_token({"sub": user.email, "type": "password_reset"}, RESET_TOKEN_EXPIRE_MINUTES)
     reset_link = f"{FRONTEND_URL}/reset-password?token={reset_token}"
-    send_email(user.email, "Reset your LossQ password", f"Reset password: {reset_link}")
+    send_email(
+        user.email,
+        "Reset your LossQ password",
+        email_shell(
+            title="Reset your LossQ password",
+            preview="We received a request to reset your LossQ password. This link expires in 30 minutes.",
+            button_text="Reset Password",
+            button_url=reset_link,
+            footer_note="If you did not request a password reset, you can ignore this email.",
+        ),
+    )
     return {"message": "If an account exists, a reset email has been sent."}
 
 
