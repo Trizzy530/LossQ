@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import text, inspect
 
 from app.database import SessionLocal
 from app.auth_utils import get_current_user
@@ -32,6 +33,10 @@ def get_default_profile(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+
+    ensure_account_profile_columns(db)
+
+
     profile = (
         db.query(AccountProfile)
         .filter(AccountProfile.organization_id == current_user["organization_id"])
@@ -98,6 +103,36 @@ def get_profile_by_policy(
         raise HTTPException(status_code=404, detail="Policy number not found")
 
     return profile
+
+def ensure_account_profile_columns(db: Session):
+    required_columns = {
+        "writing_carrier": "VARCHAR",
+        "account_number": "VARCHAR",
+        "customer_number": "VARCHAR",
+        "producer_number": "VARCHAR",
+        "policies": "TEXT",
+        "validation": "TEXT",
+        "raw_text_preview": "TEXT",
+    }
+
+    try:
+        inspector = inspect(db.bind)
+        existing_columns = [
+            column["name"] for column in inspector.get_columns("account_profiles")
+        ]
+
+        for column_name, column_type in required_columns.items():
+            if column_name not in existing_columns:
+                db.execute(
+                    text(
+                        f"ALTER TABLE account_profiles ADD COLUMN {column_name} {column_type}"
+                    )
+                )
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Account profile column check failed: {e}")
 
 
 @router.put("/")
