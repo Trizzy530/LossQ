@@ -107,6 +107,14 @@ function normalizeProfiles(data: any): AnyObject[] {
   return [];
 }
 
+function firstNonEmptyArray(...values: any[]) {
+  for (const value of values) {
+    if (Array.isArray(value) && value.length > 0) return value;
+  }
+
+  return [];
+}
+
 function getCachedProfiles(): AnyObject[] {
   if (typeof window === "undefined") return [];
 
@@ -149,6 +157,32 @@ export default function DashboardPage() {
   const router = useRouter();
 
   const [activeTool, setActiveTool] = useState<ToolKey>("overview");
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const toolParam = new URLSearchParams(window.location.search).get("tool");
+    const allowedTools: ToolKey[] = [
+      "overview",
+      "profiles",
+      "upload",
+      "renewal-risk",
+      "decision",
+      "carrier-appetite",
+      "submission-readiness",
+      "carrier-match",
+      "premium-forecast",
+      "submission-builder",
+      "summary",
+      "memo",
+      "charts",
+      "claims",
+    ];
+
+    if (toolParam && allowedTools.includes(toolParam as ToolKey)) {
+      setActiveTool(toolParam as ToolKey);
+    }
+  }, []);
 
   const [claims, setClaims] = useState<any[]>([]);
   const [summary, setSummary] = useState<any>({});
@@ -845,7 +879,7 @@ if (submissionBuilderRes.ok) {
     if (data?.profile) {
       const uploadedProfile = {
         ...data.profile,
-        policies: data?.policies || data?.profile?.policies || [],
+        policies: firstNonEmptyArray(data?.policies, data?.profile?.policies, data?.account_profile?.policies),
         validation: data?.validation || data?.profile?.validation || {},
       };
 
@@ -1076,21 +1110,6 @@ const backendAccountProfile =
   decision?.account_profile ||
   {};
 
-const displayProfile = {
-  ...(backendAccountProfile || {}),
-  ...(profile || {}),
-  policies:
-    profile?.policies ||
-    backendAccountProfile?.policies ||
-    summary?.account_profile?.policies ||
-    submissionBuilder?.account_profile?.policies ||
-    [],
-};
-
-const policySchedule = Array.isArray(displayProfile?.policies)
-  ? displayProfile.policies
-  : [];
-
 const backendPolicyNumbers = [
   ...(Array.isArray(summary?.policy_numbers_used) ? summary.policy_numbers_used : []),
   ...(Array.isArray(submissionBuilder?.policy_numbers_used)
@@ -1105,6 +1124,35 @@ const backendPolicyNumbers = [
     : []),
   ...(Array.isArray(decision?.policy_numbers_used) ? decision.policy_numbers_used : []),
 ];
+
+const recoveredPolicySchedule = firstNonEmptyArray(
+  profile?.policies,
+  backendAccountProfile?.policies,
+  summary?.account_profile?.policies,
+  submissionBuilder?.account_profile?.policies
+);
+
+const displayProfile = {
+  ...(backendAccountProfile || {}),
+  ...(profile || {}),
+  policies: recoveredPolicySchedule,
+};
+
+const policySchedule =
+  recoveredPolicySchedule.length > 0
+    ? recoveredPolicySchedule
+    : Array.from(
+        new Set(backendPolicyNumbers.map((item: any) => normalizePolicyNumber(item)).filter(Boolean))
+      ).map((policyNumber) => ({
+        policy_number: policyNumber,
+        policy_type: "Policy",
+        line_coverage: "Recovered from backend intelligence",
+        writing_carrier: displayProfile?.writing_carrier || displayProfile?.carrier_name || "-",
+        carrier: displayProfile?.carrier_name || "-",
+        effective_date: displayProfile?.effective_date || "-",
+        expiration_date: displayProfile?.expiration_date || "-",
+        status: "Recovered from backend intelligence",
+      }));
 
 const activePolicyNumbers = Array.from(
   new Set(
@@ -1203,10 +1251,151 @@ const totalIncurredDisplay = hasActiveAccount
   ? `$${Number(totalIncurred || 0).toLocaleString()}`
   : "-";
 const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
-  const lossTrendData = objectToChartData(timeline?.incurred_by_year || backendMetrics?.yearly_incurred || {});
-  const agingData = objectToChartData(timeline?.open_claim_aging || {});
-  const severityData = objectToChartData(timeline?.severity_heatmap || {});
-  const lineData = objectToChartData(timeline?.incurred_by_line || {});
+
+const totalReserve =
+  visibleClaims.length > 0
+    ? visibleClaims.reduce(
+        (sum: number, c: any) =>
+          sum +
+          toMoneyNumber(c?.reserve_amount ?? c?.reserve ?? c?.outstanding_reserve),
+        0
+      )
+    : Number(backendMetrics?.total_reserve ?? timeline?.total_reserve ?? 0);
+
+const closedClaims =
+  visibleClaims.length > 0
+    ? visibleClaims.filter(
+        (c: any) => String(c.status || "").toLowerCase() === "closed"
+      ).length
+    : Number(backendMetrics?.closed_claims ?? Math.max(totalClaims - openClaims, 0));
+
+const litigationClaims =
+  visibleClaims.length > 0
+    ? visibleClaims.filter((c: any) => {
+        const text = `${c?.litigation || ""} ${c?.claim_status || ""} ${c?.description || ""}`.toLowerCase();
+        return text.includes("litigation") || text.includes("litigated") || text.includes("attorney");
+      }).length
+    : Number(backendMetrics?.litigation_claims ?? 0);
+
+function chartHasData(rows: any[]) {
+  return Array.isArray(rows) && rows.some((item) => Number(item?.value || 0) > 0);
+}
+
+function buildVisibleClaimYearlyData() {
+  const grouped: Record<string, number> = {};
+
+  visibleClaims.forEach((claim: any) => {
+    const rawDate = claim?.loss_date || claim?.date_of_loss || claim?.claim_date || "Unknown";
+    const yearMatch = String(rawDate).match(/(20\d{2}|19\d{2})/);
+    const year = yearMatch?.[1] || "Unknown";
+    grouped[year] = (grouped[year] || 0) + getClaimIncurred(claim);
+  });
+
+  return objectToChartData(grouped);
+}
+
+function buildVisibleClaimLineData() {
+  const grouped: Record<string, number> = {};
+
+  visibleClaims.forEach((claim: any) => {
+    const line =
+      claim?.line_of_business ||
+      claim?.coverage ||
+      claim?.policy_type ||
+      claim?.lob ||
+      "Unknown";
+
+    grouped[String(line)] = (grouped[String(line)] || 0) + getClaimIncurred(claim);
+  });
+
+  return objectToChartData(grouped);
+}
+
+function buildPolicyScheduleLineData() {
+  const grouped: Record<string, number> = {};
+
+  policySchedule.forEach((policy: any) => {
+    const line =
+      policy?.policy_type ||
+      policy?.line_coverage ||
+      policy?.line_of_business ||
+      policy?.coverage ||
+      "Policy";
+
+    const policyNumber = normalizePolicyNumber(policy?.policy_number);
+    const scheduledIncurred = Number(
+      scheduleClaimStats[policyNumber]?.totalIncurred ?? policy?.total_incurred ?? 0
+    );
+
+    if (scheduledIncurred > 0) {
+      grouped[String(line)] = (grouped[String(line)] || 0) + scheduledIncurred;
+    }
+  });
+
+  return objectToChartData(grouped);
+}
+
+const timelineLossTrendData = objectToChartData(timeline?.incurred_by_year || {});
+const backendLossTrendData = objectToChartData(backendMetrics?.yearly_incurred || {});
+const visibleLossTrendData = buildVisibleClaimYearlyData();
+const lossTrendData = chartHasData(timelineLossTrendData)
+  ? timelineLossTrendData
+  : chartHasData(backendLossTrendData)
+  ? backendLossTrendData
+  : chartHasData(visibleLossTrendData)
+  ? visibleLossTrendData
+  : totalIncurred > 0
+  ? [{ name: "Account Total", value: totalIncurred }]
+  : [];
+
+const timelineAgingData = objectToChartData(timeline?.open_claim_aging || {});
+const agingData = chartHasData(timelineAgingData)
+  ? timelineAgingData
+  : totalClaims > 0
+  ? [
+      { name: "Open", value: openClaims },
+      { name: "Closed", value: closedClaims },
+    ]
+  : [];
+
+const timelineSeverityData = objectToChartData(timeline?.severity_heatmap || {});
+const severityData = chartHasData(timelineSeverityData)
+  ? timelineSeverityData
+  : totalClaims > 0
+  ? [
+      { name: "Standard Claims", value: Math.max(totalClaims - litigationClaims - flaggedClaims, 0) },
+      { name: "Flagged", value: flaggedClaims },
+      { name: "Litigation", value: litigationClaims },
+      { name: "Open", value: openClaims },
+    ].filter((item) => Number(item.value || 0) > 0)
+  : [];
+
+const timelineLineData = objectToChartData(timeline?.incurred_by_line || {});
+const visibleLineData = buildVisibleClaimLineData();
+const policyLineData = buildPolicyScheduleLineData();
+const lineData = chartHasData(timelineLineData)
+  ? timelineLineData
+  : chartHasData(visibleLineData)
+  ? visibleLineData
+  : chartHasData(policyLineData)
+  ? policyLineData
+  : totalIncurred > 0
+  ? [{ name: "Account Total", value: totalIncurred }]
+  : [];
+
+const reservePressureDisplay =
+  timeline?.reserve_pressure ||
+  (totalReserve > totalIncurred && totalReserve > 0
+    ? "High"
+    : openClaims > 0
+    ? "Elevated"
+    : "Low");
+
+const trendNoteDisplay =
+  timeline?.trend_note ||
+  (totalClaims > 0
+    ? `LossQ reviewed ${totalClaims} account-specific claim(s), including ${openClaims} open claim(s), ${litigationClaims} litigation claim(s), $${Number(totalIncurred || 0).toLocaleString()} incurred, and $${Number(totalReserve || 0).toLocaleString()} reserved.`
+    : "No trend intelligence available yet.");
 
   if (!authReady) {
     return <LoadingScreen title="Checking session..." subtitle="Validating your LossQ access" />;
@@ -2149,16 +2338,54 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
               </p>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Reserve Pressure" value={timeline?.reserve_pressure || "Low"} />
-                <MetricCard title="Open Claims" value={timeline?.open_claims || 0} />
-                <MetricCard title="Total Reserve" value={`$${Number(timeline?.total_reserve || 0).toLocaleString()}`} />
-                <MetricCard title="Total Incurred" value={`$${Number(timeline?.total_incurred || 0).toLocaleString()}`} />
+                <MetricCard title="Reserve Pressure" value={reservePressureDisplay} />
+                <MetricCard title="Open Claims" value={hasActiveAccount ? openClaims : "-"} />
+                <MetricCard title="Total Reserve" value={hasActiveAccount ? `$${Number(totalReserve || 0).toLocaleString()}` : "-"} />
+                <MetricCard title="Total Incurred" value={totalIncurredDisplay} />
               </div>
 
               <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-5 mb-6">
                 <h3 className="font-semibold mb-2">Trend Intelligence</h3>
-                <p className="text-slate-300">{timeline?.trend_note || "No trend intelligence available yet."}</p>
+                <p className="text-slate-300">{trendNoteDisplay}</p>
               </div>
+
+              {policySchedule.length > 0 && (
+                <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-5 mb-6 overflow-x-auto">
+                  <h3 className="font-semibold mb-3">Policies Feeding This Analysis</h3>
+                  <table className="w-full min-w-[760px] text-sm">
+                    <thead>
+                      <tr className="border-b border-white/10 text-left text-slate-300">
+                        <th className="py-3 pr-4">Line / Coverage</th>
+                        <th className="py-3 pr-4">Policy Number</th>
+                        <th className="py-3 pr-4">Claims</th>
+                        <th className="py-3 pr-4">Total Incurred</th>
+                      </tr>
+                    </thead>
+                    <tbody>
+                      {policySchedule.map((policy: any, index: number) => {
+                        const policyNumber = normalizePolicyNumber(policy?.policy_number);
+                        const stats = scheduleClaimStats[policyNumber];
+                        return (
+                          <tr key={policy?.policy_number || index} className="border-b border-white/10">
+                            <td className="py-3 pr-4 text-white">
+                              {policy?.policy_type || policy?.line_coverage || policy?.line_of_business || policy?.coverage || "Policy"}
+                            </td>
+                            <td className="py-3 pr-4 font-semibold text-blue-200">
+                              {policy?.policy_number || "-"}
+                            </td>
+                            <td className="py-3 pr-4">
+                              {stats?.count ?? policy?.claim_count ?? "-"}
+                            </td>
+                            <td className="py-3 pr-4">
+                              ${Number(stats?.totalIncurred ?? policy?.total_incurred ?? 0).toLocaleString()}
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
+                </div>
+              )}
 
               <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
                 <ChartCard title="Incurred Loss Trend">

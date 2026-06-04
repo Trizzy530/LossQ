@@ -255,7 +255,7 @@ export default function ClaimDetailPage() {
   }
 
   function backToClaimsTab() {
-    router.back();
+    router.push("/dashboard?tool=claims");
   }
 
   useEffect(() => {
