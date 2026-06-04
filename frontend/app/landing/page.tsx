@@ -5,8 +5,11 @@ import { useEffect, useState } from "react";
 export default function LandingPage() {
   const [email, setEmail] = useState("");
   const [joined, setJoined] = useState(false);
+  const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
+    setMounted(true);
+
     const cursor = document.getElementById("cursor");
     const ring = document.getElementById("cursorRing");
 
@@ -70,6 +73,46 @@ export default function LandingPage() {
     }
 
     setJoined(true);
+  }
+
+  if (!mounted) {
+    return (
+      <main
+        style={{
+          minHeight: "100vh",
+          background: "#030508",
+          color: "#f0f4ff",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
+          overflow: "hidden",
+          fontFamily: "Arial, Helvetica, sans-serif",
+        }}
+      >
+        <div style={{ textAlign: "center" }}>
+          <div
+            style={{
+              fontSize: 28,
+              fontWeight: 900,
+              letterSpacing: "0.08em",
+              marginBottom: 14,
+            }}
+          >
+            Loss<span style={{ color: "#0078ff" }}>Q</span>
+          </div>
+          <div
+            style={{
+              fontSize: 11,
+              letterSpacing: "0.28em",
+              textTransform: "uppercase",
+              color: "#60a5fa",
+            }}
+          >
+            AI Underwriting Platform
+          </div>
+        </div>
+      </main>
+    );
   }
 
   return (
