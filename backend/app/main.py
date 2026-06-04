@@ -22,6 +22,7 @@ from app.routes import (
     admin_users,
     submission_builder,
     audit_logs,
+    billing,
 )
 
 from app.models.user import User
@@ -68,13 +69,14 @@ app.include_router(carrier_packet.router)
 app.include_router(admin_users.router)
 app.include_router(submission_builder.router)
 app.include_router(audit_logs.router)
+app.include_router(billing.router)
 
 
 @app.get("/version")
 def version():
-    return {"version": "owner-admin-security-v1"}
+    return {"version": "billing-stripe-v1"}
 
 
 @app.get("/")
 def root():
-    return {"message": "LossQ API running", "version": "owner-admin-security-live"}
+    return {"message": "LossQ API running", "version": "billing-stripe-live"}
