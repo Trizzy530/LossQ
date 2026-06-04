@@ -6,6 +6,10 @@ import { useParams, useRouter } from "next/navigation";
 const API =
   process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
 
+const SESSION_TIMEOUT_MS = 1000 * 60 * 60 * 24;
+
+type AnyObject = Record<string, any>;
+
 async function safeJson(res: Response) {
   try {
     return await res.json();
@@ -14,415 +18,266 @@ async function safeJson(res: Response) {
   }
 }
 
-function money(value: any) {
-  return `$${Number(value || 0).toLocaleString()}`;
+function formatMoney(value: any) {
+  const number = Number(value || 0);
+  return `$${number.toLocaleString()}`;
 }
 
-function clean(value: any) {
-  return value || "-";
+function display(value: any) {
+  if (value === null || value === undefined || value === "") return "-";
+  return String(value);
 }
 
 export default function ClaimDetailPage() {
-  const params = useParams();
   const router = useRouter();
+  const params = useParams();
+  const claimId = String(params?.id || "");
 
-  const claimId = params?.id;
-  const [data, setData] = useState<any>(null);
-  const [message, setMessage] = useState("");
+  const [claim, setClaim] = useState<AnyObject | null>(null);
   const [loading, setLoading] = useState(true);
-
-  function authHeaders(): Record<string, string> {
-    const token = localStorage.getItem("lossq_token");
-    return token ? { Authorization: `Bearer ${token}` } : {};
-  }
-
-  async function loadClaim() {
-    if (!claimId) return;
-
-    setLoading(true);
-    setMessage("");
-
-    try {
-      const res = await fetch(`${API}/claims/${claimId}`, {
-        headers: authHeaders(),
-      });
-
-      const json = await safeJson(res);
-
-      if (res.status === 401 || res.status === 403) {
-        localStorage.removeItem("lossq_token");
-        localStorage.removeItem("lossq_user");
-        localStorage.removeItem("lossq_login_time");
-        router.replace("/login");
-        return;
-      }
-
-      if (!res.ok) {
-        setMessage(json?.detail || "Claim intelligence could not be loaded.");
-        return;
-      }
-
-      setData(json);
-    } catch {
-      setMessage("Claim intelligence failed to load.");
-    } finally {
-      setLoading(false);
-    }
-  }
+  const [error, setError] = useState("");
 
   useEffect(() => {
+    async function loadClaim() {
+      const token = localStorage.getItem("lossq_token");
+      const loginTime = localStorage.getItem("lossq_login_time");
+
+      if (!token) {
+        router.replace("/login?fresh=1");
+        return;
+      }
+
+      if (loginTime && Date.now() - Number(loginTime) > SESSION_TIMEOUT_MS) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (!claimId) {
+        setError("Claim ID was not found in the route.");
+        setLoading(false);
+        return;
+      }
+
+      try {
+        setLoading(true);
+        setError("");
+
+        const res = await fetch(`${API}/claims/${encodeURIComponent(claimId)}`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+        });
+
+        if (res.status === 401 || res.status === 403) {
+          clearSession();
+          router.replace("/login?expired=1");
+          return;
+        }
+
+        const data = await safeJson(res);
+
+        if (!res.ok) {
+          setError(
+            `Could not load claim. Backend returned ${res.status}: ${JSON.stringify(data)}`
+          );
+          setClaim(null);
+          return;
+        }
+
+        setClaim(data || null);
+      } catch (err: any) {
+        setError(
+          `Could not load claim. Backend may be unavailable. Error: ${err?.message || "Unknown error"}`
+        );
+        setClaim(null);
+      } finally {
+        setLoading(false);
+      }
+    }
+
     loadClaim();
-  }, [claimId]);
+  }, [claimId, router]);
+
+  function clearSession() {
+    localStorage.removeItem("lossq_token");
+    localStorage.removeItem("lossq_user");
+    localStorage.removeItem("lossq_login_time");
+    sessionStorage.removeItem("lossq_welcome");
+  }
+
+  function goBackToClaims() {
+    router.push("/claims");
+  }
+
+  function goBackToDashboardClaimsTab() {
+    router.push("/dashboard?tool=claims");
+  }
 
   if (loading) {
     return (
-      <main className="min-h-screen bg-[#030508] text-white flex items-center justify-center overflow-hidden">
-        <BackgroundGlow />
-
-        <div className="relative text-center">
-          <div className="text-5xl font-black mb-4">
-            Loss<span className="text-blue-500">Q</span>
-          </div>
-          <div className="text-blue-200 tracking-wide">
-            Loading claim intelligence...
-          </div>
+      <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
+        <div className="rounded-3xl border border-white/10 bg-white/10 backdrop-blur-xl p-8 text-center shadow-2xl">
+          <div className="mx-auto mb-5 h-12 w-12 animate-spin rounded-full border-4 border-blue-400 border-t-transparent" />
+          <h1 className="text-2xl font-bold">Loading Claim...</h1>
+          <p className="mt-2 text-slate-400">Preparing individual claim analysis.</p>
         </div>
       </main>
     );
   }
-
-  if (message) {
-    return (
-      <main className="min-h-screen bg-[#030508] text-white flex items-center justify-center px-6 overflow-hidden">
-        <BackgroundGlow />
-
-        <div className="relative max-w-xl w-full bg-white/5 backdrop-blur-xl border border-red-500/30 rounded-3xl p-10 shadow-2xl text-center">
-          <div className="text-red-400 text-sm uppercase tracking-[0.3em] mb-3">
-            Claim Error
-          </div>
-
-          <h1 className="text-4xl font-black mb-4">
-            Intelligence Unavailable
-          </h1>
-
-          <p className="text-slate-300 mb-8">{message}</p>
-
-          <div className="flex justify-center gap-4">
-            <button
-              onClick={loadClaim}
-              className="bg-blue-600 hover:bg-blue-700 px-6 py-3 rounded-xl font-bold"
-            >
-              Retry
-            </button>
-
-            <a
-              href="/dashboard"
-              className="bg-white/10 hover:bg-white/15 border border-white/10 px-6 py-3 rounded-xl font-bold"
-            >
-              Back to Dashboard
-            </a>
-          </div>
-        </div>
-      </main>
-    );
-  }
-
-  const claim = data?.claim || {};
-  const severity = data?.severity || "Low";
-  const severityScore = Number(data?.severity_score || 0);
-
-  const riskColor =
-    severity === "Catastrophic"
-      ? "text-red-300 border-red-500/40 bg-red-500/10"
-      : severity === "Severe"
-      ? "text-orange-300 border-orange-500/40 bg-orange-500/10"
-      : severity === "Moderate"
-      ? "text-yellow-300 border-yellow-500/40 bg-yellow-500/10"
-      : "text-emerald-300 border-emerald-500/40 bg-emerald-500/10";
 
   return (
-    <main className="min-h-screen bg-[#030508] text-white overflow-hidden">
-      <BackgroundGlow />
+    <main className="min-h-screen bg-[#020617] text-white overflow-hidden">
+      <div className="fixed inset-0 bg-[radial-gradient(circle_at_top_left,#1d4ed866,transparent_28%),radial-gradient(circle_at_top_right,#0ea5e955,transparent_30%),radial-gradient(circle_at_bottom,#312e8155,transparent_35%)]" />
+      <div className="fixed inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:72px_72px] opacity-20" />
 
-      <div className="relative max-w-7xl mx-auto px-6 py-10">
-        <header className="flex flex-col lg:flex-row justify-between gap-6 items-start mb-10">
+      <section className="relative mx-auto max-w-6xl px-5 py-8 md:px-8">
+        <div className="mb-6 flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
-            <div className="text-blue-400 text-sm uppercase tracking-[0.35em] mb-4">
-              Claim Intelligence
-            </div>
-
-            <h1 className="text-5xl lg:text-7xl font-black tracking-tight">
-              Claim{" "}
-              <span className="text-blue-500">
-                {clean(claim.claim_number)}
-              </span>
-            </h1>
-
-            <p className="text-slate-400 mt-5 text-lg max-w-3xl">
-              Modern underwriting view for claim timeline, severity, reserves,
-              litigation indicators, and broker action strategy.
-            </p>
-          </div>
-
-          <div className="flex gap-3">
-            <a
-              href="/dashboard"
-              className="bg-white/10 hover:bg-white/15 border border-white/10 px-5 py-3 rounded-xl font-bold"
+            <button
+              type="button"
+              onClick={goBackToClaims}
+              className="mb-5 inline-flex items-center rounded-2xl border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-semibold text-blue-200 hover:bg-blue-500/20"
             >
-              Back to Dashboard
-            </a>
-          </div>
-        </header>
+              ← Back to Claims
+            </button>
 
-        <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-          <HeroMetric title="Status" value={clean(claim.status)} />
-          <HeroMetric title="Severity" value={severity} badgeClass={riskColor} />
-          <HeroMetric title="Score" value={`${severityScore}/100`} />
-          <HeroMetric title="Renewal Impact" value={clean(data?.renewal_impact)} />
-        </section>
-
-        <section className="grid grid-cols-1 lg:grid-cols-3 gap-6 mb-8">
-          <GlassPanel className="lg:col-span-2">
-            <div className="flex justify-between gap-6 items-start mb-6">
-              <div>
-                <h2 className="text-3xl font-black">AI Claim Narrative</h2>
-                <p className="text-slate-400 mt-2">
-                  AI-generated underwriting explanation for this individual claim.
-                </p>
-              </div>
-
-              <div className={`border rounded-full px-4 py-2 text-sm font-bold ${riskColor}`}>
-                {severity}
-              </div>
-            </div>
-
-            <p className="text-slate-200 leading-8 text-lg">
-              {data?.ai_summary || "No narrative available."}
+            <p className="text-sm uppercase tracking-[0.25em] text-blue-300">
+              Claim Analysis
             </p>
-          </GlassPanel>
+            <h1 className="mt-3 text-4xl font-black tracking-tight md:text-5xl">
+              {display(claim?.claim_number || claim?.id || claimId)}
+            </h1>
+            <p className="mt-3 max-w-2xl text-slate-300">
+              Individual claim detail, financials, status, and underwriting notes.
+            </p>
+          </div>
 
-          <GlassPanel>
-            <h2 className="text-3xl font-black mb-6">Financial Exposure</h2>
+          <div className="flex flex-wrap gap-3">
+            <button type="button" onClick={goBackToClaims} className="btn-primary">
+              Main Claims Page
+            </button>
+            <button
+              type="button"
+              onClick={goBackToDashboardClaimsTab}
+              className="btn-secondary"
+            >
+              Dashboard Claims Tab
+            </button>
+          </div>
+        </div>
 
-            <div className="space-y-4">
-              <ExposureRow label="Paid" value={money(claim.paid_amount)} />
-              <ExposureRow label="Reserve" value={money(claim.reserve_amount)} />
-              <ExposureRow label="Total Incurred" value={money(claim.total_incurred)} highlight />
-              <ExposureRow label="Reserve Concern" value={clean(data?.reserve_concern)} />
-            </div>
-          </GlassPanel>
-        </section>
+        {error && (
+          <div className="mb-6 rounded-3xl border border-red-400/30 bg-red-500/10 p-5 text-red-100">
+            {error}
+          </div>
+        )}
 
-        <section className="grid grid-cols-1 lg:grid-cols-5 gap-5 mb-8">
-          <TimelineCard title="Date of Loss" value={clean(claim.date_of_loss)} />
-          <TimelineCard title="Date Reported" value={clean(claim.date_reported)} />
-          <TimelineCard title="Date Closed" value={clean(claim.date_closed)} />
-          <TimelineCard
-            title="Claim Age"
-            value={claim.claim_age ? `${claim.claim_age} days` : "-"}
-          />
-          <TimelineCard
-            title="Open Days"
-            value={claim.open_days ? `${claim.open_days} days` : "-"}
-          />
-        </section>
+        {!error && claim && (
+          <div className="grid grid-cols-1 gap-6 lg:grid-cols-3">
+            <section className="glass-panel p-6 lg:col-span-2">
+              <h2 className="mb-5 text-2xl font-bold">Claim Overview</h2>
 
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-          <GlassPanel>
-            <h2 className="text-3xl font-black mb-6">Claim Summary</h2>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <Detail label="Claim Number" value={claim.claim_number} />
+                <Detail label="Policy Number" value={claim.policy_number} />
+                <Detail label="Line of Business" value={claim.line_of_business || claim.coverage || claim.lob} />
+                <Detail label="Status" value={claim.status} />
+                <Detail label="Loss Date" value={claim.loss_date || claim.date_of_loss} />
+                <Detail label="Reported Date" value={claim.reported_date || claim.date_reported} />
+                <Detail label="Claimant" value={claim.claimant || claim.claimant_name} />
+                <Detail label="Cause of Loss" value={claim.cause_of_loss || claim.loss_description} />
+              </div>
+            </section>
 
-            <InfoGrid
-              items={[
-                ["Policy Number", claim.policy_number],
-                ["Line of Business", claim.line_of_business],
-                ["Claim Type", claim.claim_type],
-                ["Cause of Loss", claim.cause_of_loss],
-                ["Claimant Type", claim.claimant_type],
-                ["Injury Type", claim.injury_type],
-                ["Description", claim.description],
-              ]}
-            />
-          </GlassPanel>
+            <section className="glass-panel p-6">
+              <h2 className="mb-5 text-2xl font-bold">Financials</h2>
 
-          <GlassPanel>
-            <h2 className="text-3xl font-black mb-6">Litigation Intelligence</h2>
+              <div className="space-y-4">
+                <Detail label="Paid" value={formatMoney(claim.paid_amount || claim.paid)} />
+                <Detail label="Reserve" value={formatMoney(claim.reserve_amount || claim.reserve)} />
+                <Detail
+                  label="Total Incurred"
+                  value={formatMoney(
+                    claim.total_incurred ||
+                      claim.incurred ||
+                      Number(claim.paid_amount || claim.paid || 0) +
+                        Number(claim.reserve_amount || claim.reserve || 0)
+                  )}
+                />
+              </div>
+            </section>
 
-            <InfoGrid
-              items={[
-                ["Litigation", claim.litigation ? "Yes" : "No"],
-                ["Litigation Status", claim.litigation_status],
-                ["Attorney Assigned", claim.attorney_assigned ? "Yes" : "No"],
-                ["Suit Filed", claim.suit_filed ? "Yes" : "No"],
-                ["Venue State", claim.venue_state],
-                ["Exposure", data?.litigation_exposure],
-              ]}
-            />
-          </GlassPanel>
-        </section>
+            <section className="glass-panel p-6 lg:col-span-3">
+              <h2 className="mb-5 text-2xl font-bold">Underwriting Notes</h2>
+              <div className="rounded-2xl border border-white/10 bg-slate-950/60 p-5 text-slate-300 leading-7">
+                {display(
+                  claim.underwriting_notes ||
+                    claim.notes ||
+                    claim.summary ||
+                    claim.description ||
+                    "No underwriting notes are available for this claim yet."
+                )}
+              </div>
+            </section>
 
-        <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-  <ActionPanel
-    title="Risk Factors"
-    items={data?.risk_factors || []}
-  />
+            <section className="glass-panel p-6 lg:col-span-3">
+              <h2 className="mb-5 text-2xl font-bold">Raw Claim Data</h2>
+              <pre className="max-h-[420px] overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-5 text-xs leading-6 text-slate-300">
+                {JSON.stringify(claim, null, 2)}
+              </pre>
+            </section>
+          </div>
+        )}
+      </section>
 
-  <ActionPanel
-    title="Broker Actions"
-    items={data?.broker_actions || []}
-  />
-</section>
+      <style jsx global>{`
+        .glass-panel {
+          border: 1px solid rgba(255, 255, 255, 0.1);
+          background: rgba(15, 23, 42, 0.72);
+          backdrop-filter: blur(22px);
+          border-radius: 1.5rem;
+          box-shadow: 0 24px 80px rgba(15, 23, 42, 0.45);
+        }
 
-<section className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-8">
-  <GlassPanel>
-    <h2 className="text-3xl font-black mb-6">
-      Underwriter Narrative
-    </h2>
+        .btn-primary,
+        .btn-secondary {
+          border-radius: 1rem;
+          padding: 0.8rem 1.1rem;
+          font-weight: 800;
+          transition: 0.2s ease;
+        }
 
-    <p className="text-slate-200 leading-8">
-      {data?.underwriter_narrative ||
-        "No narrative available."}
-    </p>
-  </GlassPanel>
+        .btn-primary {
+          background: linear-gradient(135deg, #2563eb, #06b6d4);
+          color: white;
+          box-shadow: 0 14px 35px rgba(37, 99, 235, 0.28);
+        }
 
-  <GlassPanel>
-    <h2 className="text-3xl font-black mb-6">
-      Risk Summary
-    </h2>
+        .btn-primary:hover {
+          transform: translateY(-1px);
+          box-shadow: 0 18px 45px rgba(37, 99, 235, 0.38);
+        }
 
-    <p className="text-slate-200 leading-8">
-      {data?.risk_summary ||
-        "No risk summary available."}
-    </p>
-  </GlassPanel>
-</section>
+        .btn-secondary {
+          border: 1px solid rgba(255, 255, 255, 0.12);
+          background: rgba(255, 255, 255, 0.07);
+          color: white;
+        }
 
-<section className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-  <GlassPanel>
-    <h2 className="text-3xl font-black mb-6">
-      Litigation Analysis
-    </h2>
-
-    <p className="text-slate-200 leading-8">
-      {data?.litigation_analysis ||
-        "No litigation analysis available."}
-    </p>
-  </GlassPanel>
-
-  <ActionPanel
-    title="Broker Talking Points"
-    items={data?.broker_talking_points || []}
-  />
-</section>
-      </div>
+        .btn-secondary:hover {
+          background: rgba(255, 255, 255, 0.12);
+        }
+      `}</style>
     </main>
   );
 }
 
-function BackgroundGlow() {
+function Detail({ label, value }: { label: string; value: any }) {
   return (
-    <>
-      <div className="fixed inset-0 bg-[linear-gradient(rgba(0,120,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(0,120,255,0.05)_1px,transparent_1px)] bg-[size:60px_60px]" />
-      <div className="fixed inset-0 bg-[radial-gradient(circle_at_top_left,rgba(0,120,255,0.35),transparent_35%),radial-gradient(circle_at_bottom_right,rgba(37,99,235,0.22),transparent_35%)]" />
-    </>
-  );
-}
-
-function GlassPanel({
-  children,
-  className = "",
-}: {
-  children: React.ReactNode;
-  className?: string;
-}) {
-  return (
-    <section
-      className={`bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-7 shadow-2xl ${className}`}
-    >
-      {children}
-    </section>
-  );
-}
-
-function HeroMetric({
-  title,
-  value,
-  badgeClass = "text-blue-200 border-blue-500/30 bg-blue-500/10",
-}: {
-  title: string;
-  value: any;
-  badgeClass?: string;
-}) {
-  return (
-    <div className="bg-white/5 backdrop-blur-xl border border-white/10 rounded-3xl p-6 shadow-xl">
-      <div className="text-slate-400 text-sm mb-3">{title}</div>
-      <div className={`inline-flex border rounded-full px-4 py-2 text-xl font-black ${badgeClass}`}>
-        {value || "-"}
-      </div>
+    <div className="rounded-2xl border border-white/10 bg-slate-950/50 p-4">
+      <div className="text-xs uppercase tracking-[0.22em] text-blue-300">{label}</div>
+      <div className="mt-2 font-semibold text-white">{display(value)}</div>
     </div>
-  );
-}
-
-function TimelineCard({ title, value }: { title: string; value: any }) {
-  return (
-    <div className="bg-white/5 backdrop-blur-xl border border-blue-500/20 rounded-3xl p-6 shadow-xl">
-      <div className="h-2 w-2 rounded-full bg-blue-400 shadow-[0_0_20px_rgba(59,130,246,1)] mb-4" />
-      <div className="text-slate-400 text-sm mb-2">{title}</div>
-      <div className="text-2xl font-black break-words">{value || "-"}</div>
-    </div>
-  );
-}
-
-function ExposureRow({
-  label,
-  value,
-  highlight = false,
-}: {
-  label: string;
-  value: any;
-  highlight?: boolean;
-}) {
-  return (
-    <div className="flex justify-between border-b border-white/10 pb-3 gap-4">
-      <span className="text-slate-400">{label}</span>
-      <span className={highlight ? "text-blue-300 font-black" : "text-white font-bold"}>
-        {value || "-"}
-      </span>
-    </div>
-  );
-}
-
-function InfoGrid({ items }: { items: [string, any][] }) {
-  return (
-    <div className="grid grid-cols-1 gap-4">
-      {items.map(([label, value]) => (
-        <div key={label} className="border-b border-white/10 pb-3">
-          <div className="text-slate-500 text-sm mb-1">{label}</div>
-          <div className="text-slate-200 break-words">{clean(value)}</div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
-function ActionPanel({ title, items }: { title: string; items: string[] }) {
-  return (
-    <GlassPanel>
-      <h2 className="text-3xl font-black mb-6">{title}</h2>
-
-      {items.length === 0 ? (
-        <p className="text-slate-400">No items identified.</p>
-      ) : (
-        <div className="space-y-3">
-          {items.map((item, index) => (
-            <div
-              key={index}
-              className="bg-blue-500/10 border border-blue-500/20 rounded-2xl px-4 py-3 text-slate-200"
-            >
-              {item}
-            </div>
-          ))}
-        </div>
-      )}
-    </GlassPanel>
   );
 }

@@ -56,6 +56,49 @@ function objectToChartData(data: Record<string, number>) {
   }));
 }
 
+
+function normalizePolicyNumber(value: any) {
+  return String(value || "").trim().toUpperCase();
+}
+
+function getClaimPolicyNumber(claim: any) {
+  return normalizePolicyNumber(
+    claim?.policy_number ||
+      claim?.policyNumber ||
+      claim?.policy_no ||
+      claim?.policy ||
+      claim?.policy_id
+  );
+}
+
+function toMoneyNumber(value: any) {
+  if (value === null || value === undefined || value === "") return 0;
+
+  const cleaned = String(value).replace(/[$,]/g, "").trim();
+  const parsed = Number(cleaned);
+
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+function getClaimIncurred(claim: any) {
+  const direct =
+    claim?.total_incurred ??
+    claim?.totalIncurred ??
+    claim?.incurred ??
+    claim?.incurred_amount ??
+    claim?.loss_amount ??
+    claim?.amount;
+
+  const directValue = toMoneyNumber(direct);
+
+  if (directValue > 0) return directValue;
+
+  return (
+    toMoneyNumber(claim?.paid_amount || claim?.paid || claim?.paid_loss) +
+    toMoneyNumber(claim?.reserve_amount || claim?.reserve || claim?.outstanding_reserve)
+  );
+}
+
 function normalizeProfiles(data: any): AnyObject[] {
   if (Array.isArray(data)) return data;
   if (Array.isArray(data?.profiles)) return data.profiles;
@@ -294,7 +337,26 @@ export default function DashboardPage() {
         }
 
         if (selectedRes.ok) {
-          activeProfile = await safeJson(selectedRes);
+          const fetchedProfile = (await safeJson(selectedRes)) || {};
+          const cachedMatch = getCachedProfiles().find(
+            (item) => item?.policy_number === policyNumberOverride
+          );
+
+          activeProfile = {
+            ...(cachedMatch || {}),
+            ...fetchedProfile,
+            policies:
+              fetchedProfile?.policies ||
+              cachedMatch?.policies ||
+              profile?.policies ||
+              [],
+            validation:
+              fetchedProfile?.validation ||
+              cachedMatch?.validation ||
+              profile?.validation ||
+              {},
+          };
+
           setProfile(activeProfile || {});
           if (activeProfile?.policy_number) {
             updateProfileList([activeProfile]);
@@ -321,7 +383,26 @@ export default function DashboardPage() {
         }
 
         if (profileRes.ok) {
-          activeProfile = await safeJson(profileRes);
+          const fetchedProfile = (await safeJson(profileRes)) || {};
+          const cachedMatch = getCachedProfiles().find(
+            (item) => item?.policy_number === fetchedProfile?.policy_number
+          );
+
+          activeProfile = {
+            ...(cachedMatch || {}),
+            ...fetchedProfile,
+            policies:
+              fetchedProfile?.policies ||
+              cachedMatch?.policies ||
+              profile?.policies ||
+              [],
+            validation:
+              fetchedProfile?.validation ||
+              cachedMatch?.validation ||
+              profile?.validation ||
+              {},
+          };
+
           setProfile(activeProfile || {});
           if (activeProfile?.policy_number) {
             updateProfileList([activeProfile]);
@@ -343,11 +424,13 @@ export default function DashboardPage() {
 
       const hasPolicy = policyNumber && policyNumber !== "Policy Not Set";
 
-      const claimsUrl = hasPolicy
-        ? `${API}/claims/?policy_number=${encodeURIComponent(policyNumber)}`
-        : `${API}/claims/`;
-
-      const claimsRes = await fetch(claimsUrl, { headers: authHeaders() });
+      /*
+        Always fetch all organization claims here.
+        The dashboard filters locally through visibleClaims so account policies
+        like SA-ACCT-580219 can count child-policy claims such as SA-AUTO,
+        SA-GL, SA-CARGO, and SA-WC correctly.
+      */
+      const claimsRes = await fetch(`${API}/claims/`, { headers: authHeaders() });
 
       if (claimsRes.status === 401 || claimsRes.status === 403) {
         clearSession();
@@ -735,6 +818,22 @@ if (submissionBuilderRes.ok) {
 
     const uploadedFileNames = selectedFiles.map((file) => file.name).join(", ");
 
+    if (typeof window !== "undefined") {
+      localStorage.setItem(
+        "lossq_last_upload_review",
+        JSON.stringify({
+          uploaded_at: new Date().toISOString(),
+          uploaded_files: data?.uploaded_files || selectedFiles.map((file) => file.name),
+          profile: data?.profile || {},
+          policies: data?.policies || data?.profile?.policies || [],
+          claims: data?.claims || data?.parsed_claims || data?.saved_claim_rows || [],
+          validation: data?.validation || data?.profile?.validation || {},
+          saved_claims: data?.saved_claims || 0,
+          raw_response: data || {},
+        })
+      );
+    }
+
     setMessage(
       `Upload complete. Saved ${data?.saved_claims || 0} claim(s). New file: ${uploadedFileNames}`
     );
@@ -859,7 +958,7 @@ async function exportExecutiveReport() {
 
       setRenewalMemo(
         `Policy analyzed: ${data?.policy_number || profile.policy_number}\nClaims used: ${
-          data?.claims_used ?? claims.length
+          data?.claims_used ?? visibleClaims.length
         }\n\n${data?.memo || "No memo generated."}`
       );
     } catch {
@@ -937,7 +1036,7 @@ async function exportExecutiveReport() {
 
       setCopilotAnswer(
         `Policy analyzed: ${data?.policy_number || profile.policy_number}\nClaims used: ${
-          data?.claims_used ?? claims.length
+          data?.claims_used ?? visibleClaims.length
         }\n\n${data?.answer || "No answer returned."}`
       );
       setCopilotQuestion(question);
@@ -956,12 +1055,10 @@ async function exportExecutiveReport() {
 const policySchedule = Array.isArray(profile?.policies) ? profile.policies : [];
 
 const activePolicyNumbers = policySchedule
-  .map((item: any) => String(item?.policy_number || "").trim().toUpperCase())
+  .map((item: any) => normalizePolicyNumber(item?.policy_number))
   .filter(Boolean);
 
-const activeAccountPolicyNumber = String(profile?.policy_number || "")
-  .trim()
-  .toUpperCase();
+const activeAccountPolicyNumber = normalizePolicyNumber(profile?.policy_number);
 
 const hasActiveAccount = Boolean(
   profile?.business_name ||
@@ -972,7 +1069,7 @@ const hasActiveAccount = Boolean(
 
 const visibleClaims = hasActiveAccount
   ? claims.filter((claim: any) => {
-      const claimPolicy = String(claim?.policy_number || "").trim().toUpperCase();
+      const claimPolicy = getClaimPolicyNumber(claim);
 
       if (activePolicyNumbers.length > 0) {
         return activePolicyNumbers.includes(claimPolicy);
@@ -992,9 +1089,23 @@ const openClaims = visibleClaims.filter(
 ).length;
 
 const totalIncurred = visibleClaims.reduce(
-  (sum: number, c: any) => sum + Number(c.total_incurred || 0),
+  (sum: number, c: any) => sum + getClaimIncurred(c),
   0
 );
+
+const scheduleClaimStats = visibleClaims.reduce((acc: AnyObject, claim: any) => {
+  const claimPolicy = getClaimPolicyNumber(claim);
+  if (!claimPolicy) return acc;
+
+  if (!acc[claimPolicy]) {
+    acc[claimPolicy] = { count: 0, totalIncurred: 0 };
+  }
+
+  acc[claimPolicy].count += 1;
+  acc[claimPolicy].totalIncurred += getClaimIncurred(claim);
+
+  return acc;
+}, {});
 
 const flaggedClaims = visibleClaims.filter((c: any) => c.flag).length;
 
@@ -1288,9 +1399,19 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
                               </td>
                               <td className="py-3 pr-4">{policy.effective_date || "-"}</td>
                               <td className="py-3 pr-4">{policy.expiration_date || "-"}</td>
-                              <td className="py-3 pr-4">{policy.claim_count ?? 0}</td>
                               <td className="py-3 pr-4">
-                                ${Number(policy.total_incurred || 0).toLocaleString()}
+                                {scheduleClaimStats[normalizePolicyNumber(policy.policy_number)]
+                                  ?.count ??
+                                  policy.claim_count ??
+                                  0}
+                              </td>
+                              <td className="py-3 pr-4">
+                                ${Number(
+                                  scheduleClaimStats[normalizePolicyNumber(policy.policy_number)]
+                                    ?.totalIncurred ??
+                                    policy.total_incurred ??
+                                    0
+                                ).toLocaleString()}
                               </td>
                             </tr>
                           ))}
@@ -1395,6 +1516,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
                 <button onClick={exportCarrierLossRun} className="btn-success">Export Carrier Loss Run</button>
                 <button onClick={exportExecutiveReport} className="btn-success">Export Executive Report</button>
                 <button onClick={generateCarrierPacket} className="btn-purple">Generate Carrier Packet</button>
+                <a href="/review" className="btn-secondary">Review Extraction</a>
                 <a href="/carrier-workspace" className="btn-purple">Carrier Workspace</a>
               </div>
             </section>
@@ -2053,7 +2175,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
       <td>{claim.status || "-"}</td>
       <td>${Number(claim.paid_amount || 0).toLocaleString()}</td>
       <td>${Number(claim.reserve_amount || 0).toLocaleString()}</td>
-      <td>${Number(claim.total_incurred || 0).toLocaleString()}</td>
+      <td>${Number(getClaimIncurred(claim)).toLocaleString()}</td>
       <td>{claim.policy_number || "-"}</td>
 
       <td>
