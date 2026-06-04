@@ -1320,7 +1320,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
               <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
                 <MetricCard title="Risk Level" value={summary?.renewal_risk_level || "Not Rated"} />
                 <MetricCard title="Renewal Probability" value={decision?.renewal_probability !== undefined ? `${decision.renewal_probability}%` : "-"} />
-                <MetricCard title="Carrier Appetite" value={decision?.renewal_probability != null ? `${decision.renewal_probability}%` : "-"
+                <MetricCard title="Carrier Appetite" value={carrierAppetite?.carrier_appetite_score !== undefined ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
                 <MetricCard title="Submission Readiness" value={submissionReadiness?.submission_readiness_score !== undefined ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
               </section>
 
@@ -1565,39 +1565,34 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
           )}
 
           {activeTool === "decision" && (
-            <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-  <MetricCard
-    title="Risk Level"
-    value={summary?.renewal_risk_level || "Not Rated"}
-  />
+            <section className="glass-panel p-6 md:p-8">
+              <p className="text-sm uppercase tracking-[0.25em] text-purple-300 mb-3">
+                Underwriter Decision Engine
+              </p>
 
-  <MetricCard
-    title="Renewal Probability"
-    value={
-      decision?.renewal_probability != null
-        ? `${decision.renewal_probability}%`
-        : "-"
-    }
-  />
+              <h2 className="text-2xl md:text-3xl font-bold mb-6">
+                Carrier Placement Intelligence
+              </h2>
 
-  <MetricCard
-    title="Carrier Appetite"
-    value={
-      carrierAppetite?.carrier_appetite_score != null
-        ? `${carrierAppetite.carrier_appetite_score}/100`
-        : "-"
-    }
-  />
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+                <MetricCard title="Renewal Probability" value={decision?.renewal_probability !== undefined ? `${decision.renewal_probability}%` : "-"} />
+                <MetricCard title="Premium Impact" value={decision?.expected_premium_impact || "-"} />
+                <MetricCard title="Carrier Appetite" value={decision?.carrier_appetite || "-"} />
+                <MetricCard title="Marketability Score" value={decision?.marketability_score !== undefined ? `${decision.marketability_score}/100` : "-"} />
+              </div>
 
-  <MetricCard
-    title="Submission Readiness"
-    value={
-      submissionReadiness?.submission_readiness_score != null
-        ? `${submissionReadiness.submission_readiness_score}/100`
-        : "-"
-    }
-  />
-</section>
+              <TextCard title="Submission Readiness" text={decision?.submission_readiness || "No submission readiness available yet."} />
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                <ListCard title="Underwriting Concerns" items={decision?.underwriting_concerns || ["No underwriting concerns available."]} color="red" />
+                <ListCard title="Best Market Types" items={decision?.best_market_types || ["No market recommendation available."]} color="purple" />
+              </div>
+
+              <div className="mt-6">
+                <TextCard title="Underwriter Decision Summary" text={decision?.underwriter_decision_summary || "No decision summary available yet."} />
+              </div>
+            </section>
+          )}
 
           {activeTool === "carrier-appetite" && (
             <section className="glass-panel p-6 md:p-8">
@@ -1610,7 +1605,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-                <MetricCard title="Appetite Score" value={carrierAppetite?.carrier_appetite_score != null ? `${carrierAppetite.carrier_appetite_score}/100` : "-"
+                <MetricCard title="Appetite Score" value={carrierAppetite?.carrier_appetite_score !== undefined ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
                 <MetricCard title="Appetite Level" value={carrierAppetite?.carrier_appetite_level || "-"} />
                 <MetricCard title="Best Market" value={carrierAppetite?.best_fit_carriers?.[0]?.carrier_type || "-"} />
               </div>
@@ -1661,7 +1656,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Readiness Score" value={submissionReadiness?.submission_readiness_score != null ? `${submissionReadiness.submission_readiness_score}/100` : "-"
+                <MetricCard title="Readiness Score" value={submissionReadiness?.submission_readiness_score !== undefined ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
                 <MetricCard title="Readiness Level" value={submissionReadiness?.submission_readiness_level || "-"} />
                 <MetricCard title="Carrier Confidence" value={submissionReadiness?.carrier_confidence || "-"} />
                 <MetricCard title="Submission Quality" value={submissionReadiness?.submission_quality || "-"} />
