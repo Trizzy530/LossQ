@@ -1289,7 +1289,17 @@ if (submissionBuilderRes.ok) {
       setClaims(claimsData);
     }
 
-    setActiveTool("overview");
+   const uploadedPolicyNumber =
+  data?.profile?.policy_number ||
+  data?.profile?.account_number ||
+  profile?.policy_number ||
+  "";
+
+if (uploadedPolicyNumber) {
+  await loadDashboard(uploadedPolicyNumber);
+}
+
+setActiveTool("overview");
   } catch (error: any) {
     setMessage(
       `Upload failed before completion. Backend may have crashed. Error: ${
