@@ -1,35 +1,41 @@
 from fastapi import APIRouter, Depends, Query
-from fastapi.responses import FileResponse
+from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
-from reportlab.lib.pagesizes import letter, landscape
-from reportlab.lib import colors
-from reportlab.platypus import (
-    SimpleDocTemplate,
-    Table,
-    TableStyle,
-    Paragraph,
-    Spacer,
-    PageBreak,
-    Image,
-    Flowable,
-)
+from datetime import datetime
+from io import BytesIO
+import html
 
+from reportlab.lib import colors
+from reportlab.lib.pagesizes import letter
 from reportlab.lib.styles import getSampleStyleSheet, ParagraphStyle
 from reportlab.lib.units import inch
-from datetime import datetime
-import os
+from reportlab.platypus import (
+    SimpleDocTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+    PageBreak,
+)
 
 from app.database import SessionLocal
-from app.models.claim import Claim
-from app.models.account_profile import AccountProfile
 from app.auth_utils import get_current_user
-from app.routes.claims import build_claim_ai_analysis
-from app.services.audit import record_audit_event
+from app.routes.summary import (
+    build_underwriting_intelligence,
+    get_claims_for_account,
+    data_quality,
+)
+from app.routes.renewal import (
+    build_underwriter_decision_engine,
+    build_carrier_appetite_engine,
+    build_carrier_match_engine,
+    build_premium_forecast_engine,
+    money,
+    is_open,
+    is_litigated,
+)
 
 router = APIRouter(prefix="/reports", tags=["Reports"])
-
-REPORT_DIR = "reports"
-os.makedirs(REPORT_DIR, exist_ok=True)
 
 
 def get_db():
@@ -40,666 +46,237 @@ def get_db():
         db.close()
 
 
-def money(value):
-    return f"${float(value or 0):,.0f}"
+def clean(value):
+    return str(value or "").strip()
+
+
+def dollars(value):
+    return f"${money(value):,.0f}"
 
 
 def pct(value):
-    try:
-        return f"{float(value or 0):.1f}%"
-    except Exception:
-        return "0.0%"
+    if value is None:
+        return "-"
+    return f"{value}%"
 
 
 def safe_text(value):
-    return str(value or "").strip() or "-"
+    return html.escape(clean(value) or "-")
 
 
-def safe_file(value):
-    return (
-        str(value or "selected_policy")
-        .replace("/", "_")
-        .replace("\\", "_")
-        .replace(" ", "_")
-    )
+def claim_attr(claim, *names, default=""):
+    for name in names:
+        value = getattr(claim, name, None)
+        if value not in [None, ""]:
+            return value
+    return default
 
 
-def get_profile(db, org_id, policy_number=None):
-    query = db.query(AccountProfile).filter(AccountProfile.organization_id == org_id)
-
-    if policy_number:
-        profile = query.filter(AccountProfile.policy_number == policy_number).first()
-    else:
-        profile = query.order_by(AccountProfile.id.desc()).first()
-
-    if not profile:
-        return {
-            "business_name": "",
-            "carrier_name": "",
-            "agency_name": "",
-            "policy_number": policy_number or "",
-            "effective_date": "",
-            "expiration_date": "",
-            "evaluation_date": datetime.now().strftime("%m/%d/%Y"),
-        }
-
+def get_metrics(claims):
+    total_claims = len(claims)
+    open_claims = len([c for c in claims if is_open(c)])
+    closed_claims = max(total_claims - open_claims, 0)
+    litigation_claims = len([c for c in claims if is_litigated(c)])
+    flagged_claims = len([c for c in claims if clean(getattr(c, "flag", ""))])
+    total_paid = sum(money(getattr(c, "paid_amount", 0)) for c in claims)
+    total_reserve = sum(money(getattr(c, "reserve_amount", 0)) for c in claims)
+    total_incurred = sum(money(getattr(c, "total_incurred", 0)) for c in claims)
+    largest_loss = max([money(getattr(c, "total_incurred", 0)) for c in claims], default=0)
     return {
-        "business_name": profile.business_name or "",
-        "carrier_name": profile.carrier_name or "",
-        "agency_name": profile.agency_name or "",
-        "policy_number": profile.policy_number or "",
-        "effective_date": profile.effective_date or "",
-        "expiration_date": profile.expiration_date or "",
-        "evaluation_date": profile.evaluation_date or datetime.now().strftime("%m/%d/%Y"),
-    }
-
-
-def get_claims(db, org_id, policy_number=None):
-    query = db.query(Claim).filter(Claim.organization_id == org_id)
-
-    if policy_number:
-        query = query.filter(Claim.policy_number == policy_number)
-
-    return query.order_by(Claim.id.asc()).all()
-
-
-def claim_totals(claims):
-    total_paid = sum(float(c.paid_amount or 0) for c in claims)
-    total_reserve = sum(float(c.reserve_amount or 0) for c in claims)
-    total_incurred = sum(float(c.total_incurred or 0) for c in claims)
-    open_claims = len([c for c in claims if str(c.status or "").lower() == "open"])
-    litigation_claims = len([c for c in claims if c.litigation or c.attorney_assigned])
-
-    return {
-        "claim_count": len(claims),
+        "total_claims": total_claims,
         "open_claims": open_claims,
-        "closed_claims": max(len(claims) - open_claims, 0),
+        "closed_claims": closed_claims,
         "litigation_claims": litigation_claims,
+        "flagged_claims": flagged_claims,
         "total_paid": total_paid,
         "total_reserve": total_reserve,
         "total_incurred": total_incurred,
+        "largest_loss": largest_loss,
     }
 
 
-def renewal_score_from_claims(claims):
-    totals = claim_totals(claims)
-    score = 100
+def build_context(db: Session, current_user: dict, policy_number: str | None):
+    claims, policy_numbers_used, profile = get_claims_for_account(db, current_user, policy_number)
+    quality = data_quality(claims, policy_numbers_used, profile)
+    summary = build_underwriting_intelligence(claims)
+    decision = build_underwriter_decision_engine(claims, policy_number)
+    appetite = build_carrier_appetite_engine(claims, policy_number)
+    carrier_match = build_carrier_match_engine(claims, policy_number)
+    forecast = build_premium_forecast_engine(claims, policy_number)
+    metrics = get_metrics(claims)
 
-    if totals["claim_count"] >= 10:
-        score -= 20
-    elif totals["claim_count"] >= 5:
-        score -= 12
-    elif totals["claim_count"] >= 2:
-        score -= 6
+    # Prefer summary metrics when the guardrail engine returned them.
+    summary_metrics = summary.get("renewal_metrics") or summary.get("metrics") or {}
+    for key in [
+        "total_claims",
+        "open_claims",
+        "closed_claims",
+        "litigation_claims",
+        "flagged_claims",
+        "total_paid",
+        "total_reserve",
+        "total_incurred",
+    ]:
+        if key in summary_metrics:
+            metrics[key] = summary_metrics[key]
 
-    if totals["open_claims"] >= 3:
-        score -= 18
-    elif totals["open_claims"] >= 1:
-        score -= 8
-
-    if totals["litigation_claims"] >= 2:
-        score -= 20
-    elif totals["litigation_claims"] >= 1:
-        score -= 12
-
-    if totals["total_incurred"] >= 250000:
-        score -= 25
-    elif totals["total_incurred"] >= 100000:
-        score -= 16
-    elif totals["total_incurred"] >= 50000:
-        score -= 8
-
-    score = max(0, min(100, score))
-
-    if score >= 80:
-        level = "Low"
-    elif score >= 60:
-        level = "Moderate"
-    elif score >= 40:
-        level = "High"
-    else:
-        level = "Critical"
-
-    return score, level
+    return {
+        "claims": claims,
+        "policy_numbers_used": policy_numbers_used,
+        "profile": profile or {},
+        "quality": quality,
+        "summary": summary,
+        "decision": decision,
+        "appetite": appetite,
+        "carrier_match": carrier_match,
+        "forecast": forecast,
+        "metrics": metrics,
+    }
 
 
-def build_report_styles():
+def make_doc(title: str):
+    buffer = BytesIO()
+    doc = SimpleDocTemplate(
+        buffer,
+        pagesize=letter,
+        rightMargin=0.5 * inch,
+        leftMargin=0.5 * inch,
+        topMargin=0.5 * inch,
+        bottomMargin=0.5 * inch,
+        title=title,
+    )
     styles = getSampleStyleSheet()
-
     styles.add(
         ParagraphStyle(
             name="LossQTitle",
             parent=styles["Title"],
-            fontSize=26,
-            leading=31,
+            fontSize=22,
+            leading=26,
             textColor=colors.HexColor("#0f172a"),
-            spaceAfter=14,
+            spaceAfter=10,
         )
     )
-
     styles.add(
         ParagraphStyle(
-            name="LossQSubtitle",
-            parent=styles["Normal"],
-            fontSize=11,
-            leading=16,
-            textColor=colors.HexColor("#475569"),
-            spaceAfter=12,
-        )
-    )
-
-    styles.add(
-        ParagraphStyle(
-            name="LossQSection",
+            name="LossQHeading",
             parent=styles["Heading2"],
-            fontSize=16,
-            leading=20,
+            fontSize=14,
+            leading=18,
             textColor=colors.HexColor("#1d4ed8"),
-            spaceBefore=10,
+            spaceBefore=12,
             spaceAfter=8,
         )
     )
-
     styles.add(
         ParagraphStyle(
             name="LossQBody",
-            parent=styles["Normal"],
+            parent=styles["BodyText"],
             fontSize=9,
-            leading=13,
-            textColor=colors.HexColor("#1e293b"),
+            leading=12,
+            spaceAfter=6,
         )
     )
-
-    styles.add(
-        ParagraphStyle(
-            name="LossQSmall",
-            parent=styles["Normal"],
-            fontSize=7.5,
-            leading=10,
-            textColor=colors.HexColor("#334155"),
-        )
-    )
-
-    styles.add(
-        ParagraphStyle(
-            name="LossQWhite",
-            parent=styles["Normal"],
-            fontSize=10,
-            leading=13,
-            textColor=colors.white,
-        )
-    )
-
-    return styles
+    return buffer, doc, styles
 
 
-def apply_clean_table_style(table, header_color="#1d4ed8"):
-    table.setStyle(
+def p(text, styles):
+    return Paragraph(safe_text(text), styles["LossQBody"])
+
+
+def heading(text, styles):
+    return Paragraph(safe_text(text), styles["LossQHeading"])
+
+
+def title(text, styles):
+    return Paragraph(safe_text(text), styles["LossQTitle"])
+
+
+def table(data, widths=None, header=True):
+    tbl = Table(data, colWidths=widths, repeatRows=1 if header else 0)
+    tbl.setStyle(
         TableStyle(
             [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor(header_color)),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#1e293b") if header else colors.white),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white if header else colors.black),
                 ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
                 ("FONTSIZE", (0, 0), (-1, -1), 8),
-                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
-                ("BACKGROUND", (0, 1), (-1, -1), colors.HexColor("#f8fafc")),
+                ("LEADING", (0, 0), (-1, -1), 10),
+                ("GRID", (0, 0), (-1, -1), 0.25, colors.HexColor("#cbd5e1")),
                 ("VALIGN", (0, 0), (-1, -1), "TOP"),
-                ("LEFTPADDING", (0, 0), (-1, -1), 6),
-                ("RIGHTPADDING", (0, 0), (-1, -1), 6),
-                ("TOPPADDING", (0, 0), (-1, -1), 5),
-                ("BOTTOMPADDING", (0, 0), (-1, -1), 5),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#f8fafc")]),
+                ("LEFTPADDING", (0, 0), (-1, -1), 4),
+                ("RIGHTPADDING", (0, 0), (-1, -1), 4),
+                ("TOPPADDING", (0, 0), (-1, -1), 4),
+                ("BOTTOMPADDING", (0, 0), (-1, -1), 4),
             ]
         )
     )
-    return table
-
-def add_cover(story, styles, title, subtitle, profile):
-    story.append(Spacer(1, 0.35 * inch))
-
-    logo_path = os.path.join(REPORT_DIR, "lossq-logo-style2.png")
-
-    if os.path.exists(logo_path):
-        story.append(
-            Image(
-                logo_path,
-                width=2.8 * inch,
-                height=0.85 * inch,
-            )
-        )
-        story.append(Spacer(1, 14))
-    else:
-        story.append(Paragraph("LossQ", styles["LossQTitle"]))
-
-    story.append(Paragraph(title, styles["LossQTitle"]))
-    story.append(Paragraph(subtitle, styles["LossQSubtitle"]))
-
-    cover_table = Table(
-        [
-            ["Insured", safe_text(profile["business_name"])],
-            ["Carrier", safe_text(profile["carrier_name"])],
-            ["Agency", safe_text(profile["agency_name"])],
-            ["Policy Number", safe_text(profile["policy_number"])],
-            ["Policy Period", f'{safe_text(profile["effective_date"])} - {safe_text(profile["expiration_date"])}'],
-            ["Evaluation Date", safe_text(profile["evaluation_date"])],
-        ],
-        colWidths=[1.7 * inch, 4.7 * inch],
-    )
-
-    apply_clean_table_style(cover_table)
-
-    story.append(Spacer(1, 18))
-    story.append(cover_table)
-    story.append(Spacer(1, 24))
-
-    story.append(
-        Paragraph(
-            "Prepared by LossQ AI Underwriting Suite for broker, carrier, and renewal strategy review.",
-            styles["LossQSubtitle"],
-        )
-    )
-
-    story.append(PageBreak())
-
-class RenewalScoreBanner(Flowable):
-    def __init__(self, score, risk_level, width=6.5 * inch, height=1.38 * inch):
-        Flowable.__init__(self)
-        self.score = max(0, min(100, int(score or 0)))
-        self.risk_level = safe_text(risk_level).upper()
-        self.width = width
-        self.height = height
-
-    def draw(self):
-        import math
-
-        c = self.canv
-
-        if self.score >= 80:
-            bg = colors.HexColor("#16a34a")
-            border = colors.HexColor("#166534")
-            subtitle = "STRONG RENEWAL POSITION"
-        elif self.score >= 60:
-            bg = colors.HexColor("#eab308")
-            border = colors.HexColor("#854d0e")
-            subtitle = "MODERATE RENEWAL RISK"
-        elif self.score >= 40:
-            bg = colors.HexColor("#dc2626")
-            border = colors.HexColor("#991b1b")
-            subtitle = "ELEVATED RENEWAL RISK"
-        else:
-            bg = colors.HexColor("#dc2626")
-            border = colors.HexColor("#991b1b")
-            subtitle = "HIGH RENEWAL RISK"
-
-        c.setFillColor(bg)
-        c.roundRect(0, 0, self.width, self.height, 10, fill=1, stroke=0)
-
-        c.setStrokeColor(border)
-        c.setLineWidth(1)
-        c.roundRect(0, 0, self.width, self.height, 10, fill=0, stroke=1)
-
-        gauge_left = 0.28 * inch
-        score_left = 1.78 * inch
-        divider_x = 4.38 * inch
-        risk_left = 4.78 * inch
-
-        c.setStrokeColor(colors.white)
-        c.setLineWidth(1.2)
-        c.line(divider_x, 0.18 * inch, divider_x, self.height - 0.18 * inch)
-
-        center_x = gauge_left + 0.58 * inch
-        center_y = 0.47 * inch
-        radius = 0.48 * inch
-
-        c.setStrokeColor(colors.white)
-        c.setLineWidth(7)
-        c.arc(
-            center_x - radius,
-            center_y - radius,
-            center_x + radius,
-            center_y + radius,
-            0,
-            180,
-        )
-
-        c.setLineWidth(4)
-        for tick_angle in [30, 90, 150]:
-            start_x = center_x + math.cos(math.radians(tick_angle)) * (radius - 0.09 * inch)
-            start_y = center_y + math.sin(math.radians(tick_angle)) * (radius - 0.09 * inch)
-            end_x = center_x + math.cos(math.radians(tick_angle)) * radius
-            end_y = center_y + math.sin(math.radians(tick_angle)) * radius
-            c.line(start_x, start_y, end_x, end_y)
-
-        angle = 180 - (self.score / 100) * 180
-        needle_length = 0.42 * inch
-        end_x = center_x + math.cos(math.radians(angle)) * needle_length
-        end_y = center_y + math.sin(math.radians(angle)) * needle_length
-
-        c.setLineWidth(5)
-        c.line(center_x, center_y, end_x, end_y)
-        c.circle(center_x, center_y, 0.09 * inch, fill=1, stroke=0)
-
-        c.setFillColor(colors.white)
-        c.setFont("Helvetica-Bold", 7)
-        c.drawCentredString(center_x, 0.09 * inch, "RISK GAUGE")
-
-        c.setFont("Helvetica-Bold", 14)
-        c.drawCentredString(score_left + 1.18 * inch, 0.98 * inch, "RENEWAL SCORE")
-
-        c.setFont("Helvetica-Bold", 42)
-        c.drawCentredString(score_left + 1.18 * inch, 0.40 * inch, f"{self.score}/100")
-
-        c.setFont("Helvetica-Bold", 14)
-        c.drawCentredString(risk_left + 0.72 * inch, 0.98 * inch, "RISK LEVEL")
-
-        c.setFont("Helvetica-Bold", 25)
-        c.drawCentredString(risk_left + 0.72 * inch, 0.58 * inch, self.risk_level)
-
-        c.setFont("Helvetica-Bold", 8)
-        c.drawCentredString(risk_left + 0.72 * inch, 0.30 * inch, subtitle)
-def add_report_footer(canvas, doc):
-    canvas.saveState()
-
-    created_date = datetime.now().strftime("%m/%d/%Y")
-
-    footer_y = 0.38 * inch
-
-    canvas.setStrokeColor(colors.HexColor("#cbd5e1"))
-    canvas.setLineWidth(0.5)
-    canvas.line(doc.leftMargin, footer_y + 0.18 * inch, letter[0] - doc.rightMargin, footer_y + 0.18 * inch)
-
-    canvas.setFont("Helvetica", 8)
-    canvas.setFillColor(colors.HexColor("#64748b"))
-
-    canvas.drawString(doc.leftMargin, footer_y, "Generated by LossQ")
-
-    canvas.drawCentredString(
-        letter[0] / 2,
-        footer_y,
-        f"Date Created: {created_date}",
-    )
-
-    canvas.drawRightString(
-        letter[0] - doc.rightMargin,
-        footer_y,
-        f"Page {doc.page}",
-    )
-
-    canvas.restoreState()
-
-
-def build_report_header(story, styles, profile):
-    logo_path = os.path.join(REPORT_DIR, "lossq-logo-style2.png")
-
-    if os.path.exists(logo_path):
-        logo = Image(
-            logo_path,
-            width=2.55 * inch,
-            height=0.72 * inch,
-        )
-
-        logo_table = Table(
-            [[logo]],
-            colWidths=[6.5 * inch],
-        )
-
-        logo_table.setStyle(
-            TableStyle(
-                [
-                    ("ALIGN", (0, 0), (-1, -1), "CENTER"),
-                    ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
-                ]
-            )
-        )
-
-        story.append(logo_table)
-        story.append(Spacer(1, 12))
-    else:
-        story.append(Paragraph("LossQ", styles["LossQTitle"]))
-        story.append(Spacer(1, 12))
-
-    title_style = ParagraphStyle(
-        "ModernReportTitle",
-        parent=styles["LossQBody"],
-        fontName="Helvetica-Bold",
-        fontSize=24,
-        leading=30,
-        alignment=1,
-        textColor=colors.HexColor("#0f172a"),
-        spaceAfter=12,
-    )
-
-    policy_style = ParagraphStyle(
-        "ModernPolicyLine",
-        parent=styles["LossQBody"],
-        fontName="Helvetica",
-        fontSize=11,
-        leading=15,
-        alignment=1,
-        textColor=colors.HexColor("#475569"),
-        spaceAfter=10,
-    )
-
-    title = Paragraph("Executive Underwriting Report", title_style)
-
-    policy_line = Paragraph(
-        f'{safe_text(profile["business_name"])} &nbsp; | &nbsp; '
-        f'Policy Period: {safe_text(profile["effective_date"])} - {safe_text(profile["expiration_date"])}',
-        policy_style,
-    )
-
-    story.append(title)
-    story.append(Spacer(1, 8))
-    story.append(policy_line)
-    story.append(Spacer(1, 10))
-
-    line = Table([[""]], colWidths=[6.5 * inch], rowHeights=[0.01 * inch])
-    line.setStyle(
-        TableStyle(
-            [
-                ("LINEBELOW", (0, 0), (-1, -1), 0.75, colors.HexColor("#cbd5e1")),
-            ]
-        )
-    )
-
-    story.append(line)
-    story.append(Spacer(1, 20))
-
-def renewal_badge_color(score):
-    if score >= 80:
-        return "#16a34a"
-    if score >= 60:
-        return "#eab308"
-    return "#dc2626"
-
-
-def build_renewal_score_banner(story, styles, renewal_score, risk_level):
-    story.append(Spacer(1, 6))
-    story.append(RenewalScoreBanner(renewal_score, risk_level))
-    story.append(Spacer(1, 20))
-
-def build_premium_forecast_page(story, styles, totals, renewal_score, risk_level):
-    story.append(PageBreak())
-    story.append(Paragraph("Premium Forecast", styles["LossQSection"]))
-
-    incurred = float(totals.get("total_incurred") or 0)
-    open_claims = int(totals.get("open_claims") or 0)
-    litigation_claims = int(totals.get("litigation_claims") or 0)
-
-    if renewal_score >= 80:
-        forecast_increase = "0% - 8%"
-        confidence = "High"
-        estimated_renewal = max(25000, incurred * 0.35)
-    elif renewal_score >= 60:
-        forecast_increase = "8% - 18%"
-        confidence = "Moderate"
-        estimated_renewal = max(35000, incurred * 0.55)
-    elif renewal_score >= 40:
-        forecast_increase = "18% - 35%"
-        confidence = "Moderate"
-        estimated_renewal = max(50000, incurred * 0.75)
-    else:
-        forecast_increase = "35%+"
-        confidence = "High"
-        estimated_renewal = max(75000, incurred * 1.05)
-
-    forecast_table = Table(
-        [
-            ["Estimated Renewal Premium", "Forecast Increase %", "Confidence Score"],
-            [money(estimated_renewal), forecast_increase, confidence],
-        ],
-        colWidths=[2.15 * inch, 2.15 * inch, 2.15 * inch],
-    )
-
-    apply_clean_table_style(forecast_table, "#0f172a")
-    story.append(forecast_table)
-    story.append(Spacer(1, 16))
-
-    forecast_text = (
-        f"LossQ estimates renewal pricing pressure based on total incurred losses of "
-        f"{money(incurred)}, {open_claims} open claim(s), {litigation_claims} litigation or attorney-driven "
-        f"claim(s), and an overall renewal risk level of {risk_level}. This forecast should be reviewed "
-        f"against the actual expiring premium before final carrier negotiation."
-    )
-
-    story.append(Paragraph(forecast_text, styles["LossQBody"]))
-
-
-def build_key_renewal_drivers_page(story, styles, totals):
-    story.append(Spacer(1, 22))
-    story.append(Paragraph("Key Renewal Drivers", styles["LossQSection"]))
-
-    open_claims = int(totals.get("open_claims") or 0)
-    litigation_claims = int(totals.get("litigation_claims") or 0)
-    total_incurred = float(totals.get("total_incurred") or 0)
-    total_reserve = float(totals.get("total_reserve") or 0)
-
-    large_loss_note = "Yes" if total_incurred >= 100000 else "No"
-    reserve_concern = "Elevated" if total_reserve >= 25000 else "Manageable"
-
-    driver_table = Table(
-        [
-            ["Driver", "Result", "Underwriting Meaning"],
-            [
-                "Open Claims",
-                str(open_claims),
-                "Open claims may create uncertainty around ultimate loss development.",
-            ],
-            [
-                "Litigation",
-                str(litigation_claims),
-                "Attorney involvement can increase severity and carrier concern.",
-            ],
-            [
-                "Large Losses",
-                large_loss_note,
-                "Large incurred losses can place upward pressure on renewal pricing.",
-            ],
-            [
-                "Reserve Concerns",
-                reserve_concern,
-                f"Current reserves total {money(total_reserve)}.",
-            ],
-        ],
-        colWidths=[1.45 * inch, 1.15 * inch, 3.9 * inch],
-    )
-
-    apply_clean_table_style(driver_table, "#1d4ed8")
-    story.append(driver_table)
-    story.append(Spacer(1, 16))
-
-    story.append(
-        Paragraph(
-            "These drivers should be addressed directly in the renewal submission with updated claim status, "
-            "reserve commentary, corrective actions, and broker positioning.",
-            styles["LossQBody"],
-        )
+    return tbl
+
+
+def pdf_response(buffer: BytesIO, filename: str):
+    buffer.seek(0)
+    return StreamingResponse(
+        buffer,
+        media_type="application/pdf",
+        headers={"Content-Disposition": f'attachment; filename="{filename}"'},
     )
 
 
-def build_carrier_appetite_page(story, styles, renewal_score, risk_level):
-    story.append(PageBreak())
-    story.append(Paragraph("Carrier Appetite Analysis", styles["LossQSection"]))
-
-    if renewal_score >= 80:
-        preferred = "Standard admitted markets, preferred commercial carriers"
-        standard = "Regional carriers, package markets"
-        excess = "Generally not required unless coverage complexity exists"
-        commentary = "The account should be marketable to standard carriers if submission documentation is complete."
-    elif renewal_score >= 60:
-        preferred = "Selective standard carriers with strong broker narrative"
-        standard = "Regional and program markets"
-        excess = "Consider as backup option"
-        commentary = "The account may remain marketable, but underwriters will expect clear claim explanations."
-    elif renewal_score >= 40:
-        preferred = "Limited standard appetite"
-        standard = "Program markets and specialty carriers"
-        excess = "Likely needed for competitive terms"
-        commentary = "The account may face pricing pressure and reduced appetite from preferred carriers."
-    else:
-        preferred = "Very limited"
-        standard = "Specialty markets only"
-        excess = "Strongly recommended"
-        commentary = "The account should be positioned carefully with a complete corrective action and claims narrative package."
-
-    appetite_table = Table(
-        [
-            ["Market Type", "Appetite"],
-            ["Preferred Markets", preferred],
-            ["Standard Markets", standard],
-            ["Excess Markets", excess],
-            ["Risk Level", risk_level],
-        ],
-        colWidths=[1.8 * inch, 4.7 * inch],
-    )
-
-    apply_clean_table_style(appetite_table, "#0f766e")
-    story.append(appetite_table)
-    story.append(Spacer(1, 16))
-    story.append(Paragraph(commentary, styles["LossQBody"]))
-
-
-def build_broker_action_plan_page(story, styles, totals):
-    story.append(Spacer(1, 22))
-    story.append(Paragraph("Broker Action Plan", styles["LossQSection"]))
-
-    actions = [
-        "Obtain updated claim status notes for all open claims before marketing the account.",
-        "Request reserve reviews or adjuster commentary for claims with active reserves.",
-        "Prepare large-loss explanations and corrective action summaries for carrier review.",
-        "Package litigation updates, attorney status, and expected resolution timelines.",
-        "Submit to preferred, standard, and backup specialty markets with a complete LossQ narrative package.",
+def profile_rows(profile, policy_number):
+    return [
+        ["Insured", clean(profile.get("business_name")) or "Selected Account"],
+        ["Writing Carrier", clean(profile.get("writing_carrier")) or clean(profile.get("carrier_name")) or "-"],
+        ["Carrier", clean(profile.get("carrier_name")) or "-"],
+        ["Producing Agency", clean(profile.get("agency_name")) or "-"],
+        ["Account / Policy", clean(policy_number) or clean(profile.get("policy_number")) or "-"],
+        ["Account Number", clean(profile.get("account_number")) or clean(profile.get("customer_number")) or "-"],
+        ["Effective Date", clean(profile.get("effective_date")) or "-"],
+        ["Expiration Date", clean(profile.get("expiration_date")) or "-"],
+        ["Evaluation Date", clean(profile.get("evaluation_date")) or datetime.utcnow().date().isoformat()],
     ]
 
-    action_rows = [["#", "Recommended Action"]]
 
-    for index, action in enumerate(actions, start=1):
-        action_rows.append([str(index), Paragraph(action, styles["LossQBody"])])
+def policy_schedule_table(profile, policy_numbers_used):
+    policies = profile.get("policies") or []
+    rows = [["Policy Type", "Policy Number", "Carrier", "Effective", "Expiration"]]
+    if policies:
+        for item in policies:
+            rows.append(
+                [
+                    clean(item.get("policy_type") or item.get("line_coverage") or item.get("line_of_business") or "Needs Review"),
+                    clean(item.get("policy_number")) or "-",
+                    clean(item.get("writing_carrier") or item.get("carrier") or profile.get("carrier_name")) or "-",
+                    clean(item.get("effective_date")) or "-",
+                    clean(item.get("expiration_date")) or "-",
+                ]
+            )
+    else:
+        for pn in policy_numbers_used:
+            rows.append(["Account Policy", pn, clean(profile.get("carrier_name")) or "-", "-", "-"])
+    return rows
 
-    action_table = Table(
-        action_rows,
-        colWidths=[0.55 * inch, 5.95 * inch],
-    )
 
-    apply_clean_table_style(action_table, "#7c3aed")
-    story.append(action_table)
-    story.append(Spacer(1, 16))
-
-    story.append(
-        Paragraph(
-            "This action plan is designed to strengthen the account's market presentation before renewal negotiation.",
-            styles["LossQBody"],
+def top_claim_rows(claims, max_rows=15):
+    rows = [["Claim #", "Line", "Status", "Paid", "Reserve", "Total", "Policy", "Flag"]]
+    sorted_claims = sorted(claims, key=lambda c: money(getattr(c, "total_incurred", 0)), reverse=True)[:max_rows]
+    if not sorted_claims:
+        rows.append(["No claims", "-", "-", "$0", "$0", "$0", "-", "-"])
+        return rows
+    for c in sorted_claims:
+        rows.append(
+            [
+                clean(claim_attr(c, "claim_number", default="-")),
+                clean(claim_attr(c, "line_of_business", "claim_type", default="-")),
+                clean(claim_attr(c, "status", default="-")),
+                dollars(getattr(c, "paid_amount", 0)),
+                dollars(getattr(c, "reserve_amount", 0)),
+                dollars(getattr(c, "total_incurred", 0)),
+                clean(claim_attr(c, "policy_number", default="-")),
+                clean(claim_attr(c, "flag", default="-")) or "-",
+            ]
         )
-    )
-
-
-
-@router.get("/underwriting-pdf")
-def underwriting_pdf(
-    policy_number: str | None = Query(default=None),
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    return executive_report_pdf(policy_number, db, current_user)
+    return rows
 
 
 @router.get("/executive-report-pdf")
@@ -708,183 +285,95 @@ def executive_report_pdf(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    org_id = current_user["organization_id"]
-    claims = get_claims(db, org_id, policy_number)
-    profile = get_profile(db, org_id, policy_number)
-    totals = claim_totals(claims)
-    renewal_score, risk_level = renewal_score_from_claims(claims)
+    ctx = build_context(db, current_user, policy_number)
+    profile = ctx["profile"]
+    metrics = ctx["metrics"]
+    summary = ctx["summary"]
+    forecast = ctx["forecast"]
+    appetite = ctx["appetite"]
+    carrier_match = ctx["carrier_match"]
+    claims = ctx["claims"]
 
-    safe_policy = safe_file(profile["policy_number"])
-    file_path = os.path.join(REPORT_DIR, f"lossq_executive_report_{safe_policy}.pdf")
-
-    doc = SimpleDocTemplate(
-        file_path,
-        pagesize=letter,
-        rightMargin=42,
-        leftMargin=42,
-        topMargin=42,
-        bottomMargin=42,
-    )
-
-    styles = build_report_styles()
+    buffer, doc, styles = make_doc("LossQ Executive Underwriting Report")
     story = []
+    insured = clean(profile.get("business_name")) or "Selected Account"
+    risk_level = clean(summary.get("renewal_risk_level") or summary.get("risk_level") or "Not Rated")
+    renewal_score = summary.get("renewal_score")
 
-    add_cover(
-        story,
-        styles,
-        "Executive Underwriting Report",
-        "Boardroom-style renewal, claims, and underwriting intelligence summary.",
-        profile,
-    )
+    story.append(title("Executive Underwriting Report", styles))
+    story.append(p("Boardroom-style renewal, claims, and underwriting intelligence summary.", styles))
+    story.append(table(profile_rows(profile, policy_number or profile.get("policy_number")), widths=[1.6 * inch, 5.2 * inch], header=False))
 
-  
-
-    summary_text = (
-        f"{safe_text(profile['business_name'])} currently has {totals['claim_count']} claim(s) "
-        f"associated with this policy period. Total incurred loss is {money(totals['total_incurred'])}, "
-        f"with paid losses of {money(totals['total_paid'])} and active reserves of "
-        f"{money(totals['total_reserve'])}. LossQ assigns this account a renewal score of "
-        f"{renewal_score}/100 with a {risk_level} renewal risk level."
-    )
-
-    build_report_header(story, styles, profile)
-
-    build_renewal_score_banner(story, styles, renewal_score, risk_level)
-    
-
-    story.append(Paragraph("Executive Summary", styles["LossQSection"]))
-    story.append(Paragraph(summary_text, styles["LossQBody"]))
-    story.append(Spacer(1, 14))
-
-    metrics = Table(
-
-        [
-            ["Renewal Score", "Risk Level", "Total Claims", "Open Claims"],
-            [f"{renewal_score}/100", risk_level, str(totals["claim_count"]), str(totals["open_claims"])],
-            ["Total Paid", "Total Reserve", "Total Incurred", "Litigation Claims"],
+    story.append(heading("Risk Gauge", styles))
+    story.append(
+        table(
             [
-                money(totals["total_paid"]),
-                money(totals["total_reserve"]),
-                money(totals["total_incurred"]),
-                str(totals["litigation_claims"]),
+                ["Renewal Score", "Risk Level", "Total Claims", "Open Claims"],
+                [f"{renewal_score}/100" if renewal_score is not None else "-", risk_level, metrics["total_claims"], metrics["open_claims"]],
+                ["Total Paid", "Total Reserve", "Total Incurred", "Litigation Claims"],
+                [dollars(metrics["total_paid"]), dollars(metrics["total_reserve"]), dollars(metrics["total_incurred"]), metrics["litigation_claims"]],
             ],
-        ],
-        colWidths=[1.6 * inch, 1.6 * inch, 1.6 * inch, 1.6 * inch],
+            widths=[1.7 * inch] * 4,
+        )
     )
-    apply_clean_table_style(metrics, "#0f172a")
-    story.append(metrics)
-    story.append(Spacer(1, 14))
 
-    build_premium_forecast_page(story, styles, totals, renewal_score, risk_level)
-    build_key_renewal_drivers_page(story, styles, totals)
-    build_carrier_appetite_page(story, styles, renewal_score, risk_level)
-    build_broker_action_plan_page(story, styles, totals)
+    story.append(heading("Executive Summary", styles))
+    story.append(p(summary.get("renewal_summary") or summary.get("summary") or f"{insured} has {metrics['total_claims']} claim(s) and total incurred losses of {dollars(metrics['total_incurred'])}.", styles))
 
-    story.append(Spacer(1, 14))
+    story.append(heading("Premium Forecast", styles))
+    story.append(
+        table(
+            [
+                ["Current Premium", "Estimated Renewal", "Increase %", "Confidence"],
+                [
+                    dollars(forecast.get("current_premium")),
+                    dollars(forecast.get("expected_renewal_premium")),
+                    pct(forecast.get("expected_increase_percent")),
+                    pct(forecast.get("confidence_score")),
+                ],
+            ],
+            widths=[1.7 * inch] * 4,
+        )
+    )
+    story.append(p(forecast.get("forecast_summary") or "No premium forecast summary available.", styles))
 
-    drivers = []
-    if totals["open_claims"] > 0:
-        drivers.append(f"{totals['open_claims']} open claim(s) requiring carrier explanation.")
-    if totals["litigation_claims"] > 0:
-        drivers.append(f"{totals['litigation_claims']} claim(s) involve litigation or attorney assignment.")
-    if totals["total_reserve"] > 0:
-        drivers.append(f"Outstanding reserves total {money(totals['total_reserve'])}.")
-    if totals["total_incurred"] >= 100000:
-        drivers.append("Large-loss severity may create underwriting pressure.")
-    if not drivers:
-        drivers.append("No major renewal pressure indicators detected from current claim data.")
+    story.append(heading("Carrier Appetite and Match", styles))
+    story.append(
+        table(
+            [
+                ["Appetite Score", "Appetite Level", "Recommended Carrier", "Match Score"],
+                [
+                    f"{appetite.get('carrier_appetite_score')}/100" if appetite.get("carrier_appetite_score") is not None else "-",
+                    appetite.get("carrier_appetite_level") or "-",
+                    carrier_match.get("recommended_carrier") or "-",
+                    f"{carrier_match.get('recommended_score')}/100" if carrier_match.get("recommended_score") is not None else "-",
+                ],
+            ],
+            widths=[1.7 * inch] * 4,
+        )
+    )
+    story.append(p(carrier_match.get("carrier_match_summary") or appetite.get("placement_summary") or "No carrier match summary available.", styles))
 
-    for item in drivers:
-        story.append(Paragraph(f"• {item}", styles["LossQBody"]))
+    story.append(heading("Policy Schedule", styles))
+    story.append(table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.5 * inch, 1.7 * inch, 1.5 * inch, 1.0 * inch, 1.0 * inch]))
+
+    story.append(PageBreak())
+    story.append(heading("Top Claims by Total Incurred", styles))
+    story.append(table(top_claim_rows(claims), widths=[0.9 * inch, 1.0 * inch, 0.7 * inch, 0.8 * inch, 0.8 * inch, 0.8 * inch, 1.25 * inch, 1.0 * inch]))
+
+    story.append(heading("Broker Action Plan", styles))
+    actions = summary.get("recommended_actions") or summary.get("renewal_drivers") or []
+    if not actions:
+        actions = ["Prepare current loss runs, open claim updates, reserve commentary, litigation status, and corrective action details before market submission."]
+    for index, action in enumerate(actions, start=1):
+        story.append(p(f"{index}. {action}", styles))
 
     story.append(Spacer(1, 12))
+    story.append(p("Disclaimer: This report is generated from available claim and account data inside LossQ. All figures should be reviewed against current carrier loss runs and confirmed before formal submission.", styles))
 
-    story.append(Paragraph("Broker Recommendation", styles["LossQSection"]))
+    doc.build(story)
+    return pdf_response(buffer, "lossq_executive_underwriting_report.pdf")
 
-    recommendation = (
-        "Prepare a complete renewal submission with clear explanations for open claims, reserve strategy, "
-        "large losses, and litigation activity. Include corrective action details, updated claim statuses, "
-        "and a concise broker narrative positioning the account for the best available carrier appetite."
-    )
-    story.append(Paragraph(recommendation, styles["LossQBody"]))
-    story.append(Spacer(1, 14))
-    
-    story.append(PageBreak())
-    story.append(Paragraph("Top Claims by Total Incurred", styles["LossQSection"]))
-
-    top_claims = sorted(claims, key=lambda c: float(c.total_incurred or 0), reverse=True)[:8]
-
-    claim_rows = [["Claim #", "Line", "Status", "Paid", "Reserve", "Total", "Flag"]]
-    for c in top_claims:
-        claim_rows.append(
-            [
-                safe_text(c.claim_number),
-                safe_text(c.line_of_business),
-                safe_text(c.status),
-                money(c.paid_amount),
-                money(c.reserve_amount),
-                money(c.total_incurred),
-                Paragraph(safe_text(c.flag), styles["LossQSmall"]),
-            ]
-        )
-
-    if len(claim_rows) == 1:
-        claim_rows.append(["No claims", "-", "-", "$0", "$0", "$0", "-"])
-
-    claim_table = Table(
-        claim_rows,
-         colWidths=[
-             1.0 * inch,
-             1.15 * inch,
-             0.85 * inch,
-             0.85 * inch,
-             0.85 * inch,
-             0.95 * inch,
-             1.75 * inch,
-],
-    )
-    apply_clean_table_style(claim_table, "#1d4ed8")
-    story.append(claim_table)
-    story.append(Spacer(1, 14))
-
-    story.append(Paragraph("Executive Closing Summary", styles["LossQSection"]))
-    story.append(
-        Paragraph(
-            "This report is designed for executive review and renewal strategy planning. "
-            "It should be used alongside current carrier loss runs, updated claim notes, "
-            "client operations information, and broker market knowledge.",
-            styles["LossQBody"],
-        )
-    )
-
-    doc.build(
-        story,
-        onFirstPage=add_report_footer,
-        onLaterPages=add_report_footer,
-    )
-
-    record_audit_event(
-        db,
-        current_user=current_user,
-        action="executive_report_generated",
-        resource_type="report",
-        resource_id=safe_policy,
-        details={
-            "report_type": "executive_underwriting_report",
-            "policy_number": profile["policy_number"],
-            "business_name": profile["business_name"],
-            "renewal_score": renewal_score,
-            "risk_level": risk_level,
-            "claim_count": totals["claim_count"],
-            "total_incurred": totals["total_incurred"],
-        },
-    )
-
-    return FileResponse(
-        file_path,
-        media_type="application/pdf",
-        filename=f"lossq_executive_report_{safe_policy}.pdf",
-    )
 
 @router.get("/carrier-packet-pdf")
 def carrier_packet_pdf(
@@ -892,524 +381,117 @@ def carrier_packet_pdf(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    org_id = current_user["organization_id"]
-    claims = get_claims(db, org_id, policy_number)
-    profile = get_profile(db, org_id, policy_number)
-    totals = claim_totals(claims)
-    renewal_score, risk_level = renewal_score_from_claims(claims)
+    ctx = build_context(db, current_user, policy_number)
+    profile = ctx["profile"]
+    metrics = ctx["metrics"]
+    summary = ctx["summary"]
+    forecast = ctx["forecast"]
+    carrier_match = ctx["carrier_match"]
+    claims = ctx["claims"]
 
-    safe_policy = safe_file(profile["policy_number"])
-    file_path = os.path.join(REPORT_DIR, f"lossq_carrier_packet_{safe_policy}.pdf")
-
-    doc = SimpleDocTemplate(
-        file_path,
-        pagesize=letter,
-        rightMargin=42,
-        leftMargin=42,
-        topMargin=42,
-        bottomMargin=42,
-    )
-
-    styles = build_report_styles()
+    buffer, doc, styles = make_doc("LossQ Carrier Submission Packet")
     story = []
+    insured = clean(profile.get("business_name")) or "Selected Account"
+    risk_level = clean(summary.get("renewal_risk_level") or "Not Rated")
+    renewal_score = summary.get("renewal_score")
 
-    add_cover(
-        story,
-        styles,
-        "Carrier Submission Packet",
-        "Underwriter-ready account narrative, loss analysis, claim explanations, and broker positioning.",
-        profile,
-    )
+    story.append(title("Carrier Submission Packet", styles))
+    story.append(p("Underwriter-ready account narrative, loss analysis, claim explanations, and broker positioning.", styles))
+    story.append(table(profile_rows(profile, policy_number or profile.get("policy_number")), widths=[1.6 * inch, 5.2 * inch], header=False))
 
-    story.append(Paragraph("Insured Overview", styles["LossQSection"]))
-
-    overview_table = Table(
-        [
-            ["Insured", safe_text(profile["business_name"])],
-            ["Writing Carrier", safe_text(profile["carrier_name"])],
-            ["Producing Agency", safe_text(profile["agency_name"])],
-            ["Policy Number", safe_text(profile["policy_number"])],
-            ["Policy Period", f'{safe_text(profile["effective_date"])} - {safe_text(profile["expiration_date"])}'],
-            ["Evaluation Date", safe_text(profile["evaluation_date"])],
-        ],
-        colWidths=[1.7 * inch, 4.7 * inch],
-    )
-    apply_clean_table_style(overview_table, "#0f172a")
-    story.append(overview_table)
-    story.append(Spacer(1, 14))
-
-    story.append(Paragraph("Submission Snapshot", styles["LossQSection"]))
-
-    snapshot = Table(
-        [
-            ["Renewal Score", "Risk Level", "Claim Count", "Open Claims"],
-            [f"{renewal_score}/100", risk_level, str(totals["claim_count"]), str(totals["open_claims"])],
-            ["Paid Losses", "Open Reserves", "Total Incurred", "Litigation Claims"],
+    story.append(heading("Submission Snapshot", styles))
+    story.append(
+        table(
             [
-                money(totals["total_paid"]),
-                money(totals["total_reserve"]),
-                money(totals["total_incurred"]),
-                str(totals["litigation_claims"]),
+                ["Renewal Score", "Risk Level", "Claim Count", "Open Claims"],
+                [f"{renewal_score}/100" if renewal_score is not None else "-", risk_level, metrics["total_claims"], metrics["open_claims"]],
+                ["Paid Losses", "Open Reserves", "Total Incurred", "Litigation Claims"],
+                [dollars(metrics["total_paid"]), dollars(metrics["total_reserve"]), dollars(metrics["total_incurred"]), metrics["litigation_claims"]],
             ],
-        ],
-        colWidths=[1.6 * inch, 1.6 * inch, 1.6 * inch, 1.6 * inch],
-    )
-    apply_clean_table_style(snapshot, "#1d4ed8")
-    story.append(snapshot)
-    story.append(Spacer(1, 14))
-
-    story.append(Paragraph("Broker Marketing Narrative", styles["LossQSection"]))
-
-    broker_narrative = (
-        f"This submission package presents {safe_text(profile['business_name'])} for carrier underwriting review. "
-        f"The account has {totals['claim_count']} claim(s), {totals['open_claims']} open claim(s), "
-        f"and total incurred losses of {money(totals['total_incurred'])}. "
-        f"LossQ classifies the account as {risk_level} renewal risk with a score of {renewal_score}/100. "
-        f"The broker should position this submission with clear claim explanations, current reserve updates, "
-        f"litigation status, and any corrective actions taken by the insured."
-    )
-    story.append(Paragraph(broker_narrative, styles["LossQBody"]))
-    story.append(Spacer(1, 14))
-
-    story.append(Paragraph("Loss Summary", styles["LossQSection"]))
-
-    loss_summary = Table(
-        [
-            ["Metric", "Value"],
-            ["Total Claims", str(totals["claim_count"])],
-            ["Open Claims", str(totals["open_claims"])],
-            ["Closed Claims", str(totals["closed_claims"])],
-            ["Litigation / Attorney Claims", str(totals["litigation_claims"])],
-            ["Total Paid", money(totals["total_paid"])],
-            ["Total Reserve", money(totals["total_reserve"])],
-            ["Total Incurred", money(totals["total_incurred"])],
-        ],
-        colWidths=[2.5 * inch, 3.5 * inch],
-    )
-    apply_clean_table_style(loss_summary, "#0f766e")
-    story.append(loss_summary)
-    story.append(PageBreak())
-
-    story.append(Paragraph("Claim Narratives & Underwriting Notes", styles["LossQSection"]))
-
-    top_claims = sorted(claims, key=lambda c: float(c.total_incurred or 0), reverse=True)
-
-    if not top_claims:
-        story.append(Paragraph("No claims are available for this submission package.", styles["LossQBody"]))
-
-    for claim in top_claims:
-        analysis = build_claim_ai_analysis(claim)
-
-        claim_title = (
-            f"Claim {safe_text(claim.claim_number)} | "
-            f"{safe_text(claim.line_of_business)} | "
-            f"{money(claim.total_incurred)}"
+            widths=[1.7 * inch] * 4,
         )
+    )
 
-        story.append(Paragraph(claim_title, styles["LossQSection"]))
+    story.append(heading("Broker Marketing Narrative", styles))
+    story.append(p(summary.get("broker_recommendation") or summary.get("renewal_summary") or f"This submission presents {insured} for carrier underwriting review based on {metrics['total_claims']} account-specific claim(s).", styles))
 
-        claim_table = Table(
+    story.append(heading("Loss Summary", styles))
+    story.append(
+        table(
             [
-                ["Status", "Date of Loss", "Paid", "Reserve", "Total Incurred"],
-                [
-                    safe_text(claim.status),
-                    safe_text(claim.date_of_loss),
-                    money(claim.paid_amount),
-                    money(claim.reserve_amount),
-                    money(claim.total_incurred),
-                ],
+                ["Metric", "Value"],
+                ["Total Claims", metrics["total_claims"]],
+                ["Open Claims", metrics["open_claims"]],
+                ["Closed Claims", metrics["closed_claims"]],
+                ["Litigation / Attorney Claims", metrics["litigation_claims"]],
+                ["Flagged Claims", metrics["flagged_claims"]],
+                ["Total Paid", dollars(metrics["total_paid"])],
+                ["Total Reserve", dollars(metrics["total_reserve"])],
+                ["Total Incurred", dollars(metrics["total_incurred"])],
             ],
-            colWidths=[1.2 * inch, 1.3 * inch, 1.2 * inch, 1.2 * inch, 1.4 * inch],
+            widths=[2.4 * inch, 4.3 * inch],
         )
-        apply_clean_table_style(claim_table, "#334155")
-        story.append(claim_table)
-        story.append(Spacer(1, 8))
+    )
 
-        story.append(Paragraph("<b>Underwriter Narrative</b>", styles["LossQSmall"]))
-        story.append(
-            Paragraph(
-                analysis.get("underwriter_narrative")
-                or analysis.get("ai_summary")
-                or "No underwriter narrative available.",
-                styles["LossQBody"],
-            )
-        )
-        story.append(Spacer(1, 6))
-
-        story.append(Paragraph("<b>Risk Summary</b>", styles["LossQSmall"]))
-        story.append(
-            Paragraph(
-                analysis.get("risk_summary")
-                or "No risk summary available.",
-                styles["LossQBody"],
-            )
-        )
-        story.append(Spacer(1, 6))
-
-        story.append(Paragraph("<b>Litigation Analysis</b>", styles["LossQSmall"]))
-        story.append(
-            Paragraph(
-                analysis.get("litigation_analysis")
-                or analysis.get("litigation_exposure")
-                or "No litigation analysis available.",
-                styles["LossQBody"],
-            )
-        )
-        story.append(Spacer(1, 6))
-
-        talking_points = analysis.get("broker_talking_points") or analysis.get("broker_actions") or []
-        if talking_points:
-            story.append(Paragraph("<b>Broker Talking Points</b>", styles["LossQSmall"]))
-            for point in talking_points:
-                story.append(Paragraph(f"• {point}", styles["LossQBody"]))
-
-        story.append(Spacer(1, 14))
+    story.append(heading("Policy Schedule", styles))
+    story.append(table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.5 * inch, 1.7 * inch, 1.5 * inch, 1.0 * inch, 1.0 * inch]))
 
     story.append(PageBreak())
-    story.append(Paragraph("Renewal Strategy", styles["LossQSection"]))
+    story.append(heading("Claim Narratives and Underwriting Notes", styles))
+    story.append(table(top_claim_rows(claims, max_rows=25), widths=[0.9 * inch, 1.0 * inch, 0.7 * inch, 0.8 * inch, 0.8 * inch, 0.8 * inch, 1.25 * inch, 1.0 * inch]))
 
-    strategy_items = []
+    story.append(heading("Renewal Strategy", styles))
+    strategy = summary.get("broker_recommendation") or "Provide updated loss runs, open-claim status, reserve explanations, litigation updates, and corrective-action documentation before approaching markets."
+    story.append(p(strategy, styles))
+    story.append(p(f"Recommended market: {carrier_match.get('recommended_carrier') or 'To be determined'} with match score {carrier_match.get('recommended_score', '-')}/100.", styles))
+    story.append(p(f"Premium forecast: {dollars(forecast.get('expected_renewal_premium'))}, modeled change {forecast.get('expected_increase_percent', '-')}%.", styles))
 
-    if totals["open_claims"] > 0:
-        strategy_items.append("Provide updated open-claim status and expected closure timeline.")
-    if totals["total_reserve"] > 0:
-        strategy_items.append("Explain current reserve strategy and expected reserve movement.")
-    if totals["litigation_claims"] > 0:
-        strategy_items.append("Include defense counsel update and litigation posture.")
-    if totals["total_incurred"] >= 100000:
-        strategy_items.append("Prepare large-loss explanation and corrective action summary.")
-    if not strategy_items:
-        strategy_items.append("Position the account as clean, controlled, and ready for standard market review.")
-
-    for item in strategy_items:
-        story.append(Paragraph(f"• {item}", styles["LossQBody"]))
-
-    story.append(Spacer(1, 14))
-
-    story.append(Paragraph("Carrier Submission Email Draft", styles["LossQSection"]))
-
+    story.append(heading("Carrier Submission Email Draft", styles))
     email_text = (
-        f"Please find attached the renewal submission package for {safe_text(profile['business_name'])}. "
-        f"The account reflects {totals['claim_count']} claim(s), total incurred losses of "
-        f"{money(totals['total_incurred'])}, and a LossQ renewal score of {renewal_score}/100. "
-        f"We have included claim narratives, reserve commentary, litigation review, and broker positioning "
-        f"to support underwriting review. Please advise if additional loss control, payroll, vehicle, or operations "
-        f"information is needed for quoting consideration."
+        f"Subject: Renewal Submission - {insured}\n\n"
+        f"Please find attached the renewal submission package for {insured}. "
+        f"LossQ reviewed {metrics['total_claims']} account-specific claim(s), "
+        f"{metrics['open_claims']} open claim(s), total incurred losses of {dollars(metrics['total_incurred'])}, "
+        f"reserves of {dollars(metrics['total_reserve'])}, and {metrics['litigation_claims']} litigation-related claim(s). "
+        f"The modeled renewal score is {renewal_score}/100 and the account is rated {risk_level}. "
+        f"Please advise if additional loss-control, vehicle, payroll, operations, reserve, or litigation information is needed for quoting consideration."
     )
-    story.append(Paragraph(email_text, styles["LossQBody"]))
+    story.append(p(email_text, styles))
 
-    story.append(Spacer(1, 18))
-    story.append(
-        Paragraph(
-            "Disclaimer: This carrier packet is generated from available claim and account data inside LossQ. "
-            "All figures should be reviewed against current carrier loss runs and confirmed before formal submission.",
-            styles["LossQSmall"],
-        )
-    )
+    story.append(Spacer(1, 12))
+    story.append(p("Disclaimer: This carrier packet is generated from available claim and account data inside LossQ. All figures should be reviewed against current carrier loss runs and confirmed before formal submission.", styles))
 
-        
     doc.build(story)
-
-    record_audit_event(
-        db,
-        current_user=current_user,
-        action="carrier_packet_generated",
-        resource_type="report",
-        resource_id=safe_policy,
-        details={
-            "report_type": "carrier_submission_packet",
-            "policy_number": profile["policy_number"],
-            "business_name": profile["business_name"],
-            "renewal_score": renewal_score,
-            "risk_level": risk_level,
-            "claim_count": totals["claim_count"],
-            "total_incurred": totals["total_incurred"],
-        },
-    )
-
-    return FileResponse(
-        file_path,
-        media_type="application/pdf",
-        filename=f"lossq_carrier_packet_{safe_policy}.pdf",
-    )
+    return pdf_response(buffer, "lossq_carrier_submission_packet.pdf")
 
 
-@router.get("/carrier-packet-pdf")
-def carrier_packet_pdf(
+@router.get("/loss-run-template-pdf")
+def loss_run_template_pdf(
     policy_number: str | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    org_id = current_user["organization_id"]
+    ctx = build_context(db, current_user, policy_number)
+    profile = ctx["profile"]
+    claims = ctx["claims"]
+    metrics = ctx["metrics"]
 
-    claims = get_claims(db, org_id, policy_number)
-    profile = get_profile(db, org_id, policy_number)
-
-    safe_policy = safe_file(profile["policy_number"])
-    file_path = os.path.join(REPORT_DIR, f"lossq_loss_run_{safe_policy}.pdf")
-
-    doc = SimpleDocTemplate(
-        file_path,
-        pagesize=landscape(letter),
-        rightMargin=30,
-        leftMargin=30,
-        topMargin=30,
-        bottomMargin=30,
-    )
-
-    styles = getSampleStyleSheet()
-
-    title_style = ParagraphStyle(
-        "TitleGreen",
-        parent=styles["Title"],
-        textColor=colors.HexColor("#1f5c3b"),
-        fontSize=18,
-        spaceAfter=12,
-    )
-
-    section_style = ParagraphStyle(
-        "Section",
-        parent=styles["Heading2"],
-        textColor=colors.HexColor("#1f5c3b"),
-        fontSize=13,
-        spaceAfter=8,
-    )
-
-    small = ParagraphStyle(
-        "Small",
-        parent=styles["Normal"],
-        fontSize=8,
-        leading=10,
-    )
-
+    buffer, doc, styles = make_doc("LossQ Carrier Loss Run")
     story = []
-
-    story.append(Paragraph(profile["carrier_name"] or "Carrier Loss Run", title_style))
-    story.append(Paragraph("Summary Loss History", section_style))
-
+    story.append(title("Carrier Loss Run", styles))
+    story.append(p("Account-specific loss run export generated from LossQ claim data.", styles))
+    story.append(table(profile_rows(profile, policy_number or profile.get("policy_number")), widths=[1.6 * inch, 5.2 * inch], header=False))
+    story.append(heading("Loss Totals", styles))
     story.append(
-        Table(
+        table(
             [
-                ["Carrier", profile["carrier_name"], "Evaluation Date", profile["evaluation_date"]],
-                ["Insured", profile["business_name"], "Agency", profile["agency_name"]],
-                ["Policy Number", profile["policy_number"], "Effective", f'{profile["effective_date"]} - {profile["expiration_date"]}'],
+                ["Total Claims", "Open Claims", "Total Paid", "Total Reserve", "Total Incurred"],
+                [metrics["total_claims"], metrics["open_claims"], dollars(metrics["total_paid"]), dollars(metrics["total_reserve"]), dollars(metrics["total_incurred"])],
             ],
-            colWidths=[1.2 * inch, 3.2 * inch, 1.3 * inch, 2.8 * inch],
+            widths=[1.35 * inch] * 5,
         )
     )
-
-    story.append(Spacer(1, 12))
-
-    total_paid = sum(float(c.paid_amount or 0) for c in claims)
-    total_reserve = sum(float(c.reserve_amount or 0) for c in claims)
-    total_incurred = sum(float(c.total_incurred or 0) for c in claims)
-
-    summary_table = Table(
-        [
-            [
-                "Coverage Type",
-                "Claim Count",
-                "Paid Loss",
-                "Paid Expenses",
-                "Case Loss & Expense Reserve",
-                "Gross Incurred",
-                "Recoveries",
-                "Net Incurred",
-            ],
-            [
-                "All Lines",
-                len(claims),
-                money(total_paid),
-                "$0",
-                money(total_reserve),
-                money(total_incurred),
-                "$0",
-                money(total_incurred),
-            ],
-        ],
-        colWidths=[
-            1.8 * inch,
-            0.9 * inch,
-            1.1 * inch,
-            1.1 * inch,
-            1.8 * inch,
-            1.2 * inch,
-            1.1 * inch,
-            1.2 * inch,
-        ],
-    )
-
-    summary_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d8efe3")),
-                ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1f5c3b")),
-                ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#29513a")),
-                ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
-                ("ALIGN", (1, 1), (-1, -1), "RIGHT"),
-            ]
-        )
-    )
-
-    story.append(summary_table)
-    story.append(PageBreak())
-
-    story.append(Paragraph("Detail Loss History", title_style))
-
-    policy_table = Table(
-        [
-            ["Policy Number", profile["policy_number"]],
-            ["Effective", f'{profile["effective_date"]} - {profile["expiration_date"]}'],
-            ["Insured", profile["business_name"]],
-            ["Agency", profile["agency_name"]],
-        ],
-        colWidths=[1.3 * inch, 3.0 * inch],
-    )
-
-    policy_table.setStyle(
-        TableStyle(
-            [
-                ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#eeeeee")),
-                ("GRID", (0, 0), (-1, -1), 0.25, colors.white),
-                ("FONTSIZE", (0, 0), (-1, -1), 8),
-            ]
-        )
-    )
-
-    story.append(policy_table)
-    story.append(Spacer(1, 10))
-
-    for claim in claims:
-        analysis = build_claim_ai_analysis(claim)
-
-        claim_header = Table(
-            [
-                ["Claim Number", "Status", "Loss Date", "Date Reported", "Policy"],
-                [
-                    claim.claim_number or "",
-                    claim.status or "",
-                    claim.date_of_loss or "",
-                    claim.date_reported or "",
-                    claim.policy_number or "",
-                ],
-            ],
-            colWidths=[1.4 * inch, 1.2 * inch, 1.2 * inch, 1.3 * inch, 2.2 * inch],
-        )
-
-        claim_header.setStyle(
-            TableStyle(
-                [
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1f5c3b")),
-                    ("BACKGROUND", (1, 1), (1, 1), colors.HexColor("#777777")),
-                    ("TEXTCOLOR", (1, 1), (1, 1), colors.white),
-                    ("FONTSIZE", (0, 0), (-1, -1), 8),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                ]
-            )
-        )
-
-        story.append(claim_header)
-        story.append(Paragraph("<b>Loss Description</b>", small))
-        story.append(Paragraph(str(claim.description or "No description provided."), small))
-        story.append(Spacer(1, 4))
-
-        detail_table = Table(
-            [
-                [
-                    "Claimant",
-                    "Coverage Type",
-                    "Paid Loss Gross of Recovery",
-                    "Paid Expenses",
-                    "Case Loss & Expense Reserve",
-                    "Gross Incurred",
-                    "Recoveries",
-                    "Deductible Recovery",
-                    "Net Incurred",
-                ],
-                [
-                    "Claimant / Insured",
-                    claim.line_of_business or "Unknown",
-                    money(claim.paid_amount),
-                    "$0",
-                    money(claim.reserve_amount),
-                    money(claim.total_incurred),
-                    "$0",
-                    "$0",
-                    money(claim.total_incurred),
-                ],
-                [
-                    "Total",
-                    "",
-                    money(claim.paid_amount),
-                    "$0",
-                    money(claim.reserve_amount),
-                    money(claim.total_incurred),
-                    "$0",
-                    "$0",
-                    money(claim.total_incurred),
-                ],
-            ],
-            colWidths=[
-                1.1 * inch,
-                1.1 * inch,
-                1.2 * inch,
-                1.0 * inch,
-                1.4 * inch,
-                1.0 * inch,
-                1.2 * inch,
-                1.2 * inch,
-                1.0 * inch,
-            ],
-        )
-
-        detail_table.setStyle(
-            TableStyle(
-                [
-                    ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#d8efe3")),
-                    ("TEXTCOLOR", (0, 0), (-1, 0), colors.HexColor("#1f5c3b")),
-                    ("GRID", (0, 0), (-1, -1), 0.5, colors.HexColor("#29513a")),
-                    ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-                    ("FONTNAME", (0, 2), (-1, 2), "Helvetica-Bold"),
-                    ("FONTSIZE", (0, 0), (-1, -1), 7),
-                    ("ALIGN", (2, 1), (-1, -1), "RIGHT"),
-                ]
-            )
-        )
-
-        story.append(detail_table)
-        story.append(Spacer(1, 6))
-
-        story.append(Paragraph("<b>LossQ Claim Analysis</b>", small))
-        story.append(
-            Paragraph(
-                f"Severity: {analysis['severity']} | Score: {analysis['severity_score']} | "
-                f"Reserve Concern: {analysis['reserve_concern']} | Renewal Impact: {analysis['renewal_impact']}",
-                small,
-            )
-        )
-        story.append(Paragraph(analysis["ai_summary"], small))
-
-        if analysis["broker_actions"]:
-            story.append(Paragraph("<b>Broker Action Items</b>", small))
-            for action in analysis["broker_actions"]:
-                story.append(Paragraph(f"- {action}", small))
-
-        story.append(Spacer(1, 16))
-
-    disclaimer = (
-        "This information is being provided for informational purposes only. "
-        "LossQ does not make any express or implied representation or warranty "
-        "as to the accuracy or completeness of the information."
-    )
-
-    story.append(Spacer(1, 20))
-    story.append(Paragraph(disclaimer, small))
-
+    story.append(heading("Claims", styles))
+    story.append(table(top_claim_rows(claims, max_rows=50), widths=[0.9 * inch, 1.0 * inch, 0.7 * inch, 0.8 * inch, 0.8 * inch, 0.8 * inch, 1.25 * inch, 1.0 * inch]))
     doc.build(story)
-
-    return FileResponse(
-        file_path,
-        media_type="application/pdf",
-        filename=f"lossq_loss_run_{safe_policy}.pdf",
-    )
+    return pdf_response(buffer, "lossq_carrier_loss_run.pdf")
