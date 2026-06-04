@@ -1565,34 +1565,39 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
           )}
 
           {activeTool === "decision" && (
-            <section className="glass-panel p-6 md:p-8">
-              <p className="text-sm uppercase tracking-[0.25em] text-purple-300 mb-3">
-                Underwriter Decision Engine
-              </p>
+            <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+  <MetricCard
+    title="Risk Level"
+    value={summary?.renewal_risk_level || "Not Rated"}
+  />
 
-              <h2 className="text-2xl md:text-3xl font-bold mb-6">
-                Carrier Placement Intelligence
-              </h2>
+  <MetricCard
+    title="Renewal Probability"
+    value={
+      decision?.renewal_probability != null
+        ? `${decision.renewal_probability}%`
+        : "-"
+    }
+  />
 
-              <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Renewal Probability" value={decision?.renewal_probability != null ? `${decision.renewal_probability}%` : "-"
-                <MetricCard title="Premium Impact" value={decision?.expected_premium_impact || "-"} />
-                <MetricCard title="Carrier Appetite" value={decision?.carrier_appetite || "-"} />
-                <MetricCard title="Marketability Score" value={decision?.marketability_score !== undefined ? `${decision.marketability_score}/100` : "-"} />
-              </div>
+  <MetricCard
+    title="Carrier Appetite"
+    value={
+      carrierAppetite?.carrier_appetite_score != null
+        ? `${carrierAppetite.carrier_appetite_score}/100`
+        : "-"
+    }
+  />
 
-              <TextCard title="Submission Readiness" text={decision?.submission_readiness || "No submission readiness available yet."} />
-
-              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-                <ListCard title="Underwriting Concerns" items={decision?.underwriting_concerns || ["No underwriting concerns available."]} color="red" />
-                <ListCard title="Best Market Types" items={decision?.best_market_types || ["No market recommendation available."]} color="purple" />
-              </div>
-
-              <div className="mt-6">
-                <TextCard title="Underwriter Decision Summary" text={decision?.underwriter_decision_summary || "No decision summary available yet."} />
-              </div>
-            </section>
-          )}
+  <MetricCard
+    title="Submission Readiness"
+    value={
+      submissionReadiness?.submission_readiness_score != null
+        ? `${submissionReadiness.submission_readiness_score}/100`
+        : "-"
+    }
+  />
+</section>
 
           {activeTool === "carrier-appetite" && (
             <section className="glass-panel p-6 md:p-8">
