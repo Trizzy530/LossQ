@@ -40,6 +40,8 @@ app = FastAPI(title="LossQ API", redirect_slashes=False)
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
+        "https://lossq.com",
+        "https://www.lossq.com",
         "https://loss-q.vercel.app",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
@@ -67,10 +69,12 @@ app.include_router(admin_users.router)
 app.include_router(submission_builder.router)
 app.include_router(audit_logs.router)
 
+
 @app.get("/version")
 def version():
-    return {"version": "carrier-packet-v2-6e80c7b"}
+    return {"version": "owner-admin-security-v1"}
+
 
 @app.get("/")
 def root():
-    return {"message": "LossQ API running", "version": "carrier-packet-live"}
+    return {"message": "LossQ API running", "version": "owner-admin-security-live"}

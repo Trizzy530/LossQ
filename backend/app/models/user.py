@@ -1,5 +1,6 @@
-from sqlalchemy import Column, Integer, String, ForeignKey
+from sqlalchemy import Boolean, Column, DateTime, ForeignKey, Integer, String, func
 from app.database import Base
+
 
 class User(Base):
     __tablename__ = "users"
@@ -7,5 +8,17 @@ class User(Base):
     id = Column(Integer, primary_key=True, index=True)
     email = Column(String, unique=True, index=True, nullable=False)
     password_hash = Column(String, nullable=False)
-    role = Column(String, default="user")
-    organization_id = Column(Integer, ForeignKey("organizations.id"))
+
+    # Roles: owner, admin, user
+    role = Column(String, default="user", nullable=False)
+    organization_id = Column(Integer, ForeignKey("organizations.id"), index=True)
+
+    first_name = Column(String, nullable=True)
+    last_name = Column(String, nullable=True)
+
+    is_email_verified = Column(Boolean, default=False, nullable=False)
+    is_active = Column(Boolean, default=True, nullable=False)
+
+    last_login_at = Column(DateTime(timezone=True), nullable=True)
+    created_at = Column(DateTime(timezone=True), server_default=func.now(), nullable=True)
+    updated_at = Column(DateTime(timezone=True), onupdate=func.now(), nullable=True)
