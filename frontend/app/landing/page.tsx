@@ -244,13 +244,13 @@ export default function LandingPage() {
       <section className="section" id="pricing">
         <span className="section-label reveal">Pricing</span>
         <h2 className="section-title reveal">
-          Simple pricing. <em>No surprises.</em>
+          Launch pricing built for <em>commercial agencies.</em>
         </h2>
 
         <div className="pricing-grid reveal">
-          <Price tier="Starter" price="$99" desc="For solo brokers processing lower monthly volume." features={["1 user", "20 uploads/month", "AI claims intelligence", "PDF export", "Email support"]} />
-          <Price featured tier="Pro" price="$249" desc="For agencies running renewals and submissions." features={["Up to 5 users", "Unlimited uploads", "Renewal memos", "Carrier packets", "Priority support"]} />
-          <Price tier="Agency" price="$499" desc="For teams needing full platform access." features={["Unlimited users", "Unlimited uploads", "All Pro features", "Team workflows", "Dedicated support"]} />
+          <Price tier="Starter" price="$199" desc="For independent brokers, solo producers, and small agencies." features={["1 user", "50 uploads/month", "Loss run uploads", "AI summaries", "Renewal memos", "PDF exports"]} />
+          <Price featured tier="Professional" price="$499" desc="For commercial lines teams and growing agencies." features={["Up to 5 users", "Unlimited uploads", "Carrier appetite", "Premium forecast", "Submission builder", "Priority support"]} />
+          <Price tier="Agency" price="$999" desc="For agency owners, multi-user teams, and regional agencies." features={["Up to 25 users", "Unlimited uploads", "Team management", "User permissions", "Audit logs", "Advanced analytics"]} />
         </div>
       </section>
 
@@ -1050,10 +1050,10 @@ function Price({
       </ul>
 
       <a
-        href="/login?fresh=1"
+        href="/pricing"
         className={`price-btn ${featured ? "price-btn-filled" : "price-btn-outline"}`}
       >
-        Get Started
+        View Plans
       </a>
     </div>
   );

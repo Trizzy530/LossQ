@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 
 const API =
@@ -9,12 +9,21 @@ const API =
 type PlanKey = "starter" | "professional" | "agency" | "founding_agency";
 
 type BillingStatus = {
+  organization_id?: number;
+  organization_name?: string;
   plan?: string;
   subscription_status?: string;
   user_limit?: number;
   upload_limit?: number;
   founding_slots_remaining?: number;
   is_billing_admin?: boolean;
+};
+
+type CurrentUser = {
+  id?: number;
+  email?: string;
+  role?: string;
+  organization_id?: number;
 };
 
 const plans: Array<{
@@ -26,6 +35,22 @@ const plans: Array<{
   features: string[];
   cta: string;
 }> = [
+  {
+    key: "founding_agency",
+    name: "Founding Agency",
+    price: "$99",
+    description: "Locked-in launch pricing for the first 10–20 agencies that help shape LossQ.",
+    badge: "Limited Launch Offer",
+    features: [
+      "5 users",
+      "Unlimited uploads",
+      "Professional features included",
+      "Priority support",
+      "Early feature access",
+      "Locked-in founder pricing",
+    ],
+    cta: "Claim Founder Pricing",
+  },
   {
     key: "starter",
     name: "Starter",
@@ -72,82 +97,113 @@ const plans: Array<{
       "Team management",
       "User permissions",
       "Audit logs",
-      "White-label reporting later",
       "Advanced analytics",
       "Account management tools",
     ],
     cta: "Start Agency",
   },
-  {
-    key: "founding_agency",
-    name: "Founding Agency",
-    price: "$199",
-    description: "Locked-in founder pricing for the first agencies that help shape LossQ.",
-    badge: "Limited",
-    features: [
-      "5 users",
-      "Unlimited uploads",
-      "Locked-in pricing",
-      "Priority support",
-      "Early feature access",
-      "Roadmap influence",
-      "Founder recognition",
-    ],
-    cta: "Claim Founder Pricing",
-  },
 ];
+
+function getToken() {
+  if (typeof window === "undefined") return "";
+  return localStorage.getItem("lossq_token") || "";
+}
+
+async function safeJson(res: Response) {
+  try {
+    return await res.json();
+  } catch {
+    return null;
+  }
+}
 
 export default function PricingPage() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const [billing, setBilling] = useState<BillingStatus>({});
+  const [currentUser, setCurrentUser] = useState<CurrentUser>({});
   const [message, setMessage] = useState("");
   const [loadingPlan, setLoadingPlan] = useState<PlanKey | "">("");
   const [loadingPortal, setLoadingPortal] = useState(false);
-
-  const token = useMemo(() => {
-    if (typeof window === "undefined") return null;
-    return localStorage.getItem("lossq_token");
-  }, []);
+  const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
-    const cancelled = searchParams.get("billing") === "cancelled";
-    if (cancelled) setMessage("Checkout was cancelled. You can choose a plan when ready.");
-    loadBilling();
+    if (searchParams.get("billing") === "cancelled") {
+      setMessage("Checkout was cancelled. You can choose a plan when ready.");
+    }
+
+    loadAccountAndBilling();
   }, []);
 
   function authHeaders(): Record<string, string> {
-    const storedToken =
-      typeof window !== "undefined" ? localStorage.getItem("lossq_token") : token;
-    return storedToken ? { Authorization: `Bearer ${storedToken}` } : {};
+    const token = getToken();
+    return token ? { Authorization: `Bearer ${token}` } : {};
   }
 
-  async function safeJson(res: Response) {
-    try {
-      return await res.json();
-    } catch {
-      return null;
-    }
-  }
+  async function loadAccountAndBilling() {
+    setIsLoading(true);
 
-  async function loadBilling() {
-    if (!localStorage.getItem("lossq_token")) {
+    const token = getToken();
+    if (!token) {
       setMessage("Log in first, then choose a plan for your LossQ account.");
+      setIsLoading(false);
       return;
     }
 
     try {
-      const res = await fetch(`${API}/billing/status`, { headers: authHeaders() });
-      const data = await safeJson(res);
-      if (res.ok) setBilling(data || {});
+      const meRes = await fetch(`${API}/auth/me`, { headers: authHeaders() });
+      const meData = await safeJson(meRes);
+
+      if (meRes.status === 401 || meRes.status === 403) {
+        localStorage.removeItem("lossq_token");
+        localStorage.removeItem("lossq_user");
+        setMessage("Your session expired. Log in again, then choose a plan.");
+        setIsLoading(false);
+        return;
+      }
+
+      if (meRes.ok) {
+        const user = meData?.user || meData || {};
+        setCurrentUser(user);
+        if (typeof window !== "undefined") {
+          localStorage.setItem("lossq_user", JSON.stringify(user));
+        }
+      }
+
+      const billingRes = await fetch(`${API}/billing/status`, {
+        headers: authHeaders(),
+      });
+      const billingData = await safeJson(billingRes);
+
+      if (billingRes.ok) {
+        setBilling(billingData || {});
+      } else {
+        setMessage(
+          billingData?.detail ||
+            `Billing status could not load. Backend returned ${billingRes.status}.`
+        );
+      }
     } catch {
-      setMessage("Billing status unavailable right now.");
+      setMessage(
+        "Billing connection failed. Confirm Railway deployed the billing route and Vercel NEXT_PUBLIC_API_URL is https://lossq-production.up.railway.app."
+      );
+    } finally {
+      setIsLoading(false);
     }
   }
 
   async function startCheckout(plan: PlanKey) {
-    if (!localStorage.getItem("lossq_token")) {
-      router.push("/login?fresh=1");
+    const token = getToken();
+    if (!token) {
+      router.push("/login?fresh=1&next=/pricing");
+      return;
+    }
+
+    const role = String(currentUser?.role || "").toLowerCase();
+    const isBillingAdmin = billing?.is_billing_admin || role === "owner" || role === "admin";
+
+    if (!isBillingAdmin) {
+      setMessage("Only an Owner or Admin can choose a billing plan. Log out and log back in if your role was recently changed.");
       return;
     }
 
@@ -167,7 +223,7 @@ export default function PricingPage() {
       const data = await safeJson(res);
 
       if (!res.ok) {
-        setMessage(data?.detail || "Could not start checkout.");
+        setMessage(data?.detail || `Could not start checkout. Backend returned ${res.status}.`);
         return;
       }
 
@@ -178,15 +234,16 @@ export default function PricingPage() {
 
       setMessage("Stripe checkout URL was not returned.");
     } catch {
-      setMessage("Checkout failed. Please try again.");
+      setMessage("Checkout failed. Confirm billing backend is deployed and your custom domain is allowed by CORS.");
     } finally {
       setLoadingPlan("");
     }
   }
 
   async function manageBilling() {
-    if (!localStorage.getItem("lossq_token")) {
-      router.push("/login?fresh=1");
+    const token = getToken();
+    if (!token) {
+      router.push("/login?fresh=1&next=/pricing");
       return;
     }
 
@@ -212,7 +269,6 @@ export default function PricingPage() {
 
       if (data?.portal_url) {
         window.location.href = data.portal_url;
-        return;
       }
     } catch {
       setMessage("Could not open billing portal.");
@@ -222,6 +278,8 @@ export default function PricingPage() {
   }
 
   const activePlan = billing?.plan || "free";
+  const role = String(currentUser?.role || "guest").toLowerCase();
+  const isBillingAdmin = billing?.is_billing_admin || role === "owner" || role === "admin";
 
   return (
     <main className="min-h-screen bg-[#020617] text-white px-5 py-10">
@@ -241,69 +299,78 @@ export default function PricingPage() {
           </div>
         </nav>
 
-        <div className="mb-12 text-center">
+        <div className="mb-10 text-center">
           <p className="mb-4 text-xs uppercase tracking-[0.35em] text-blue-300">
-            Commercial Insurance Renewal Intelligence Platform
+            LossQ Pricing
           </p>
-          <h1 className="mx-auto max-w-4xl text-5xl font-black tracking-tight md:text-7xl">
-            Pricing built around renewal value, not software cost.
+          <h1 className="text-4xl md:text-6xl font-black tracking-tight">
+            Commercial Insurance Renewal Intelligence
           </h1>
-          <p className="mx-auto mt-5 max-w-3xl text-lg leading-8 text-slate-300">
-            LossQ helps brokers and agencies turn loss runs into renewal scoring, carrier appetite analysis, AI underwriting summaries, renewal memos, and submission packages.
+          <p className="mx-auto mt-5 max-w-3xl text-slate-300 leading-8">
+            Pricing built around business value: loss run analysis, claims intelligence,
+            renewal scoring, carrier appetite, premium forecasting, and submission package generation.
           </p>
         </div>
 
+        <div className="mb-8 rounded-3xl border border-blue-400/20 bg-blue-500/10 p-5 text-sm text-blue-100">
+          <div className="flex flex-col gap-2 md:flex-row md:items-center md:justify-between">
+            <div>
+              <span className="font-bold">Account:</span> {currentUser?.email || "Not logged in"} · <span className="font-bold">Role:</span> {role}
+            </div>
+            <div>
+              <span className="font-bold">Current Plan:</span> {activePlan} · <span className="font-bold">Status:</span> {billing?.subscription_status || "inactive"}
+            </div>
+          </div>
+          {!isBillingAdmin && getToken() && (
+            <p className="mt-3 text-amber-200">
+              Billing changes require Owner or Admin access. If your role was recently changed, log out and log back in.
+            </p>
+          )}
+        </div>
+
         {message && (
-          <div className="mb-8 rounded-2xl border border-blue-400/30 bg-blue-500/10 p-4 text-blue-100">
+          <div className="mb-8 rounded-3xl border border-amber-300/30 bg-amber-400/10 p-5 text-amber-100">
             {message}
           </div>
         )}
 
-        <div className="mb-8 grid grid-cols-1 gap-4 rounded-3xl border border-white/10 bg-slate-950/70 p-5 md:grid-cols-4">
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Current Plan</p>
-            <p className="mt-1 text-xl font-bold capitalize">{activePlan.replaceAll("_", " ")}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Status</p>
-            <p className="mt-1 text-xl font-bold capitalize">{billing?.subscription_status || "inactive"}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Users</p>
-            <p className="mt-1 text-xl font-bold">{billing?.user_limit || "-"}</p>
-          </div>
-          <div>
-            <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Founding Slots</p>
-            <p className="mt-1 text-xl font-bold">{billing?.founding_slots_remaining ?? "-"}</p>
-          </div>
-        </div>
-
         <div className="grid grid-cols-1 gap-6 lg:grid-cols-4">
           {plans.map((plan) => {
             const isActive = activePlan === plan.key;
+            const isDisabled = isLoading || Boolean(loadingPlan) || (plan.key === "founding_agency" && billing?.founding_slots_remaining === 0);
+
             return (
               <div
                 key={plan.key}
                 className={`relative rounded-3xl border p-6 backdrop-blur-xl ${
-                  plan.badge === "Recommended"
-                    ? "border-blue-400/60 bg-blue-500/10 shadow-[0_0_50px_rgba(59,130,246,0.22)]"
+                  plan.badge
+                    ? "border-blue-400/60 bg-blue-500/10 shadow-[0_0_40px_rgba(59,130,246,0.18)]"
                     : "border-white/10 bg-slate-950/70"
                 }`}
               >
                 {plan.badge && (
-                  <div className="absolute -top-3 left-1/2 -translate-x-1/2 rounded-full bg-blue-600 px-4 py-1 text-xs font-bold uppercase tracking-[0.18em]">
+                  <div className="absolute -top-3 left-6 rounded-full bg-blue-600 px-4 py-1 text-xs font-bold uppercase tracking-widest">
                     {plan.badge}
                   </div>
                 )}
 
-                <h2 className="text-2xl font-black">{plan.name}</h2>
-                <p className="mt-3 min-h-[72px] text-sm leading-6 text-slate-400">{plan.description}</p>
-                <div className="mt-6 text-5xl font-black">
-                  {plan.price}
-                  <span className="text-base font-semibold text-slate-400">/mo</span>
+                <h2 className="mt-3 text-2xl font-black">{plan.name}</h2>
+                <p className="mt-3 min-h-[72px] text-sm leading-6 text-slate-300">
+                  {plan.description}
+                </p>
+
+                <div className="mt-6">
+                  <span className="text-5xl font-black">{plan.price}</span>
+                  <span className="text-slate-400">/month</span>
                 </div>
 
-                <ul className="mt-6 space-y-3 text-sm text-slate-300">
+                {plan.key === "founding_agency" && (
+                  <p className="mt-3 text-xs text-blue-200">
+                    Founding slots remaining: {billing?.founding_slots_remaining ?? "20"}
+                  </p>
+                )}
+
+                <ul className="mt-6 space-y-3 text-sm text-slate-200">
                   {plan.features.map((feature) => (
                     <li key={feature} className="flex gap-2">
                       <span className="text-blue-300">✓</span>
@@ -313,13 +380,16 @@ export default function PricingPage() {
                 </ul>
 
                 <button
+                  type="button"
+                  disabled={isDisabled || isActive}
                   onClick={() => startCheckout(plan.key)}
-                  disabled={Boolean(loadingPlan) || isActive}
-                  className={`mt-8 w-full rounded-2xl px-4 py-4 font-bold ${
+                  className={`mt-8 w-full rounded-2xl px-4 py-4 text-sm font-black transition ${
                     isActive
-                      ? "cursor-not-allowed border border-green-400/40 bg-green-500/10 text-green-200"
-                      : "bg-blue-600 hover:bg-blue-500"
-                  } disabled:opacity-60`}
+                      ? "border border-green-400/30 bg-green-500/10 text-green-200"
+                      : plan.badge
+                      ? "bg-blue-600 text-white hover:bg-blue-500 disabled:opacity-50"
+                      : "border border-white/10 bg-white/5 text-white hover:bg-white/10 disabled:opacity-50"
+                  }`}
                 >
                   {isActive ? "Current Plan" : loadingPlan === plan.key ? "Opening Stripe..." : plan.cta}
                 </button>
@@ -328,30 +398,40 @@ export default function PricingPage() {
           })}
         </div>
 
-        <div className="mt-8 rounded-3xl border border-white/10 bg-slate-950/70 p-6 text-center">
-          <h2 className="text-2xl font-black">Enterprise</h2>
-          <p className="mx-auto mt-3 max-w-3xl text-slate-300">
-            For MGAs, wholesalers, large brokerages, and enterprise customers needing custom integrations, API access, SSO, custom reporting, dedicated onboarding, and premium support.
-          </p>
-          <a
-            href="mailto:tmckenzie49@gmail.com?subject=LossQ Enterprise Inquiry"
-            className="mt-5 inline-block rounded-2xl border border-blue-400/40 px-6 py-3 font-bold text-blue-100 hover:bg-blue-500/10"
-          >
-            Contact Sales
-          </a>
+        <div className="mt-10 rounded-3xl border border-white/10 bg-slate-950/70 p-6">
+          <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+            <div>
+              <h3 className="text-2xl font-bold">Enterprise</h3>
+              <p className="mt-2 text-slate-300">
+                MGAs, wholesalers, large brokerages, custom integrations, API access, SSO, and premium support.
+              </p>
+            </div>
+            <a
+              href="mailto:hello@lossq.com?subject=LossQ Enterprise Demo"
+              className="rounded-2xl bg-purple-600 px-6 py-4 text-center text-sm font-black hover:bg-purple-500"
+            >
+              Contact Sales
+            </a>
+          </div>
         </div>
 
-        <div className="mt-8 flex flex-wrap justify-center gap-4">
+        <div className="mt-8 flex flex-wrap gap-4">
           <button
-            onClick={manageBilling}
-            disabled={loadingPortal}
-            className="rounded-2xl border border-white/10 px-6 py-3 font-bold text-slate-200 hover:bg-white/10 disabled:opacity-60"
+            type="button"
+            onClick={loadAccountAndBilling}
+            className="rounded-2xl border border-white/10 px-5 py-3 text-sm font-bold hover:bg-white/10"
           >
-            {loadingPortal ? "Opening Billing Portal..." : "Manage Billing"}
+            Refresh Billing Status
           </button>
-          <a href="/dashboard" className="rounded-2xl bg-slate-800 px-6 py-3 font-bold hover:bg-slate-700">
-            Back to Dashboard
-          </a>
+
+          <button
+            type="button"
+            onClick={manageBilling}
+            disabled={loadingPortal || !isBillingAdmin}
+            className="rounded-2xl border border-blue-400/30 bg-blue-500/10 px-5 py-3 text-sm font-bold text-blue-100 hover:bg-blue-500/20 disabled:opacity-50"
+          >
+            {loadingPortal ? "Opening Portal..." : "Manage Billing"}
+          </button>
         </div>
       </section>
     </main>
