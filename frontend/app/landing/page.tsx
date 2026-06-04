@@ -248,8 +248,9 @@ export default function LandingPage() {
         </h2>
 
         <div className="pricing-grid reveal">
+          <Price featured tier="Founding Agency" price="$99" desc="Limited launch offer for the first 10 agencies that help shape LossQ." features={["First 10 agencies only", "5 users", "Unlimited uploads", "Professional features", "Locked-in pricing", "Priority support"]} />
           <Price tier="Starter" price="$199" desc="For independent brokers, solo producers, and small agencies." features={["1 user", "50 uploads/month", "Loss run uploads", "AI summaries", "Renewal memos", "PDF exports"]} />
-          <Price featured tier="Professional" price="$499" desc="For commercial lines teams and growing agencies." features={["Up to 5 users", "Unlimited uploads", "Carrier appetite", "Premium forecast", "Submission builder", "Priority support"]} />
+          <Price tier="Professional" price="$499" desc="For commercial lines teams and growing agencies." features={["Up to 5 users", "Unlimited uploads", "Carrier appetite", "Premium forecast", "Submission builder", "Priority support"]} />
           <Price tier="Agency" price="$999" desc="For agency owners, multi-user teams, and regional agencies." features={["Up to 25 users", "Unlimited uploads", "Team management", "User permissions", "Audit logs", "Advanced analytics"]} />
         </div>
       </section>
@@ -719,8 +720,8 @@ export default function LandingPage() {
 
         .pricing-grid {
           display: grid;
-          grid-template-columns: repeat(3, 1fr);
-          gap: 24px;
+          grid-template-columns: repeat(4, 1fr);
+          gap: 20px;
           margin-top: 64px;
         }
 
@@ -907,6 +908,13 @@ export default function LandingPage() {
           }
           to {
             transform: translateX(-50%);
+          }
+        }
+
+
+        @media (max-width: 1200px) {
+          .pricing-grid {
+            grid-template-columns: repeat(2, 1fr);
           }
         }
 
