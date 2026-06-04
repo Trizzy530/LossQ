@@ -56,6 +56,24 @@ function objectToChartData(data: Record<string, number>) {
   }));
 }
 
+function hasDisplayValue(value: any) {
+  return value !== null && value !== undefined && value !== "";
+}
+
+function formatScore(value: any) {
+  return hasDisplayValue(value) ? `${value}/100` : "-";
+}
+
+function formatPercent(value: any) {
+  return hasDisplayValue(value) ? `${value}%` : "-";
+}
+
+function formatMoney(value: any) {
+  return hasDisplayValue(value)
+    ? `$${Number(value || 0).toLocaleString()}`
+    : "-";
+}
+
 
 function normalizePolicyNumber(value: any) {
   return String(value || "").trim().toUpperCase();
@@ -303,6 +321,8 @@ export default function DashboardPage() {
     setCarrierAppetite({});
     setSubmissionReadiness({});
     setCarrierMatch({});
+    setPremiumForecast({});
+    setSubmissionBuilder({});
     setTimeline({});
     setRenewalMemo("");
     setCopilotAnswer("");
@@ -584,6 +604,8 @@ if (submissionBuilderRes.ok) {
       setCarrierAppetite({});
       setSubmissionReadiness({});
       setCarrierMatch({});
+      setPremiumForecast({});
+      setSubmissionBuilder({});
       setTimeline({});
     } finally {
       setDashboardLoading(false);
@@ -602,6 +624,8 @@ if (submissionBuilderRes.ok) {
     setCarrierAppetite({});
     setSubmissionReadiness({});
     setCarrierMatch({});
+    setPremiumForecast({});
+    setSubmissionBuilder({});
     setTimeline({});
 
     await loadDashboard(policyNumber);
@@ -834,16 +858,31 @@ if (submissionBuilderRes.ok) {
       );
     }
 
+    const savedClaimCount = data?.saved_claims ?? 0;
+    let uploadedPolicyNumber =
+      data?.profile?.policy_number ||
+      data?.profile?.account_number ||
+      data?.account_number ||
+      profile?.policy_number ||
+      "";
+
     setMessage(
-      `Upload complete. Saved ${data?.saved_claims || 0} claim(s). New file: ${uploadedFileNames}`
+      `Upload complete. Saved ${savedClaimCount} new claim(s). Existing duplicate claims may be skipped. New file: ${uploadedFileNames}`
     );
 
     if (data?.profile) {
       const uploadedProfile = {
         ...data.profile,
+        policy_number:
+          data?.profile?.policy_number ||
+          data?.profile?.account_number ||
+          data?.account_number ||
+          "",
         policies: data?.policies || data?.profile?.policies || [],
         validation: data?.validation || data?.profile?.validation || {},
       };
+
+      uploadedPolicyNumber = uploadedProfile.policy_number || uploadedPolicyNumber;
 
       setProfile(uploadedProfile);
       updateProfileList([uploadedProfile]);
@@ -863,6 +902,10 @@ if (submissionBuilderRes.ok) {
 
     if (claimsRes.ok && Array.isArray(claimsData)) {
       setClaims(claimsData);
+    }
+
+    if (uploadedPolicyNumber) {
+      await loadDashboard(uploadedPolicyNumber);
     }
 
     setActiveTool("overview");
@@ -1319,9 +1362,9 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
 
               <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
                 <MetricCard title="Risk Level" value={summary?.renewal_risk_level || "Not Rated"} />
-                <MetricCard title="Renewal Probability" value={decision?.renewal_probability !== undefined ? `${decision.renewal_probability}%` : "-"} />
-                <MetricCard title="Carrier Appetite" value={carrierAppetite?.carrier_appetite_score !== undefined ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
-                <MetricCard title="Submission Readiness" value={submissionReadiness?.submission_readiness_score !== undefined ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
+                <MetricCard title="Renewal Probability" value={formatPercent(decision?.renewal_probability)} />
+                <MetricCard title="Carrier Appetite" value={formatScore(carrierAppetite?.carrier_appetite_score)} />
+                <MetricCard title="Submission Readiness" value={formatScore(submissionReadiness?.submission_readiness_score)} />
               </section>
 
               <section className="glass-panel p-6 md:p-8">
@@ -1575,10 +1618,10 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Renewal Probability" value={decision?.renewal_probability !== undefined ? `${decision.renewal_probability}%` : "-"} />
+                <MetricCard title="Renewal Probability" value={formatPercent(decision?.renewal_probability)} />
                 <MetricCard title="Premium Impact" value={decision?.expected_premium_impact || "-"} />
                 <MetricCard title="Carrier Appetite" value={decision?.carrier_appetite || "-"} />
-                <MetricCard title="Marketability Score" value={decision?.marketability_score !== undefined ? `${decision.marketability_score}/100` : "-"} />
+                <MetricCard title="Marketability Score" value={formatScore(decision?.marketability_score)} />
               </div>
 
               <TextCard title="Submission Readiness" text={decision?.submission_readiness || "No submission readiness available yet."} />
@@ -1605,7 +1648,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-                <MetricCard title="Appetite Score" value={carrierAppetite?.carrier_appetite_score !== undefined ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
+                <MetricCard title="Appetite Score" value={formatScore(carrierAppetite?.carrier_appetite_score)} />
                 <MetricCard title="Appetite Level" value={carrierAppetite?.carrier_appetite_level || "-"} />
                 <MetricCard title="Best Market" value={carrierAppetite?.best_fit_carriers?.[0]?.carrier_type || "-"} />
               </div>
@@ -1656,7 +1699,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Readiness Score" value={submissionReadiness?.submission_readiness_score !== undefined ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
+                <MetricCard title="Readiness Score" value={formatScore(submissionReadiness?.submission_readiness_score)} />
                 <MetricCard title="Readiness Level" value={submissionReadiness?.submission_readiness_level || "-"} />
                 <MetricCard title="Carrier Confidence" value={submissionReadiness?.carrier_confidence || "-"} />
                 <MetricCard title="Submission Quality" value={submissionReadiness?.submission_quality || "-"} />
@@ -1711,9 +1754,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
       <MetricCard
         title="Match Score"
         value={
-          carrierMatch?.recommended_score !== undefined
-            ? `${carrierMatch.recommended_score}/100`
-            : "-"
+          formatScore(carrierMatch?.recommended_score)
         }
       />
       <MetricCard
@@ -1774,33 +1815,29 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
     <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
       <MetricCard
         title="Current Premium"
-        value={`$${Number(
-          premiumForecast?.current_premium || 0
-        ).toLocaleString()}`}
+        value={formatMoney(premiumForecast?.current_premium)}
       />
 
       <MetricCard
         title="Expected Renewal"
-        value={`$${Number(
-          premiumForecast?.expected_renewal_premium || 0
-        ).toLocaleString()}`}
+        value={formatMoney(premiumForecast?.expected_renewal_premium)}
       />
 
       <MetricCard
         title="Expected Increase"
-        value={`${premiumForecast?.expected_increase_percent || 0}%`}
+        value={formatPercent(premiumForecast?.expected_increase_percent)}
       />
 
       <MetricCard
         title="Confidence"
-        value={`${premiumForecast?.confidence_score || 0}%`}
+        value={formatPercent(premiumForecast?.confidence_score)}
       />
     </div>
 
     <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
       <MetricCard
         title="Best Case"
-        value={`${premiumForecast?.best_case_percent || 0}%`}
+        value={formatPercent(premiumForecast?.best_case_percent)}
       />
 
       <MetricCard
@@ -1810,7 +1847,7 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
 
       <MetricCard
         title="Worst Case"
-        value={`${premiumForecast?.worst_case_percent || 0}%`}
+        value={formatPercent(premiumForecast?.worst_case_percent)}
       />
     </div>
 
@@ -1907,18 +1944,12 @@ const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
       <MetricCard
         title="Premium Forecast"
         value={
-          premiumForecast?.expected_increase_percent !== undefined
-            ? `${premiumForecast.expected_increase_percent}%`
-            : "-"
+          formatPercent(premiumForecast?.expected_increase_percent)
         }
       />
       <MetricCard
         title="Submission Readiness"
-        value={
-          submissionReadiness?.submission_readiness_score !== undefined
-            ? `${submissionReadiness.submission_readiness_score}/100`
-            : "-"
-        }
+        value={formatScore(submissionReadiness?.submission_readiness_score)}
       />
     </div>
 
