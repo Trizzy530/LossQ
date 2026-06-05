@@ -1,3 +1,6 @@
-from .loss_run_pipeline import parse_loss_run_file
+"""
+LossQ Document Intelligence Engine
 
-__all__ = ["parse_loss_run_file"]
+This package powers universal loss run parsing, validation,
+confidence scoring, and document intelligence workflows.
+"""

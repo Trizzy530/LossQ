@@ -1,49 +1,121 @@
 from __future__ import annotations
 
 import re
-from .utils import compact_spaces, detect_lob, find_dates, likely_policy_tokens, money_values, normalize_date, normalize_policy_number, unique_by
+
+from .utils import (
+    clean_text,
+    date_values,
+    money_values,
+    normalize_policy_number,
+    POLICY_RE,
+    split_lines,
+)
 
 
-def extract_policies(text: str) -> list[dict]:
-    lines = [compact_spaces(line) for line in (text or "").splitlines() if compact_spaces(line)]
+LOB_KEYWORDS = {
+    "commercial auto": ["commercial auto", "auto", "vehicle", "fleet"],
+    "general liability": ["general liability", "gl", "premises"],
+    "workers comp": ["workers comp", "workers compensation", "wc", "work comp"],
+    "property": ["property"],
+    "cargo": ["cargo", "motor truck cargo"],
+    "inland marine": ["inland marine", "equipment"],
+    "umbrella": ["umbrella", "excess"],
+}
+
+
+def detect_lob(line: str) -> str:
+    lower = clean_text(line).lower()
+
+    for lob, keywords in LOB_KEYWORDS.items():
+        if any(keyword in lower for keyword in keywords):
+            return lob.title()
+
+    return "Policy"
+
+
+def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
+    """
+    Universal policy schedule parser.
+
+    It detects rows that contain:
+    - policy number
+    - line/coverage signal
+    - effective and expiration dates when available
+    - optional paid/reserve/incurred values
+    """
+
+    profile = profile or {}
+    lines = split_lines(text)
     policies: list[dict] = []
+    seen: set[str] = set()
 
     for line in lines:
         lower = line.lower()
-        if any(marker in lower for marker in ["claim detail", "detailed claims", "claim no", "loss summary", "supplement table"]):
-            continue
-        dates = find_dates(line)
-        policy_tokens = likely_policy_tokens(line)
-        lob = detect_lob(line)
-        if not policy_tokens or not lob:
-            continue
-        # A schedule row usually has at least one date or financial/unit context.
-        if len(dates) < 1 and not any(word in lower for word in ["expired", "active", "sales", "payroll", "units", "equip"]):
+
+        if "claim no" in lower or "claim number" in lower or "claim id" in lower:
             continue
 
-        policy_number = normalize_policy_number(policy_tokens[0])
-        eff = normalize_date(dates[0]) if len(dates) >= 1 else ""
-        exp = normalize_date(dates[1]) if len(dates) >= 2 else ""
+        if not any(keyword in lower for keyword in ["policy", "coverage", "lob", "carrier", "effective", "expiration", "expired", "active", "auto", "liability", "comp", "cargo", "marine"]):
+            continue
+
+        candidates = POLICY_RE.findall(line)
+        if not candidates:
+            continue
+
+        dates = date_values(line)
         amounts = money_values(line)
 
-        carrier_part = line.split(policy_tokens[0])[0].strip(" -|:") if policy_tokens[0] in line else ""
-        carrier = carrier_part
-        if carrier.lower() in ["carrier", "co.", "company", "policy type / coverage", "policy type"]:
-            carrier = ""
+        for raw_policy in candidates:
+            policy_number = normalize_policy_number(raw_policy)
 
-        policies.append({
-            "policy_number": policy_number,
-            "policy_type": lob,
-            "line_coverage": lob,
-            "line_of_business": lob,
-            "writing_carrier": carrier,
-            "carrier": carrier,
-            "effective_date": eff,
-            "expiration_date": exp,
-            "status": "Expired" if "expired" in lower else ("Active" if "active" in lower else ""),
-            "total_paid": amounts[-3] if len(amounts) >= 3 else 0,
-            "total_reserve": amounts[-2] if len(amounts) >= 3 else 0,
-            "total_incurred": amounts[-1] if len(amounts) >= 3 else 0,
-        })
+            if not policy_number or len(policy_number) < 5:
+                continue
 
-    return unique_by(policies, lambda p: p.get("policy_number"))
+            # Avoid treating claim numbers as policies in schedule context.
+            if re.match(r"^(GL|WC|CA|IM|CG|AUTO)-?\d{2,4}-?\d{3,}", policy_number, re.I):
+                continue
+
+            if policy_number in seen:
+                continue
+
+            lob = detect_lob(line)
+
+            policy = {
+                "policy_number": policy_number,
+                "policy_type": lob,
+                "line_coverage": lob,
+                "line_of_business": lob,
+                "writing_carrier": profile.get("writing_carrier") or profile.get("carrier_name") or "",
+                "carrier": profile.get("carrier_name") or profile.get("writing_carrier") or "",
+                "effective_date": dates[0] if len(dates) >= 1 else profile.get("effective_date", ""),
+                "expiration_date": dates[1] if len(dates) >= 2 else profile.get("expiration_date", ""),
+                "claim_count": 0,
+                "total_paid": amounts[-3] if len(amounts) >= 3 else 0,
+                "total_reserve": amounts[-2] if len(amounts) >= 2 else 0,
+                "total_incurred": amounts[-1] if len(amounts) >= 1 else 0,
+                "source_line": line[:600],
+            }
+
+            policies.append(policy)
+            seen.add(policy_number)
+
+    if not policies and profile.get("policy_number"):
+        policies.append(
+            {
+                "policy_number": normalize_policy_number(profile.get("policy_number")),
+                "policy_type": "Policy",
+                "line_coverage": "Policy",
+                "line_of_business": "Policy",
+                "writing_carrier": profile.get("writing_carrier") or profile.get("carrier_name") or "",
+                "carrier": profile.get("carrier_name") or profile.get("writing_carrier") or "",
+                "effective_date": profile.get("effective_date", ""),
+                "expiration_date": profile.get("expiration_date", ""),
+                "claim_count": 0,
+                "total_paid": 0,
+                "total_reserve": 0,
+                "total_incurred": 0,
+                "source_line": "Fallback from profile",
+            }
+        )
+
+    return policies

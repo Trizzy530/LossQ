@@ -1,112 +1,182 @@
 from __future__ import annotations
 
 import re
-from .utils import compact_spaces, money_values
+
+from .utils import clean_text, clamp_score, money_values, split_lines
 
 
-def _extract_summary_counts(text: str) -> dict:
-    lower_text = text or ""
-    summary: dict = {}
-    patterns = {
-        "reported_total_claims": r"Total Claims\s+([0-9]+)",
-        "reported_open_claims": r"Open Claims\??\s+(?:NONE shown / all closed|([0-9]+)|NONE|NO)",
-        "reported_litigation_claims": r"(?:Litigation / Attorney Claims|Litigation)\s+(?:NO|NONE|([0-9]+))",
-        "reported_total_paid": r"Total Paid\s+\$?([0-9,]+(?:\.\d{1,2})?)",
-        "reported_total_reserve": r"Total Reserve\s+\$?([0-9,]+(?:\.\d{1,2})?)",
-        "reported_total_incurred": r"Total Incurred\s+\$?([0-9,]+(?:\.\d{1,2})?)",
+def detect_reported_totals(text: str) -> dict:
+    lines = split_lines(text)
+
+    reported = {
+        "reported_total_claims": None,
+        "reported_open_claims": None,
+        "reported_closed_claims": None,
+        "reported_litigation_claims": None,
+        "reported_total_paid": None,
+        "reported_total_reserve": None,
+        "reported_total_incurred": None,
     }
-    for key, pattern in patterns.items():
-        m = re.search(pattern, lower_text, re.IGNORECASE)
-        if not m:
-            continue
-        raw = next((g for g in m.groups() if g is not None), "0")
-        if raw.upper() in ["NO", "NONE"]:
-            raw = "0"
-        summary[key] = float(str(raw).replace(",", ""))
 
-    # Handle rows like TOTALS $20,030 $0 $20,030.
-    for line in lower_text.splitlines():
-        if re.search(r"\b(total|totals|subtotal|sub-total)\b", line, re.IGNORECASE):
-            vals = money_values(line)
-            if len(vals) >= 3:
-                summary.setdefault("reported_total_paid", vals[-3])
-                summary.setdefault("reported_total_reserve", vals[-2])
-                summary.setdefault("reported_total_incurred", vals[-1])
-    return summary
+    for line in lines:
+        lower = clean_text(line).lower()
+        amounts = money_values(line)
+
+        if "total claims" in lower:
+            match = re.search(r"total claims\s*[:\-]?\s*(\d+)", lower)
+            if match:
+                reported["reported_total_claims"] = int(match.group(1))
+
+        if "open claims" in lower or "open claims?" in lower:
+            if "none" in lower or "no open" in lower:
+                reported["reported_open_claims"] = 0
+            else:
+                match = re.search(r"open claims\??\s*[:\-]?\s*(\d+)", lower)
+                if match:
+                    reported["reported_open_claims"] = int(match.group(1))
+
+        if "closed claims" in lower:
+            match = re.search(r"closed claims\s*[:\-]?\s*(\d+)", lower)
+            if match:
+                reported["reported_closed_claims"] = int(match.group(1))
+
+        if "litigation" in lower:
+            if "litigation no" in lower or "no litigation" in lower:
+                reported["reported_litigation_claims"] = 0
+            else:
+                match = re.search(r"litigation[^0-9]*(\d+)", lower)
+                if match:
+                    reported["reported_litigation_claims"] = int(match.group(1))
+
+        if "total paid" in lower and amounts:
+            reported["reported_total_paid"] = amounts[-1]
+
+        if "total reserve" in lower and amounts:
+            reported["reported_total_reserve"] = amounts[-1]
+
+        if "total incurred" in lower and amounts:
+            reported["reported_total_incurred"] = amounts[-1]
+
+        if ("totals" in lower or "subtotal" in lower) and len(amounts) >= 3:
+            reported["reported_total_paid"] = reported["reported_total_paid"] or amounts[-3]
+            reported["reported_total_reserve"] = reported["reported_total_reserve"] or amounts[-2]
+            reported["reported_total_incurred"] = reported["reported_total_incurred"] or amounts[-1]
+
+    return reported
 
 
-def validate_loss_run(text: str, profile: dict, policies: list[dict], claims: list[dict], ignored_rows: list[dict], extraction_meta: dict) -> dict:
+def validate_loss_run(text: str, profile: dict, policies: list[dict], claims: list[dict], ignored_rows: list[dict]) -> dict:
+    reported = detect_reported_totals(text)
+
     total_claims = len(claims)
-    open_claims = sum(1 for c in claims if str(c.get("status", "")).lower() == "open")
-    closed_claims = sum(1 for c in claims if str(c.get("status", "")).lower() == "closed")
-    litigation_claims = sum(1 for c in claims if c.get("litigation"))
-    total_paid = sum(float(c.get("paid_amount") or 0) for c in claims)
-    total_reserve = sum(float(c.get("reserve_amount") or 0) for c in claims)
-    total_incurred = sum(float(c.get("total_incurred") or 0) for c in claims)
+    open_claims = sum(1 for claim in claims if str(claim.get("status") or "").lower() == "open")
+    closed_claims = sum(1 for claim in claims if str(claim.get("status") or "").lower() == "closed")
+    litigation_claims = sum(1 for claim in claims if claim.get("litigation"))
 
-    reported = _extract_summary_counts(text)
+    total_paid = round(sum(float(claim.get("paid_amount") or 0) for claim in claims), 2)
+    total_reserve = round(sum(float(claim.get("reserve_amount") or 0) for claim in claims), 2)
+    total_incurred = round(sum(float(claim.get("total_incurred") or 0) for claim in claims), 2)
+
     warnings: list[str] = []
     passed_checks: list[str] = []
 
-    if ignored_rows:
-        passed_checks.append(f"Ignored {len(ignored_rows)} subtotal/total/noise row(s).")
-
-    if not profile.get("business_name") or "Needs Review" in str(profile.get("business_name")):
-        warnings.append("Named insured/business name needs review.")
+    if profile.get("business_name"):
+        passed_checks.append("Named insured/account name detected.")
     else:
-        passed_checks.append("Named insured detected.")
+        warnings.append("Named insured/account name was not confidently detected.")
 
     if policies:
-        passed_checks.append(f"Detected {len(policies)} policy schedule row(s).")
+        passed_checks.append(f"Policy schedule detected with {len(policies)} policy row(s).")
     else:
-        warnings.append("No policy schedule rows confidently detected.")
+        warnings.append("Policy schedule was not confidently detected.")
 
-    if claims:
-        passed_checks.append(f"Detected {total_claims} claim row(s).")
+    if total_claims > 0:
+        passed_checks.append(f"{total_claims} claim row(s) extracted.")
     else:
-        warnings.append("No claim rows were confidently detected. Review required before relying on results.")
+        warnings.append("No claim rows were extracted.")
 
-    tolerance = 1.0
-    for reported_key, extracted_value, label in [
-        ("reported_total_paid", total_paid, "paid total"),
-        ("reported_total_reserve", total_reserve, "reserve total"),
-        ("reported_total_incurred", total_incurred, "incurred total"),
-    ]:
-        if reported_key in reported:
-            diff = abs(float(reported[reported_key]) - float(extracted_value))
-            if diff <= tolerance:
-                passed_checks.append(f"Financial reconciliation passed for {label}.")
-            else:
-                warnings.append(
-                    f"Financial reconciliation mismatch for {label}: reported {reported[reported_key]}, extracted {round(extracted_value, 2)}."
-                )
+    if ignored_rows:
+        passed_checks.append(f"{len(ignored_rows)} non-claim/header/total row(s) ignored.")
 
-    lower = compact_spaces(text).lower()
+    if reported.get("reported_total_claims") is not None:
+        if reported["reported_total_claims"] == total_claims:
+            passed_checks.append("Reported claim count matches extracted claim count.")
+        else:
+            warnings.append(
+                f"Reported claim count {reported['reported_total_claims']} does not match extracted claim count {total_claims}."
+            )
+
+    if reported.get("reported_open_claims") is not None:
+        if reported["reported_open_claims"] == open_claims:
+            passed_checks.append("Reported open claim count matches extracted open claim count.")
+        else:
+            warnings.append(
+                f"Reported open claims {reported['reported_open_claims']} does not match extracted open claims {open_claims}."
+            )
+
+    if reported.get("reported_total_incurred") is not None:
+        variance = abs(float(reported["reported_total_incurred"]) - total_incurred)
+        if variance <= 1:
+            passed_checks.append("Reported total incurred reconciles to extracted claims.")
+        else:
+            warnings.append(
+                f"Reported total incurred ${reported['reported_total_incurred']:,.2f} does not reconcile to extracted ${total_incurred:,.2f}."
+            )
+
+    financial_validation = "Passed"
+    if any("does not" in warning or "No claim rows" in warning for warning in warnings):
+        financial_validation = "Needs Review"
+
     renewal_signal = "Needs Review"
-    if "good renewal" in lower or "favorable renewal" in lower or "renewal recommended" in lower:
-        renewal_signal = "Good Renewal"
-    elif "poor renewal" in lower or "non-renew" in lower or "adverse" in lower:
-        renewal_signal = "Adverse Renewal"
+    lower_text = clean_text(text).lower()
 
-    financial_status = "Passed" if not any("Financial reconciliation mismatch" in w for w in warnings) and claims else "Needs Review"
+    if "good renewal" in lower_text or "renewal recommended" in lower_text or "favorable renewal" in lower_text:
+        renewal_signal = "Good Renewal"
+    elif open_claims > 0 or litigation_claims > 0:
+        renewal_signal = "Review Required"
+    elif total_claims > 0 and total_reserve == 0:
+        renewal_signal = "Good Renewal"
+
+    base_score = 70
+
+    if profile.get("business_name"):
+        base_score += 5
+    if policies:
+        base_score += 5
+    if claims:
+        base_score += 10
+    if financial_validation == "Passed":
+        base_score += 10
+    if warnings:
+        base_score -= min(len(warnings) * 6, 25)
+
+    confidence_score = clamp_score(base_score)
+
+    if confidence_score >= 85:
+        confidence_level = "High"
+    elif confidence_score >= 65:
+        confidence_level = "Medium"
+    else:
+        confidence_level = "Low"
 
     return {
-        "document_type": "Loss Run / Experience Detail" if "loss run" in lower or "experience" in lower else "Document Needs Review",
-        "document_confidence": 0,  # set by confidence engine
-        "financial_validation": financial_status,
+        "engine": "LossQ Universal Parser Validation Engine V1",
+        "document_confidence": confidence_score,
+        "confidence_level": confidence_level,
+        "financial_validation": financial_validation,
         "renewal_signal": renewal_signal,
+        "warnings": warnings,
+        "passed_checks": passed_checks,
+        "ignored_rows": ignored_rows[:50],
+        "reported_totals": reported,
         "extracted_totals": {
             "total_claims": total_claims,
             "open_claims": open_claims,
             "closed_claims": closed_claims,
             "litigation_claims": litigation_claims,
-            "total_paid": round(total_paid, 2),
-            "total_reserve": round(total_reserve, 2),
-            "total_incurred": round(total_incurred, 2),
+            "total_paid": total_paid,
+            "total_reserve": total_reserve,
+            "total_incurred": total_incurred,
         },
-        "reported_totals": reported,
-        "passed_checks": passed_checks,
-        "warnings": warnings + extraction_meta.get("warnings", []),
-        "ignored_rows": ignored_rows[:20],
-        "requires_review": bool(warnings) or not claims,
+        "requires_review": confidence_score < 70 or financial_validation != "Passed",
     }

@@ -19,7 +19,6 @@ def extract_text_from_pdf(file_path: str) -> tuple[str, dict]:
 
     text = "\n".join(text_parts).strip()
 
-    # Use OCR only when text extraction is very weak and the server has OCR packages installed.
     if len(text) < 80:
         try:
             from pdf2image import convert_from_path
@@ -27,14 +26,18 @@ def extract_text_from_pdf(file_path: str) -> tuple[str, dict]:
 
             images = convert_from_path(file_path, dpi=220)
             ocr_parts: list[str] = []
+
             for index, image in enumerate(images, start=1):
                 ocr_text = pytesseract.image_to_string(image) or ""
                 ocr_parts.append(f"\n--- PAGE {index} OCR ---\n{ocr_text}")
+
             ocr_text = "\n".join(ocr_parts).strip()
+
             if len(ocr_text) > len(text):
                 text = ocr_text
                 meta["method"] = "ocr"
                 meta["ocr_used"] = True
+
         except Exception as exc:
             meta["warnings"].append(f"OCR fallback unavailable: {exc}")
 
@@ -44,6 +47,7 @@ def extract_text_from_pdf(file_path: str) -> tuple[str, dict]:
 def extract_text(file_path: str, filename: str = "") -> tuple[str, dict]:
     lower = (filename or file_path or "").lower()
     suffix = Path(lower).suffix
+
     if suffix == ".pdf":
         return extract_text_from_pdf(file_path)
 

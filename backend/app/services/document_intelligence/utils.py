@@ -2,159 +2,165 @@ from __future__ import annotations
 
 import re
 from datetime import datetime
-from typing import Any, Iterable
-
-DATE_PATTERNS = [
-    r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b",
-    r"\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b",
-    r"\b\d{1,2}\.\d{1,2}\.\d{2,4}\b",
-]
-
-MONEY_RE = re.compile(r"(?<![A-Za-z0-9])\$?\(?-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\)?(?![A-Za-z0-9])")
-
-NON_CLAIM_MARKERS = [
-    "subtotal", "sub-total", "total ", "totals", "grand total", "summary", "metric",
-    "header", "claim no", "claim number", "policy /", "date of loss", "do not create",
-    "do not count", "not a claim", "page ", "generated:", "loss run summary",
-]
-
-LOB_ALIASES = {
-    "commercial auto": ["commercial auto", "comm auto", "auto", "ca", "garage"],
-    "general liability": ["general liability", "general liab", "gl", "premises", "liability"],
-    "workers compensation": ["workers comp", "workers compensation", "wc", "work comp"],
-    "motor truck cargo": ["motor truck cargo", "cargo"],
-    "inland marine": ["inland marine", "inland", "equipment"],
-    "property": ["property", "bpp", "building"],
-}
+from typing import Any
 
 
-def compact_spaces(text: str) -> str:
-    return re.sub(r"\s+", " ", str(text or "")).strip()
+MONEY_RE = re.compile(r"\(?\$?\s*-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\)?|\$?\s*-?\d+(?:\.\d{1,2})?")
+DATE_RE = re.compile(
+    r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}\.\d{1,2}\.\d{2,4})\b"
+)
+POLICY_RE = re.compile(r"\b[A-Z]{1,6}[-\s]?[A-Z]{0,4}[-\s]?\d{3,}[-\s]?[A-Z0-9]{0,6}\b", re.I)
+CLAIM_RE = re.compile(r"\b[A-Z]{1,5}[-\s]?\d{2,4}[-\s]?[A-Z0-9]{3,8}\??\b", re.I)
+
+
+def clean_text(value: Any) -> str:
+    text = "" if value is None else str(value)
+    text = text.replace("\u00a0", " ")
+    text = re.sub(r"[ \t]+", " ", text)
+    return text.strip()
+
+
+def normalize_whitespace(text: str) -> str:
+    text = text.replace("\r\n", "\n").replace("\r", "\n")
+    text = re.sub(r"[ \t]+", " ", text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
 
 def normalize_money(value: Any) -> float:
     if value is None:
         return 0.0
+
     raw = str(value).strip()
-    if raw == "":
+    if not raw:
         return 0.0
+
     negative = raw.startswith("(") and raw.endswith(")")
     raw = raw.replace("$", "").replace(",", "").replace("(", "").replace(")", "").strip()
-    if raw in ["", "-", "."]:
-        return 0.0
+
     try:
-        val = float(raw)
-        return -val if negative else val
+        amount = float(raw)
+        return -amount if negative else amount
     except Exception:
         return 0.0
 
 
-def money_values(text: str) -> list[float]:
-    values: list[float] = []
-    for m in MONEY_RE.findall(text or ""):
-        # Ignore bare years as money values.
-        clean = m.replace("$", "").replace(",", "").replace("(", "").replace(")", "")
-        if re.fullmatch(r"19\d{2}|20\d{2}", clean):
+def money_values(line: str) -> list[float]:
+    values = []
+    for match in MONEY_RE.findall(line or ""):
+        cleaned = str(match).strip()
+        if not cleaned:
             continue
-        values.append(normalize_money(m))
+        values.append(normalize_money(cleaned))
     return values
 
 
-def find_dates(text: str) -> list[str]:
-    dates: list[str] = []
-    for pattern in DATE_PATTERNS:
-        dates.extend(re.findall(pattern, text or ""))
-    return dates
-
-
-def normalize_date(value: Any) -> str:
-    raw = str(value or "").strip()
+def parse_date(value: Any) -> str | None:
+    raw = clean_text(value)
     if not raw:
-        return ""
-    raw = raw.replace(".", "/")
+        return None
+
     formats = [
-        "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%m-%d-%y",
-        "%Y/%m/%d", "%Y-%m-%d",
+        "%m/%d/%Y",
+        "%m/%d/%y",
+        "%m-%d-%Y",
+        "%m-%d-%y",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%m.%d.%Y",
+        "%m.%d.%y",
     ]
+
     for fmt in formats:
         try:
             return datetime.strptime(raw, fmt).date().isoformat()
         except Exception:
             pass
+
+    match = DATE_RE.search(raw)
+    if match:
+        return parse_date(match.group(0))
+
+    return None
+
+
+def date_values(line: str) -> list[str]:
+    dates = []
+    for match in DATE_RE.findall(line or ""):
+        parsed = parse_date(match)
+        if parsed:
+            dates.append(parsed)
+    return dates
+
+
+def normalize_policy_number(value: Any) -> str:
+    raw = clean_text(value).upper()
+    raw = raw.replace(" ", "-")
+    raw = re.sub(r"[^A-Z0-9\-]", "", raw)
+    raw = re.sub(r"-{2,}", "-", raw).strip("-")
     return raw
 
 
 def normalize_claim_number(value: Any) -> str:
-    raw = str(value or "").strip().upper().replace("?", "")
-    raw = re.sub(r"\s+", "-", raw)
-    # OCR cleanup: GL23O049 -> GL230049 only when O appears among digits.
-    raw = re.sub(r"(?<=\d)O(?=\d)", "0", raw)
-    raw = raw.replace("—", "-").replace("–", "-")
-    raw = re.sub(r"-+", "-", raw).strip("-")
-    return raw
-
-
-def normalize_policy_number(value: Any) -> str:
-    raw = str(value or "").strip().upper()
+    raw = clean_text(value).upper()
     raw = raw.replace("?", "")
-    raw = re.sub(r"\s+", "-", raw)
-    raw = re.sub(r"(?<=\d)O(?=\d)", "0", raw)
-    raw = raw.replace("—", "-").replace("–", "-")
-    raw = re.sub(r"-+", "-", raw).strip("-")
+    raw = raw.replace(" ", "-")
+    raw = re.sub(r"[^A-Z0-9\-]", "", raw)
+    raw = re.sub(r"-{2,}", "-", raw).strip("-")
+
+    # OCR cleanup: only normalize common O/0 mistakes inside mostly numeric claim tails.
+    parts = raw.split("-")
+    if len(parts) >= 2:
+        fixed_parts = []
+        for part in parts:
+            if re.search(r"\d", part) and len(part) >= 3:
+                fixed_parts.append(part.replace("O", "0"))
+            else:
+                fixed_parts.append(part)
+        raw = "-".join(fixed_parts)
+
     return raw
 
 
-def is_non_claim_line(text: str) -> bool:
-    lower = compact_spaces(text).lower()
-    if not lower:
-        return True
-    return any(marker in lower for marker in NON_CLAIM_MARKERS)
+def looks_like_total_row(line: str) -> bool:
+    lower = clean_text(line).lower()
+    total_words = ["subtotal", "sub-total", "total", "totals", "grand total", "summary"]
+    if any(word in lower for word in total_words):
+        if not re.search(r"\b(claim no|claim number|claim id)\b", lower):
+            return True
+    return False
 
 
-def detect_lob(text: str) -> str:
-    lower = compact_spaces(text).lower()
-    for canonical, aliases in LOB_ALIASES.items():
-        for alias in aliases:
-            if re.search(rf"\b{re.escape(alias)}\b", lower):
-                return canonical.title()
+def looks_like_header_row(line: str) -> bool:
+    lower = clean_text(line).lower()
+    header_terms = ["claim number", "claim no", "claim id", "policy", "paid", "reserve", "incurred"]
+    return sum(term in lower for term in header_terms) >= 3
+
+
+def line_has_claim_signal(line: str) -> bool:
+    if not line or looks_like_total_row(line) or looks_like_header_row(line):
+        return False
+
+    has_claim = bool(CLAIM_RE.search(line))
+    has_money = len(money_values(line)) >= 2
+    has_date = bool(date_values(line))
+
+    return has_claim and (has_money or has_date)
+
+
+def find_first(patterns: list[str], text: str, flags: int = re.I) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, text, flags)
+        if match:
+            for group in match.groups():
+                if group:
+                    return clean_text(group)
     return ""
 
 
-def likely_claim_id_tokens(text: str) -> list[str]:
-    tokens = re.findall(r"\b[A-Z]{1,5}[A-Z0-9]*[\s-]?\d{2,4}[A-Z0-9\s-]{1,20}\b", str(text or "").upper())
-    cleaned: list[str] = []
-    for token in tokens:
-        normalized = normalize_claim_number(token)
-        if len(normalized) < 5:
-            continue
-        if any(word in normalized for word in ["POLICY", "ACCT", "ACCOUNT", "TOTAL", "PAGE"]):
-            continue
-        if normalized not in cleaned:
-            cleaned.append(normalized)
-    return cleaned
+def clamp_score(value: int | float) -> int:
+    return max(0, min(100, int(round(value))))
 
 
-def likely_policy_tokens(text: str) -> list[str]:
-    tokens = re.findall(r"\b[A-Z]{1,6}[A-Z0-9]*[\s-]?[A-Z]{0,6}[\s-]?\d{3,}[A-Z0-9\s-]*\b", str(text or "").upper())
-    cleaned: list[str] = []
-    for token in tokens:
-        normalized = normalize_policy_number(token)
-        if len(normalized) < 6:
-            continue
-        if any(word in normalized for word in ["CLAIM", "TOTAL", "PAGE", "DATE"]):
-            continue
-        if normalized not in cleaned:
-            cleaned.append(normalized)
-    return cleaned
-
-
-def unique_by(items: Iterable[dict], key_fn) -> list[dict]:
-    out: list[dict] = []
-    seen: set[str] = set()
-    for item in items:
-        key = str(key_fn(item) or "").strip().upper()
-        if not key or key in seen:
-            continue
-        seen.add(key)
-        out.append(item)
-    return out
+def split_lines(text: str) -> list[str]:
+    return [clean_text(line) for line in normalize_whitespace(text).splitlines() if clean_text(line)]

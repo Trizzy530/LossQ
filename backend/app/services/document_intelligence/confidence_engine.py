@@ -1,32 +1,59 @@
 from __future__ import annotations
 
+from .utils import clamp_score
 
-def score_document(profile: dict, policies: list[dict], claims: list[dict], validation: dict) -> dict:
-    score = 35
-    if profile.get("business_name") and "Needs Review" not in str(profile.get("business_name")):
+
+def score_document(
+    profile: dict,
+    policies: list[dict],
+    claims: list[dict],
+    validation: dict,
+    meta: dict | None = None,
+) -> dict:
+    meta = meta or {}
+    warnings = list(validation.get("warnings") or [])
+
+    score = 50
+
+    if profile.get("business_name"):
         score += 10
-    if profile.get("account_number") and "Needs Review" not in str(profile.get("account_number")):
-        score += 5
-    if policies:
-        score += min(20, len(policies) * 4)
-    if claims:
-        score += min(25, len(claims) * 4)
-    if validation.get("financial_validation") == "Passed":
-        score += 15
-    if validation.get("ignored_rows"):
-        score += 3
-    if validation.get("warnings"):
-        score -= min(25, len(validation.get("warnings", [])) * 5)
 
-    score = max(0, min(100, int(score)))
+    if profile.get("carrier_name") or profile.get("writing_carrier"):
+        score += 5
+
+    if profile.get("policy_number") or profile.get("account_number"):
+        score += 5
+
+    if policies:
+        score += 10
+
+    if claims:
+        score += 15
+
+    if validation.get("financial_validation") == "Passed":
+        score += 10
+
+    if meta.get("ocr_used"):
+        score -= 5
+
+    score -= min(len(warnings) * 5, 25)
+
+    score = clamp_score(score)
+
     if score >= 85:
         level = "High"
+        recommendation = "Extraction is strong. Standard review recommended before final underwriting use."
     elif score >= 65:
         level = "Medium"
+        recommendation = "Extraction is usable but should be reviewed before saving or carrier submission."
     else:
         level = "Low"
+        recommendation = "Extraction requires manual review before claims are saved or used for underwriting."
 
-    validation["document_confidence"] = score
-    validation["confidence_level"] = level
-    validation["requires_review"] = validation.get("requires_review") or score < 75
-    return validation
+    return {
+        "document_confidence": score,
+        "confidence_level": level,
+        "processing_recommendation": recommendation,
+        "ocr_used": bool(meta.get("ocr_used")),
+        "warning_count": len(warnings),
+    }
