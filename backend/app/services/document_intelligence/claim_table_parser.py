@@ -20,14 +20,9 @@ CLAIM_PATTERN = re.compile(
     re.I,
 )
 
-POLICY_PATTERN = re.compile(
-    r"\b(?:[A-Z]{1,6}[-\s]?[A-Z]{1,6}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,6})?|\d{3,8}[-\s]?[A-Z]{1,5}[-\s]?\d{1,6})\b",
-    re.I,
-)
 
-
-def detect_status(line: str) -> str:
-    lower = clean_text(line).lower()
+def detect_status(text: str) -> str:
+    lower = clean_text(text).lower()
 
     if "closed" in lower or "resolved" in lower:
         return "Closed"
@@ -38,8 +33,20 @@ def detect_status(line: str) -> str:
     return "Open"
 
 
-def detect_litigation(line: str) -> bool:
-    lower = clean_text(line).lower()
+def detect_litigation(text: str) -> bool:
+    lower = clean_text(text).lower()
+
+    no_litigation_phrases = [
+        "no litigation",
+        "litigation no",
+        "no litigated",
+        "no attorney",
+        "no attorney involvement",
+    ]
+
+    if any(phrase in lower for phrase in no_litigation_phrases):
+        return False
+
     return any(
         term in lower
         for term in [
@@ -53,8 +60,8 @@ def detect_litigation(line: str) -> bool:
     )
 
 
-def extract_claim_number(line: str) -> str:
-    matches = CLAIM_PATTERN.findall(line or "")
+def extract_claim_number(text: str) -> str:
+    matches = CLAIM_PATTERN.findall(text or "")
 
     if not matches:
         return ""
@@ -66,9 +73,9 @@ def normalize_compact(value: str) -> str:
     return normalize_policy_number(value).replace("-", "")
 
 
-def extract_policy_number(line: str, policies: list[dict]) -> str:
-    clean_line = clean_text(line)
-    compact_line = normalize_compact(clean_line)
+def extract_policy_number(text: str, policies: list[dict]) -> str:
+    clean = clean_text(text)
+    compact = normalize_compact(clean)
 
     known_policies = [
         normalize_policy_number(policy.get("policy_number"))
@@ -80,32 +87,17 @@ def extract_policy_number(line: str, policies: list[dict]) -> str:
         if not policy_number:
             continue
 
-        if policy_number in normalize_policy_number(clean_line):
+        if policy_number in normalize_policy_number(clean):
             return policy_number
 
-        if normalize_compact(policy_number) in compact_line:
+        if normalize_compact(policy_number) in compact:
             return policy_number
 
-    candidates = POLICY_PATTERN.findall(clean_line)
-
-    for candidate in candidates:
-        policy_number = normalize_policy_number(candidate)
-
-        if not policy_number:
-            continue
-
-        # Skip obvious claim IDs.
-        if CLAIM_PATTERN.search(policy_number):
-            continue
-
-        if re.search(r"\d{3,}", policy_number):
-            return policy_number
-
-    return known_policies[0] if len(known_policies) == 1 else ""
+    return ""
 
 
-def clean_description(line: str, claim_number: str, policy_number: str) -> str:
-    desc = clean_text(line)
+def clean_description(row: str, claim_number: str, policy_number: str) -> str:
+    desc = clean_text(row)
 
     for value in [claim_number, policy_number]:
         if value:
@@ -116,28 +108,18 @@ def clean_description(line: str, claim_number: str, policy_number: str) -> str:
     desc = re.sub(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", " ", desc)
     desc = re.sub(r"\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b", " ", desc)
     desc = re.sub(r"\b\d{1,2}\.\d{1,2}\.\d{2,4}\b", " ", desc)
+    desc = re.sub(r"\b(CLOSED|OPEN|PENDING|RESOLVED)\*?\b", " ", desc, flags=re.I)
     desc = re.sub(r"\s+", " ", desc).strip(" -|")
 
     return desc[:700]
 
 
-def line_has_claim_signal(line: str) -> bool:
-    if not line:
-        return False
-
-    if looks_like_total_row(line) or looks_like_header_row(line):
-        return False
-
-    if not CLAIM_PATTERN.search(line):
-        return False
-
-    has_money = len(money_values(line)) >= 1
-    has_date = len(date_values(line)) >= 1
-
-    return has_money or has_date
-
-
 def assign_amounts(amounts: list[float]) -> tuple[float, float, float]:
+    """
+    Use the last three money values as paid/reserve/incurred.
+    This avoids accidentally using claim number or policy number digits.
+    """
+
     if len(amounts) >= 3:
         paid = amounts[-3]
         reserve = amounts[-2]
@@ -161,69 +143,117 @@ def assign_amounts(amounts: list[float]) -> tuple[float, float, float]:
     return paid, reserve, incurred
 
 
+def reconstruct_claim_rows(lines: list[str]) -> tuple[list[str], list[dict]]:
+    """
+    Reconstruct claim table rows from PDFs that extract each table cell as a new line.
+
+    Starts when a claim number appears, then gathers nearby policy/date/description/status/money
+    lines until the next claim number or subtotal/total section.
+    """
+
+    rows: list[str] = []
+    ignored_rows: list[dict] = []
+
+    index = 0
+
+    while index < len(lines):
+        line = lines[index]
+
+        if looks_like_total_row(line):
+            ignored_rows.append({"reason": "total_or_subtotal_row", "line": line[:700]})
+            index += 1
+            continue
+
+        if looks_like_header_row(line):
+            ignored_rows.append({"reason": "header_row", "line": line[:700]})
+            index += 1
+            continue
+
+        if not CLAIM_PATTERN.search(line):
+            index += 1
+            continue
+
+        # Ignore policy schedule values that are not real claim numbers.
+        claim_number = extract_claim_number(line)
+        if not claim_number:
+            index += 1
+            continue
+
+        parts = [line]
+        index += 1
+
+        while index < len(lines):
+            next_line = lines[index]
+
+            if looks_like_total_row(next_line):
+                ignored_rows.append({"reason": "total_or_subtotal_row", "line": next_line[:700]})
+                break
+
+            if CLAIM_PATTERN.search(next_line):
+                break
+
+            parts.append(next_line)
+
+            # Most claim rows should have at least 3 money values by the end.
+            joined = " ".join(parts)
+            if len(money_values(joined)) >= 3 and detect_status(joined) in ["Closed", "Open"]:
+                # Continue a little only if next lines look like money/noise, otherwise stop.
+                if index + 1 < len(lines) and not CLAIM_PATTERN.search(lines[index + 1]):
+                    lookahead = clean_text(lines[index + 1]).lower()
+                    if not any(token in lookahead for token in ["$", "0.00", "closed", "open"]):
+                        pass
+                break
+
+            index += 1
+
+        rows.append(" ".join(parts))
+
+    return rows, ignored_rows
+
+
 def parse_claims(
     text: str,
     policies: list[dict] | None = None,
     profile: dict | None = None,
 ) -> tuple[list[dict], list[dict]]:
-    """
-    Universal claim row parser V2.
-
-    It is not hardcoded to one carrier or file. It detects:
-    - claim IDs by common insurance claim-number patterns
-    - dates
-    - money columns
-    - claim status
-    - litigation indicators
-    - policy numbers by known policy schedule matching
-    """
-
     policies = policies or []
     profile = profile or {}
+
     lines = split_lines(text)
+    reconstructed_rows, ignored_rows = reconstruct_claim_rows(lines)
 
     claims: list[dict] = []
-    ignored_rows: list[dict] = []
-    seen: set[str] = set()
+    seen_claim_numbers: set[str] = set()
 
-    for line in lines:
-        if not line:
+    for row in reconstructed_rows:
+        if looks_like_total_row(row) or looks_like_header_row(row):
+            ignored_rows.append({"reason": "non_claim_row", "line": row[:700]})
             continue
 
-        if looks_like_total_row(line):
-            ignored_rows.append({"reason": "total_or_subtotal_row", "line": line[:700]})
-            continue
-
-        if looks_like_header_row(line):
-            ignored_rows.append({"reason": "header_row", "line": line[:700]})
-            continue
-
-        if not line_has_claim_signal(line):
-            continue
-
-        claim_number = extract_claim_number(line)
+        claim_number = extract_claim_number(row)
 
         if not claim_number:
-            ignored_rows.append({"reason": "missing_claim_number", "line": line[:700]})
+            ignored_rows.append({"reason": "missing_claim_number", "line": row[:700]})
             continue
 
-        dates = date_values(line)
-        amounts = money_values(line)
+        # If this is a duplicate supplement row, skip it.
+        if claim_number in seen_claim_numbers:
+            ignored_rows.append({"reason": "duplicate_claim_row", "line": row[:700]})
+            continue
+
+        dates = date_values(row)
+        amounts = money_values(row)
+
+        # A real claim row needs claim number + date or money.
+        if len(dates) == 0 and len(amounts) < 2:
+            ignored_rows.append({"reason": "insufficient_claim_row_context", "line": row[:700]})
+            continue
+
         paid, reserve, incurred = assign_amounts(amounts)
-
-        policy_number = extract_policy_number(line, policies)
-
-        dedupe_key = f"{claim_number}|{policy_number}|{dates[0] if dates else ''}|{incurred}"
-
-        if dedupe_key in seen:
-            ignored_rows.append({"reason": "duplicate_claim_row", "line": line[:700]})
-            continue
-
-        seen.add(dedupe_key)
-
-        lob = detect_lob(line)
-        status = detect_status(line)
-        litigation = detect_litigation(line)
+        policy_number = extract_policy_number(row, policies)
+        lob = detect_lob(row)
+        status = detect_status(row)
+        litigation = detect_litigation(row)
 
         claim = {
             "claim_number": claim_number,
@@ -236,20 +266,21 @@ def parse_claims(
             "date_reported": dates[1] if len(dates) >= 2 else None,
             "date_closed": None,
             "status": status,
-            "description": clean_description(line, claim_number, policy_number),
+            "description": clean_description(row, claim_number, policy_number),
             "paid_amount": paid,
             "reserve_amount": reserve,
             "total_incurred": incurred,
             "litigation": litigation,
             "litigation_status": "Litigation/Attorney Indicator" if litigation else "",
             "attorney_assigned": litigation,
-            "suit_filed": "suit filed" in line.lower() or "lawsuit" in line.lower(),
+            "suit_filed": "suit filed" in row.lower() or "lawsuit" in row.lower(),
             "venue_state": "",
             "injury_type": "",
             "flag": "Litigation exposure" if litigation else "",
-            "source_line": line[:700],
+            "source_line": row[:700],
         }
 
         claims.append(claim)
+        seen_claim_numbers.add(claim_number)
 
     return claims, ignored_rows
