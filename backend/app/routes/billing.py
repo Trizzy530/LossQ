@@ -345,8 +345,16 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Invalid webhook payload: {exc}")
 
+    # Stripe's Python SDK returns StripeObject/Event objects, not normal dicts.
+    # Convert them before using .get() so webhooks do not crash with:
+    # AttributeError: get / KeyError: 'get'.
+    if hasattr(event, "to_dict_recursive"):
+        event = event.to_dict_recursive()
+    else:
+        event = dict(event)
+
     event_type = event.get("type")
-    obj = event.get("data", {}).get("object", {})
+    obj = event.get("data", {}).get("object", {}) or {}
 
     if event_type == "checkout.session.completed":
         org_id = obj.get("metadata", {}).get("organization_id")
@@ -355,6 +363,8 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
         if org_id and subscription_id:
             subscription = stripe.Subscription.retrieve(subscription_id)
+            if hasattr(subscription, "to_dict_recursive"):
+                subscription = subscription.to_dict_recursive()
             price_id = subscription["items"]["data"][0]["price"]["id"]
             org = db.query(Organization).filter(Organization.id == int(org_id)).first()
             if org:
