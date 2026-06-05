@@ -352,25 +352,28 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     obj = event.get("data", {}).get("object", {}) or {}
 
     if event_type == "checkout.session.completed":
-        org_id = obj.get("metadata", {}).get("organization_id")
+        metadata = obj.get("metadata", {}) or {}
+        org_id = metadata.get("organization_id")
+        price_id = metadata.get("price_id")
         subscription_id = obj.get("subscription")
         customer_id = obj.get("customer")
 
-        if org_id and subscription_id:
-            subscription = stripe.Subscription.retrieve(subscription_id)
-            if hasattr(subscription, "to_dict_recursive"):
-                subscription = subscription.to_dict_recursive()
-            price_id = subscription["items"]["data"][0]["price"]["id"]
+        # Do not call subscription.get() here. Stripe SDK returns StripeObject,
+        # which can crash with AttributeError: get on some versions.
+        # The checkout session already carries the price_id in metadata because
+        # create_checkout_session stores it there. Subscription updated events
+        # can later fill current_period_end.
+        if org_id and price_id:
             org = db.query(Organization).filter(Organization.id == int(org_id)).first()
             if org:
                 apply_plan_to_org(
                     db,
                     org,
                     price_id=price_id,
-                    status=subscription.get("status", "active"),
-                    subscription_id=subscription_id,
-                    customer_id=customer_id,
-                    current_period_end=subscription.get("current_period_end"),
+                    status="active",
+                    subscription_id=subscription_id or "",
+                    customer_id=customer_id or "",
+                    current_period_end=None,
                 )
 
     if event_type in {"customer.subscription.created", "customer.subscription.updated"}:
