@@ -5,12 +5,19 @@ from datetime import datetime
 from typing import Any
 
 
-MONEY_RE = re.compile(r"\(?\$?\s*-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\)?|\$?\s*-?\d+(?:\.\d{1,2})?")
 DATE_RE = re.compile(
     r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}|\d{1,2}\.\d{1,2}\.\d{2,4})\b"
 )
-POLICY_RE = re.compile(r"\b[A-Z]{1,6}[-\s]?[A-Z]{0,4}[-\s]?\d{3,}[-\s]?[A-Z0-9]{0,6}\b", re.I)
-CLAIM_RE = re.compile(r"\b[A-Z]{1,5}[-\s]?\d{2,4}[-\s]?[A-Z0-9]{3,8}\??\b", re.I)
+
+POLICY_RE = re.compile(
+    r"\b[A-Z]{1,6}[-\s]?[A-Z]{1,6}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,6})?\b",
+    re.I,
+)
+
+CLAIM_RE = re.compile(
+    r"\b(?:GL|WC|CA|IM|CG|AUTO|AL|BI|PD|PROP)[-\s]?\d{2,4}[-\s]?[A-Z0-9]{3,8}\??\b",
+    re.I,
+)
 
 
 def clean_text(value: Any) -> str:
@@ -46,12 +53,36 @@ def normalize_money(value: Any) -> float:
 
 
 def money_values(line: str) -> list[float]:
-    values = []
-    for match in MONEY_RE.findall(line or ""):
-        cleaned = str(match).strip()
-        if not cleaned:
-            continue
-        values.append(normalize_money(cleaned))
+    """
+    Extract actual money columns only.
+
+    Important:
+    Do NOT treat claim IDs like GL-23-0041 or policy IDs like CW-WC-77142
+    as negative money values.
+    """
+
+    text = clean_text(line)
+
+    # Remove known ID/date patterns before scanning for money-like numbers.
+    scrubbed = CLAIM_RE.sub(" ", text)
+    scrubbed = POLICY_RE.sub(" ", scrubbed)
+    scrubbed = DATE_RE.sub(" ", scrubbed)
+
+    values: list[float] = []
+
+    # Currency amounts are strong signals.
+    for match in re.finditer(r"\(?\$[\s]*-?\d[\d,]*(?:\.\d{1,2})?\)?", scrubbed):
+        values.append(normalize_money(match.group(0)))
+
+    # Plain table numeric money values: 0, 0.00, 1225, 1,225.00
+    # Require token boundaries so we do not pull digits from IDs.
+    for token in re.findall(r"(?<![A-Za-z0-9-])\(?-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\)?(?![A-Za-z0-9-])", scrubbed):
+        value = normalize_money(token)
+
+        # Avoid page numbers, years, and tiny row labels unless it is zero.
+        if value == 0 or abs(value) >= 100:
+            values.append(value)
+
     return values
 
 
@@ -108,7 +139,6 @@ def normalize_claim_number(value: Any) -> str:
     raw = re.sub(r"[^A-Z0-9\-]", "", raw)
     raw = re.sub(r"-{2,}", "-", raw).strip("-")
 
-    # OCR cleanup: only normalize common O/0 mistakes inside mostly numeric claim tails.
     parts = raw.split("-")
     if len(parts) >= 2:
         fixed_parts = []
@@ -124,10 +154,14 @@ def normalize_claim_number(value: Any) -> str:
 
 def looks_like_total_row(line: str) -> bool:
     lower = clean_text(line).lower()
-    total_words = ["subtotal", "sub-total", "total", "totals", "grand total", "summary"]
+
+    if "do not create a claim" in lower:
+        return True
+
+    total_words = ["subtotal", "sub-total", "totals", "grand total"]
     if any(word in lower for word in total_words):
-        if not re.search(r"\b(claim no|claim number|claim id)\b", lower):
-            return True
+        return True
+
     return False
 
 
@@ -135,17 +169,6 @@ def looks_like_header_row(line: str) -> bool:
     lower = clean_text(line).lower()
     header_terms = ["claim number", "claim no", "claim id", "policy", "paid", "reserve", "incurred"]
     return sum(term in lower for term in header_terms) >= 3
-
-
-def line_has_claim_signal(line: str) -> bool:
-    if not line or looks_like_total_row(line) or looks_like_header_row(line):
-        return False
-
-    has_claim = bool(CLAIM_RE.search(line))
-    has_money = len(money_values(line)) >= 2
-    has_date = bool(date_values(line))
-
-    return has_claim and (has_money or has_date)
 
 
 def find_first(patterns: list[str], text: str, flags: int = re.I) -> str:
