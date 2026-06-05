@@ -1,4 +1,5 @@
 import os
+import json
 from datetime import datetime, timezone
 from typing import Any, Dict, Optional
 
@@ -333,25 +334,19 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     payload = await request.body()
     signature = request.headers.get("stripe-signature")
 
+    # Verify Stripe signature first, then parse the raw JSON payload into
+    # a normal Python dict. This avoids StripeObject/Event parsing crashes
+    # such as AttributeError: get or KeyError: 0.
     if STRIPE_WEBHOOK_SECRET:
         try:
-            event = stripe.Webhook.construct_event(payload, signature, STRIPE_WEBHOOK_SECRET)
+            stripe.Webhook.construct_event(payload, signature, STRIPE_WEBHOOK_SECRET)
         except Exception as exc:
             raise HTTPException(status_code=400, detail=f"Webhook signature verification failed: {exc}")
-    else:
-        # Allows local/sandbox testing before webhook secret is added.
-        try:
-            event = stripe.Event.construct_from(await request.json(), stripe.api_key)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Invalid webhook payload: {exc}")
 
-    # Stripe's Python SDK returns StripeObject/Event objects, not normal dicts.
-    # Convert them before using .get() so webhooks do not crash with:
-    # AttributeError: get / KeyError: 'get'.
-    if hasattr(event, "to_dict_recursive"):
-        event = event.to_dict_recursive()
-    else:
-        event = dict(event)
+    try:
+        event = json.loads(payload.decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Invalid webhook payload: {exc}")
 
     event_type = event.get("type")
     obj = event.get("data", {}).get("object", {}) or {}
