@@ -23,9 +23,25 @@ LOB_KEYWORDS = {
 
 
 POLICY_PATTERN = re.compile(
-    r"\b(?:[A-Z]{1,6}[-\s]?[A-Z]{1,6}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,6})?|\d{3,8}[-\s]?[A-Z]{1,5}[-\s]?\d{1,6})\b",
+    r"\b[A-Z]{1,6}[-\s]?[A-Z]{1,6}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,6})?\b",
     re.I,
 )
+
+
+BAD_POLICY_WORDS = [
+    "PAGE",
+    "GENERATED",
+    "REPORT",
+    "VALUATION",
+    "TOTAL",
+    "TOTALS",
+    "SUBTOTAL",
+    "SUMMARY",
+    "CLAIM",
+    "LOSS",
+    "RUN",
+    "COPY",
+]
 
 
 def detect_lob(line: str) -> str:
@@ -38,25 +54,76 @@ def detect_lob(line: str) -> str:
     return "Policy"
 
 
+def is_valid_policy_number(policy_number: str) -> bool:
+    policy = normalize_policy_number(policy_number)
+
+    if not policy:
+        return False
+
+    if len(policy) < 6:
+        return False
+
+    if any(word in policy for word in BAD_POLICY_WORDS):
+        return False
+
+    # Must contain letters and at least 3 digits.
+    if not re.search(r"[A-Z]", policy):
+        return False
+
+    if not re.search(r"\d{3,}", policy):
+        return False
+
+    # Avoid pure date/page-looking values.
+    if re.match(r"^20\d{2}-PAGE-\d+$", policy):
+        return False
+
+    if re.match(r"^PAGE-\d+$", policy):
+        return False
+
+    # Avoid obvious claim numbers.
+    if re.match(r"^(GL|WC|CA|IM|CG|BI|PD|AL|PROP)-?\d{2,4}-?\d{3,}", policy, re.I):
+        return False
+
+    return True
+
+
 def looks_like_policy_schedule_row(line: str) -> bool:
     lower = clean_text(line).lower()
 
     if not line:
         return False
 
-    if "claim no" in lower or "claim number" in lower or "claim id" in lower:
+    hard_excludes = [
+        "generated:",
+        "page ",
+        "claim no",
+        "claim number",
+        "claim id",
+        "detailed claims",
+        "claim detail",
+        "date of loss",
+        "total claims",
+        "open claims",
+        "closed claims",
+        "litigation",
+        "underwriter note",
+        "carrier comments",
+        "renewal signal",
+        "fax received",
+    ]
+
+    if any(term in lower for term in hard_excludes):
         return False
 
-    if "detailed claims" in lower or "claim detail" in lower:
+    candidates = extract_policy_candidates(line)
+    if not candidates:
         return False
 
-    has_policy_like_value = bool(POLICY_PATTERN.search(line))
     has_lob = detect_lob(line) != "Policy"
     has_date = len(date_values(line)) >= 1
     has_schedule_words = any(
         word in lower
         for word in [
-            "carrier",
             "policy",
             "coverage",
             "lob",
@@ -71,38 +138,27 @@ def looks_like_policy_schedule_row(line: str) -> bool:
         ]
     )
 
-    return has_policy_like_value and (has_lob or has_date or has_schedule_words)
+    return has_lob or has_date or has_schedule_words
 
 
 def extract_policy_candidates(line: str) -> list[str]:
-    candidates = []
+    candidates: list[str] = []
 
     for match in POLICY_PATTERN.findall(line or ""):
         policy = normalize_policy_number(match)
 
-        if not policy:
-            continue
-
-        # Avoid obvious claim numbers.
-        if re.match(r"^(GL|WC|CA|IM|CG|BI|PD|AL|PROP)-?\d{2,4}-?\d{3,}", policy, re.I):
-            continue
-
-        # Avoid carrier abbreviations without enough numeric content.
-        if not re.search(r"\d{3,}", policy):
-            continue
-
-        candidates.append(policy)
+        if is_valid_policy_number(policy):
+            candidates.append(policy)
 
     return candidates
 
 
 def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
     """
-    Universal policy schedule parser V2.
+    Universal policy schedule parser V3.
 
-    This parser is intentionally structural, not carrier-specific.
-    It looks for policy-number-like values inside rows that also contain
-    line of business, date, schedule, payroll/sales/unit, or carrier context.
+    Detects policy schedule rows while rejecting headers, page numbers,
+    dates, claim rows, subtotal rows, report text, and OCR noise.
     """
 
     profile = profile or {}
@@ -115,7 +171,6 @@ def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
             continue
 
         candidates = extract_policy_candidates(line)
-
         if not candidates:
             continue
 
@@ -147,22 +202,25 @@ def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
             seen.add(policy_number)
 
     if not policies and profile.get("policy_number"):
-        policies.append(
-            {
-                "policy_number": normalize_policy_number(profile.get("policy_number")),
-                "policy_type": "Policy",
-                "line_coverage": "Policy",
-                "line_of_business": "Policy",
-                "writing_carrier": profile.get("writing_carrier") or profile.get("carrier_name") or "",
-                "carrier": profile.get("carrier_name") or profile.get("writing_carrier") or "",
-                "effective_date": profile.get("effective_date", ""),
-                "expiration_date": profile.get("expiration_date", ""),
-                "claim_count": 0,
-                "total_paid": 0,
-                "total_reserve": 0,
-                "total_incurred": 0,
-                "source_line": "Fallback from profile",
-            }
-        )
+        fallback_policy = normalize_policy_number(profile.get("policy_number"))
+
+        if is_valid_policy_number(fallback_policy):
+            policies.append(
+                {
+                    "policy_number": fallback_policy,
+                    "policy_type": "Policy",
+                    "line_coverage": "Policy",
+                    "line_of_business": "Policy",
+                    "writing_carrier": profile.get("writing_carrier") or profile.get("carrier_name") or "",
+                    "carrier": profile.get("carrier_name") or profile.get("writing_carrier") or "",
+                    "effective_date": profile.get("effective_date", ""),
+                    "expiration_date": profile.get("expiration_date", ""),
+                    "claim_count": 0,
+                    "total_paid": 0,
+                    "total_reserve": 0,
+                    "total_incurred": 0,
+                    "source_line": "Fallback from profile",
+                }
+            )
 
     return policies
