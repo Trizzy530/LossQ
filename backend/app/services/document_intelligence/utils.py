@@ -14,8 +14,10 @@ POLICY_RE = re.compile(
     re.I,
 )
 
+# Claim IDs should look like GL-23-0041, WC-24-0177, CA-24-2109, IM-24-0066.
+# This intentionally rejects policy-number fragments like GL-882190 or WC-77142.
 CLAIM_RE = re.compile(
-    r"\b(?:GL|WC|CA|IM|CG|AUTO|AL|BI|PD|PROP)[-\s]?\d{2,4}[-\s]?[A-Z0-9]{3,8}\??\b",
+    r"\b(?:GL|WC|CA|IM|CG|AUTO|AL|BI|PD|PROP)[-\s]?(?:1[0-9]|2[0-9])[-\s]?[A-Z0-9]{3,8}\??\b",
     re.I,
 )
 
@@ -54,32 +56,33 @@ def normalize_money(value: Any) -> float:
 
 def money_values(line: str) -> list[float]:
     """
-    Extract actual money columns only.
+    Extract real money columns only.
 
-    Important:
-    Do NOT treat claim IDs like GL-23-0041 or policy IDs like CW-WC-77142
-    as negative money values.
+    This avoids treating claim IDs, policy IDs, dates, years, page numbers,
+    and row numbers as money.
     """
 
     text = clean_text(line)
 
-    # Remove known ID/date patterns before scanning for money-like numbers.
     scrubbed = CLAIM_RE.sub(" ", text)
     scrubbed = POLICY_RE.sub(" ", scrubbed)
     scrubbed = DATE_RE.sub(" ", scrubbed)
 
     values: list[float] = []
 
-    # Currency amounts are strong signals.
+    # Strongest signal: currency tokens like $2,450 or ($1,200.00)
     for match in re.finditer(r"\(?\$[\s]*-?\d[\d,]*(?:\.\d{1,2})?\)?", scrubbed):
         values.append(normalize_money(match.group(0)))
 
-    # Plain table numeric money values: 0, 0.00, 1225, 1,225.00
-    # Require token boundaries so we do not pull digits from IDs.
-    for token in re.findall(r"(?<![A-Za-z0-9-])\(?-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\)?(?![A-Za-z0-9-])", scrubbed):
+    # Plain table cells like 0, 0.00, 1225, 1,225.00.
+    for token in re.findall(
+        r"(?<![A-Za-z0-9-])\(?-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\)?(?![A-Za-z0-9-])",
+        scrubbed,
+    ):
         value = normalize_money(token)
 
-        # Avoid page numbers, years, and tiny row labels unless it is zero.
+        # Keep zeros because reserve columns are often 0.
+        # Keep values >= 100 because insurance claim amounts usually are.
         if value == 0 or abs(value) >= 100:
             values.append(value)
 
@@ -139,17 +142,23 @@ def normalize_claim_number(value: Any) -> str:
     raw = re.sub(r"[^A-Z0-9\-]", "", raw)
     raw = re.sub(r"-{2,}", "-", raw).strip("-")
 
-    parts = raw.split("-")
-    if len(parts) >= 2:
-        fixed_parts = []
-        for part in parts:
-            if re.search(r"\d", part) and len(part) >= 3:
-                fixed_parts.append(part.replace("O", "0"))
-            else:
-                fixed_parts.append(part)
-        raw = "-".join(fixed_parts)
+    # OCR cleanup: GL23O049 should become GL-23-0049 when possible.
+    compact = raw.replace("-", "")
+    match = re.match(r"^(GL|WC|CA|IM|CG|AUTO|AL|BI|PD|PROP)(1[0-9]|2[0-9])([A-Z0-9]{3,8})$", compact)
+    if match:
+        prefix, year, tail = match.groups()
+        tail = tail.replace("O", "0")
+        raw = f"{prefix}-{year}-{tail}"
 
-    return raw
+    parts = raw.split("-")
+    fixed_parts = []
+    for part in parts:
+        if re.search(r"\d", part) and len(part) >= 3:
+            fixed_parts.append(part.replace("O", "0"))
+        else:
+            fixed_parts.append(part)
+
+    return "-".join(fixed_parts)
 
 
 def looks_like_total_row(line: str) -> bool:

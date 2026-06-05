@@ -4,6 +4,7 @@ import re
 
 from .policy_schedule_parser import detect_lob
 from .utils import (
+    CLAIM_RE,
     clean_text,
     date_values,
     looks_like_header_row,
@@ -15,18 +16,18 @@ from .utils import (
 )
 
 
-CLAIM_PATTERN = re.compile(
-    r"\b(?:GL|WC|CA|IM|CG|AUTO|AL|BI|PD|PROP)[-\s]?\d{2,4}[-\s]?[A-Z0-9]{3,8}\??\b",
-    re.I,
-)
+CLAIM_PATTERN = CLAIM_RE
 
 
 def detect_status(text: str) -> str:
     lower = clean_text(text).lower()
+
     if "closed" in lower or "resolved" in lower:
         return "Closed"
+
     if "open" in lower or "pending" in lower or "reopened" in lower:
         return "Open"
+
     return "Open"
 
 
@@ -35,7 +36,13 @@ def detect_litigation(text: str) -> bool:
 
     if any(
         phrase in lower
-        for phrase in ["no litigation", "litigation no", "no attorney", "no attorney involvement"]
+        for phrase in [
+            "no litigation",
+            "closed no litigation",
+            "litigation no",
+            "no attorney",
+            "no attorney involvement",
+        ]
     ):
         return False
 
@@ -68,14 +75,32 @@ def extract_policy_number(text: str, policies: list[dict]) -> str:
 
 
 def assign_amounts(amounts: list[float]) -> tuple[float, float, float]:
+    """
+    Financial Column Mapping Engine V1.
+
+    Most loss runs use:
+    Paid | Reserve | Total Incurred
+
+    We take the final 3 actual money columns after IDs and dates are removed.
+    """
+
     if len(amounts) >= 3:
-        return amounts[-3], amounts[-2], amounts[-1]
+        paid = amounts[-3]
+        reserve = amounts[-2]
+        incurred = amounts[-1]
+        return paid, reserve, incurred
 
     if len(amounts) == 2:
-        return amounts[-2], 0.0, amounts[-1]
+        paid = amounts[-2]
+        reserve = 0.0
+        incurred = amounts[-1]
+        return paid, reserve, incurred
 
     if len(amounts) == 1:
-        return amounts[-1], 0.0, amounts[-1]
+        paid = amounts[-1]
+        reserve = 0.0
+        incurred = amounts[-1]
+        return paid, reserve, incurred
 
     return 0.0, 0.0, 0.0
 
@@ -95,6 +120,17 @@ def clean_description(row: str, claim_number: str, policy_number: str) -> str:
     desc = re.sub(r"\s+", " ", desc).strip(" -|")
 
     return desc[:700]
+
+
+def is_claim_start(line: str) -> bool:
+    """
+    Only true claim IDs should start claim rows.
+
+    This rejects policy fragments like AMG-GL-882190, CW-WC-77142,
+    LHC-CA-55209, etc.
+    """
+
+    return bool(CLAIM_PATTERN.search(line or ""))
 
 
 def reconstruct_claim_rows(lines: list[str]) -> tuple[list[str], list[dict]]:
@@ -125,7 +161,7 @@ def reconstruct_claim_rows(lines: list[str]) -> tuple[list[str], list[dict]]:
             index += 1
             continue
 
-        if not CLAIM_PATTERN.search(line):
+        if not is_claim_start(line):
             index += 1
             continue
 
@@ -136,7 +172,7 @@ def reconstruct_claim_rows(lines: list[str]) -> tuple[list[str], list[dict]]:
             next_line = lines[index]
             next_lower = next_line.lower()
 
-            if CLAIM_PATTERN.search(next_line):
+            if is_claim_start(next_line):
                 break
 
             if "underwriter note" in next_lower or "carrier comments" in next_lower or "renewal signal" in next_lower:
@@ -149,7 +185,10 @@ def reconstruct_claim_rows(lines: list[str]) -> tuple[list[str], list[dict]]:
             parts.append(next_line)
 
             joined = " ".join(parts)
-            if len(money_values(joined)) >= 3 and detect_status(joined) in {"Closed", "Open"}:
+
+            # Stop only after we have status and all three financial columns.
+            if detect_status(joined) in {"Closed", "Open"} and len(money_values(joined)) >= 3:
+                index += 1
                 break
 
             index += 1
@@ -159,7 +198,11 @@ def reconstruct_claim_rows(lines: list[str]) -> tuple[list[str], list[dict]]:
     return rows, ignored_rows
 
 
-def parse_claims(text: str, policies: list[dict] | None = None, profile: dict | None = None) -> tuple[list[dict], list[dict]]:
+def parse_claims(
+    text: str,
+    policies: list[dict] | None = None,
+    profile: dict | None = None,
+) -> tuple[list[dict], list[dict]]:
     policies = policies or []
     profile = profile or {}
 
