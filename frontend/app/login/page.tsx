@@ -28,6 +28,35 @@ function errorToText(data: any, fallback: string) {
   return fallback;
 }
 
+
+function getSafeNextPath() {
+  if (typeof window === "undefined") return "/dashboard";
+
+  const params = new URLSearchParams(window.location.search);
+  const next = params.get("next") || sessionStorage.getItem("lossq_next_after_login");
+
+  if (!next) return "/dashboard";
+
+  try {
+    const decoded = decodeURIComponent(next);
+
+    if (
+      decoded.startsWith("/") &&
+      !decoded.startsWith("//") &&
+      !decoded.includes("http://") &&
+      !decoded.includes("https://")
+    ) {
+      return decoded;
+    }
+  } catch {
+    if (next.startsWith("/") && !next.startsWith("//")) {
+      return next;
+    }
+  }
+
+  return "/dashboard";
+}
+
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [step, setStep] = useState(1);
@@ -51,10 +80,16 @@ export default function LoginPage() {
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
+    const next = params.get("next");
+
+    if (next && next.startsWith("/")) {
+      sessionStorage.setItem("lossq_next_after_login", next);
+    }
 
     if (params.get("fresh") === "1") {
       localStorage.removeItem("lossq_token");
       localStorage.removeItem("lossq_user");
+      localStorage.removeItem("lossq_login_time");
       sessionStorage.removeItem("lossq_welcome");
     }
   }, []);
@@ -89,7 +124,9 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
         : `Welcome back, ${cleanEmail.split("@")[0]}`
     );
 
-    window.location.href = "/dashboard";
+    const nextPath = getSafeNextPath();
+    sessionStorage.removeItem("lossq_next_after_login");
+    window.location.href = nextPath;
   }
 
   function validateRegisterStepOne() {
