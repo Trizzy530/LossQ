@@ -887,21 +887,9 @@ if (submissionBuilderRes.ok) {
       updateProfileList([uploadedProfile]);
     }
 
-    /*
-      Fetch all org claims after upload.
-      The dashboard will filter them locally by profile.policies.
-      This is required because the account policy is SA-ACCT-580219,
-      but claims belong to SA-AUTO, SA-GL, SA-CARGO, and SA-WC.
-    */
-    const claimsRes = await fetch(`${API}/claims/`, {
-      headers: authHeaders(),
-    });
-
-    const claimsData = await safeJson(claimsRes);
-
-    if (claimsRes.ok && Array.isArray(claimsData)) {
-      setClaims(claimsData);
-    }
+    // Clear stale organization-wide claims immediately after upload.
+    // loadDashboard(uploadedPolicyNumber) will reload the selected account safely.
+    setClaims([]);
 
     const uploadedPolicyNumber =
       data?.profile?.policy_number ||
@@ -1125,6 +1113,14 @@ const backendPolicyNumbers = [
   ...(Array.isArray(decision?.policy_numbers_used) ? decision.policy_numbers_used : []),
 ];
 
+/*
+  Guardrail: backendPolicyNumbers are useful for intelligence widgets, but they must
+  NOT drive the Claims tab filter. Some backend endpoints can return stale policy
+  numbers from the previously selected account when a newly uploaded file saved
+  zero claims. Claims filtering must rely only on the selected profile/account and
+  the selected profile's own policy schedule.
+*/
+
 const recoveredPolicySchedule = firstNonEmptyArray(
   profile?.policies,
   backendAccountProfile?.policies,
@@ -1138,34 +1134,24 @@ const displayProfile = {
   policies: recoveredPolicySchedule,
 };
 
-const policySchedule =
-  recoveredPolicySchedule.length > 0
-    ? recoveredPolicySchedule
-    : Array.from(
-        new Set(backendPolicyNumbers.map((item: any) => normalizePolicyNumber(item)).filter(Boolean))
-      ).map((policyNumber) => ({
-        policy_number: policyNumber,
-        policy_type: "Policy",
-        line_coverage: "Recovered from backend intelligence",
-        writing_carrier: displayProfile?.writing_carrier || displayProfile?.carrier_name || "-",
-        carrier: displayProfile?.carrier_name || "-",
-        effective_date: displayProfile?.effective_date || "-",
-        expiration_date: displayProfile?.expiration_date || "-",
-        status: "Recovered from backend intelligence",
-      }));
+const policySchedule = recoveredPolicySchedule.length > 0 ? recoveredPolicySchedule : [];
+
+const activeAccountPolicyNumber = normalizePolicyNumber(displayProfile?.policy_number);
+const activeAccountNumber = normalizePolicyNumber(displayProfile?.account_number);
+const activeCustomerNumber = normalizePolicyNumber(displayProfile?.customer_number);
 
 const activePolicyNumbers = Array.from(
   new Set(
     [
       ...policySchedule.map((item: any) => item?.policy_number),
-      ...backendPolicyNumbers,
+      activeAccountPolicyNumber,
+      activeAccountNumber,
+      activeCustomerNumber,
     ]
       .map((item: any) => normalizePolicyNumber(item))
       .filter(Boolean)
   )
 );
-
-const activeAccountPolicyNumber = normalizePolicyNumber(displayProfile?.policy_number);
 
 const hasActiveAccount = Boolean(
   displayProfile?.business_name ||
@@ -1210,21 +1196,17 @@ const backendClaimsUsed =
   carrierAppetite?.claims_used ??
   decision?.claims_used;
 
-const totalClaims =
-  visibleClaims.length > 0
-    ? visibleClaims.length
-    : Number(backendMetrics?.total_claims ?? backendClaimsUsed ?? 0);
+const totalClaims = hasActiveAccount
+  ? visibleClaims.length
+  : Number(backendMetrics?.total_claims ?? backendClaimsUsed ?? 0);
 
-const openClaims =
-  visibleClaims.length > 0
-    ? visibleClaims.filter((c: any) => String(c.status || "").toLowerCase() === "open")
-        .length
-    : Number(backendMetrics?.open_claims ?? 0);
+const openClaims = hasActiveAccount
+  ? visibleClaims.filter((c: any) => String(c.status || "").toLowerCase() === "open").length
+  : Number(backendMetrics?.open_claims ?? 0);
 
-const totalIncurred =
-  visibleClaims.length > 0
-    ? visibleClaims.reduce((sum: number, c: any) => sum + getClaimIncurred(c), 0)
-    : Number(backendMetrics?.total_incurred ?? 0);
+const totalIncurred = hasActiveAccount
+  ? visibleClaims.reduce((sum: number, c: any) => sum + getClaimIncurred(c), 0)
+  : Number(backendMetrics?.total_incurred ?? 0);
 
 const scheduleClaimStats = visibleClaims.reduce((acc: AnyObject, claim: any) => {
   const claimPolicy = getClaimPolicyNumber(claim);
@@ -1240,10 +1222,9 @@ const scheduleClaimStats = visibleClaims.reduce((acc: AnyObject, claim: any) => 
   return acc;
 }, {});
 
-const flaggedClaims =
-  visibleClaims.length > 0
-    ? visibleClaims.filter((c: any) => c.flag).length
-    : Number(backendMetrics?.flagged_claims ?? 0);
+const flaggedClaims = hasActiveAccount
+  ? visibleClaims.filter((c: any) => c.flag).length
+  : Number(backendMetrics?.flagged_claims ?? 0);
 
 const totalClaimsDisplay = hasActiveAccount ? totalClaims : "-";
 const openClaimsDisplay = hasActiveAccount ? openClaims : "-";
@@ -1252,30 +1233,24 @@ const totalIncurredDisplay = hasActiveAccount
   : "-";
 const flaggedClaimsDisplay = hasActiveAccount ? flaggedClaims : "-";
 
-const totalReserve =
-  visibleClaims.length > 0
-    ? visibleClaims.reduce(
-        (sum: number, c: any) =>
-          sum +
-          toMoneyNumber(c?.reserve_amount ?? c?.reserve ?? c?.outstanding_reserve),
-        0
-      )
-    : Number(backendMetrics?.total_reserve ?? timeline?.total_reserve ?? 0);
+const totalReserve = hasActiveAccount
+  ? visibleClaims.reduce(
+      (sum: number, c: any) =>
+        sum + toMoneyNumber(c?.reserve_amount ?? c?.reserve ?? c?.outstanding_reserve),
+      0
+    )
+  : Number(backendMetrics?.total_reserve ?? timeline?.total_reserve ?? 0);
 
-const closedClaims =
-  visibleClaims.length > 0
-    ? visibleClaims.filter(
-        (c: any) => String(c.status || "").toLowerCase() === "closed"
-      ).length
-    : Number(backendMetrics?.closed_claims ?? Math.max(totalClaims - openClaims, 0));
+const closedClaims = hasActiveAccount
+  ? visibleClaims.filter((c: any) => String(c.status || "").toLowerCase() === "closed").length
+  : Number(backendMetrics?.closed_claims ?? Math.max(totalClaims - openClaims, 0));
 
-const litigationClaims =
-  visibleClaims.length > 0
-    ? visibleClaims.filter((c: any) => {
-        const text = `${c?.litigation || ""} ${c?.claim_status || ""} ${c?.description || ""}`.toLowerCase();
-        return text.includes("litigation") || text.includes("litigated") || text.includes("attorney");
-      }).length
-    : Number(backendMetrics?.litigation_claims ?? 0);
+const litigationClaims = hasActiveAccount
+  ? visibleClaims.filter((c: any) => {
+      const text = `${c?.litigation || ""} ${c?.claim_status || ""} ${c?.description || ""}`.toLowerCase();
+      return text.includes("litigation") || text.includes("litigated") || text.includes("attorney");
+    }).length
+  : Number(backendMetrics?.litigation_claims ?? 0);
 
 function chartHasData(rows: any[]) {
   return Array.isArray(rows) && rows.some((item) => Number(item?.value || 0) > 0);
@@ -2468,6 +2443,14 @@ const trendNoteDisplay =
                   </thead>
 
 <tbody>
+  {visibleClaims.length === 0 && (
+    <tr className="border-b border-white/10 text-slate-400">
+      <td className="py-6 text-center" colSpan={8}>
+        No claims found for the selected account. Upload or select another account to view claim-level detail.
+      </td>
+    </tr>
+  )}
+
   {visibleClaims.map((claim: any) => (
     <tr
       key={claim.id || claim.claim_number}
