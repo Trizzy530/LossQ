@@ -14,8 +14,6 @@ POLICY_RE = re.compile(
     re.I,
 )
 
-# Claim IDs should look like GL-23-0041, WC-24-0177, CA-24-2109, IM-24-0066.
-# This intentionally rejects policy-number fragments like GL-882190 or WC-77142.
 CLAIM_RE = re.compile(
     r"\b(?:GL|WC|CA|IM|CG|AUTO|AL|BI|PD|PROP)[-\s]?(?:1[0-9]|2[0-9])[-\s]?[A-Z0-9]{3,8}\??\b",
     re.I,
@@ -39,14 +37,11 @@ def normalize_whitespace(text: str) -> str:
 def normalize_money(value: Any) -> float:
     if value is None:
         return 0.0
-
     raw = str(value).strip()
     if not raw:
         return 0.0
-
     negative = raw.startswith("(") and raw.endswith(")")
     raw = raw.replace("$", "").replace(",", "").replace("(", "").replace(")", "").strip()
-
     try:
         amount = float(raw)
         return -amount if negative else amount
@@ -56,36 +51,29 @@ def normalize_money(value: Any) -> float:
 
 def money_values(line: str) -> list[float]:
     """
-    Extract real money columns only.
+    Extract true financial column values.
 
-    This avoids treating claim IDs, policy IDs, dates, years, page numbers,
-    and row numbers as money.
+    Fixes:
+    - claim IDs and policy IDs are scrubbed before money parsing
+    - currency values are not double-counted as plain numeric values
+    - zeros are kept because reserve columns are often $0
     """
-
     text = clean_text(line)
-
     scrubbed = CLAIM_RE.sub(" ", text)
     scrubbed = POLICY_RE.sub(" ", scrubbed)
     scrubbed = DATE_RE.sub(" ", scrubbed)
-
     values: list[float] = []
-
-    # Strongest signal: currency tokens like $2,450 or ($1,200.00)
-    for match in re.finditer(r"\(?\$[\s]*-?\d[\d,]*(?:\.\d{1,2})?\)?", scrubbed):
+    currency_pattern = re.compile(r"\(?\$[\s]*-?\d[\d,]*(?:\.\d{1,2})?\)?")
+    scrubbed_without_currency = currency_pattern.sub(" ", scrubbed)
+    for match in currency_pattern.finditer(scrubbed):
         values.append(normalize_money(match.group(0)))
-
-    # Plain table cells like 0, 0.00, 1225, 1,225.00.
     for token in re.findall(
         r"(?<![A-Za-z0-9-])\(?-?\d{1,3}(?:,\d{3})*(?:\.\d{1,2})?\)?(?![A-Za-z0-9-])",
-        scrubbed,
+        scrubbed_without_currency,
     ):
         value = normalize_money(token)
-
-        # Keep zeros because reserve columns are often 0.
-        # Keep values >= 100 because insurance claim amounts usually are.
         if value == 0 or abs(value) >= 100:
             values.append(value)
-
     return values
 
 
@@ -93,28 +81,18 @@ def parse_date(value: Any) -> str | None:
     raw = clean_text(value)
     if not raw:
         return None
-
     formats = [
-        "%m/%d/%Y",
-        "%m/%d/%y",
-        "%m-%d-%Y",
-        "%m-%d-%y",
-        "%Y-%m-%d",
-        "%Y/%m/%d",
-        "%m.%d.%Y",
-        "%m.%d.%y",
+        "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%m-%d-%y",
+        "%Y-%m-%d", "%Y/%m/%d", "%m.%d.%Y", "%m.%d.%y",
     ]
-
     for fmt in formats:
         try:
             return datetime.strptime(raw, fmt).date().isoformat()
         except Exception:
             pass
-
     match = DATE_RE.search(raw)
     if match:
         return parse_date(match.group(0))
-
     return None
 
 
@@ -141,15 +119,12 @@ def normalize_claim_number(value: Any) -> str:
     raw = raw.replace(" ", "-")
     raw = re.sub(r"[^A-Z0-9\-]", "", raw)
     raw = re.sub(r"-{2,}", "-", raw).strip("-")
-
-    # OCR cleanup: GL23O049 should become GL-23-0049 when possible.
     compact = raw.replace("-", "")
     match = re.match(r"^(GL|WC|CA|IM|CG|AUTO|AL|BI|PD|PROP)(1[0-9]|2[0-9])([A-Z0-9]{3,8})$", compact)
     if match:
         prefix, year, tail = match.groups()
         tail = tail.replace("O", "0")
         raw = f"{prefix}-{year}-{tail}"
-
     parts = raw.split("-")
     fixed_parts = []
     for part in parts:
@@ -157,20 +132,16 @@ def normalize_claim_number(value: Any) -> str:
             fixed_parts.append(part.replace("O", "0"))
         else:
             fixed_parts.append(part)
-
     return "-".join(fixed_parts)
 
 
 def looks_like_total_row(line: str) -> bool:
     lower = clean_text(line).lower()
-
     if "do not create a claim" in lower:
         return True
-
     total_words = ["subtotal", "sub-total", "totals", "grand total"]
     if any(word in lower for word in total_words):
         return True
-
     return False
 
 
