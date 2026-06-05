@@ -7,20 +7,25 @@ from .utils import (
     date_values,
     money_values,
     normalize_policy_number,
-    POLICY_RE,
     split_lines,
 )
 
 
 LOB_KEYWORDS = {
-    "commercial auto": ["commercial auto", "auto", "vehicle", "fleet"],
-    "general liability": ["general liability", "gl", "premises"],
-    "workers comp": ["workers comp", "workers compensation", "wc", "work comp"],
-    "property": ["property"],
-    "cargo": ["cargo", "motor truck cargo"],
-    "inland marine": ["inland marine", "equipment"],
-    "umbrella": ["umbrella", "excess"],
+    "Commercial Auto": ["commercial auto", "auto", "vehicle", "fleet", "truck"],
+    "General Liability": ["general liability", "general liab", "liability", "gl", "premises"],
+    "Workers Compensation": ["workers comp", "workers compensation", "work comp", "wc"],
+    "Property": ["property"],
+    "Motor Truck Cargo": ["motor truck cargo", "cargo"],
+    "Inland Marine": ["inland marine", "equipment", "marine"],
+    "Umbrella": ["umbrella", "excess"],
 }
+
+
+POLICY_PATTERN = re.compile(
+    r"\b(?:[A-Z]{1,6}[-\s]?[A-Z]{1,6}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,6})?|\d{3,8}[-\s]?[A-Z]{1,5}[-\s]?\d{1,6})\b",
+    re.I,
+)
 
 
 def detect_lob(line: str) -> str:
@@ -28,20 +33,76 @@ def detect_lob(line: str) -> str:
 
     for lob, keywords in LOB_KEYWORDS.items():
         if any(keyword in lower for keyword in keywords):
-            return lob.title()
+            return lob
 
     return "Policy"
 
 
+def looks_like_policy_schedule_row(line: str) -> bool:
+    lower = clean_text(line).lower()
+
+    if not line:
+        return False
+
+    if "claim no" in lower or "claim number" in lower or "claim id" in lower:
+        return False
+
+    if "detailed claims" in lower or "claim detail" in lower:
+        return False
+
+    has_policy_like_value = bool(POLICY_PATTERN.search(line))
+    has_lob = detect_lob(line) != "Policy"
+    has_date = len(date_values(line)) >= 1
+    has_schedule_words = any(
+        word in lower
+        for word in [
+            "carrier",
+            "policy",
+            "coverage",
+            "lob",
+            "effective",
+            "expiration",
+            "expired",
+            "active",
+            "sales",
+            "payroll",
+            "units",
+            "equip",
+        ]
+    )
+
+    return has_policy_like_value and (has_lob or has_date or has_schedule_words)
+
+
+def extract_policy_candidates(line: str) -> list[str]:
+    candidates = []
+
+    for match in POLICY_PATTERN.findall(line or ""):
+        policy = normalize_policy_number(match)
+
+        if not policy:
+            continue
+
+        # Avoid obvious claim numbers.
+        if re.match(r"^(GL|WC|CA|IM|CG|BI|PD|AL|PROP)-?\d{2,4}-?\d{3,}", policy, re.I):
+            continue
+
+        # Avoid carrier abbreviations without enough numeric content.
+        if not re.search(r"\d{3,}", policy):
+            continue
+
+        candidates.append(policy)
+
+    return candidates
+
+
 def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
     """
-    Universal policy schedule parser.
+    Universal policy schedule parser V2.
 
-    It detects rows that contain:
-    - policy number
-    - line/coverage signal
-    - effective and expiration dates when available
-    - optional paid/reserve/incurred values
+    This parser is intentionally structural, not carrier-specific.
+    It looks for policy-number-like values inside rows that also contain
+    line of business, date, schedule, payroll/sales/unit, or carrier context.
     """
 
     profile = profile or {}
@@ -50,35 +111,21 @@ def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
     seen: set[str] = set()
 
     for line in lines:
-        lower = line.lower()
-
-        if "claim no" in lower or "claim number" in lower or "claim id" in lower:
+        if not looks_like_policy_schedule_row(line):
             continue
 
-        if not any(keyword in lower for keyword in ["policy", "coverage", "lob", "carrier", "effective", "expiration", "expired", "active", "auto", "liability", "comp", "cargo", "marine"]):
-            continue
+        candidates = extract_policy_candidates(line)
 
-        candidates = POLICY_RE.findall(line)
         if not candidates:
             continue
 
         dates = date_values(line)
         amounts = money_values(line)
+        lob = detect_lob(line)
 
-        for raw_policy in candidates:
-            policy_number = normalize_policy_number(raw_policy)
-
-            if not policy_number or len(policy_number) < 5:
-                continue
-
-            # Avoid treating claim numbers as policies in schedule context.
-            if re.match(r"^(GL|WC|CA|IM|CG|AUTO)-?\d{2,4}-?\d{3,}", policy_number, re.I):
-                continue
-
+        for policy_number in candidates:
             if policy_number in seen:
                 continue
-
-            lob = detect_lob(line)
 
             policy = {
                 "policy_number": policy_number,
@@ -93,7 +140,7 @@ def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
                 "total_paid": amounts[-3] if len(amounts) >= 3 else 0,
                 "total_reserve": amounts[-2] if len(amounts) >= 2 else 0,
                 "total_incurred": amounts[-1] if len(amounts) >= 1 else 0,
-                "source_line": line[:600],
+                "source_line": line[:700],
             }
 
             policies.append(policy)
