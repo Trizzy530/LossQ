@@ -2,6 +2,7 @@ from fastapi import HTTPException, Depends
 from app.auth_utils import get_current_user
 
 ROLE_PERMISSIONS = {
+    "owner": ["read", "upload", "edit", "delete", "export", "manage_users", "manage_billing"],
     "admin": ["read", "upload", "edit", "delete", "export", "manage_users"],
     "broker": ["read", "upload", "edit", "export"],
     "underwriter": ["read", "export"],
