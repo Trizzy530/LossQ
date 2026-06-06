@@ -1,7 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import text, inspect
+from sqlalchemy import text, inspect, func
 
 from app.database import SessionLocal
 from app.auth_utils import get_current_user
@@ -91,11 +91,13 @@ def get_profile_by_policy(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    normalized_policy_number = str(policy_number or "").strip().upper()
+
     profile = (
         db.query(AccountProfile)
         .filter(
             AccountProfile.organization_id == current_user["organization_id"],
-            AccountProfile.policy_number == policy_number,
+            func.upper(AccountProfile.policy_number) == normalized_policy_number,
         )
         .first()
     )
@@ -105,7 +107,7 @@ def get_profile_by_policy(
             db.query(Claim)
             .filter(
                 Claim.organization_id == current_user["organization_id"],
-                Claim.policy_number == policy_number,
+                func.upper(Claim.policy_number) == normalized_policy_number,
             )
             .all()
         )
@@ -127,7 +129,7 @@ def get_profile_by_policy(
             "account_number": "",
             "customer_number": "",
             "producer_number": "",
-            "policy_number": policy_number,
+            "policy_number": normalized_policy_number,
             "effective_date": "",
             "expiration_date": "",
             "evaluation_date": "",
@@ -211,11 +213,13 @@ def delete_account_profile_by_query(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    normalized_policy_number = str(policy_number or "").strip().upper()
+
     profile = (
         db.query(AccountProfile)
         .filter(
             AccountProfile.organization_id == current_user["organization_id"],
-            AccountProfile.policy_number == policy_number,
+            func.upper(AccountProfile.policy_number) == normalized_policy_number,
         )
         .first()
     )
@@ -228,7 +232,7 @@ def delete_account_profile_by_query(
 
     return {
         "message": "Profile deleted",
-        "policy_number": policy_number,
+        "policy_number": normalized_policy_number,
     }
 
 @router.delete("/{policy_number}")
@@ -237,11 +241,13 @@ def delete_profile(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    normalized_policy_number = str(policy_number or "").strip().upper()
+
     profile = (
         db.query(AccountProfile)
         .filter(
             AccountProfile.organization_id == current_user["organization_id"],
-            AccountProfile.policy_number == policy_number,
+            func.upper(AccountProfile.policy_number) == normalized_policy_number,
         )
         .first()
     )
