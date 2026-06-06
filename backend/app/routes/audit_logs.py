@@ -168,23 +168,105 @@ def normalize_claim_event(row: dict) -> dict:
     return {
         "id": f"claim-{row.get('id', '')}",
         "created_at": iso_or_string(row.get("created_at") or row.get("uploaded_at") or row.get("updated_at")),
-        "user_email": "",
+        "user_email": row.get("user_email") or row.get("uploaded_by_email") or row.get("email") or "",
         "action": "claim_record_saved",
         "resource_type": "claim",
         "resource_id": str(row.get("id") or row.get("claim_number") or ""),
         "details": {
             "claim_number": row.get("claim_number") or row.get("claim_id") or "",
             "policy_number": row.get("policy_number") or "",
-            "total_incurred": row.get("total_incurred") or row.get("incurred_amount"),
+            "line_of_business": row.get("line_of_business") or "",
             "status": row.get("status") or "",
+            "paid_amount": row.get("paid_amount"),
+            "reserve_amount": row.get("reserve_amount"),
+            "total_incurred": row.get("total_incurred") or row.get("incurred_amount"),
+            "uploaded_at": iso_or_string(row.get("uploaded_at")),
         },
     }
+
+
+def existing_event_keys(events: list[dict]) -> set[tuple[str, str, str]]:
+    keys: set[tuple[str, str, str]] = set()
+    for event in events:
+        keys.add(
+            (
+                str(event.get("resource_type") or "").lower(),
+                str(event.get("resource_id") or ""),
+                str(event.get("action") or "").lower(),
+            )
+        )
+    return keys
+
+
+def add_claim_events(db: Session, events: list[dict], names: set[str], org_id: Any, limit: int) -> None:
+    """
+    Display-only claim audit coverage.
+
+    This does NOT write to the claims table.
+    This does NOT change upload/parser/dashboard behavior.
+    It only reads existing claims and turns them into audit timeline events.
+    """
+
+    if "claims" not in names:
+        return
+
+    remaining = max(limit - len(events), 0)
+
+    # Keep the audit page useful even when audit_logs is already full of upload events.
+    # Pull up to 100 recent claims, but never exceed the requested API limit once merged.
+    claim_limit = min(max(remaining, 25), 100)
+
+    rows = safe_table_query(
+        db,
+        "claims",
+        [
+            "id",
+            "created_at",
+            "uploaded_at",
+            "updated_at",
+            "claim_number",
+            "claim_id",
+            "policy_number",
+            "line_of_business",
+            "status",
+            "paid_amount",
+            "reserve_amount",
+            "total_incurred",
+            "incurred_amount",
+            "user_email",
+            "uploaded_by_email",
+            "email",
+            "organization_id",
+        ],
+        claim_limit,
+        org_id,
+    )
+
+    if not rows:
+        return
+
+    keys = existing_event_keys(events)
+
+    for row in rows:
+        claim_event = normalize_claim_event(row)
+        claim_key = (
+            str(claim_event.get("resource_type") or "").lower(),
+            str(claim_event.get("resource_id") or ""),
+            str(claim_event.get("action") or "").lower(),
+        )
+
+        if claim_key in keys:
+            continue
+
+        events.append(claim_event)
+        keys.add(claim_key)
 
 
 def build_events(db: Session, current_user: Any, limit: int) -> tuple[list[dict], str]:
     org_id = actor_value(current_user, "organization_id")
     names = table_names(db)
     events: list[dict] = []
+    sources: list[str] = []
 
     if "audit_logs" in names:
         rows = safe_table_query(
@@ -203,72 +285,72 @@ def build_events(db: Session, current_user: Any, limit: int) -> tuple[list[dict]
             limit,
             org_id,
         )
-        events.extend(normalize_audit_event(row) for row in rows)
+        audit_events = [normalize_audit_event(row) for row in rows]
+        events.extend(audit_events)
 
-    if events:
-        events.sort(key=lambda item: item.get("created_at") or "", reverse=True)
-        return events[:limit], "audit_logs"
+        if audit_events:
+            sources.append("audit_logs")
 
-    upload_table = None
-    for candidate in ["upload_history", "upload_histories", "uploads", "uploaded_files"]:
-        if candidate in names:
-            upload_table = candidate
-            break
+    # Important:
+    # Before this patch, the function returned immediately when audit_logs had rows.
+    # That made the Audit Log summary show Claims: 0 even though the claims table had records.
+    # Now we always derive recent claim events for display only.
+    add_claim_events(db=db, events=events, names=names, org_id=org_id, limit=limit)
 
-    if upload_table:
-        rows = safe_table_query(
-            db,
-            upload_table,
-            [
-                "id",
-                "created_at",
-                "uploaded_at",
-                "timestamp",
-                "filename",
-                "file_name",
-                "original_filename",
-                "name",
-                "policy_number",
-                "policy",
-                "account_number",
-                "customer_number",
-                "claims_saved",
-                "claim_count",
-                "claims_count",
-                "user_email",
-                "uploaded_by_email",
-                "email",
-                "organization_id",
-            ],
-            limit,
-            org_id,
-        )
-        events.extend(normalize_upload_event(row) for row in rows)
+    if any(event.get("resource_type") == "claim" for event in events):
+        sources.append("claims")
 
-    if "claims" in names and len(events) < limit:
-        rows = safe_table_query(
-            db,
-            "claims",
-            [
-                "id",
-                "created_at",
-                "uploaded_at",
-                "updated_at",
-                "claim_number",
-                "claim_id",
-                "policy_number",
-                "total_incurred",
-                "incurred_amount",
-                "status",
-                "organization_id",
-            ],
-            limit - len(events),
-            org_id,
-        )
-        events.extend(normalize_claim_event(row) for row in rows)
+    # Keep the old upload fallback behavior for accounts without formal audit_logs rows.
+    if not events:
+        upload_table = None
+        for candidate in ["upload_history", "upload_histories", "uploads", "uploaded_files"]:
+            if candidate in names:
+                upload_table = candidate
+                break
+
+        if upload_table:
+            rows = safe_table_query(
+                db,
+                upload_table,
+                [
+                    "id",
+                    "created_at",
+                    "uploaded_at",
+                    "timestamp",
+                    "filename",
+                    "file_name",
+                    "original_filename",
+                    "name",
+                    "policy_number",
+                    "policy",
+                    "account_number",
+                    "customer_number",
+                    "claims_saved",
+                    "claim_count",
+                    "claims_count",
+                    "user_email",
+                    "uploaded_by_email",
+                    "email",
+                    "organization_id",
+                ],
+                limit,
+                org_id,
+            )
+            upload_events = [normalize_upload_event(row) for row in rows]
+            events.extend(upload_events)
+
+            if upload_events:
+                sources.append("existing_uploads")
+
+        add_claim_events(db=db, events=events, names=names, org_id=org_id, limit=limit)
+
+        if any(event.get("resource_type") == "claim" for event in events):
+            sources.append("claims")
 
     events.sort(key=lambda item: item.get("created_at") or "", reverse=True)
-    return events[:limit], "derived_from_existing_uploads_and_claims"
+
+    source = "_with_".join(dict.fromkeys(sources)) if sources else "no_events_found"
+    return events[:limit], source
 
 
 def audit_payload(limit: int, current_user: Any, db: Session) -> dict:
