@@ -14,10 +14,19 @@ from app.routes.auth import get_current_user
 from app.services.audit_service import write_audit_event
 
 
-router = APIRouter(prefix="/audit", tags=["Audit Log"])
-compat_router = APIRouter(tags=["Audit Log Compatibility"])
+# This is the route your live Swagger/front-end expects:
+# GET /audit-logs/
+# GET /audit-logs/summary
+router = APIRouter(prefix="/audit-logs", tags=["Audit Logs"])
 
-# Never let table creation break the app.
+# Compatibility routes for older frontend attempts:
+# GET /audit/events
+# GET /audit/logs
+# GET /audit-log
+# GET /auth/audit-log
+compat_router = APIRouter(tags=["Audit Logs Compatibility"])
+
+
 try:
     Base.metadata.create_all(bind=engine)
 except Exception:
@@ -76,13 +85,20 @@ def columns_for(db: Session, table_name: str) -> set[str]:
         return set()
 
 
-def safe_table_query(db: Session, table_name: str, wanted: list[str], limit: int, org_id: Any = None) -> list[dict]:
+def safe_table_query(
+    db: Session,
+    table_name: str,
+    wanted: list[str],
+    limit: int,
+    org_id: Any = None,
+) -> list[dict]:
     cols = columns_for(db, table_name)
     if not cols:
         return []
 
     selected = [col for col in wanted if col in cols]
-    if "id" not in selected and "id" in cols:
+
+    if "id" in cols and "id" not in selected:
         selected.insert(0, "id")
 
     if not selected:
@@ -101,10 +117,11 @@ def safe_table_query(db: Session, table_name: str, wanted: list[str], limit: int
         where = " WHERE organization_id = :org_id"
         params["org_id"] = org_id
 
-    # Table names are chosen from SQLAlchemy inspector, not user input.
     sql = f"SELECT {', '.join(selected)} FROM {table_name}{where}"
+
     if order_col:
         sql += f" ORDER BY {order_col} DESC"
+
     sql += " LIMIT :limit"
 
     try:
@@ -228,11 +245,10 @@ def build_events(db: Session, current_user: Any, limit: int) -> tuple[list[dict]
         )
         events.extend(normalize_upload_event(row) for row in rows)
 
-    claim_table = "claims" if "claims" in names else None
-    if claim_table and len(events) < limit:
+    if "claims" in names and len(events) < limit:
         rows = safe_table_query(
             db,
-            claim_table,
+            "claims",
             [
                 "id",
                 "created_at",
@@ -269,7 +285,6 @@ def audit_payload(limit: int, current_user: Any, db: Session) -> dict:
         except Exception:
             pass
 
-        # Return a 200 JSON payload instead of a 500 so the frontend can show the issue.
         return {
             "events": [
                 {
@@ -287,57 +302,69 @@ def audit_payload(limit: int, current_user: Any, db: Session) -> dict:
         }
 
 
-@router.get("/events")
-def get_audit_events(
-    limit: int = Query(100, ge=1, le=250),
-    current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    return audit_payload(limit=limit, current_user=current_user, db=db)
+def audit_summary_payload(limit: int, current_user: Any, db: Session) -> dict:
+    payload = audit_payload(limit=limit, current_user=current_user, db=db)
+    events = payload.get("events", [])
 
-
-@router.get("/logs")
-def get_audit_logs(
-    limit: int = Query(100, ge=1, le=250),
-    current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    return audit_payload(limit=limit, current_user=current_user, db=db)
-
-
-@router.post("/events")
-def record_audit_event(
-    payload: dict,
-    request: Request,
-    current_user=Depends(get_current_user),
-    db: Session = Depends(get_db),
-):
-    event = write_audit_event(
-        db=db,
-        current_user=current_user,
-        action=str(payload.get("action") or "custom_event"),
-        resource_type=str(payload.get("resource_type") or ""),
-        resource_id=str(payload.get("resource_id") or ""),
-        details=payload.get("details") or {},
-        request=request,
-    )
+    uploads = sum(1 for event in events if event.get("resource_type") == "upload" or "upload" in str(event.get("action", "")).lower())
+    claims = sum(1 for event in events if event.get("resource_type") == "claim" or "claim" in str(event.get("action", "")).lower())
+    exports = sum(1 for event in events if "export" in str(event.get("action", "")).lower())
+    users = sum(1 for event in events if event.get("resource_type") == "user" or "user" in str(event.get("action", "")).lower())
 
     return {
-        "saved": bool(event),
-        "event": normalize_audit_event(
-            {
-                "id": getattr(event, "id", None),
-                "created_at": getattr(event, "created_at", None),
-                "user_email": getattr(event, "user_email", ""),
-                "action": getattr(event, "action", "custom_event"),
-                "resource_type": getattr(event, "resource_type", ""),
-                "resource_id": getattr(event, "resource_id", ""),
-                "details": getattr(event, "details", "{}"),
-            }
-        )
-        if event
-        else None,
+        "total_events": len(events),
+        "uploads": uploads,
+        "claims": claims,
+        "exports": exports,
+        "users": users,
+        "last_event_at": events[0].get("created_at") if events else "",
+        "source": payload.get("source", ""),
     }
+
+
+@router.get("/")
+def list_audit_logs(
+    limit: int = Query(100, ge=1, le=250),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return audit_payload(limit=limit, current_user=current_user, db=db)
+
+
+@router.get("")
+def list_audit_logs_no_slash(
+    limit: int = Query(100, ge=1, le=250),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return audit_payload(limit=limit, current_user=current_user, db=db)
+
+
+@router.get("/summary")
+def audit_log_summary(
+    limit: int = Query(250, ge=1, le=500),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return audit_summary_payload(limit=limit, current_user=current_user, db=db)
+
+
+@compat_router.get("/audit/events")
+def get_audit_events_compat(
+    limit: int = Query(100, ge=1, le=250),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return audit_payload(limit=limit, current_user=current_user, db=db)
+
+
+@compat_router.get("/audit/logs")
+def get_audit_logs_compat(
+    limit: int = Query(100, ge=1, le=250),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return audit_payload(limit=limit, current_user=current_user, db=db)
 
 
 @compat_router.get("/audit-log")
@@ -356,3 +383,23 @@ def get_auth_audit_log_compat(
     db: Session = Depends(get_db),
 ):
     return audit_payload(limit=limit, current_user=current_user, db=db)
+
+
+@router.post("/")
+def record_audit_event(
+    payload: dict,
+    request: Request,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    event = write_audit_event(
+        db=db,
+        current_user=current_user,
+        action=str(payload.get("action") or "custom_event"),
+        resource_type=str(payload.get("resource_type") or ""),
+        resource_id=str(payload.get("resource_id") or ""),
+        details=payload.get("details") or {},
+        request=request,
+    )
+
+    return {"saved": bool(event)}
