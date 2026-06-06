@@ -6,6 +6,7 @@ from sqlalchemy import text, inspect
 from app.database import SessionLocal
 from app.auth_utils import get_current_user
 from app.models.account_profile import AccountProfile
+from app.models.claim import Claim
 
 router = APIRouter(prefix="/account-profile", tags=["Account Profile"])
 
@@ -100,7 +101,44 @@ def get_profile_by_policy(
     )
 
     if not profile:
-        raise HTTPException(status_code=404, detail="Policy number not found")
+        claims = (
+            db.query(Claim)
+            .filter(
+                Claim.organization_id == current_user["organization_id"],
+                Claim.policy_number == policy_number,
+            )
+            .all()
+        )
+
+        if not claims:
+            raise HTTPException(status_code=404, detail="Policy number not found")
+
+        total_paid = sum(float(claim.paid_amount or 0) for claim in claims)
+        total_reserve = sum(float(claim.reserve_amount or 0) for claim in claims)
+        total_incurred = sum(float(claim.total_incurred or 0) for claim in claims)
+        open_claims = len([claim for claim in claims if str(claim.status or "").lower() == "open"])
+        closed_claims = len([claim for claim in claims if str(claim.status or "").lower() == "closed"])
+
+        return {
+            "business_name": "",
+            "carrier_name": "Carrier Not Set",
+            "writing_carrier": "Carrier Not Set",
+            "agency_name": "",
+            "account_number": "",
+            "customer_number": "",
+            "producer_number": "",
+            "policy_number": policy_number,
+            "effective_date": "",
+            "expiration_date": "",
+            "evaluation_date": "",
+            "profile_source": "claims_fallback",
+            "claim_count": len(claims),
+            "open_claims": open_claims,
+            "closed_claims": closed_claims,
+            "total_paid": total_paid,
+            "total_reserve": total_reserve,
+            "total_incurred": total_incurred,
+        }
 
     return profile
 
