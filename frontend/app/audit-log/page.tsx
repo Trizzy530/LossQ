@@ -72,7 +72,7 @@ function getCurrentUserEmail() {
 }
 
 function formatDate(value?: string) {
-  if (!value) return "â€”";
+  if (!value) return "—";
 
   try {
     return new Date(value).toLocaleString();
@@ -84,7 +84,7 @@ function formatDate(value?: string) {
 function formatCurrency(value: any) {
   const num = Number(value || 0);
 
-  if (!Number.isFinite(num)) return "â€”";
+  if (!Number.isFinite(num)) return "—";
 
   return num.toLocaleString("en-US", {
     style: "currency",
@@ -94,7 +94,7 @@ function formatCurrency(value: any) {
 }
 
 function formatNumber(value: any) {
-  if (value === null || value === undefined || value === "") return "â€”";
+  if (value === null || value === undefined || value === "") return "—";
 
   const num = Number(value);
 
@@ -157,20 +157,20 @@ function toDetails(details: any) {
 }
 
 function cleanDisplayText(value: any) {
-  if (value === null || value === undefined || value === "") return "â€”";
+  if (value === null || value === undefined || value === "") return "—";
 
   return String(value)
-    .replace(/Ã¢â‚¬â€/g, "â€”")
-    .replace(/Ã¢â‚¬â€œ/g, "â€“")
-    .replace(/Ã¢â‚¬Å“/g, "â€œ")
-    .replace(/Ã¢â‚¬Â/g, "â€")
-    .replace(/Ã¢â‚¬\u009d/g, "â€")
-    .replace(/Ã¢â‚¬â„¢/g, "â€™")
-    .replace(/Ã¢â‚¬Ëœ/g, "â€˜")
-    .replace(/Ã¢â‚¬Â¢/g, "â€¢")
-    .replace(/Ã¢â‚¬Â¦/g, "â€¦")
-    .replace(/Ã‚\$/g, "$")
-    .replace(/Ã‚/g, "");
+    .replace(/Ã¢â‚¬”/g, "—")
+    .replace(/Ã¢â‚¬“/g, "–")
+    .replace(/“/g, "“")
+    .replace(/”/g, "”")
+    .replace(/Ã¢â‚¬\u009d/g, "”")
+    .replace(/’/g, "”™")
+    .replace(/‘/g, "”˜")
+    .replace(/”¢/g, "”¢")
+    .replace(/”¦/g, "”¦")
+    .replace(/\$/g, "$")
+    .replace(//g, "");
 }
 
 function safeText(value: any) {
@@ -314,7 +314,7 @@ function EventDetails({ event }: { event: AuditEvent }) {
           <DetailPill label="Policy Number" value={details.policy_number || event.resource_id} />
           <DetailPill label="Business" value={details.business_name} />
           <StatusPill label="Risk Level" value={details.risk_level} />
-          <DetailPill label="Renewal Score" value={details.renewal_score ?? "â€”"} tone="purple" />
+          <DetailPill label="Renewal Score" value={details.renewal_score ?? "—"} tone="purple" />
           <DetailPill label="Claim Count" value={formatNumber(details.claim_count)} />
           <DetailPill label="Total Incurred" value={formatCurrency(details.total_incurred)} />
         </div>
@@ -354,7 +354,7 @@ function EventDetails({ event }: { event: AuditEvent }) {
             <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-200">Review Notes</p>
             <ul className="mt-2 grid gap-1 text-sm text-amber-100">
               {validation.warnings.slice(0, 4).map((warning: string, index: number) => (
-                <li key={`${warning}-${index}`}>â€¢ {warning}</li>
+                <li key={`${warning}-${index}`}>”¢ {warning}</li>
               ))}
             </ul>
           </div>
@@ -545,7 +545,7 @@ export default function AuditLogPage() {
               onClick={() => router.push("/settings")}
               className="mb-4 rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:bg-white/10 hover:text-white"
             >
-              â† Back to Settings
+              ← Back to Settings
             </button>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-4xl font-black tracking-tight">Audit Log</h1>
@@ -583,19 +583,19 @@ export default function AuditLogPage() {
           />
           <StatCard
             label="Uploads"
-            value={formatNumber(summary?.uploads ?? "â€”")}
+            value={formatNumber(summary?.uploads ?? "—")}
             helper="Loss run uploads and file activity."
             tone="blue"
           />
           <StatCard
             label="Claims"
-            value={formatNumber(summary?.claims ?? "â€”")}
+            value={formatNumber(summary?.claims ?? "—")}
             helper="Claim records derived from saved claims."
             tone="emerald"
           />
           <StatCard
             label="Reports"
-            value={formatNumber(summary?.exports ?? "â€”")}
+            value={formatNumber(summary?.exports ?? "—")}
             helper="Generated reports, packets, and memos."
             tone="purple"
           />
@@ -705,7 +705,7 @@ export default function AuditLogPage() {
                       <div>
                         <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Resource ID</p>
                         <p className="mt-1 break-all text-xs text-slate-400">
-                          {event.resource_id || "â€”"}
+                          {safeText(event.resource_id)}
                         </p>
                       </div>
                     </aside>
