@@ -19,6 +19,12 @@ from .utils import (
 CLAIM_PATTERN = CLAIM_RE
 
 
+POLICY_LIKE_RE = re.compile(
+    r"\b[A-Z]{2,8}[-\s]?[A-Z]{1,6}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,6})?\b",
+    re.I,
+)
+
+
 def detect_status(text: str) -> str:
     lower = clean_text(text).lower()
 
@@ -99,13 +105,6 @@ def extract_policy_number(text: str, policies: list[dict]) -> str:
 
 
 def assign_amounts(amounts: list[float]) -> tuple[float, float, float]:
-    """
-    Financial Column Mapping Engine V3.
-
-    Standard order:
-    Paid | Reserve | Total Incurred
-    """
-
     if len(amounts) >= 3:
         return amounts[-3], amounts[-2], amounts[-1]
 
@@ -135,7 +134,25 @@ def clean_description(row: str, claim_number: str, policy_number: str) -> str:
     return desc[:700]
 
 
-def is_claim_start(line: str) -> bool:
+def is_known_policy_value(line: str, policies: list[dict]) -> bool:
+    candidate = normalize_policy_number(line)
+    if not candidate:
+        return False
+
+    for policy in policies:
+        if candidate == normalize_policy_number(policy.get("policy_number")):
+            return True
+
+    if POLICY_LIKE_RE.fullmatch(clean_text(line) or ""):
+        return True
+
+    return False
+
+
+def is_claim_start(line: str, policies: list[dict]) -> bool:
+    if is_known_policy_value(line, policies):
+        return False
+
     return bool(CLAIM_PATTERN.search(line or ""))
 
 
@@ -143,7 +160,7 @@ def row_has_complete_financial_columns(row: str) -> bool:
     return len(money_values(row)) >= 3
 
 
-def reconstruct_claim_rows(lines: list[str]) -> tuple[list[str], list[dict]]:
+def reconstruct_claim_rows(lines: list[str], policies: list[dict]) -> tuple[list[str], list[dict]]:
     rows: list[str] = []
     ignored_rows: list[dict] = []
 
@@ -154,12 +171,12 @@ def reconstruct_claim_rows(lines: list[str]) -> tuple[list[str], list[dict]]:
         line = lines[index]
         lower = line.lower()
 
-        if "detailed claims" in lower or "claim detail" in lower or "claim no" in lower:
+        if "claim summary" in lower or "detailed claims" in lower or "claim detail" in lower or "claim no" in lower or "claim #" in lower:
             in_claims = True
             index += 1
             continue
 
-        if "underwriter note" in lower or "carrier comments" in lower or "renewal signal" in lower:
+        if "renewal underwriting notes" in lower or "carrier comments" in lower or "renewal signal" in lower or "recommended broker action" in lower:
             in_claims = False
 
         if looks_like_total_row(line) or looks_like_header_row(line):
@@ -171,7 +188,7 @@ def reconstruct_claim_rows(lines: list[str]) -> tuple[list[str], list[dict]]:
             index += 1
             continue
 
-        if not is_claim_start(line):
+        if not is_claim_start(line, policies):
             index += 1
             continue
 
@@ -182,10 +199,10 @@ def reconstruct_claim_rows(lines: list[str]) -> tuple[list[str], list[dict]]:
             next_line = lines[index]
             next_lower = next_line.lower()
 
-            if is_claim_start(next_line):
+            if is_claim_start(next_line, policies):
                 break
 
-            if "underwriter note" in next_lower or "carrier comments" in next_lower or "renewal signal" in next_lower:
+            if "renewal underwriting notes" in next_lower or "carrier comments" in next_lower or "renewal signal" in next_lower or "recommended broker action" in next_lower:
                 break
 
             if looks_like_total_row(next_line):
@@ -215,7 +232,7 @@ def parse_claims(
     profile = profile or {}
 
     lines = split_lines(text)
-    rows, ignored_rows = reconstruct_claim_rows(lines)
+    rows, ignored_rows = reconstruct_claim_rows(lines, policies)
 
     claims: list[dict] = []
     seen: set[str] = set()

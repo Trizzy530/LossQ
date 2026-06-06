@@ -14,10 +14,12 @@ POLICY_RE = re.compile(
     re.I,
 )
 
-# True claim IDs should look like GL-23-0041, WC-24-0177, CA-24-2109, IM-24-0066.
-# This rejects policy-number fragments like GL-882190, WC-77142, CA-55209.
+# Claim IDs:
+# - common LOB format: GL-23-0041, WC-24-0177, CA-24-2109, IM-24-0066
+# - standard carrier format: GRC-1001, CLM-10244, ABC-123456
+# The parser applies extra checks inside the claim section so policy numbers are not mistaken for claims.
 CLAIM_RE = re.compile(
-    r"\b(?:GL|WC|CA|IM|CG|AUTO|AL|BI|PD|PROP)[-\s]?(?:1[0-9]|2[0-9])[-\s]?[A-Z0-9]{3,8}\??\b",
+    r"\b(?:(?:GL|WC|CA|IM|CG|AUTO|AL|BI|PD|PROP)[-\s]?(?:1[0-9]|2[0-9])[-\s]?[A-Z0-9]{3,8}\??|[A-Z]{2,6}[-\s]?\d{3,8}\??)\b",
     re.I,
 )
 
@@ -58,13 +60,6 @@ def money_values(line: str) -> list[float]:
     """
     Extract true financial column values in the same left-to-right order
     they appear in the claim row.
-
-    This fixes mixed rows such as:
-    $1,225.00 0.00 $1,225.00
-
-    Previous logic pulled currency first and plain zero second, changing
-    the order to 1225, 1225, 0. This version preserves the real order:
-    1225, 0, 1225.
     """
 
     text = clean_text(line)
@@ -85,9 +80,6 @@ def money_values(line: str) -> list[float]:
         token = match.group(0)
         value = normalize_money(token)
 
-        # Keep zeros because reserve columns are often zero.
-        # Keep values >= 100 because insurance claim amounts usually are.
-        # This also avoids years/page numbers after ID/date scrubbing.
         if value == 0 or abs(value) >= 100:
             values.append(value)
 
@@ -108,6 +100,8 @@ def parse_date(value: Any) -> str | None:
         "%Y/%m/%d",
         "%m.%d.%Y",
         "%m.%d.%y",
+        "%B %d, %Y",
+        "%b %d, %Y",
     ]
 
     for fmt in formats:
@@ -180,7 +174,7 @@ def looks_like_total_row(line: str) -> bool:
 
 def looks_like_header_row(line: str) -> bool:
     lower = clean_text(line).lower()
-    header_terms = ["claim number", "claim no", "claim id", "policy", "paid", "reserve", "incurred"]
+    header_terms = ["claim number", "claim no", "claim #", "claim id", "policy", "paid", "reserve", "incurred", "total"]
     return sum(term in lower for term in header_terms) >= 3
 
 

@@ -6,17 +6,17 @@ from .utils import clean_text, date_values, normalize_policy_number, split_lines
 
 
 LOB_KEYWORDS = {
-    "Commercial Auto": ["commercial auto", "auto", "vehicle", "fleet", "truck"],
+    "Commercial Auto": ["commercial auto", "business auto", "auto", "vehicle", "fleet", "truck"],
     "General Liability": ["general liability", "general liab", "liability", "gl"],
-    "Workers Compensation": ["workers comp", "workers compensation", "work comp", "wc"],
+    "Workers Compensation": ["workers compensation", "workers comp", "work comp", "wc"],
     "Motor Truck Cargo": ["motor truck cargo", "cargo"],
     "Inland Marine": ["inland marine", "equipment", "marine", "inland"],
-    "Property": ["property"],
+    "Property": ["property package", "property"],
     "Umbrella": ["umbrella", "excess"],
 }
 
 POLICY_PATTERN = re.compile(
-    r"\b[A-Z]{1,6}[-\s]?[A-Z]{1,6}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,6})?\b",
+    r"\b[A-Z]{2,8}[-\s]?[A-Z]{1,6}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,6})?\b",
     re.I,
 )
 
@@ -65,7 +65,7 @@ def looks_like_carrier_name(value: str) -> bool:
     cleaned = clean_text(value)
     lower = cleaned.lower()
 
-    if not cleaned or cleaned in {"Carrier / Co.", "/ Co.", "Policy #", "LOB", "Eff Date", "Exp Date", "Status"}:
+    if not cleaned or cleaned in {"Carrier / Co.", "/ Co.", "Policy #", "Policy Number", "LOB", "Eff Date", "Exp Date", "Status"}:
         return False
 
     if any(
@@ -104,6 +104,7 @@ def looks_like_carrier_name(value: str) -> bool:
         "hartford",
         "progressive",
         "national general",
+        "preferred",
         "berkley",
         "cna",
         "zurich",
@@ -137,12 +138,12 @@ def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
         line = lines[index]
         lower = line.lower()
 
-        if "schedule of policies" in lower or "policy schedule" in lower:
+        if "policy schedule" in lower or "schedule of policies" in lower:
             in_schedule = True
             index += 1
             continue
 
-        if "detailed claims" in lower or "claim detail" in lower or "claim no" in lower:
+        if "claim summary" in lower or "detailed claims" in lower or "claim detail" in lower or "claim no" in lower or "claim #" in lower:
             in_schedule = False
 
         if not in_schedule:
