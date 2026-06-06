@@ -41,6 +41,36 @@ function getToken() {
   );
 }
 
+function decodeJwtPayload(token: string) {
+  try {
+    const payload = token.split(".")[1];
+    if (!payload) return null;
+
+    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
+    const decoded = JSON.parse(window.atob(normalized));
+
+    return decoded;
+  } catch {
+    return null;
+  }
+}
+
+function getCurrentUserEmail() {
+  if (typeof window === "undefined") return "";
+
+  const token = getToken();
+  const payload = decodeJwtPayload(token);
+
+  return (
+    payload?.email ||
+    payload?.sub ||
+    payload?.user_email ||
+    localStorage.getItem("lossq_user_email") ||
+    localStorage.getItem("user_email") ||
+    ""
+  );
+}
+
 function formatDate(value?: string) {
   if (!value) return "—";
 
@@ -370,6 +400,7 @@ export default function AuditLogPage() {
   const [source, setSource] = useState("");
   const [search, setSearch] = useState("");
   const [resourceFilter, setResourceFilter] = useState("all");
+  const [currentUserEmail, setCurrentUserEmail] = useState("");
 
   const totalEvents = useMemo(() => {
     if (summary?.total_events !== undefined) return summary.total_events;
@@ -396,6 +427,7 @@ export default function AuditLogPage() {
         event.resource_id,
         event.user_email,
         event.actor_email,
+        currentUserEmail,
         details,
       ]
         .filter(Boolean)
@@ -403,7 +435,7 @@ export default function AuditLogPage() {
         .toLowerCase()
         .includes(cleanSearch);
     });
-  }, [events, search, resourceFilter]);
+  }, [events, search, resourceFilter, currentUserEmail]);
 
   async function fetchJson(path: string) {
     const token = getToken();
@@ -483,6 +515,7 @@ export default function AuditLogPage() {
       return;
     }
 
+    setCurrentUserEmail(getCurrentUserEmail());
     loadAuditLog();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
@@ -649,7 +682,7 @@ export default function AuditLogPage() {
                       <div>
                         <p className="text-xs uppercase tracking-[0.2em] text-slate-500">User</p>
                         <p className="mt-1 break-all text-sm text-slate-300">
-                          {event.user_email || event.actor_email || "System"}
+                          {event.user_email || event.actor_email || currentUserEmail || "System"}
                         </p>
                       </div>
 
