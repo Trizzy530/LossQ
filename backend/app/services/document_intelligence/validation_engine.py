@@ -13,6 +13,60 @@ def safe_float(value: Any) -> float:
         return 0.0
 
 
+def detect_summary_table_totals(text: str) -> dict:
+    # Detect summary rows like Total Claims / Open Claims ... 7 / 0 ... Net Incurred.
+    result = {
+        "reported_total_claims": None,
+        "reported_open_claims": None,
+        "reported_closed_claims": None,
+        "reported_total_paid": None,
+        "reported_total_reserve": None,
+        "reported_total_incurred": None,
+    }
+
+    best_line = ""
+
+    for line in (text or "").splitlines():
+        cleaned = clean_text(line)
+        if not cleaned:
+            continue
+
+        if not re.search(r"\b\d+\s*/\s*\d+\b", cleaned):
+            continue
+
+        amounts = money_values(cleaned)
+
+        if len(amounts) < 3:
+            continue
+
+        if "total" in cleaned.lower() or "net incurred" in (text or "").lower():
+            best_line = cleaned
+
+    if not best_line:
+        return result
+
+    claim_match = re.search(r"\b(\d+)\s*/\s*(\d+)\b", best_line)
+    amounts = money_values(best_line)
+
+    if claim_match:
+        total_claims = int(claim_match.group(1))
+        open_claims = int(claim_match.group(2))
+        result["reported_total_claims"] = total_claims
+        result["reported_open_claims"] = open_claims
+        result["reported_closed_claims"] = max(total_claims - open_claims, 0)
+
+    if len(amounts) >= 6 and amounts[-2] < 0:
+        result["reported_total_paid"] = round(float(amounts[-3]), 2)
+        result["reported_total_reserve"] = 0.0
+        result["reported_total_incurred"] = round(float(amounts[-1]), 2)
+    elif len(amounts) >= 3:
+        result["reported_total_paid"] = round(float(amounts[-3]), 2)
+        result["reported_total_reserve"] = round(float(amounts[-2]), 2)
+        result["reported_total_incurred"] = round(float(amounts[-1]), 2)
+
+    return result
+
+
 def detect_reported_totals(text: str) -> dict:
     lower = text.lower()
 
@@ -62,14 +116,16 @@ def detect_reported_totals(text: str) -> dict:
         if values:
             reported_total_incurred = values[-1]
 
+    summary_totals = detect_summary_table_totals(text)
+
     return {
-        "reported_total_claims": reported_total_claims,
-        "reported_open_claims": reported_open_claims,
-        "reported_closed_claims": reported_closed_claims,
+        "reported_total_claims": reported_total_claims if reported_total_claims is not None else summary_totals.get("reported_total_claims"),
+        "reported_open_claims": reported_open_claims if reported_open_claims is not None else summary_totals.get("reported_open_claims"),
+        "reported_closed_claims": reported_closed_claims if reported_closed_claims is not None else summary_totals.get("reported_closed_claims"),
         "reported_litigation_claims": reported_litigation_claims,
-        "reported_total_paid": reported_total_paid,
-        "reported_total_reserve": reported_total_reserve,
-        "reported_total_incurred": reported_total_incurred,
+        "reported_total_paid": reported_total_paid if reported_total_paid is not None else summary_totals.get("reported_total_paid"),
+        "reported_total_reserve": reported_total_reserve if reported_total_reserve is not None else summary_totals.get("reported_total_reserve"),
+        "reported_total_incurred": reported_total_incurred if reported_total_incurred is not None else summary_totals.get("reported_total_incurred"),
     }
 
 
@@ -200,8 +256,9 @@ def validate_loss_run(
 
     # Financial validation: use extracted math first, then compare to reported if available.
     financial_validation = "Passed"
+    has_recovery_or_net_incurred_layout = any(term in (text or "").lower() for term in ["ded. rec", "ded rec", "total rec", "net incurred", "other rec"])
 
-    if abs((total_paid + total_reserve) - total_incurred) > 1:
+    if not has_recovery_or_net_incurred_layout and abs((total_paid + total_reserve) - total_incurred) > 1:
         # Some reports already provide total incurred as the authoritative field,
         # but in most loss runs paid + reserve should equal incurred.
         warnings.append("Extracted paid plus reserve does not equal extracted total incurred.")

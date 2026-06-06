@@ -124,6 +124,66 @@ def nearest_carrier_before(lines: list[str], index: int) -> str:
     return ""
 
 
+
+def parse_policy_blocks(text: str, profile: dict | None = None) -> list[dict]:
+    # Parse carrier layouts that use repeated Policy blocks.
+    profile = profile or {}
+    lines = split_lines(text)
+    policies: list[dict] = []
+    seen: set[str] = set()
+
+    for index, line in enumerate(lines):
+        if "policy" not in line.lower():
+            continue
+
+        match = re.search(
+            r"\bPolicy\s*[:#]?\s*([A-Z]{2,10}\d{5,12}[A-Z0-9]*)\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*(?:to|through|thru|-|â€“|â€”)\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+            line,
+            re.I,
+        )
+
+        if not match:
+            continue
+
+        policy_number = normalize_policy_number(match.group(1))
+        if not is_valid_policy_number(policy_number) or policy_number in seen:
+            continue
+
+        window = lines[index : min(index + 6, len(lines))]
+        row_text = " ".join(window)
+        coverage_line = ""
+
+        for candidate in window[1:]:
+            candidate_clean = clean_text(candidate)
+            if candidate_clean and not candidate_clean.lower().startswith("claim number"):
+                coverage_line = candidate_clean
+                break
+
+        lob = detect_lob(" ".join([coverage_line, row_text]))
+        no_claims = "nothing to report" in row_text.lower()
+
+        policies.append(
+            {
+                "policy_number": policy_number,
+                "policy_type": lob,
+                "line_coverage": coverage_line or lob,
+                "line_of_business": lob,
+                "writing_carrier": profile.get("writing_carrier") or profile.get("carrier_name") or "",
+                "carrier": profile.get("carrier_name") or profile.get("writing_carrier") or "",
+                "effective_date": parse_date(match.group(2)) or "",
+                "expiration_date": parse_date(match.group(3)) or "",
+                "claim_count": 0,
+                "total_paid": 0,
+                "total_reserve": 0,
+                "total_incurred": 0,
+                "no_claims_reported": no_claims,
+                "source_line": row_text[:700],
+            }
+        )
+        seen.add(policy_number)
+    return policies
+
+
 def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
     profile = profile or {}
     lines = split_lines(text)
@@ -188,5 +248,11 @@ def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
             seen.add(policy_number)
 
         index += 1
+
+    for block_policy in parse_policy_blocks(text, profile):
+        block_policy_number = normalize_policy_number(block_policy.get("policy_number"))
+        if block_policy_number and block_policy_number not in seen:
+            policies.append(block_policy)
+            seen.add(block_policy_number)
 
     return policies

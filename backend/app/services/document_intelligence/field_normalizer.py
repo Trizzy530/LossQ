@@ -206,6 +206,7 @@ def extract_profile(text: str) -> dict:
             r"\bNamed Insured\s*[:\-]?\s*([^\n|]+)",
             r"\bAccount Name\s*[:\-]?\s*([^\n|]+)",
             r"\bACCT NAME\s*[:\-]?\s*([^\n|]+)",
+            r"^\s*([A-Z0-9&.,\' \-]{6,80}LLC)\s*$",
         ],
         text,
     )
@@ -226,6 +227,7 @@ def extract_profile(text: str) -> dict:
             r"\bAccount\s+No\.?\s*:\s*([A-Z0-9\-]+)",
             r"\bAccount\s+#\s*:\s*([A-Z0-9\-]+)",
             r"\bCustomer\s+No\.?\s*:\s*([A-Z0-9\-]+)",
+            r"\bCustomer\s+Number\s*[:\-]?\s*([A-Z0-9\-]+)",
             r"\bRisk\s+ID\s*[:\-]?\s*([A-Z0-9\-]+)",
         ],
         text,
@@ -237,6 +239,7 @@ def extract_profile(text: str) -> dict:
             r"\bCarrier Name\s*:\s*([^\n|]+)",
             r"\bInsurance Carrier\s*:\s*([^\n|]+)",
             r"\bCarrier\s*:\s*([^\n|]+)",
+            r"\b([A-Z][A-Za-z&.\' ]+ Insurance Company)\b",
         ],
         text,
     )
@@ -246,6 +249,9 @@ def extract_profile(text: str) -> dict:
     carrier_name = explicit_carrier if not is_bad_profile_value(explicit_carrier) else ""
     if not carrier_name:
         carrier_name = schedule_carrier
+
+    if not carrier_name and "vanliner" in (text or "").lower():
+        carrier_name = "Vanliner Insurance Company"
 
     raw_policy_number = find_first(
         [
@@ -280,6 +286,8 @@ def extract_profile(text: str) -> dict:
 
     evaluation_date_raw = find_first(
         [
+            r"\bEval\s+Date\s*[:\-]?\s*([0-9/\-.]+)",
+            r"\bEvaluation\s+Date\s*[:\-]?\s*([0-9/\-.]+)",
             r"\bValuation Date\s*:\s*([0-9/\-.]+)",
             r"\bReport Date\s*:\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})",
             r"\bVALUATION\s*[:\-]?\s*([0-9/\-.]+)",
@@ -295,7 +303,7 @@ def extract_profile(text: str) -> dict:
         "agency_name": clean_text(agency_name),
         "account_number": clean_text(account_number),
         "customer_number": clean_text(account_number),
-        "producer_number": "",
+        "producer_number": find_first([r"\bProducer\s+Number\s*[:\-]?\s*([A-Z0-9\-]+)"], text),
         "policy_number": policy_number,
         "effective_date": parse_date(effective_date_raw) or "",
         "expiration_date": parse_date(expiration_date_raw) or "",
