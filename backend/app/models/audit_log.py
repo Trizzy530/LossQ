@@ -15,8 +15,8 @@ class AuditLog(Base):
     action = Column(String, index=True, nullable=False)
     resource_type = Column(String, index=True, nullable=True)
     resource_id = Column(String, index=True, nullable=True)
-
     details = Column(Text, nullable=True)
+
     ip_address = Column(String, nullable=True)
     user_agent = Column(String, nullable=True)
 

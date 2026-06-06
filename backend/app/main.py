@@ -69,6 +69,7 @@ app.include_router(carrier_packet.router)
 app.include_router(admin_users.router)
 app.include_router(submission_builder.router)
 app.include_router(audit_logs.router)
+app.include_router(audit_logs.compat_router)
 app.include_router(billing.router)
 
 

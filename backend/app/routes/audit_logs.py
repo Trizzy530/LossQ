@@ -11,12 +11,13 @@ from app.database import Base, engine, SessionLocal
 from app.models.audit_log import AuditLog
 from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
-from app.routes.auth import get_current_user, require_admin_or_owner
+from app.routes.auth import get_current_user
+from app.services.audit_service import write_audit_event
 
 
 router = APIRouter(prefix="/audit", tags=["Audit Log"])
+compat_router = APIRouter(tags=["Audit Log Compatibility"])
 
-# Make sure the table exists even if an older main.py did not import the model before create_all.
 Base.metadata.create_all(bind=engine)
 
 
@@ -28,13 +29,10 @@ def get_db():
         db.close()
 
 
-def safe_get(obj: Any, *names: str, default: Any = None) -> Any:
-    for name in names:
-        if hasattr(obj, name):
-            value = getattr(obj, name)
-            if value is not None:
-                return value
-    return default
+def actor_value(current_user: Any, key: str, default: Any = None) -> Any:
+    if isinstance(current_user, dict):
+        return current_user.get(key, default)
+    return getattr(current_user, key, default)
 
 
 def iso_or_string(value: Any) -> str:
@@ -59,6 +57,15 @@ def parse_details(value: Any) -> Any:
         except Exception:
             return value
     return str(value)
+
+
+def safe_get(obj: Any, *names: str, default: Any = None) -> Any:
+    for name in names:
+        if hasattr(obj, name):
+            value = getattr(obj, name)
+            if value is not None:
+                return value
+    return default
 
 
 def normalize_audit_row(row: AuditLog) -> dict:
@@ -111,7 +118,7 @@ def claim_event(row: Any) -> dict:
         "id": f"claim-{safe_get(row, 'id', default='')}",
         "created_at": iso_or_string(created_at),
         "user_email": "",
-        "action": "claim_record_available",
+        "action": "claim_record_saved",
         "resource_type": "claim",
         "resource_id": str(safe_get(row, "id", default=claim_number)),
         "details": {
@@ -122,56 +129,23 @@ def claim_event(row: Any) -> dict:
     }
 
 
-def create_audit_event(
-    db: Session,
-    current_user: Any,
-    action: str,
-    resource_type: str = "",
-    resource_id: str = "",
-    details: Any = None,
-    request: Request | None = None,
-) -> AuditLog:
-    if details is None:
-        details_text = None
-    elif isinstance(details, str):
-        details_text = details
-    else:
-        details_text = json.dumps(details, default=str)
-
-    event = AuditLog(
-        organization_id=getattr(current_user, "organization_id", None),
-        user_id=getattr(current_user, "id", None),
-        user_email=getattr(current_user, "email", None),
-        action=action,
-        resource_type=resource_type,
-        resource_id=str(resource_id or ""),
-        details=details_text,
-        ip_address=request.client.host if request and request.client else None,
-        user_agent=request.headers.get("user-agent") if request else None,
-    )
-
-    db.add(event)
-    db.commit()
-    db.refresh(event)
-    return event
+def get_organization_filter(model: Any, current_user: Any):
+    org_id = actor_value(current_user, "organization_id")
+    if org_id is not None and hasattr(model, "organization_id"):
+        return model.organization_id == org_id
+    return None
 
 
 def build_fallback_events(db: Session, current_user: Any, limit: int) -> list[dict]:
-    """
-    If no formal AuditLog rows exist yet, build useful activity from existing uploads and claims.
-    This makes the Audit Log useful immediately without breaking the current upload pipeline.
-    """
-
     events: list[dict] = []
-    org_id = getattr(current_user, "organization_id", None)
 
     try:
         upload_query = db.query(UploadHistory)
-
-        if hasattr(UploadHistory, "organization_id") and org_id is not None:
-            upload_query = upload_query.filter(UploadHistory.organization_id == org_id)
-        elif hasattr(UploadHistory, "user_id") and getattr(current_user, "id", None) is not None:
-            upload_query = upload_query.filter(UploadHistory.user_id == current_user.id)
+        org_filter = get_organization_filter(UploadHistory, current_user)
+        if org_filter is not None:
+            upload_query = upload_query.filter(org_filter)
+        elif hasattr(UploadHistory, "user_id") and actor_value(current_user, "id") is not None:
+            upload_query = upload_query.filter(UploadHistory.user_id == actor_value(current_user, "id"))
 
         if hasattr(UploadHistory, "created_at"):
             upload_query = upload_query.order_by(UploadHistory.created_at.desc())
@@ -189,9 +163,9 @@ def build_fallback_events(db: Session, current_user: Any, limit: int) -> list[di
     if len(events) < limit:
         try:
             claim_query = db.query(Claim)
-
-            if hasattr(Claim, "organization_id") and org_id is not None:
-                claim_query = claim_query.filter(Claim.organization_id == org_id)
+            org_filter = get_organization_filter(Claim, current_user)
+            if org_filter is not None:
+                claim_query = claim_query.filter(org_filter)
 
             if hasattr(Claim, "created_at"):
                 claim_query = claim_query.order_by(Claim.created_at.desc())
@@ -208,16 +182,12 @@ def build_fallback_events(db: Session, current_user: Any, limit: int) -> list[di
     return events[:limit]
 
 
-@router.get("/events")
-def get_audit_events(
-    limit: int = Query(100, ge=1, le=250),
-    current_user=Depends(require_admin_or_owner),
-    db: Session = Depends(get_db),
-):
+def get_events_payload(limit: int, current_user: Any, db: Session) -> dict:
     query = db.query(AuditLog)
 
-    if getattr(current_user, "organization_id", None) is not None:
-        query = query.filter(AuditLog.organization_id == current_user.organization_id)
+    org_id = actor_value(current_user, "organization_id")
+    if org_id is not None:
+        query = query.filter(AuditLog.organization_id == org_id)
 
     rows = query.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).all()
     events = [normalize_audit_row(row) for row in rows]
@@ -228,17 +198,26 @@ def get_audit_events(
     return {
         "events": events,
         "count": len(events),
-        "source": "audit_logs" if rows else "derived_from_existing_activity",
+        "source": "audit_logs" if rows else "derived_from_existing_uploads_and_claims",
     }
+
+
+@router.get("/events")
+def get_audit_events(
+    limit: int = Query(100, ge=1, le=250),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return get_events_payload(limit=limit, current_user=current_user, db=db)
 
 
 @router.get("/logs")
 def get_audit_logs(
     limit: int = Query(100, ge=1, le=250),
-    current_user=Depends(require_admin_or_owner),
+    current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    return get_audit_events(limit=limit, current_user=current_user, db=db)
+    return get_events_payload(limit=limit, current_user=current_user, db=db)
 
 
 @router.post("/events")
@@ -248,7 +227,7 @@ def record_audit_event(
     current_user=Depends(get_current_user),
     db: Session = Depends(get_db),
 ):
-    event = create_audit_event(
+    event = write_audit_event(
         db=db,
         current_user=current_user,
         action=str(payload.get("action") or "custom_event"),
@@ -258,4 +237,22 @@ def record_audit_event(
         request=request,
     )
 
-    return {"event": normalize_audit_row(event)}
+    return {"event": normalize_audit_row(event) if event else None, "saved": bool(event)}
+
+
+@compat_router.get("/audit-log")
+def get_audit_log_compat(
+    limit: int = Query(100, ge=1, le=250),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return get_events_payload(limit=limit, current_user=current_user, db=db)
+
+
+@compat_router.get("/auth/audit-log")
+def get_auth_audit_log_compat(
+    limit: int = Query(100, ge=1, le=250),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return get_events_payload(limit=limit, current_user=current_user, db=db)
