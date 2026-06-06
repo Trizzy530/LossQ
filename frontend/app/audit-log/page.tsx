@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -72,7 +72,7 @@ function getCurrentUserEmail() {
 }
 
 function formatDate(value?: string) {
-  if (!value) return "—";
+  if (!value) return "â€”";
 
   try {
     return new Date(value).toLocaleString();
@@ -84,7 +84,7 @@ function formatDate(value?: string) {
 function formatCurrency(value: any) {
   const num = Number(value || 0);
 
-  if (!Number.isFinite(num)) return "—";
+  if (!Number.isFinite(num)) return "â€”";
 
   return num.toLocaleString("en-US", {
     style: "currency",
@@ -94,7 +94,7 @@ function formatCurrency(value: any) {
 }
 
 function formatNumber(value: any) {
-  if (value === null || value === undefined || value === "") return "—";
+  if (value === null || value === undefined || value === "") return "â€”";
 
   const num = Number(value);
 
@@ -157,7 +157,7 @@ function toDetails(details: any) {
 }
 
 function safeText(value: any) {
-  if (value === null || value === undefined || value === "") return "—";
+  if (value === null || value === undefined || value === "") return "â€”";
   return String(value);
 }
 
@@ -230,18 +230,18 @@ function DetailPill({
   tone?: ActionTone;
 }) {
   return (
-    <div className={`rounded-xl border px-3 py-2 ${toneClasses(tone)}`}>
+    <div className={`min-w-0 rounded-xl border px-3 py-2 ${toneClasses(tone)}`}>
       <p className="text-[10px] uppercase tracking-[0.2em] opacity-70">{label}</p>
-      <p className="mt-1 text-sm font-bold">{safeText(value)}</p>
+      <p className="mt-1 min-w-0 break-words text-sm font-bold leading-relaxed">{safeText(value)}</p>
     </div>
   );
 }
 
 function StatusPill({ label, value }: { label: string; value: any }) {
   return (
-    <div className={`rounded-xl border px-3 py-2 ${statusTone(value)}`}>
+    <div className={`min-w-0 rounded-xl border px-3 py-2 ${statusTone(value)}`}>
       <p className="text-[10px] uppercase tracking-[0.2em] opacity-70">{label}</p>
-      <p className="mt-1 text-sm font-bold">{safeText(value)}</p>
+      <p className="mt-1 min-w-0 break-words text-sm font-bold leading-relaxed">{safeText(value)}</p>
     </div>
   );
 }
@@ -276,7 +276,7 @@ function EventDetails({ event }: { event: AuditEvent }) {
   if (resource === "claim" || action.includes("claim")) {
     return (
       <div className="space-y-3">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
           <DetailPill label="Claim Number" value={details.claim_number || event.resource_id} tone="emerald" />
           <DetailPill label="Policy Number" value={details.policy_number} />
           <StatusPill label="Status" value={details.status} />
@@ -293,12 +293,12 @@ function EventDetails({ event }: { event: AuditEvent }) {
   if (resource === "report" || action.includes("report") || action.includes("packet") || action.includes("memo")) {
     return (
       <div className="space-y-3">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
           <DetailPill label="Report Type" value={prettyAction(details.report_type)} tone="purple" />
           <DetailPill label="Policy Number" value={details.policy_number || event.resource_id} />
           <DetailPill label="Business" value={details.business_name} />
           <StatusPill label="Risk Level" value={details.risk_level} />
-          <DetailPill label="Renewal Score" value={details.renewal_score ?? "—"} tone="purple" />
+          <DetailPill label="Renewal Score" value={details.renewal_score ?? "â€”"} tone="purple" />
           <DetailPill label="Claim Count" value={formatNumber(details.claim_count)} />
           <DetailPill label="Total Incurred" value={formatCurrency(details.total_incurred)} />
         </div>
@@ -314,7 +314,7 @@ function EventDetails({ event }: { event: AuditEvent }) {
 
     return (
       <div className="space-y-3">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+        <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
           <DetailPill
             label="File"
             value={uploadedFile?.filename || details.filename || "Loss run upload"}
@@ -338,7 +338,7 @@ function EventDetails({ event }: { event: AuditEvent }) {
             <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-200">Review Notes</p>
             <ul className="mt-2 grid gap-1 text-sm text-amber-100">
               {validation.warnings.slice(0, 4).map((warning: string, index: number) => (
-                <li key={`${warning}-${index}`}>• {warning}</li>
+                <li key={`${warning}-${index}`}>â€¢ {warning}</li>
               ))}
             </ul>
           </div>
@@ -351,7 +351,7 @@ function EventDetails({ event }: { event: AuditEvent }) {
 
   return (
     <div className="space-y-3">
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-3">
+      <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
         {Object.entries(details)
           .slice(0, 6)
           .map(([key, value]) => (
@@ -529,7 +529,7 @@ export default function AuditLogPage() {
               onClick={() => router.push("/settings")}
               className="mb-4 rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:bg-white/10 hover:text-white"
             >
-              ← Back to Settings
+              â† Back to Settings
             </button>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-4xl font-black tracking-tight">Audit Log</h1>
@@ -567,19 +567,19 @@ export default function AuditLogPage() {
           />
           <StatCard
             label="Uploads"
-            value={formatNumber(summary?.uploads ?? "—")}
+            value={formatNumber(summary?.uploads ?? "â€”")}
             helper="Loss run uploads and file activity."
             tone="blue"
           />
           <StatCard
             label="Claims"
-            value={formatNumber(summary?.claims ?? "—")}
+            value={formatNumber(summary?.claims ?? "â€”")}
             helper="Claim records derived from saved claims."
             tone="emerald"
           />
           <StatCard
             label="Reports"
-            value={formatNumber(summary?.exports ?? "—")}
+            value={formatNumber(summary?.exports ?? "â€”")}
             helper="Generated reports, packets, and memos."
             tone="purple"
           />
@@ -689,7 +689,7 @@ export default function AuditLogPage() {
                       <div>
                         <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Resource ID</p>
                         <p className="mt-1 break-all text-xs text-slate-400">
-                          {event.resource_id || "—"}
+                          {event.resource_id || "â€”"}
                         </p>
                       </div>
                     </aside>
@@ -716,3 +716,5 @@ export default function AuditLogPage() {
     </main>
   );
 }
+
+
