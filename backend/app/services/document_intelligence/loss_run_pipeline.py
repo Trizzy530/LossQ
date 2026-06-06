@@ -81,15 +81,68 @@ def ensure_claim_policies(claims: list[dict], policies: list[dict], profile: dic
     return cleaned
 
 
+def enrich_profile_from_policies(profile: dict, policies: list[dict]) -> dict:
+    """
+    Fill the account snapshot from the policy schedule.
+
+    The uploaded PDF may not have one top-level policy period because it contains
+    several policy rows. In that case, use the earliest effective date and latest
+    expiration date across the schedule so the dashboard does not show Not Set.
+    """
+
+    profile = dict(profile or {})
+    valid_policies = [policy for policy in policies if isinstance(policy, dict)]
+
+    if valid_policies:
+        first_policy = valid_policies[0]
+
+        if not profile.get("carrier_name") or str(profile.get("carrier_name")).strip() in {"/ Co.", "/ Co", "Co.", "Carrier / Co."}:
+            profile["carrier_name"] = first_policy.get("carrier") or first_policy.get("writing_carrier") or ""
+
+        if not profile.get("writing_carrier") or str(profile.get("writing_carrier")).strip() in {"/ Co.", "/ Co", "Co.", "Carrier / Co."}:
+            profile["writing_carrier"] = first_policy.get("writing_carrier") or first_policy.get("carrier") or ""
+
+        if not profile.get("policy_number") or str(profile.get("policy_number")).strip().upper() in {"LOB", "POLICY", "POLICY-"}:
+            profile["policy_number"] = first_policy.get("policy_number") or ""
+
+        effective_dates = sorted(
+            [
+                str(policy.get("effective_date"))
+                for policy in valid_policies
+                if policy.get("effective_date")
+            ]
+        )
+
+        expiration_dates = sorted(
+            [
+                str(policy.get("expiration_date"))
+                for policy in valid_policies
+                if policy.get("expiration_date")
+            ]
+        )
+
+        if not profile.get("effective_date") and effective_dates:
+            profile["effective_date"] = effective_dates[0]
+
+        if not profile.get("expiration_date") and expiration_dates:
+            profile["expiration_date"] = expiration_dates[-1]
+
+    return profile
+
+
 def parse_loss_run_file(file_path: str, filename: str = "") -> dict:
     text, meta = extract_text(file_path, filename)
 
     profile = extract_profile(text)
     policies = parse_policy_schedule(text, profile)
+
+    profile = enrich_profile_from_policies(profile, policies)
+
     claims, ignored_rows = parse_claims(text, policies, profile)
 
     claims = ensure_claim_policies(claims, policies, profile)
     policies = attach_policy_claim_counts(policies, claims)
+    profile = enrich_profile_from_policies(profile, policies)
 
     validation = validate_loss_run(
         text=text,

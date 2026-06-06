@@ -532,11 +532,23 @@ export default function ClaimDetailPage() {
             </Panel>
 
             <div className="mt-6">
-              <Panel title="Raw Claim Data" subtitle="Use this only to verify exactly what the backend returned.">
-                <div className="max-h-[420px] overflow-auto rounded-2xl border border-white/10 bg-slate-950/70 p-5">
-                  <pre className="text-sm text-slate-300 whitespace-pre-wrap">
-                    {JSON.stringify(claim, null, 2)}
-                  </pre>
+              <Panel
+                title="Claim Data Quality"
+                subtitle="Clean validation summary for this claim record."
+              >
+                <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
+                  <DetailCard
+                    label="Record Status"
+                    value={display.claimNumber !== "-" ? "Claim loaded successfully" : "Needs review"}
+                  />
+                  <DetailCard
+                    label="Financial Mapping"
+                    value={display.totalIncurred === display.paid + display.reserve ? "Balanced" : "Review totals"}
+                  />
+                  <DetailCard
+                    label="Backend Source"
+                    value="Normalized LossQ claim record"
+                  />
                 </div>
               </Panel>
             </div>

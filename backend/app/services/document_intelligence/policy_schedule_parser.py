@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import re
 
-from .utils import clean_text, date_values, money_values, normalize_policy_number, split_lines
+from .utils import clean_text, date_values, normalize_policy_number, split_lines
 
 
 LOB_KEYWORDS = {
@@ -61,6 +61,68 @@ def extract_policy_number(line: str) -> str:
     return ""
 
 
+def looks_like_carrier_name(value: str) -> bool:
+    cleaned = clean_text(value)
+    lower = cleaned.lower()
+
+    if not cleaned or cleaned in {"Carrier / Co.", "/ Co.", "Policy #", "LOB", "Eff Date", "Exp Date", "Status"}:
+        return False
+
+    if any(
+        bad in lower
+        for bad in [
+            "schedule",
+            "policy",
+            "claim",
+            "loss run",
+            "generated",
+            "page",
+            "detailed",
+            "expired",
+            "active",
+            "sales",
+            "payroll",
+            "units",
+            "equip",
+        ]
+    ):
+        return False
+
+    carrier_words = [
+        "insurance",
+        "ins.",
+        "mutual",
+        "casualty",
+        "western",
+        "harbor",
+        "builders",
+        "atlantic",
+        "continental",
+        "liberty",
+        "summit",
+        "travelers",
+        "hartford",
+        "progressive",
+        "national general",
+        "berkley",
+        "cna",
+        "zurich",
+        "chubb",
+        "aig",
+        "hanover",
+    ]
+
+    return any(word in lower for word in carrier_words) or len(cleaned.split()) >= 2
+
+
+def nearest_carrier_before(lines: list[str], index: int) -> str:
+    for back in range(index - 1, max(-1, index - 8), -1):
+        candidate = clean_text(lines[back])
+        if looks_like_carrier_name(candidate):
+            return candidate
+    return ""
+
+
 def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
     profile = profile or {}
     lines = split_lines(text)
@@ -98,7 +160,7 @@ def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
 
         lob = detect_lob(row_text)
         dates = date_values(row_text)
-        amounts = money_values(row_text)
+        carrier_name = nearest_carrier_before(lines, index) or profile.get("writing_carrier") or profile.get("carrier_name") or ""
 
         if lob == "Policy" and len(dates) == 0:
             index += 1
@@ -111,8 +173,8 @@ def parse_policy_schedule(text: str, profile: dict | None = None) -> list[dict]:
                     "policy_type": lob,
                     "line_coverage": lob,
                     "line_of_business": lob,
-                    "writing_carrier": profile.get("writing_carrier") or profile.get("carrier_name") or "",
-                    "carrier": profile.get("carrier_name") or profile.get("writing_carrier") or "",
+                    "writing_carrier": carrier_name,
+                    "carrier": carrier_name,
                     "effective_date": dates[0] if len(dates) >= 1 else profile.get("effective_date", ""),
                     "expiration_date": dates[1] if len(dates) >= 2 else profile.get("expiration_date", ""),
                     "claim_count": 0,
