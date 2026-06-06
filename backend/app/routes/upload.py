@@ -502,15 +502,28 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         file_policy_number = clean_input_policy
 
-        if parsed_profile:
-            parsed_policy = str(
-                parsed_profile.get("policy_number")
-                or parsed_profile.get("account_number")
-                or ""
-            ).strip()
+        claim_policy_number = ""
+        for claim_data in parsed_claims:
+            claim_policy = clean_profile_value(claim_data.get("policy_number"))
+            if claim_policy:
+                claim_policy_number = claim_policy
+                break
 
+        if parsed_profile:
+            parsed_policy = clean_profile_value(parsed_profile.get("policy_number"))
+            parsed_account = clean_profile_value(
+                parsed_profile.get("account_number") or parsed_profile.get("customer_number")
+            )
+
+            # Important:
+            # Prefer the actual policy number found on claim rows.
+            # Do not let customer/account number override real claim policy number.
             if parsed_policy:
                 file_policy_number = parsed_policy
+            elif claim_policy_number:
+                file_policy_number = claim_policy_number
+            elif parsed_account:
+                file_policy_number = parsed_account
 
             for key, value in parsed_profile.items():
                 if key in ["policies", "validation", "raw_text_preview"]:
@@ -520,13 +533,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
                 if value and not direct_profile.get(key):
                     direct_profile[key] = value
 
-        if not file_policy_number:
-            for claim_data in parsed_claims:
-                claim_policy = str(claim_data.get("policy_number") or "").strip()
-
-                if claim_policy:
-                    file_policy_number = claim_policy
-                    break
+        if not file_policy_number and claim_policy_number:
+            file_policy_number = claim_policy_number
 
         if not file_policy_number:
             file_policy_number = (
