@@ -1,19 +1,28 @@
 from __future__ import annotations
+
 import json
 from datetime import datetime
 from typing import Any
+
 from fastapi import APIRouter, Depends, Query, Request
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
+
 from app.database import Base, engine, SessionLocal
 from app.models.audit_log import AuditLog
-from app.models.claim import Claim
-from app.models.upload_history import UploadHistory
 from app.routes.auth import get_current_user
 from app.services.audit_service import write_audit_event
 
+
 router = APIRouter(prefix="/audit", tags=["Audit Log"])
 compat_router = APIRouter(tags=["Audit Log Compatibility"])
-Base.metadata.create_all(bind=engine)
+
+# Never let table creation break the app.
+try:
+    Base.metadata.create_all(bind=engine)
+except Exception:
+    pass
+
 
 def get_db():
     db = SessionLocal()
@@ -22,8 +31,12 @@ def get_db():
     finally:
         db.close()
 
+
 def actor_value(current_user: Any, key: str, default: Any = None) -> Any:
-    return current_user.get(key, default) if isinstance(current_user, dict) else getattr(current_user, key, default)
+    if isinstance(current_user, dict):
+        return current_user.get(key, default)
+    return getattr(current_user, key, default)
+
 
 def iso_or_string(value: Any) -> str:
     if value is None:
@@ -35,7 +48,8 @@ def iso_or_string(value: Any) -> str:
     except Exception:
         return str(value)
 
-def parse_details(value: Any) -> Any:
+
+def parse_json(value: Any) -> Any:
     if value is None:
         return {}
     if isinstance(value, (dict, list)):
@@ -47,89 +61,298 @@ def parse_details(value: Any) -> Any:
             return value
     return str(value)
 
-def safe_get(obj: Any, *names: str, default: Any = None) -> Any:
-    for name in names:
-        if hasattr(obj, name):
-            value = getattr(obj, name)
-            if value is not None:
-                return value
-    return default
 
-def normalize_audit_row(row: AuditLog) -> dict:
-    return {"id": row.id, "created_at": iso_or_string(row.created_at), "user_email": row.user_email or "", "action": row.action, "resource_type": row.resource_type or "", "resource_id": row.resource_id or "", "details": parse_details(row.details)}
-
-def upload_history_event(row: Any) -> dict:
-    return {"id": f"upload-{safe_get(row, 'id', default='')}", "created_at": iso_or_string(safe_get(row, "created_at", "uploaded_at", "timestamp")), "user_email": safe_get(row, "user_email", "uploaded_by_email", "email", default=""), "action": "loss_run_uploaded", "resource_type": "upload", "resource_id": str(safe_get(row, "id", default="")), "details": {"filename": safe_get(row, "filename", "file_name", "original_filename", "name", default=""), "policy_number": safe_get(row, "policy_number", "policy", default=""), "account_number": safe_get(row, "account_number", "customer_number", default=""), "claims_saved": safe_get(row, "claims_saved", "claim_count", "claims_count", default=None)}}
-
-def claim_event(row: Any) -> dict:
-    return {"id": f"claim-{safe_get(row, 'id', default='')}", "created_at": iso_or_string(safe_get(row, "created_at", "uploaded_at", "updated_at")), "user_email": "", "action": "claim_record_saved", "resource_type": "claim", "resource_id": str(safe_get(row, "id", default=safe_get(row, "claim_number", default=""))), "details": {"claim_number": safe_get(row, "claim_number", "claim_id", default=""), "policy_number": safe_get(row, "policy_number", default=""), "total_incurred": safe_get(row, "total_incurred", "incurred_amount", default=None)}}
-
-def org_filter(model: Any, current_user: Any):
-    org_id = actor_value(current_user, "organization_id")
-    if org_id is not None and hasattr(model, "organization_id"):
-        return model.organization_id == org_id
-    return None
-
-def build_fallback_events(db: Session, current_user: Any, limit: int) -> list[dict]:
-    events = []
+def table_names(db: Session) -> set[str]:
     try:
-        q = db.query(UploadHistory)
-        f = org_filter(UploadHistory, current_user)
-        if f is not None:
-            q = q.filter(f)
-        if hasattr(UploadHistory, "created_at"):
-            q = q.order_by(UploadHistory.created_at.desc())
-        elif hasattr(UploadHistory, "uploaded_at"):
-            q = q.order_by(UploadHistory.uploaded_at.desc())
-        elif hasattr(UploadHistory, "id"):
-            q = q.order_by(UploadHistory.id.desc())
-        events += [upload_history_event(row) for row in q.limit(limit).all()]
-    except Exception as exc:
-        events.append({"id": "upload-fallback-error", "created_at": "", "user_email": "", "action": "audit_upload_history_unavailable", "resource_type": "system", "resource_id": "", "details": {"error": str(exc)}})
-    if len(events) < limit:
-        try:
-            q = db.query(Claim)
-            f = org_filter(Claim, current_user)
-            if f is not None:
-                q = q.filter(f)
-            if hasattr(Claim, "created_at"):
-                q = q.order_by(Claim.created_at.desc())
-            elif hasattr(Claim, "id"):
-                q = q.order_by(Claim.id.desc())
-            events += [claim_event(row) for row in q.limit(limit - len(events)).all()]
-        except Exception as exc:
-            events.append({"id": "claim-fallback-error", "created_at": "", "user_email": "", "action": "audit_claim_history_unavailable", "resource_type": "system", "resource_id": "", "details": {"error": str(exc)}})
-    events.sort(key=lambda x: x.get("created_at") or "", reverse=True)
-    return events[:limit]
+        return set(inspect(db.bind).get_table_names())
+    except Exception:
+        return set()
 
-def payload(limit: int, current_user: Any, db: Session) -> dict:
-    q = db.query(AuditLog)
+
+def columns_for(db: Session, table_name: str) -> set[str]:
+    try:
+        return {col["name"] for col in inspect(db.bind).get_columns(table_name)}
+    except Exception:
+        return set()
+
+
+def safe_table_query(db: Session, table_name: str, wanted: list[str], limit: int, org_id: Any = None) -> list[dict]:
+    cols = columns_for(db, table_name)
+    if not cols:
+        return []
+
+    selected = [col for col in wanted if col in cols]
+    if "id" not in selected and "id" in cols:
+        selected.insert(0, "id")
+
+    if not selected:
+        return []
+
+    order_col = None
+    for candidate in ["created_at", "uploaded_at", "timestamp", "updated_at", "id"]:
+        if candidate in cols:
+            order_col = candidate
+            break
+
+    where = ""
+    params = {"limit": limit}
+
+    if org_id is not None and "organization_id" in cols:
+        where = " WHERE organization_id = :org_id"
+        params["org_id"] = org_id
+
+    # Table names are chosen from SQLAlchemy inspector, not user input.
+    sql = f"SELECT {', '.join(selected)} FROM {table_name}{where}"
+    if order_col:
+        sql += f" ORDER BY {order_col} DESC"
+    sql += " LIMIT :limit"
+
+    try:
+        rows = db.execute(text(sql), params).mappings().all()
+        return [dict(row) for row in rows]
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return []
+
+
+def normalize_audit_event(row: dict) -> dict:
+    return {
+        "id": row.get("id"),
+        "created_at": iso_or_string(row.get("created_at") or row.get("timestamp") or row.get("updated_at")),
+        "user_email": row.get("user_email") or row.get("email") or "",
+        "action": row.get("action") or "audit_event",
+        "resource_type": row.get("resource_type") or "",
+        "resource_id": row.get("resource_id") or "",
+        "details": parse_json(row.get("details")),
+    }
+
+
+def normalize_upload_event(row: dict) -> dict:
+    return {
+        "id": f"upload-{row.get('id', '')}",
+        "created_at": iso_or_string(row.get("created_at") or row.get("uploaded_at") or row.get("timestamp")),
+        "user_email": row.get("user_email") or row.get("uploaded_by_email") or row.get("email") or "",
+        "action": "loss_run_uploaded",
+        "resource_type": "upload",
+        "resource_id": str(row.get("id") or ""),
+        "details": {
+            "filename": row.get("filename") or row.get("file_name") or row.get("original_filename") or row.get("name") or "",
+            "policy_number": row.get("policy_number") or row.get("policy") or "",
+            "account_number": row.get("account_number") or row.get("customer_number") or "",
+            "claims_saved": row.get("claims_saved") or row.get("claim_count") or row.get("claims_count"),
+        },
+    }
+
+
+def normalize_claim_event(row: dict) -> dict:
+    return {
+        "id": f"claim-{row.get('id', '')}",
+        "created_at": iso_or_string(row.get("created_at") or row.get("uploaded_at") or row.get("updated_at")),
+        "user_email": "",
+        "action": "claim_record_saved",
+        "resource_type": "claim",
+        "resource_id": str(row.get("id") or row.get("claim_number") or ""),
+        "details": {
+            "claim_number": row.get("claim_number") or row.get("claim_id") or "",
+            "policy_number": row.get("policy_number") or "",
+            "total_incurred": row.get("total_incurred") or row.get("incurred_amount"),
+            "status": row.get("status") or "",
+        },
+    }
+
+
+def build_events(db: Session, current_user: Any, limit: int) -> tuple[list[dict], str]:
     org_id = actor_value(current_user, "organization_id")
-    if org_id is not None:
-        q = q.filter(AuditLog.organization_id == org_id)
-    rows = q.order_by(AuditLog.created_at.desc(), AuditLog.id.desc()).limit(limit).all()
-    events = [normalize_audit_row(row) for row in rows]
-    if not events:
-        events = build_fallback_events(db, current_user, limit)
-    return {"events": events, "count": len(events), "source": "audit_logs" if rows else "derived_from_existing_uploads_and_claims"}
+    names = table_names(db)
+    events: list[dict] = []
+
+    if "audit_logs" in names:
+        rows = safe_table_query(
+            db,
+            "audit_logs",
+            [
+                "id",
+                "created_at",
+                "user_email",
+                "action",
+                "resource_type",
+                "resource_id",
+                "details",
+                "organization_id",
+            ],
+            limit,
+            org_id,
+        )
+        events.extend(normalize_audit_event(row) for row in rows)
+
+    if events:
+        events.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+        return events[:limit], "audit_logs"
+
+    upload_table = None
+    for candidate in ["upload_history", "upload_histories", "uploads", "uploaded_files"]:
+        if candidate in names:
+            upload_table = candidate
+            break
+
+    if upload_table:
+        rows = safe_table_query(
+            db,
+            upload_table,
+            [
+                "id",
+                "created_at",
+                "uploaded_at",
+                "timestamp",
+                "filename",
+                "file_name",
+                "original_filename",
+                "name",
+                "policy_number",
+                "policy",
+                "account_number",
+                "customer_number",
+                "claims_saved",
+                "claim_count",
+                "claims_count",
+                "user_email",
+                "uploaded_by_email",
+                "email",
+                "organization_id",
+            ],
+            limit,
+            org_id,
+        )
+        events.extend(normalize_upload_event(row) for row in rows)
+
+    claim_table = "claims" if "claims" in names else None
+    if claim_table and len(events) < limit:
+        rows = safe_table_query(
+            db,
+            claim_table,
+            [
+                "id",
+                "created_at",
+                "uploaded_at",
+                "updated_at",
+                "claim_number",
+                "claim_id",
+                "policy_number",
+                "total_incurred",
+                "incurred_amount",
+                "status",
+                "organization_id",
+            ],
+            limit - len(events),
+            org_id,
+        )
+        events.extend(normalize_claim_event(row) for row in rows)
+
+    events.sort(key=lambda item: item.get("created_at") or "", reverse=True)
+    return events[:limit], "derived_from_existing_uploads_and_claims"
+
+
+def audit_payload(limit: int, current_user: Any, db: Session) -> dict:
+    try:
+        events, source = build_events(db, current_user, limit)
+        return {
+            "events": events,
+            "count": len(events),
+            "source": source,
+        }
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+        # Return a 200 JSON payload instead of a 500 so the frontend can show the issue.
+        return {
+            "events": [
+                {
+                    "id": "audit-endpoint-error",
+                    "created_at": "",
+                    "user_email": "",
+                    "action": "audit_endpoint_error",
+                    "resource_type": "system",
+                    "resource_id": "",
+                    "details": {"error": str(exc)},
+                }
+            ],
+            "count": 1,
+            "source": "safe_error_payload",
+        }
+
 
 @router.get("/events")
-def get_audit_events(limit: int = Query(100, ge=1, le=250), current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    return payload(limit, current_user, db)
+def get_audit_events(
+    limit: int = Query(100, ge=1, le=250),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return audit_payload(limit=limit, current_user=current_user, db=db)
+
 
 @router.get("/logs")
-def get_audit_logs(limit: int = Query(100, ge=1, le=250), current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    return payload(limit, current_user, db)
+def get_audit_logs(
+    limit: int = Query(100, ge=1, le=250),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return audit_payload(limit=limit, current_user=current_user, db=db)
+
 
 @router.post("/events")
-def record_audit_event(payload_body: dict, request: Request, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    event = write_audit_event(db, current_user, str(payload_body.get("action") or "custom_event"), str(payload_body.get("resource_type") or ""), str(payload_body.get("resource_id") or ""), payload_body.get("details") or {}, request)
-    return {"event": normalize_audit_row(event) if event else None, "saved": bool(event)}
+def record_audit_event(
+    payload: dict,
+    request: Request,
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    event = write_audit_event(
+        db=db,
+        current_user=current_user,
+        action=str(payload.get("action") or "custom_event"),
+        resource_type=str(payload.get("resource_type") or ""),
+        resource_id=str(payload.get("resource_id") or ""),
+        details=payload.get("details") or {},
+        request=request,
+    )
+
+    return {
+        "saved": bool(event),
+        "event": normalize_audit_event(
+            {
+                "id": getattr(event, "id", None),
+                "created_at": getattr(event, "created_at", None),
+                "user_email": getattr(event, "user_email", ""),
+                "action": getattr(event, "action", "custom_event"),
+                "resource_type": getattr(event, "resource_type", ""),
+                "resource_id": getattr(event, "resource_id", ""),
+                "details": getattr(event, "details", "{}"),
+            }
+        )
+        if event
+        else None,
+    }
+
 
 @compat_router.get("/audit-log")
-def get_audit_log_compat(limit: int = Query(100, ge=1, le=250), current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    return payload(limit, current_user, db)
+def get_audit_log_compat(
+    limit: int = Query(100, ge=1, le=250),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return audit_payload(limit=limit, current_user=current_user, db=db)
+
 
 @compat_router.get("/auth/audit-log")
-def get_auth_audit_log_compat(limit: int = Query(100, ge=1, le=250), current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    return payload(limit, current_user, db)
+def get_auth_audit_log_compat(
+    limit: int = Query(100, ge=1, le=250),
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    return audit_payload(limit=limit, current_user=current_user, db=db)
