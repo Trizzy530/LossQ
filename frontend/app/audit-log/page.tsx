@@ -157,20 +157,21 @@ function toDetails(details: any) {
 }
 
 function cleanDisplayText(value: any) {
-  if (value === null || value === undefined || value === "") return "—";
+  if (value === null || value === undefined || value === "") return "-";
 
   return String(value)
-    .replace(/Ã¢â‚¬”/g, "—")
-    .replace(/Ã¢â‚¬“/g, "–")
-    .replace(/“/g, "“")
-    .replace(/”/g, "”")
-    .replace(/Ã¢â‚¬\u009d/g, "”")
-    .replace(/’/g, "”™")
-    .replace(/‘/g, "”˜")
-    .replace(/”¢/g, "”¢")
-    .replace(/”¦/g, "”¦")
-    .replace(/\$/g, "$")
-    .replace(//g, "");
+    .replace(/\u00e2\u20ac\u201d/g, "-")
+    .replace(/\u00e2\u20ac\u201c/g, "-")
+    .replace(/\u00e2\u20ac\u0153/g, '"')
+    .replace(/\u00e2\u20ac\ufffd/g, '"')
+    .replace(/\u00e2\u20ac\u009d/g, '"')
+    .replace(/\u00e2\u20ac\u2122/g, "'")
+    .replace(/\u00e2\u20ac\u02dc/g, "'")
+    .replace(/\u00e2\u20ac\u00a2/g, "•")
+    .replace(/\u00e2\u20ac\u00a6/g, "...")
+    .replace(/\u00e2\u2020\u0090/g, "<-")
+    .replace(/\u00e2\u2020\u2019/g, "->")
+    .replace(/\u00c2/g, "");
 }
 
 function safeText(value: any) {
