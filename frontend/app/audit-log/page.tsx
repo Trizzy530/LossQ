@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -546,7 +546,7 @@ export default function AuditLogPage() {
               onClick={() => router.push("/settings")}
               className="mb-4 rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:bg-white/10 hover:text-white"
             >
-              ? Back to Settings
+             Back to Settings
             </button>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-4xl font-black tracking-tight">Audit Log</h1>
@@ -733,6 +733,7 @@ export default function AuditLogPage() {
     </main>
   );
 }
+
 
 
 
