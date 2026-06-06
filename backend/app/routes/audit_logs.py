@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import json
 from datetime import datetime
@@ -390,7 +390,13 @@ def audit_summary_payload(limit: int, current_user: Any, db: Session) -> dict:
 
     uploads = sum(1 for event in events if event.get("resource_type") == "upload" or "upload" in str(event.get("action", "")).lower())
     claims = sum(1 for event in events if event.get("resource_type") == "claim" or "claim" in str(event.get("action", "")).lower())
-    exports = sum(1 for event in events if "export" in str(event.get("action", "")).lower())
+    report_action_words = ("export", "report", "packet", "memo", "generated")
+    exports = sum(
+        1
+        for event in events
+        if event.get("resource_type") == "report"
+        or any(word in str(event.get("action", "")).lower() for word in report_action_words)
+    )
     users = sum(1 for event in events if event.get("resource_type") == "user" or "user" in str(event.get("action", "")).lower())
 
     return {
@@ -485,3 +491,4 @@ def record_audit_event(
     )
 
     return {"saved": bool(event)}
+
