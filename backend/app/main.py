@@ -38,15 +38,17 @@ Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="LossQ API", redirect_slashes=False)
 
+
+# Production CORS - must stay before route registration.
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
         "https://lossq.com",
         "https://www.lossq.com",
-        "https://loss-q.vercel.app",
         "http://localhost:3000",
         "http://127.0.0.1:3000",
     ],
+    allow_origin_regex=r"https://.*\.vercel\.app",
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
