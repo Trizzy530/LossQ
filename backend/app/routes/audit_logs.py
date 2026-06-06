@@ -85,7 +85,7 @@ def build_fallback_events(db: Session, current_user: Any, limit: int) -> list[di
             q = q.order_by(UploadHistory.id.desc())
         events += [upload_history_event(row) for row in q.limit(limit).all()]
     except Exception as exc:
-        events.append({"id":"upload-fallback-error","created_at":"","user_email":"","action":"audit_upload_history_unavailable","resource_type":"system","resource_id":"","details":{"error":str(exc)}})
+        events.append({"id": "upload-fallback-error", "created_at": "", "user_email": "", "action": "audit_upload_history_unavailable", "resource_type": "system", "resource_id": "", "details": {"error": str(exc)}})
     if len(events) < limit:
         try:
             q = db.query(Claim)
@@ -96,9 +96,9 @@ def build_fallback_events(db: Session, current_user: Any, limit: int) -> list[di
                 q = q.order_by(Claim.created_at.desc())
             elif hasattr(Claim, "id"):
                 q = q.order_by(Claim.id.desc())
-            events += [claim_event(row) for row in q.limit(limit-len(events)).all()]
+            events += [claim_event(row) for row in q.limit(limit - len(events)).all()]
         except Exception as exc:
-            events.append({"id":"claim-fallback-error","created_at":"","user_email":"","action":"audit_claim_history_unavailable","resource_type":"system","resource_id":"","details":{"error":str(exc)}})
+            events.append({"id": "claim-fallback-error", "created_at": "", "user_email": "", "action": "audit_claim_history_unavailable", "resource_type": "system", "resource_id": "", "details": {"error": str(exc)}})
     events.sort(key=lambda x: x.get("created_at") or "", reverse=True)
     return events[:limit]
 

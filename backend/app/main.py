@@ -1,6 +1,6 @@
 import os
 from dotenv import load_dotenv
-from fastapi import FastAPI
+from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
@@ -39,6 +39,42 @@ Base.metadata.create_all(bind=engine)
 app = FastAPI(title="LossQ API", redirect_slashes=False)
 
 
+
+ALLOWED_LOSSQ_ORIGINS = {
+    "https://lossq.com",
+    "https://www.lossq.com",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+}
+
+def lossq_emergency_cors_headers(origin: str | None) -> dict:
+    if not origin:
+        return {}
+    allowed = origin in ALLOWED_LOSSQ_ORIGINS or (origin.startswith("https://") and origin.endswith(".vercel.app"))
+    if not allowed:
+        return {}
+    return {
+        "Access-Control-Allow-Origin": origin,
+        "Vary": "Origin",
+        "Access-Control-Allow-Credentials": "true",
+        "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
+        "Access-Control-Allow-Headers": "Authorization, Content-Type, Accept, Origin, X-Requested-With",
+        "Access-Control-Max-Age": "86400",
+    }
+
+@app.middleware("http")
+async def lossq_emergency_cors_middleware(request: Request, call_next):
+    origin = request.headers.get("origin")
+    headers = lossq_emergency_cors_headers(origin)
+    if request.method == "OPTIONS":
+        return Response(status_code=200, headers=headers)
+    try:
+        response = await call_next(request)
+    except Exception as exc:
+        response = Response(content=f'{{"detail":"Internal server error","error":"{str(exc)}"}}', status_code=500, media_type="application/json")
+    for key, value in headers.items():
+        response.headers[key] = value
+    return response
 # Production CORS - must stay before route registration.
 app.add_middleware(
     CORSMiddleware,
