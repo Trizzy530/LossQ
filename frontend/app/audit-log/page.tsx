@@ -156,9 +156,25 @@ function toDetails(details: any) {
   return { value: String(details) };
 }
 
-function safeText(value: any) {
+function cleanDisplayText(value: any) {
   if (value === null || value === undefined || value === "") return "â€”";
-  return String(value);
+
+  return String(value)
+    .replace(/Ã¢â‚¬â€/g, "â€”")
+    .replace(/Ã¢â‚¬â€œ/g, "â€“")
+    .replace(/Ã¢â‚¬Å“/g, "â€œ")
+    .replace(/Ã¢â‚¬Â/g, "â€")
+    .replace(/Ã¢â‚¬\u009d/g, "â€")
+    .replace(/Ã¢â‚¬â„¢/g, "â€™")
+    .replace(/Ã¢â‚¬Ëœ/g, "â€˜")
+    .replace(/Ã¢â‚¬Â¢/g, "â€¢")
+    .replace(/Ã¢â‚¬Â¦/g, "â€¦")
+    .replace(/Ã‚\$/g, "$")
+    .replace(/Ã‚/g, "");
+}
+
+function safeText(value: any) {
+  return cleanDisplayText(value);
 }
 
 function eventTime(event: AuditEvent) {
@@ -716,5 +732,7 @@ export default function AuditLogPage() {
     </main>
   );
 }
+
+
 
 
