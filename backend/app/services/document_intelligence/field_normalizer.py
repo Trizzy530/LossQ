@@ -39,6 +39,7 @@ CARRIER_WORDS = [
     "continental",
     "liberty",
     "summit",
+    "preferred",
     "travelers",
     "hartford",
     "progressive",
@@ -108,6 +109,44 @@ def looks_like_carrier_name(value: str) -> bool:
     return False
 
 
+def clean_policy_value(value: str) -> str:
+    """
+    Prevent labels after the policy number from being stored as the policy number.
+
+    Example bad capture:
+    NG-45872-COMM Policy Period
+    should become:
+    NG-45872-COMM
+    """
+
+    raw = clean_text(value)
+
+    if not raw:
+        return ""
+
+    raw = re.split(
+        r"\b(?:policy period|effective|expiration|eff date|exp date|carrier|insured|producer|broker|valuation|report date|status|premium|line of business|lob)\b",
+        raw,
+        maxsplit=1,
+        flags=re.I,
+    )[0]
+
+    raw = raw.strip(" :-|")
+
+    policy = normalize_policy_number(raw)
+
+    if not policy:
+        return ""
+
+    if policy in {"LOB", "POLICY", "POLICY-PERIOD", "ACCOUNT"}:
+        return ""
+
+    if any(token in policy for token in ["POLICY-PERIOD", "EFF-DATE", "EXP-DATE", "REPORT-DATE", "LINE-OF-BUSINESS"]):
+        return ""
+
+    return policy
+
+
 def carrier_from_policy_schedule(text: str) -> str:
     lines = split_lines(text)
     in_schedule = False
@@ -119,17 +158,43 @@ def carrier_from_policy_schedule(text: str) -> str:
             in_schedule = True
             continue
 
-        if "detailed claims" in lower or "claim detail" in lower or "claim no" in lower:
+        if "claim summary" in lower or "detailed claims" in lower or "claim detail" in lower or "claim no" in lower or "claim #" in lower:
             in_schedule = False
 
         if not in_schedule:
             continue
 
-        if re.search(r"\b[A-Z]{1,6}[-\s]?[A-Z]{1,6}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,6})?\b", line, re.I):
+        if re.search(r"\b[A-Z]{1,8}[-\s]?[A-Z]{1,8}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,8})?\b", line, re.I):
             for back in range(index - 1, max(-1, index - 8), -1):
                 candidate = clean_text(lines[back])
                 if looks_like_carrier_name(candidate):
                     return candidate
+
+    return ""
+
+
+def extract_first_schedule_policy(text: str) -> str:
+    lines = split_lines(text)
+    in_schedule = False
+
+    for line in lines:
+        lower = line.lower()
+
+        if "schedule of policies" in lower or "policy schedule" in lower:
+            in_schedule = True
+            continue
+
+        if "claim summary" in lower or "detailed claims" in lower or "claim detail" in lower or "claim no" in lower or "claim #" in lower:
+            in_schedule = False
+
+        if not in_schedule:
+            continue
+
+        match = re.search(r"\b[A-Z]{1,8}[-\s]?[A-Z]{1,8}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,8})?\b", line, re.I)
+        if match:
+            policy = clean_policy_value(match.group(0))
+            if policy:
+                return policy
 
     return ""
 
@@ -147,6 +212,7 @@ def extract_profile(text: str) -> dict:
 
     agency_name = find_first(
         [
+            r"\bProducer/Agency\s*:\s*([^\n]+)",
             r"\bProducer/Broker\s*:\s*([^\n]+?)(?:\s+Account\s+No|\s+Account\s+#|\n|$)",
             r"\bProducer\s*:\s*([^\n]+)",
             r"\bBroker\s*:\s*([^\n]+)",
@@ -181,16 +247,18 @@ def extract_profile(text: str) -> dict:
     if not carrier_name:
         carrier_name = schedule_carrier
 
-    policy_number = find_first(
+    raw_policy_number = find_first(
         [
-            r"\bPolicy\s*(?:Number|No\.?|#)\s*:\s*([A-Z0-9\-\s]+)",
-            r"\bPolicy\s*#\s*([A-Z0-9\-\s]+)",
+            r"\bPolicy\s*(?:Number|No\.?|#)\s*:\s*([^\n|]+)",
+            r"\bPolicy\s*#\s*([^\n|]+)",
         ],
         text,
     )
 
-    if is_bad_profile_value(policy_number):
-        policy_number = ""
+    policy_number = clean_policy_value(raw_policy_number)
+
+    if not policy_number:
+        policy_number = extract_first_schedule_policy(text)
 
     effective_date_raw = find_first(
         [
@@ -213,6 +281,7 @@ def extract_profile(text: str) -> dict:
     evaluation_date_raw = find_first(
         [
             r"\bValuation Date\s*:\s*([0-9/\-.]+)",
+            r"\bReport Date\s*:\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})",
             r"\bVALUATION\s*[:\-]?\s*([0-9/\-.]+)",
             r"\bAs Of\s*:\s*([0-9/\-.]+)",
         ],
@@ -227,7 +296,7 @@ def extract_profile(text: str) -> dict:
         "account_number": clean_text(account_number),
         "customer_number": clean_text(account_number),
         "producer_number": "",
-        "policy_number": normalize_policy_number(policy_number),
+        "policy_number": policy_number,
         "effective_date": parse_date(effective_date_raw) or "",
         "expiration_date": parse_date(expiration_date_raw) or "",
         "evaluation_date": parse_date(evaluation_date_raw) or "",

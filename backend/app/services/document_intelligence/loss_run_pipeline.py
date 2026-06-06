@@ -9,6 +9,9 @@ from .validation_engine import validate_loss_run
 from .utils import normalize_policy_number
 
 
+BAD_POLICY_VALUES = {"", "LOB", "POLICY", "POLICY-PERIOD", "ACCOUNT", "UNKNOWN"}
+
+
 def attach_policy_claim_counts(policies: list[dict], claims: list[dict]) -> list[dict]:
     policy_map = {}
 
@@ -56,9 +59,10 @@ def ensure_claim_policies(claims: list[dict], policies: list[dict], profile: dic
         if policy.get("policy_number")
     ]
 
-    account_policy = normalize_policy_number(
-        profile.get("policy_number") or profile.get("account_number") or ""
-    )
+    account_policy = normalize_policy_number(profile.get("policy_number") or "")
+
+    if account_policy in BAD_POLICY_VALUES:
+        account_policy = ""
 
     cleaned = []
 
@@ -82,14 +86,6 @@ def ensure_claim_policies(claims: list[dict], policies: list[dict], profile: dic
 
 
 def enrich_profile_from_policies(profile: dict, policies: list[dict]) -> dict:
-    """
-    Fill the account snapshot from the policy schedule.
-
-    The uploaded PDF may not have one top-level policy period because it contains
-    several policy rows. In that case, use the earliest effective date and latest
-    expiration date across the schedule so the dashboard does not show Not Set.
-    """
-
     profile = dict(profile or {})
     valid_policies = [policy for policy in policies if isinstance(policy, dict)]
 
@@ -102,7 +98,8 @@ def enrich_profile_from_policies(profile: dict, policies: list[dict]) -> dict:
         if not profile.get("writing_carrier") or str(profile.get("writing_carrier")).strip() in {"/ Co.", "/ Co", "Co.", "Carrier / Co."}:
             profile["writing_carrier"] = first_policy.get("writing_carrier") or first_policy.get("carrier") or ""
 
-        if not profile.get("policy_number") or str(profile.get("policy_number")).strip().upper() in {"LOB", "POLICY", "POLICY-"}:
+        current_policy = normalize_policy_number(profile.get("policy_number") or "")
+        if current_policy in BAD_POLICY_VALUES or "POLICY-PERIOD" in current_policy:
             profile["policy_number"] = first_policy.get("policy_number") or ""
 
         effective_dates = sorted(
