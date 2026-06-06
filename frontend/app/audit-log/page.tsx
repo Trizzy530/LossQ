@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -72,7 +72,7 @@ function getCurrentUserEmail() {
 }
 
 function formatDate(value?: string) {
-  if (!value) return "—";
+  if (!value) return "";
 
   try {
     return new Date(value).toLocaleString();
@@ -84,7 +84,7 @@ function formatDate(value?: string) {
 function formatCurrency(value: any) {
   const num = Number(value || 0);
 
-  if (!Number.isFinite(num)) return "—";
+  if (!Number.isFinite(num)) return "";
 
   return num.toLocaleString("en-US", {
     style: "currency",
@@ -94,7 +94,7 @@ function formatCurrency(value: any) {
 }
 
 function formatNumber(value: any) {
-  if (value === null || value === undefined || value === "") return "—";
+  if (value === null || value === undefined || value === "") return "";
 
   const num = Number(value);
 
@@ -167,7 +167,7 @@ function cleanDisplayText(value: any) {
     .replace(/\u00e2\u20ac\u009d/g, '"')
     .replace(/\u00e2\u20ac\u2122/g, "'")
     .replace(/\u00e2\u20ac\u02dc/g, "'")
-    .replace(/\u00e2\u20ac\u00a2/g, "•")
+    .replace(/\u00e2\u20ac\u00a2/g, "")
     .replace(/\u00e2\u20ac\u00a6/g, "...")
     .replace(/\u00e2\u2020\u0090/g, "<-")
     .replace(/\u00e2\u2020\u2019/g, "->")
@@ -315,7 +315,7 @@ function EventDetails({ event }: { event: AuditEvent }) {
           <DetailPill label="Policy Number" value={details.policy_number || event.resource_id} />
           <DetailPill label="Business" value={details.business_name} />
           <StatusPill label="Risk Level" value={details.risk_level} />
-          <DetailPill label="Renewal Score" value={details.renewal_score ?? "—"} tone="purple" />
+          <DetailPill label="Renewal Score" value={details.renewal_score ?? ""} tone="purple" />
           <DetailPill label="Claim Count" value={formatNumber(details.claim_count)} />
           <DetailPill label="Total Incurred" value={formatCurrency(details.total_incurred)} />
         </div>
@@ -355,7 +355,7 @@ function EventDetails({ event }: { event: AuditEvent }) {
             <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-200">Review Notes</p>
             <ul className="mt-2 grid gap-1 text-sm text-amber-100">
               {validation.warnings.slice(0, 4).map((warning: string, index: number) => (
-                <li key={`${warning}-${index}`}>”¢ {warning}</li>
+                <li key={`${warning}-${index}`}>- {safeText(warning)}</li>
               ))}
             </ul>
           </div>
@@ -546,7 +546,7 @@ export default function AuditLogPage() {
               onClick={() => router.push("/settings")}
               className="mb-4 rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:bg-white/10 hover:text-white"
             >
-              ← Back to Settings
+              ? Back to Settings
             </button>
             <div className="flex flex-wrap items-center gap-3">
               <h1 className="text-4xl font-black tracking-tight">Audit Log</h1>
@@ -584,19 +584,19 @@ export default function AuditLogPage() {
           />
           <StatCard
             label="Uploads"
-            value={formatNumber(summary?.uploads ?? "—")}
+            value={formatNumber(summary?.uploads ?? "")}
             helper="Loss run uploads and file activity."
             tone="blue"
           />
           <StatCard
             label="Claims"
-            value={formatNumber(summary?.claims ?? "—")}
+            value={formatNumber(summary?.claims ?? "")}
             helper="Claim records derived from saved claims."
             tone="emerald"
           />
           <StatCard
             label="Reports"
-            value={formatNumber(summary?.exports ?? "—")}
+            value={formatNumber(summary?.exports ?? "")}
             helper="Generated reports, packets, and memos."
             tone="purple"
           />
