@@ -625,6 +625,28 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             or f"UPLOAD-{upload_session_id}"
         )
 
+    primary_claim_policy_number = ""
+    for claim_data in all_parsed_claims:
+        claim_policy_number = clean_profile_value(claim_data.get("policy_number"))
+        if claim_policy_number:
+            primary_claim_policy_number = claim_policy_number
+            break
+
+    profile_policy_number = clean_profile_value(profile_data.get("policy_number"))
+    profile_account_number = clean_profile_value(
+        profile_data.get("account_number") or profile_data.get("customer_number")
+    )
+
+    # Important:
+    # For scanned/OCR loss runs, the profile may only detect the customer/account number.
+    # If claim rows contain a real policy number, use that as the profile policy key.
+    if primary_claim_policy_number and (
+        not profile_policy_number
+        or profile_policy_number == profile_account_number
+        or profile_policy_number.isdigit()
+    ):
+        profile_data["policy_number"] = primary_claim_policy_number
+
     profile = upsert_account_profile(db, profile_data, current_user)
 
     record_audit_event(
