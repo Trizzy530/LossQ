@@ -93,9 +93,11 @@ def force_save_account_profile_v2(
     """
     Hard-save the V2 parsed profile into AccountProfile.
 
-    This directly creates or updates the account_profiles row for the user's
-    organization and policy number. It always overwrites placeholder names when
-    V2 parsed a real business_name.
+    Universal behavior:
+    - Uses whatever business_name / insured / named_insured V2 parsed.
+    - Does not hard-code any company or carrier.
+    - Updates every duplicate profile row for the same org + policy number so
+      old placeholder rows cannot keep blocking the dashboard.
     """
     policy_number = clean_profile_value(
         profile_data.get("policy_number")
@@ -108,111 +110,138 @@ def force_save_account_profile_v2(
 
     business_name = _profile_name(profile_data)
 
-    existing = (
+    carrier_name = clean_profile_value(
+        profile_data.get("carrier_name")
+        or profile_data.get("carrier")
+        or profile_data.get("insurer")
+    )
+
+    writing_carrier = clean_profile_value(
+        profile_data.get("writing_carrier")
+        or profile_data.get("carrier_name")
+        or profile_data.get("carrier")
+        or profile_data.get("insurer")
+    )
+
+    agency_name = clean_profile_value(profile_data.get("agency_name"))
+
+    matching_profiles = (
         db.query(AccountProfile)
         .filter(AccountProfile.organization_id == current_user["organization_id"])
         .filter(func.upper(AccountProfile.policy_number) == policy_number)
-        .first()
+        .all()
     )
 
-    if not existing:
-        existing = AccountProfile(
+    if not matching_profiles:
+        profile = AccountProfile(
             organization_id=current_user["organization_id"],
             policy_number=policy_number,
         )
-        db.add(existing)
+        db.add(profile)
         db.flush()
+        matching_profiles = [profile]
 
-    # Critical fix: if V2 parsed a real name, force it onto the saved row.
-    # This intentionally overwrites "Business Name Not Set" and any stale name.
-    if business_name:
-        existing.business_name = business_name
-    elif _is_placeholder_name(getattr(existing, "business_name", "")):
-        existing.business_name = "Business Name Not Set"
+    for profile in matching_profiles:
+        # Force overwrite placeholder names with the parser's real value.
+        if business_name:
+            profile.business_name = business_name
+        elif _is_placeholder_name(getattr(profile, "business_name", "")):
+            profile.business_name = "Business Name Not Set"
 
-    carrier_name = clean_profile_value(profile_data.get("carrier_name"))
-    writing_carrier = clean_profile_value(
-        profile_data.get("writing_carrier") or profile_data.get("carrier_name")
-    )
-    agency_name = clean_profile_value(profile_data.get("agency_name"))
+        profile.carrier_name = (
+            carrier_name
+            or getattr(profile, "carrier_name", None)
+            or "Carrier Not Detected"
+        )
 
-    existing.carrier_name = carrier_name or getattr(existing, "carrier_name", None) or "Carrier Not Set"
-    existing.agency_name = agency_name or getattr(existing, "agency_name", None) or "Agency Not Set"
-    existing.policy_number = policy_number
+        profile.agency_name = (
+            agency_name
+            or getattr(profile, "agency_name", None)
+            or "Agency Not Set"
+        )
 
-    existing.effective_date = (
-        clean_profile_value(profile_data.get("effective_date"))
-        or getattr(existing, "effective_date", None)
-        or "Not Set"
-    )
-    existing.expiration_date = (
-        clean_profile_value(profile_data.get("expiration_date"))
-        or getattr(existing, "expiration_date", None)
-        or "Not Set"
-    )
-    existing.evaluation_date = (
-        clean_profile_value(profile_data.get("evaluation_date"))
-        or getattr(existing, "evaluation_date", None)
-        or datetime.now().date().isoformat()
-    )
+        profile.policy_number = policy_number
 
-    _safe_set_if_exists(
-        existing,
-        "writing_carrier",
-        writing_carrier or carrier_name or getattr(existing, "writing_carrier", None) or "Carrier Not Set",
-    )
-    _safe_set_if_exists(
-        existing,
-        "account_number",
-        clean_profile_value(profile_data.get("account_number")) or policy_number,
-    )
-    _safe_set_if_exists(
-        existing,
-        "customer_number",
-        clean_profile_value(profile_data.get("customer_number"))
-        or clean_profile_value(profile_data.get("account_number"))
-        or policy_number,
-    )
-    _safe_set_if_exists(
-        existing,
-        "producer_number",
-        clean_profile_value(profile_data.get("producer_number")),
-    )
-    _safe_set_if_exists(
-        existing,
-        "policies",
-        serialize_json(profile_data.get("policies") or [], []),
-    )
-    _safe_set_if_exists(
-        existing,
-        "validation",
-        serialize_json(profile_data.get("validation") or {}, {}),
-    )
-    _safe_set_if_exists(
-        existing,
-        "raw_text_preview",
-        clean_profile_value(profile_data.get("raw_text_preview")),
-    )
+        profile.effective_date = (
+            clean_profile_value(profile_data.get("effective_date"))
+            or getattr(profile, "effective_date", None)
+            or "Not Set"
+        )
+
+        profile.expiration_date = (
+            clean_profile_value(profile_data.get("expiration_date"))
+            or getattr(profile, "expiration_date", None)
+            or "Not Set"
+        )
+
+        profile.evaluation_date = (
+            clean_profile_value(profile_data.get("evaluation_date"))
+            or getattr(profile, "evaluation_date", None)
+            or datetime.now().date().isoformat()
+        )
+
+        _safe_set_if_exists(
+            profile,
+            "writing_carrier",
+            writing_carrier
+            or carrier_name
+            or getattr(profile, "writing_carrier", None)
+            or "Carrier Not Detected",
+        )
+
+        _safe_set_if_exists(
+            profile,
+            "account_number",
+            clean_profile_value(profile_data.get("account_number")) or policy_number,
+        )
+
+        _safe_set_if_exists(
+            profile,
+            "customer_number",
+            clean_profile_value(profile_data.get("customer_number"))
+            or clean_profile_value(profile_data.get("account_number"))
+            or policy_number,
+        )
+
+        _safe_set_if_exists(
+            profile,
+            "producer_number",
+            clean_profile_value(profile_data.get("producer_number")),
+        )
+
+        _safe_set_if_exists(
+            profile,
+            "policies",
+            serialize_json(profile_data.get("policies") or [], []),
+        )
+
+        _safe_set_if_exists(
+            profile,
+            "validation",
+            serialize_json(profile_data.get("validation") or {}, {}),
+        )
+
+        _safe_set_if_exists(
+            profile,
+            "raw_text_preview",
+            clean_profile_value(profile_data.get("raw_text_preview")),
+        )
 
     db.flush()
-    db.refresh(existing)
-    return existing
 
-
-@router.post("/loss-run-v2")
-async def upload_loss_run_v2(
-    file: UploadFile = File(...),
-    policy_number: str = Form(default=""),
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(require_permission("upload")),
-):
-    return await save_uploaded_files_v2(
-        files=[file],
-        policy_number=policy_number,
-        db=db,
-        current_user=current_user,
+    # Return the best row, preferring the one with the real business name.
+    saved = (
+        db.query(AccountProfile)
+        .filter(AccountProfile.organization_id == current_user["organization_id"])
+        .filter(func.upper(AccountProfile.policy_number) == policy_number)
+        .order_by(AccountProfile.id.desc())
+        .first()
     )
 
+    if saved:
+        db.refresh(saved)
+
+    return saved
 
 @router.post("/loss-runs-v2")
 async def upload_multiple_loss_runs_v2(
@@ -424,6 +453,7 @@ async def save_uploaded_files_v2(
             db.query(AccountProfile)
             .filter(AccountProfile.organization_id == current_user["organization_id"])
             .filter(func.upper(AccountProfile.policy_number) == saved_profile_policy_number)
+	    .order_by(AccountProfile.id.desc())
             .first()
         )
 
