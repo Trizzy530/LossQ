@@ -215,35 +215,63 @@ def extract_claims(text: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
     for line in text.splitlines():
         if not line.strip():
             continue
-        if not re.search(r"\$?[0-9][0-9,]*(?:\.\d{2})?", line):
-            continue
-        policy_numbers = [p for p in extract_policy_numbers(line) if "ACCT" not in p]
-        claim_number = extract_claim_number(line)
-        if not claim_number and not policy_numbers:
+
+        cleaned_line = clean_line(line)
+
+        # Skip document header/profile lines so they do not become fake claims.
+        if re.search(
+            r"^\s*(Policy\s*Number|PolicyNumber|ReportRunDate|Report\s*Run\s*Date|NamedInsured|Named\s+Insured|Page\s+\d+|PolicyTerm)\b",
+            cleaned_line,
+            flags=re.IGNORECASE,
+        ):
             continue
 
-        amounts = extract_amounts(line)
+        # Only parse lines that look like actual claim rows.
+        if not re.search(
+            r"(Claim\s*Number|ClaimNumber|Claim\s*#|CLM\s*#|AU-|GL-|WC-|AUTO|Collision|Property\s+damage)",
+            cleaned_line,
+            flags=re.IGNORECASE,
+        ):
+            continue
+
+        if not re.search(r"\$?[0-9][0-9,]*(?:\.\d{2})?", cleaned_line):
+            continue
+
+        policy_numbers = [p for p in extract_policy_numbers(cleaned_line) if "ACCT" not in p]
+        claim_number = extract_claim_number(cleaned_line)
+
+        if not claim_number:
+            continue
+
+        amounts = extract_amounts(cleaned_line)
         paid = amounts[-3] if len(amounts) >= 3 else 0
         reserve = amounts[-2] if len(amounts) >= 2 else 0
         incurred = amounts[-1] if amounts else paid + reserve
-        status = "Open" if re.search(r"\b(open|pending|active)\b", line, re.IGNORECASE) else "Closed" if re.search(r"\b(closed|close)\b", line, re.IGNORECASE) else ""
-        coverage = guess_coverage(line)
+
+        status = (
+            "Open"
+            if re.search(r"\b(open|pending|active)\b", cleaned_line, re.IGNORECASE)
+            else "Closed"
+            if re.search(r"\b(closed|close)\b", cleaned_line, re.IGNORECASE)
+            else ""
+        )
+
+        coverage = guess_coverage(cleaned_line)
 
         claims.append({
-            "claim_number": claim_number or f"NEEDS-REVIEW-{len(claims)+1}",
+            "claim_number": claim_number,
             "policy_number": policy_numbers[0] if policy_numbers else "",
             "line_of_business": coverage,
-            "loss_date": extract_first_date(line, 0),
-            "reported_date": extract_first_date(line, 1),
+            "loss_date": extract_first_date(cleaned_line, 0),
+            "reported_date": extract_first_date(cleaned_line, 1),
             "status": status,
             "paid_amount": paid,
             "reserve_amount": reserve,
             "total_incurred": incurred or paid + reserve,
-            "description": clean_line(line)[:500],
+            "description": cleaned_line[:500],
         })
 
     return claims
-
 
 def looks_like_claim_row(row: Dict[str, Any]) -> bool:
     keys = set(row.keys())
@@ -274,17 +302,49 @@ def normalize_claim(row: Dict[str, Any]) -> Dict[str, Any]:
 
 
 def extract_claim_number(line: str) -> str:
-    patterns = [
-        r"\b[A-Z]{0,4}[0-9]{5,}[A-Z0-9\-]*\b",
-        r"(?:claim|clm)\s*#?\s*[:\-]?\s*([A-Z0-9\-]+)",
-    ]
-    for pattern in patterns:
-        match = re.search(pattern, line, flags=re.IGNORECASE)
-        if match:
-            value = match.group(1) if match.groups() else match.group(0)
-            return str(value).strip().upper()
-    return ""
+    cleaned = clean_line(line)
 
+    # Do not treat policy/header lines as claim rows.
+    header_only_patterns = [
+        r"^\s*Policy\s*Number\s*:",
+        r"^\s*PolicyNumber\s*:",
+        r"^\s*ReportRunDate\s*:",
+        r"^\s*Report\s*Run\s*Date\s*:",
+        r"^\s*NamedInsured\s*:",
+        r"^\s*Named\s+Insured\s*:",
+        r"^\s*Page\s+\d+",
+        r"^\s*PolicyTerm\b",
+    ]
+
+    if any(re.search(pattern, cleaned, flags=re.IGNORECASE) for pattern in header_only_patterns):
+        return ""
+
+    # Prefer explicit claim labels first.
+    explicit_patterns = [
+        r"(?:Claim\s*Number|ClaimNumber|Claim\s*#|CLM\s*#|Claim|CLM)\s*[:#\-]?\s*([A-Z]{0,6}-?[0-9][A-Z0-9\-]{4,})",
+    ]
+
+    for pattern in explicit_patterns:
+        match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+        if match:
+            value = str(match.group(1) or "").strip().upper()
+            if value:
+                return value
+
+    # Fallback: claim-like IDs, but avoid plain policy numbers.
+    fallback_patterns = [
+        r"\b[A-Z]{1,6}-[0-9][A-Z0-9\-]{4,}\b",
+        r"\b[0-9]{5,}-[0-9A-Z\-]{3,}\b",
+    ]
+
+    for pattern in fallback_patterns:
+        match = re.search(pattern, cleaned, flags=re.IGNORECASE)
+        if match:
+            value = str(match.group(0) or "").strip().upper()
+            if value:
+                return value
+
+    return ""
 
 def extract_amounts(line: str) -> List[float]:
     values: List[float] = []
