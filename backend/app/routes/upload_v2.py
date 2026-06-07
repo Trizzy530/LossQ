@@ -376,14 +376,13 @@ async def save_uploaded_files_v2(
         # shows the clean V2 claim count for the latest uploaded file.
         if file_policy_number and file_policy_number not in policies_replaced_this_upload:
             existing_claims_deleted = (
-                db.query(Claim)
-                .filter(
-                    Claim.organization_id == current_user["organization_id"],
-                    func.upper(Claim.policy_number) == file_policy_number,
-                )
-                .delete(synchronize_session=False)
-            )
-
+    db.query(Claim)
+    .filter(
+        Claim.organization_id == current_user["organization_id"],
+        func.upper(func.trim(Claim.policy_number)) == file_policy_number,
+    )
+    .delete(synchronize_session=False)
+)
             total_existing_claims_deleted += existing_claims_deleted
             policies_replaced_this_upload.add(file_policy_number)
             db.flush()
