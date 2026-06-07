@@ -1,428 +1,376 @@
-"""
-LossQ Loss Run Pipeline V2 — Phase 1 through Phase 3 foundation.
-
-Drop-in purpose:
-- Reads common PDF/Excel/CSV text/table outputs.
-- Detects major carrier templates.
-- Extracts account profile, policy schedule, claim rows, and totals.
-- Runs validation so uncertain data is flagged instead of guessed.
-
-Important:
-This file is designed to be imported by your existing upload route. It does not
-change auth, CORS, database models, or deployment settings.
-"""
-
 from __future__ import annotations
 
-import csv
 import io
 import re
-from pathlib import Path
+from collections import defaultdict
 from typing import Any, Dict, List, Tuple
 
-from .lossq_carrier_templates import detect_carrier, extract_policy_numbers, normalize_row
-from .lossq_validation import number, validate_loss_run_payload
 
-try:
-    import pandas as pd
-except Exception:  # pragma: no cover
-    pd = None
-
-try:
-    from pypdf import PdfReader
-except Exception:  # pragma: no cover
-    PdfReader = None
-
-
-COVERAGE_KEYWORDS = {
-    "commercial auto": ["commercial auto", "business auto", "auto liability", "bap", "collision", "auto"],
-    "general liability": ["general liability", "gl", "premises", "products completed"],
-    "motor truck cargo": ["motor truck cargo", "cargo", "truck cargo"],
-    "workers compensation": ["workers compensation", "workers comp", "wc", "work comp"],
-    "property": ["property", "property damage", "commercial property"],
-    "umbrella": ["umbrella", "excess"],
-}
-
-
-def read_upload_bytes(filename: str, content: bytes) -> Tuple[str, List[Dict[str, Any]]]:
-    suffix = Path(filename or "").suffix.lower()
-
-    if suffix == ".pdf":
-        return read_pdf_text(content), []
-
-    if suffix in {".xlsx", ".xls"} and pd is not None:
-        frames = pd.read_excel(io.BytesIO(content), sheet_name=None)
-        rows: List[Dict[str, Any]] = []
-        text_parts: List[str] = []
-        for sheet_name, frame in frames.items():
-            frame = frame.fillna("")
-            text_parts.append(f"Sheet: {sheet_name}\n" + frame.to_string(index=False))
-            rows.extend(frame.to_dict(orient="records"))
-        return "\n".join(text_parts), rows
-
-    if suffix == ".csv":
-        decoded = content.decode("utf-8", errors="ignore")
-        reader = csv.DictReader(io.StringIO(decoded))
-        rows = list(reader)
-        return decoded, rows
-
-    return content.decode("utf-8", errors="ignore"), []
-
-
-def read_pdf_text(content: bytes) -> str:
-    if PdfReader is None:
-        return content.decode("utf-8", errors="ignore")
-
-    try:
-        reader = PdfReader(io.BytesIO(content))
-        text_parts = []
-        for page in reader.pages:
-            text_parts.append(page.extract_text() or "")
-        return "\n".join(text_parts)
-    except Exception:
-        return content.decode("utf-8", errors="ignore")
-
-
-def extract_profile(text: str, carrier_display_name: str) -> Dict[str, Any]:
-    profile: Dict[str, Any] = {
-        "carrier_name": carrier_display_name if carrier_display_name != "Generic Carrier" else "",
-        "writing_carrier": carrier_display_name if carrier_display_name != "Generic Carrier" else "",
-    }
-
-    patterns = {
-        "business_name": [
-            r"(?:named\s*insured|namedinsured|insured|account name|customer)\s*[:\-]\s*(.+)",
-            r"loss runs?\s+for\s+(.+)",
-        ],
-        "account_number": [r"(?:account number|account no|customer number|customer no)\s*[:\-]\s*([A-Z0-9\-]+)"],
-        "policy_number": [r"(?:policy number|policynumber|policy no|account policy|policy)\s*[:\-]\s*([A-Z0-9\-]+)"],
-        "effective_date": [r"(?:effective date|policy effective|from)\s*[:\-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})"],
-        "expiration_date": [r"(?:expiration date|expiry date|policy expiration|to)\s*[:\-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})"],
-        "agency_name": [r"(?:agency|producer|producing agency|broker)\s*[:\-]\s*(.+)"],
-    }
-
-    for field, field_patterns in patterns.items():
-        for pattern in field_patterns:
-            match = re.search(pattern, text, flags=re.IGNORECASE)
-            if match:
-                value = clean_profile_value(match.group(1)) if field == "business_name" else clean_line(match.group(1))
-                if value:
-                    profile[field] = value[:120]
-                    break
-
-    if not profile.get("policy_number"):
-        policies = extract_policy_numbers(text)
-        account_like = [p for p in policies if "ACCT" in p]
-        if account_like:
-            profile["policy_number"] = account_like[0]
-        elif policies:
-            profile["policy_number"] = policies[0]
-
-    if not profile.get("account_number") and profile.get("policy_number", "").upper().find("ACCT") >= 0:
-        profile["account_number"] = profile["policy_number"]
-
-    return profile
-
-
-def clean_line(value: str) -> str:
+def _clean(value: Any) -> str:
     value = str(value or "").strip()
-    value = re.sub(r"\s{2,}", " ", value)
-    value = re.split(r"\s{3,}|\n", value)[0].strip()
+    value = re.sub(r"\s+", " ", value)
+    return value.strip(" :-|\t\r\n")
+
+
+def _money_to_float(value: Any) -> float:
+    try:
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        cleaned = str(value).replace("$", "").replace(",", "").strip()
+        if cleaned in {"", "-", "None", "none", "null"}:
+            return 0.0
+        return float(cleaned)
+    except Exception:
+        return 0.0
+
+
+def _find_first(patterns: List[str], text: str, default: str = "") -> str:
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            value = _clean(match.group(1))
+            if value:
+                return value
+    return default
+
+
+def _is_bad_policy(value: Any) -> bool:
+    value = _clean(value).upper()
+    if not value:
+        return True
+    if value in {"POLICY", "POLICY NUMBER", "ACCOUNT", "ACCOUNT NUMBER", "CLAIMS", "YES"}:
+        return True
+    if len(value) < 4:
+        return True
+    return False
+
+
+def _normalize_policy(value: Any) -> str:
+    value = _clean(value).upper()
+    value = value.replace(" ", "")
+    value = value.strip(":-|")
     return value
 
 
-def clean_profile_value(value: str) -> str:
-    value = clean_line(value)
-    value = re.split(
-        r"(?:Policy\s*Number|PolicyNumber|Policy\s*Term|PolicyTerm|Report\s*Run\s*Date|ReportRunDate|Page\s+\d+|Claim\s*Number|ClaimNumber)",
-        value,
-        maxsplit=1,
+def _extract_text_from_pdf(content: bytes) -> str:
+    text_parts: List[str] = []
+
+    try:
+        from pypdf import PdfReader
+
+        reader = PdfReader(io.BytesIO(content))
+        for page in reader.pages:
+            page_text = page.extract_text() or ""
+            if page_text:
+                text_parts.append(page_text)
+    except Exception:
+        pass
+
+    text = "\n".join(text_parts)
+
+    # Fallback for non-PDF text uploads.
+    if not text.strip():
+        try:
+            text = content.decode("utf-8", errors="ignore")
+        except Exception:
+            text = ""
+
+    return text
+
+
+def _extract_profile(text: str) -> Dict[str, Any]:
+    business_name = _find_first(
+        [
+            r"Named\s*Insured\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Carrier\s*:|Report\s*Run\s*Date)",
+            r"Insured\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Carrier\s*:|Report\s*Run\s*Date)",
+            r"Account\s*Name\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Carrier\s*:|Report\s*Run\s*Date)",
+        ],
+        text,
+    )
+
+    if business_name.lower() in {"carrier", "policy", "claims", "yes"}:
+        business_name = ""
+
+    carrier_name = _find_first(
+        [
+            r"Carrier\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Named\s*Insured|Policy\s*Term)",
+            r"Insurance\s*Company\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Named\s*Insured|Policy\s*Term)",
+            r"Writing\s*Carrier\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Named\s*Insured|Policy\s*Term)",
+        ],
+        text,
+    )
+
+    if carrier_name.lower() in {"carrier", "policy", "claims", "yes"}:
+        carrier_name = ""
+
+    policy_candidates = [
+        _normalize_policy(x)
+        for x in re.findall(r"Policy\s*Number\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\s]{3,40})", text, flags=re.IGNORECASE)
+    ]
+    policy_candidates = [p for p in policy_candidates if not _is_bad_policy(p)]
+
+    policy_number = policy_candidates[0] if policy_candidates else ""
+
+    effective_date = ""
+    expiration_date = ""
+    term_match = re.search(
+        r"Policy\s*Term\s*[:\-]?\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})\s*[-–]\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})",
+        text,
         flags=re.IGNORECASE,
-    )[0]
-    return clean_line(value).strip(" :-|")
+    )
+    if term_match:
+        effective_date = term_match.group(1)
+        expiration_date = term_match.group(2)
+
+    return {
+        "business_name": business_name,
+        "carrier_name": carrier_name,
+        "writing_carrier": carrier_name,
+        "policy_number": policy_number,
+        "account_number": policy_number,
+        "customer_number": policy_number,
+        "effective_date": effective_date,
+        "expiration_date": expiration_date,
+        "evaluation_date": "",
+        "raw_text_preview": text[:2500],
+    }
 
 
-def guess_coverage(line: str) -> str:
-    lower = line.lower()
-    for coverage, keywords in COVERAGE_KEYWORDS.items():
-        if any(keyword in lower for keyword in keywords):
-            return coverage.title()
+def _find_policy_for_position(text: str, position: int, fallback_policy: str) -> str:
+    before = text[:position]
+    matches = list(
+        re.finditer(
+            r"Policy\s*Number\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\s]{3,40})",
+            before,
+            flags=re.IGNORECASE,
+        )
+    )
+
+    for match in reversed(matches):
+        policy = _normalize_policy(match.group(1))
+        if not _is_bad_policy(policy):
+            return policy
+
+    return fallback_policy
+
+
+def _extract_claim_sections(text: str, fallback_policy: str) -> List[Tuple[str, str, str]]:
+    """
+    Returns tuples of (claim_number, policy_number, claim_section_text).
+    Uses actual "Claim Number:" anchors so policy numbers do not become claims.
+    """
+    claim_pattern = re.compile(
+        r"Claim\s*Number\s*[:\-]\s*([A-Z]{1,4}[-\s]?[A-Z0-9]{2,20}(?:[-\s][A-Z0-9]{2,20})*)",
+        flags=re.IGNORECASE,
+    )
+
+    matches = list(claim_pattern.finditer(text))
+    sections: List[Tuple[str, str, str]] = []
+
+    for index, match in enumerate(matches):
+        claim_number = _clean(match.group(1)).upper().replace(" ", "-")
+        claim_number = re.sub(r"-{2,}", "-", claim_number)
+
+        start = match.start()
+        end = matches[index + 1].start() if index + 1 < len(matches) else min(len(text), start + 2500)
+        section = text[start:end]
+
+        if claim_number in {"CLAIM", "CLAIM-NUMBER", "POLICY"}:
+            continue
+
+        policy_number = _find_policy_for_position(text, start, fallback_policy)
+
+        if _is_bad_policy(policy_number):
+            policy_number = fallback_policy
+
+        sections.append((claim_number, policy_number, section))
+
+    return sections
+
+
+def _extract_amounts_from_section(section: str) -> List[float]:
+    values: List[float] = []
+    for raw in re.findall(r"\$\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+(?:\.[0-9]{2}))", section):
+        amount = _money_to_float(raw)
+        if amount > 0:
+            values.append(amount)
+    return values
+
+
+def _extract_date(section: str, label: str) -> str:
+    match = re.search(
+        rf"{re.escape(label)}\s*[:\-]\s*([0-9]{{1,2}}/[0-9]{{1,2}}/[0-9]{{2,4}})",
+        section,
+        flags=re.IGNORECASE,
+    )
+    return match.group(1) if match else ""
+
+
+def _extract_status(section: str) -> str:
+    match = re.search(r"Status\s*of\s*Loss\s*[:\-]\s*([A-Za-z]+)", section, flags=re.IGNORECASE)
+    if match:
+        value = match.group(1).strip().title()
+        if value.lower() in {"open", "closed", "pending", "reopened"}:
+            return value
+
+    if re.search(r"\bOpen\b", section, flags=re.IGNORECASE):
+        return "Open"
+    if re.search(r"\bClosed\b", section, flags=re.IGNORECASE):
+        return "Closed"
+
     return ""
 
 
-def extract_policy_schedule(text: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    policies: Dict[str, Dict[str, Any]] = {}
-
-    # First pass: table rows from Excel/CSV.
-    for raw in rows or []:
-        row = normalize_row(raw)
-        policy_number = str(row.get("policy_number") or "").strip().upper()
-        if not policy_number:
-            joined = " ".join(str(v) for v in raw.values())
-            found = extract_policy_numbers(joined)
-            policy_number = found[0] if found else ""
-        if not policy_number:
-            continue
-
-        coverage = row.get("line_of_business") or guess_coverage(" ".join(str(v) for v in raw.values()))
-        policies.setdefault(policy_number, {
-            "policy_number": policy_number,
-            "policy_type": coverage or "Needs Review",
-            "line_of_business": coverage or "Needs Review",
-            "writing_carrier": row.get("writing_carrier") or "",
-            "carrier": row.get("carrier") or "",
-            "effective_date": row.get("effective_date") or "",
-            "expiration_date": row.get("expiration_date") or "",
-            "claim_count": 0,
-            "total_incurred": 0,
-        })
-
-    # Second pass: text lines from PDFs.
-    for line in text.splitlines():
-        found = extract_policy_numbers(line)
-        coverage = guess_coverage(line)
-        for policy_number in found:
-            if "ACCT" in policy_number:
-                continue
-            policies.setdefault(policy_number, {
-                "policy_number": policy_number,
-                "policy_type": coverage or "Needs Review",
-                "line_of_business": coverage or "Needs Review",
-                "writing_carrier": "",
-                "carrier": "",
-                "effective_date": extract_first_date(line, 0),
-                "expiration_date": extract_first_date(line, 1),
-                "claim_count": 0,
-                "total_incurred": 0,
-            })
-            if coverage and policies[policy_number].get("policy_type") == "Needs Review":
-                policies[policy_number]["policy_type"] = coverage
-                policies[policy_number]["line_of_business"] = coverage
-
-    return list(policies.values())
+def _extract_description(section: str) -> str:
+    match = re.search(
+        r"Description\s*of\s*Loss\s*[:\-]\s*(.*?)(?:Claimant\s+Type\s+Of\s+Loss|Claimant\s+TypeOfLoss|$)",
+        section,
+        flags=re.IGNORECASE | re.DOTALL,
+    )
+    if match:
+        return _clean(match.group(1))
+    return _clean(section[:500])
 
 
-def extract_first_date(text: str, index: int = 0) -> str:
-    dates = re.findall(r"[0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4}", text or "")
-    return dates[index] if len(dates) > index else ""
+def _infer_lob(section: str, claim_number: str) -> str:
+    section_lower = section.lower()
+    claim_upper = claim_number.upper()
+
+    if claim_upper.startswith("WC") or "workers comp" in section_lower:
+        return "Workers Comp"
+    if claim_upper.startswith("CG") or "cargo" in section_lower:
+        return "Cargo"
+    if claim_upper.startswith("GL") or "general liability" in section_lower:
+        return "General Liability"
+    if claim_upper.startswith("AU") or "collision" in section_lower or "vehicle" in section_lower or "truck" in section_lower:
+        return "Commercial Auto"
+    if "property damage" in section_lower:
+        return "General Liability"
+    return "Unknown"
 
 
-def extract_claims(text: str, rows: List[Dict[str, Any]], default_policy_number: str = "") -> List[Dict[str, Any]]:
+def _extract_claims(text: str, fallback_policy: str) -> List[Dict[str, Any]]:
     claims: List[Dict[str, Any]] = []
-    default_policy_number = str(default_policy_number or "").strip().upper()
 
-    if rows:
-        for raw in rows:
-            row = normalize_row(raw)
-            if not looks_like_claim_row(row):
-                continue
-            claim = normalize_claim(row)
-            if not claim.get("policy_number") and default_policy_number:
-                claim["policy_number"] = default_policy_number
-            claims.append(claim)
+    for claim_number, policy_number, section in _extract_claim_sections(text, fallback_policy):
+        amounts = _extract_amounts_from_section(section)
 
-    if claims:
-        return claims
+        total_incurred = max(amounts) if amounts else 0.0
 
-    # PDF/text fallback. This handles common row layouts where claim number,
-    # policy number, dates, status, and money columns are on the same line.
-    for line in text.splitlines():
-        if not line.strip():
-            continue
+        # Try to read paid and reserve from the table. For most loss runs, the
+        # largest amount is safest as the total net loss when extraction is messy.
+        paid_amount = total_incurred
+        reserve_amount = 0.0
 
-        cleaned_line = clean_line(line)
+        if re.search(r"\bOpen\b", section, flags=re.IGNORECASE) and len(amounts) >= 2:
+            # Open claims commonly show paid + remaining reserve + net loss.
+            # Keep total as largest, paid as first meaningful amount, reserve as
+            # the second-largest if it is below/equal total.
+            paid_amount = amounts[0]
+            possible_reserves = [a for a in amounts if a != paid_amount and a <= total_incurred]
+            reserve_amount = max(possible_reserves) if possible_reserves else 0.0
 
-        has_claim_signal = re.search(
-            r"(Claim\s*Number|ClaimNumber|Claim\s*#|CLM\s*#|AU-|GL-|WC-|AUTO|Collision|Property\s+damage)",
-            cleaned_line,
-            flags=re.IGNORECASE,
-        )
-
-        # Skip document header/profile lines so they do not become fake claims.
-        # If a compact line starts with PolicyTerm but also contains Claim Number,
-        # keep parsing it because it may hold the first claim.
-        if re.search(
-            r"^\s*(Policy\s*Number|PolicyNumber|ReportRunDate|Report\s*Run\s*Date|NamedInsured|Named\s+Insured|Page\s+\d+|PolicyTerm)\b",
-            cleaned_line,
-            flags=re.IGNORECASE,
-        ) and not has_claim_signal:
-            continue
-
-        # Only parse lines that look like actual claim rows.
-        if not has_claim_signal:
-            continue
-
-        if not re.search(r"\$?[0-9][0-9,]*(?:\.\d{2})?", cleaned_line):
-            continue
-
-        policy_numbers = [p for p in extract_policy_numbers(cleaned_line) if "ACCT" not in p]
-        claim_number = extract_claim_number(cleaned_line)
-
-        if not claim_number:
-            continue
-
-        amounts = extract_amounts(cleaned_line)
-        paid = amounts[-3] if len(amounts) >= 3 else 0
-        reserve = amounts[-2] if len(amounts) >= 2 else 0
-        incurred = amounts[-1] if amounts else paid + reserve
-
-        status = (
-            "Open"
-            if re.search(r"\b(open|pending|active)\b", cleaned_line, re.IGNORECASE)
-            else "Closed"
-            if re.search(r"\b(closed|close)\b", cleaned_line, re.IGNORECASE)
-            else ""
-        )
-
-        coverage = guess_coverage(cleaned_line)
-
-        claims.append({
+        claim = {
             "claim_number": claim_number,
-            "policy_number": policy_numbers[0] if policy_numbers else default_policy_number,
-            "line_of_business": coverage,
-            "loss_date": extract_first_date(cleaned_line, 0),
-            "reported_date": extract_first_date(cleaned_line, 1),
-            "status": status,
-            "paid_amount": paid,
-            "reserve_amount": reserve,
-            "total_incurred": incurred or paid + reserve,
-            "description": cleaned_line[:500],
-        })
+            "policy_number": policy_number,
+            "line_of_business": _infer_lob(section, claim_number),
+            "loss_date": _extract_date(section, "Loss Date"),
+            "date_of_loss": _extract_date(section, "Loss Date"),
+            "reported_date": _extract_date(section, "Loss Report Date"),
+            "date_reported": _extract_date(section, "Loss Report Date"),
+            "status": _extract_status(section),
+            "paid_amount": paid_amount,
+            "reserve_amount": reserve_amount,
+            "total_incurred": total_incurred,
+            "description": _extract_description(section),
+        }
+
+        claims.append(claim)
 
     return claims
 
 
-def looks_like_claim_row(row: Dict[str, Any]) -> bool:
-    keys = set(row.keys())
-    has_claim = bool(row.get("claim_number") or row.get("loss_date") or row.get("status"))
-    has_money = any(number(row.get(k)) for k in ["paid_amount", "reserve_amount", "total_incurred"])
-    has_policy = bool(row.get("policy_number") or row.get("line_of_business"))
-    return has_claim and (has_money or has_policy or "claim_number" in keys)
-
-
-def normalize_claim(row: Dict[str, Any]) -> Dict[str, Any]:
-    paid = number(row.get("paid_amount") or row.get("paid"))
-    reserve = number(row.get("reserve_amount") or row.get("reserve"))
-    incurred = number(row.get("total_incurred") or row.get("incurred")) or paid + reserve
-
-    return {
-        "claim_number": str(row.get("claim_number") or "").strip(),
-        "policy_number": str(row.get("policy_number") or "").strip().upper(),
-        "line_of_business": str(row.get("line_of_business") or row.get("coverage") or "").strip(),
-        "loss_date": str(row.get("loss_date") or row.get("date_of_loss") or "").strip(),
-        "reported_date": str(row.get("reported_date") or "").strip(),
-        "status": str(row.get("status") or "").strip(),
-        "paid_amount": paid,
-        "reserve_amount": reserve,
-        "total_incurred": incurred,
-        "claimant": str(row.get("claimant") or "").strip(),
-        "description": str(row.get("description") or "").strip(),
-    }
-
-
-def extract_claim_number(line: str) -> str:
-    cleaned = clean_line(line)
-
-    # Do not treat policy/header lines as claim rows unless they contain
-    # an explicit claim number later in the same compact line.
-    if re.search(r"^\s*(Policy\s*Number|PolicyNumber|ReportRunDate|Report\s*Run\s*Date|NamedInsured|Named\s+Insured|Page\s+\d+)\b", cleaned, flags=re.IGNORECASE):
-        return ""
-
-    # Prefer explicit claim labels first.
-    explicit_patterns = [
-        r"(?:Claim\s*Number|ClaimNumber|Claim\s*#|CLM\s*#|Claim|CLM)\s*[:#\-]?\s*([A-Z]{0,6}-?[0-9][A-Z0-9\-]{4,})",
-    ]
-
-    for pattern in explicit_patterns:
-        match = re.search(pattern, cleaned, flags=re.IGNORECASE)
-        if match:
-            value = str(match.group(1) or "").strip().upper()
-            if value:
-                return value
-
-    # Fallback: claim-like IDs, but avoid plain policy numbers.
-    fallback_patterns = [
-        r"\b[A-Z]{1,6}-[0-9][A-Z0-9\-]{4,}\b",
-        r"\b[0-9]{5,}-[0-9A-Z\-]{3,}\b",
-    ]
-
-    for pattern in fallback_patterns:
-        match = re.search(pattern, cleaned, flags=re.IGNORECASE)
-        if match:
-            value = str(match.group(0) or "").strip().upper()
-            if value:
-                return value
-
-    return ""
-
-
-def extract_amounts(line: str) -> List[float]:
-    values: List[float] = []
-    for match in re.findall(r"\$?\(?[0-9][0-9,]*(?:\.\d{2})?\)?", line):
-        negative = "(" in match and ")" in match
-        value = number(match.replace("(", "").replace(")", ""))
-        values.append(-value if negative else value)
-    return values
-
-
-def extract_document_totals(text: str) -> Dict[str, Any]:
-    totals: Dict[str, Any] = {}
-    for line in text.splitlines():
-        lower = line.lower()
-        if "total" in lower and "incurred" in lower:
-            amounts = extract_amounts(line)
-            if amounts:
-                totals["total_incurred"] = amounts[-1]
-        if "total" in lower and "claims" in lower:
-            nums = re.findall(r"\b[0-9]+\b", line)
-            if nums:
-                totals["claim_count"] = int(nums[-1])
-    return totals
-
-
-def rollup_policy_schedule(policies: List[Dict[str, Any]], claims: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    by_policy = {str(p.get("policy_number") or "").strip().upper(): dict(p) for p in policies if p.get("policy_number")}
+def _policy_rollup(claims: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    grouped: Dict[str, Dict[str, Any]] = {}
 
     for claim in claims:
-        policy_number = str(claim.get("policy_number") or "").strip().upper()
-        if not policy_number:
+        policy_number = _normalize_policy(claim.get("policy_number"))
+        if _is_bad_policy(policy_number):
             continue
-        by_policy.setdefault(policy_number, {
-            "policy_number": policy_number,
-            "policy_type": claim.get("line_of_business") or "Needs Review",
-            "line_of_business": claim.get("line_of_business") or "Needs Review",
-            "claim_count": 0,
-            "total_incurred": 0,
-        })
-        by_policy[policy_number]["claim_count"] = int(by_policy[policy_number].get("claim_count") or 0) + 1
-        by_policy[policy_number]["total_incurred"] = number(by_policy[policy_number].get("total_incurred")) + number(claim.get("total_incurred"))
 
-    return list(by_policy.values())
+        lob = _clean(claim.get("line_of_business")) or "Unknown"
+
+        if policy_number not in grouped:
+            grouped[policy_number] = {
+                "policy_number": policy_number,
+                "policy_type": lob,
+                "line_of_business": lob,
+                "claim_count": 0,
+                "total_incurred": 0.0,
+            }
+
+        grouped[policy_number]["claim_count"] += 1
+        grouped[policy_number]["total_incurred"] += _money_to_float(claim.get("total_incurred"))
+
+    return list(grouped.values())
 
 
 def parse_loss_run_upload(filename: str, content: bytes) -> Dict[str, Any]:
-    text, rows = read_upload_bytes(filename, content)
-    carrier_template = detect_carrier(text)
-    profile = extract_profile(text, carrier_template.display_name)
-    policies = extract_policy_schedule(text, rows)
-    claims = extract_claims(text, rows, profile.get("policy_number", ""))
-    policies = rollup_policy_schedule(policies, claims)
-    document_totals = extract_document_totals(text)
-    validation = validate_loss_run_payload(profile, policies, claims, document_totals)
+    """
+    Universal V2 parser entry point used by app.routes.upload_v2.
+
+    Goal: favor accuracy over over-extraction.
+    - Only creates claims from actual "Claim Number:" anchors.
+    - Rejects header labels like POLICY as policy numbers.
+    - Uses the nearest previous Policy Number as the claim policy.
+    - Reads dates/status/amounts from each claim section.
+    """
+    text = _extract_text_from_pdf(content)
+    profile = _extract_profile(text)
+
+    fallback_policy = profile.get("policy_number") or ""
+    claims = _extract_claims(text, fallback_policy)
+
+    # If the first policy number is missing but claims have policies, use the first claim policy.
+    if not profile.get("policy_number") and claims:
+        profile["policy_number"] = claims[0].get("policy_number", "")
+        profile["account_number"] = profile["policy_number"]
+        profile["customer_number"] = profile["policy_number"]
+
+    policies = _policy_rollup(claims)
+
+    total_incurred = round(sum(_money_to_float(c.get("total_incurred")) for c in claims), 2)
+
+    validation = {
+        "is_valid": bool(claims),
+        "confidence_score": 90 if claims else 40,
+        "needs_manual_review": not bool(claims),
+        "needs_review": [],
+        "warnings": [],
+        "policy_count": len(policies),
+        "claim_count": len(claims),
+        "calculated_total_incurred": total_incurred,
+        "document_total_incurred": 0,
+        "policy_rollup": policies,
+    }
+
+    if not profile.get("carrier_name"):
+        validation["needs_review"].append("Carrier or writing carrier was not detected.")
+
+    if not profile.get("business_name"):
+        validation["needs_review"].append("Business/account name was not detected.")
 
     profile["policies"] = policies
     profile["validation"] = validation
 
     return {
-        "carrier_template": carrier_template.carrier_key,
-        "carrier_name": carrier_template.display_name,
+        "filename": filename,
         "profile": profile,
         "policies": policies,
+        "validation": validation,
         "claims": claims,
         "parsed_claims": claims,
-        "document_totals": document_totals,
-        "validation": validation,
         "claim_count": len(claims),
-        "policy_count": len(policies),
-        "total_incurred": validation.get("calculated_total_incurred", 0),
     }
