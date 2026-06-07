@@ -170,6 +170,34 @@ function clearCachedSelectedPolicy() {
   localStorage.removeItem(SELECTED_POLICY_CACHE_KEY);
 }
 
+function getCachedLastUploadReview(): AnyObject {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = localStorage.getItem("lossq_last_upload_review");
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function claimMatchesPolicySet(claim: any, policySet: Set<string>) {
+  if (!policySet || policySet.size === 0) return false;
+  return policySet.has(getClaimPolicyNumber(claim));
+}
+
+function mergeClaimsByNumber(existing: any[], incoming: any[]) {
+  const map = new Map<string, any>();
+
+  [...existing, ...incoming].forEach((claim) => {
+    const key = `${claim?.claim_number || claim?.claimNumber || claim?.id || Math.random()}-${getClaimPolicyNumber(claim)}`;
+    map.set(key, claim);
+  });
+
+  return Array.from(map.values());
+}
+
 function mergeProfiles(existing: AnyObject[], incoming: AnyObject[]) {
   const map = new Map<string, AnyObject>();
 
@@ -338,8 +366,7 @@ function normalizeProfileName(item: any) {
   function updateProfileList(incomingProfiles: AnyObject[]) {
     const cleanedIncoming = (incomingProfiles || [])
       .filter(Boolean)
-      .map((item) => normalizeProfileName(item))
-      .filter((item) => item?.policy_number || item?.account_number || getAccountDisplayName(item));
+      .map((item) => normalizeProfileName(item));
 
     setProfiles((prev) => {
       const merged = [...cleanedIncoming, ...prev.map((item) => normalizeProfileName(item))];
@@ -347,8 +374,9 @@ function normalizeProfileName(item: any) {
 
       const next = merged.filter((item) => {
         const key =
-          normalizePolicyNumber(item?.policy_number || item?.account_number) ||
-          String(item?.id || "") ||
+          item?.policy_number ||
+          item?.account_number ||
+          item?.id ||
           `${getAccountDisplayName(item)}-${item?.carrier_name || ""}`;
 
         if (!key) return true;
@@ -589,9 +617,46 @@ if (activeProfile?.policy_number) {
 
       if (claimsRes.ok) {
         const claimsData = await safeJson(claimsRes);
-        setClaims(Array.isArray(claimsData) ? claimsData : []);
+        const serverClaims = Array.isArray(claimsData) ? claimsData : [];
+
+        const policySet = new Set(
+          [
+            policyNumber,
+            activeProfile?.policy_number,
+            activeProfile?.account_number,
+            activeProfile?.customer_number,
+            ...firstNonEmptyArray(activeProfile?.policies, profile?.policies).map(
+              (item: any) => item?.policy_number
+            ),
+          ]
+            .map((item: any) => normalizePolicyNumber(item))
+            .filter(Boolean)
+        );
+
+        const serverMatches = serverClaims.filter((claim: any) =>
+          claimMatchesPolicySet(claim, policySet)
+        );
+
+        const cachedUpload = getCachedLastUploadReview();
+        const cachedUploadClaims = Array.isArray(cachedUpload?.claims)
+          ? cachedUpload.claims
+          : [];
+        const cachedMatches = cachedUploadClaims.filter((claim: any) =>
+          claimMatchesPolicySet(claim, policySet)
+        );
+
+        // Important: /claims/ can return a limited or stale organization-wide list.
+        // Do not let that erase the fresh upload claims stored locally from the upload response.
+        setClaims(
+          serverMatches.length > 0
+            ? mergeClaimsByNumber(serverClaims, cachedMatches)
+            : cachedMatches.length > 0
+            ? cachedMatches
+            : serverClaims
+        );
       } else {
-        setClaims([]);
+        const cachedUpload = getCachedLastUploadReview();
+        setClaims(Array.isArray(cachedUpload?.claims) ? cachedUpload.claims : []);
       }
 
       const summaryUrl = hasPolicy
@@ -782,7 +847,7 @@ if (submissionBuilderRes.ok) {
     setMessage(`Deleting profile ${policyNumber}...`);
 
     const res = await fetch(
-  `${API}/account-profile/?policy_number=${encodeURIComponent(policyNumber)}&delete_claims=true`,
+  `${API}/account-profile/delete?policy_number=${encodeURIComponent(policyNumber)}`,
   {
     method: "DELETE",
     headers: authHeaders(),
@@ -854,7 +919,6 @@ if (submissionBuilderRes.ok) {
 
       setProfile(savedProfile);
       updateProfileList([savedProfile]);
-      setCachedProfiles(mergeProfiles(getCachedProfiles(), [savedProfile]));
       setMessage("Account profile saved.");
       setCachedSelectedPolicy(savedProfile.policy_number);
       await loadDashboard(savedProfile.policy_number);
@@ -1039,11 +1103,10 @@ if (submissionBuilderRes.ok) {
 
       setProfile(uploadedProfile);
       updateProfileList([uploadedProfile]);
-      setCachedProfiles(mergeProfiles(getCachedProfiles(), [uploadedProfile]));
     }
 
-    // Use the fresh upload response immediately so the dashboard does not look blank
-    // while the saved backend routes reload.
+    // Show the freshly parsed claim rows immediately. loadDashboard may fetch
+    // /claims/, but /claims/ can be limited/stale, so we re-apply combinedClaims below.
     setClaims(combinedClaims);
 
     const uploadedPolicyNumber =
@@ -1060,11 +1123,19 @@ if (submissionBuilderRes.ok) {
       await loadDashboard();
     }
 
+    // Re-apply upload response claims after dashboard reload so the Claims tab
+    // does not go blank if /claims/ returns a stale or limited list.
+    if (combinedClaims.length > 0) {
+      setClaims(combinedClaims);
+    }
+
     setActiveTool("overview");
 
     window.setTimeout(() => {
-      setMessage("");
-    }, 8000);
+      setMessage((current) =>
+        current.includes("Upload complete using V2 parser") ? "" : current
+      );
+    }, 6000);
   } catch (error: any) {
     setMessage(
       `Upload failed before completion. Backend may have crashed. Error: ${
@@ -1324,7 +1395,7 @@ const hasActiveAccount = Boolean(
     claims.length > 0
 );
 
-const visibleClaims = hasActiveAccount
+const filteredVisibleClaims = hasActiveAccount
   ? claims.filter((claim: any) => {
       const claimPolicy = getClaimPolicyNumber(claim);
 
@@ -1339,6 +1410,29 @@ const visibleClaims = hasActiveAccount
       return false;
     })
   : [];
+
+const lastUploadReview = getCachedLastUploadReview();
+const lastUploadClaims = Array.isArray(lastUploadReview?.claims)
+  ? lastUploadReview.claims
+  : [];
+const lastUploadPolicySet = new Set(
+  [
+    lastUploadReview?.profile?.policy_number,
+    lastUploadReview?.profile?.account_number,
+    ...(Array.isArray(lastUploadReview?.policies)
+      ? lastUploadReview.policies.map((item: any) => item?.policy_number)
+      : []),
+  ]
+    .map((item: any) => normalizePolicyNumber(item))
+    .filter(Boolean)
+);
+
+const visibleClaims =
+  filteredVisibleClaims.length > 0
+    ? filteredVisibleClaims
+    : activePolicyNumbers.some((policyNumber) => lastUploadPolicySet.has(policyNumber))
+    ? lastUploadClaims
+    : [];
 
 const backendMetrics =
   summary?.renewal_metrics ||
