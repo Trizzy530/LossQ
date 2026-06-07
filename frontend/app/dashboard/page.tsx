@@ -198,6 +198,18 @@ function mergeClaimsByNumber(existing: any[], incoming: any[]) {
   return Array.from(map.values());
 }
 
+function getClaimNumberValue(claim: any) {
+  return String(claim?.claim_number || claim?.claimNumber || claim?.number || "").trim().toUpperCase();
+}
+
+function sameClaimRecord(a: any, b: any) {
+  return (
+    getClaimNumberValue(a) &&
+    getClaimNumberValue(a) === getClaimNumberValue(b) &&
+    getClaimPolicyNumber(a) === getClaimPolicyNumber(b)
+  );
+}
+
 function mergeProfiles(existing: AnyObject[], incoming: AnyObject[]) {
   const map = new Map<string, AnyObject>();
 
@@ -1325,6 +1337,36 @@ async function exportExecutiveReport() {
     }
   }
 
+  async function openClaimRecord(claim: any) {
+    if (!claim) return;
+
+    if (claim?.id) {
+      router.push(`/claims/${claim.id}`);
+      return;
+    }
+
+    try {
+      setMessage(`Opening claim ${getClaimNumberValue(claim) || "detail"}...`);
+
+      const res = await fetch(`${API}/claims/`, { headers: authHeaders() });
+      const data = res.ok ? await safeJson(res) : [];
+      const serverClaims = Array.isArray(data) ? data : [];
+      const match = serverClaims.find((item: any) => sameClaimRecord(item, claim) && item?.id);
+
+      if (match?.id) {
+        router.push(`/claims/${match.id}`);
+        return;
+      }
+    } catch {
+      // Fall through to in-page preview if backend lookup is unavailable.
+    }
+
+    setSelectedClaimDetail(claim);
+    setMessage(
+      "Claim detail opened in preview because the saved database claim ID was not returned. Re-upload this file after the backend deploy finishes to enable full claim detail pages."
+    );
+  }
+
   function logout() {
     clearSession();
     router.replace("/login?fresh=1");
@@ -1606,20 +1648,39 @@ const effectiveSubmissionReadiness =
   visibleClaims.length > 0
     ? {
         ...(submissionReadiness || {}),
-        submission_readiness_score: submissionReadiness?.submission_readiness_score ?? localSubmissionReadinessScore,
-        submission_readiness_level:
-          submissionReadiness?.submission_readiness_level ||
-          (localSubmissionReadinessScore && localSubmissionReadinessScore >= 85 ? "Strong" : "Needs Review"),
-        carrier_confidence: submissionReadiness?.carrier_confidence || (localOpenClaimCount > 0 ? "Moderate" : "Good"),
-        submission_quality: submissionReadiness?.submission_quality || "Claims loaded; narrative review required.",
-        missing_items:
-          submissionReadiness?.missing_items ||
-          (localOpenClaimCount > 0 ? ["Open claim status updates", "Corrective action summary"] : ["Carrier-ready loss narrative"]),
-        required_documents: submissionReadiness?.required_documents || ["Loss runs", "Claim narrative", "Operations overview"],
-        recommended_actions: submissionReadiness?.recommended_actions || ["Confirm claim amounts", "Explain open claims", "Add safety/controls narrative"],
-        readiness_summary:
-          submissionReadiness?.readiness_summary ||
-          `Submission has ${visibleClaims.length} loaded claim(s). Add narrative context before carrier release.`,
+        submission_readiness_score: backendSaysInsufficient
+          ? localSubmissionReadinessScore
+          : submissionReadiness?.submission_readiness_score ?? localSubmissionReadinessScore,
+        submission_readiness_level: backendSaysInsufficient
+          ? localSubmissionReadinessScore && localSubmissionReadinessScore >= 85
+            ? "Strong"
+            : "Needs Review"
+          : submissionReadiness?.submission_readiness_level ||
+            (localSubmissionReadinessScore && localSubmissionReadinessScore >= 85 ? "Strong" : "Needs Review"),
+        carrier_confidence: backendSaysInsufficient
+          ? localOpenClaimCount > 0
+            ? "Moderate"
+            : "Good"
+          : submissionReadiness?.carrier_confidence || (localOpenClaimCount > 0 ? "Moderate" : "Good"),
+        submission_quality: backendSaysInsufficient
+          ? "Claims loaded from the selected account; narrative review required."
+          : submissionReadiness?.submission_quality || "Claims loaded; narrative review required.",
+        missing_items: backendSaysInsufficient
+          ? localOpenClaimCount > 0
+            ? ["Open claim status updates", "Corrective action summary", "Carrier-ready loss narrative"]
+            : ["Carrier-ready loss narrative"]
+          : submissionReadiness?.missing_items ||
+            (localOpenClaimCount > 0 ? ["Open claim status updates", "Corrective action summary"] : ["Carrier-ready loss narrative"]),
+        required_documents: backendSaysInsufficient
+          ? ["Validated loss runs", "Parsed claim rows", "Claim narrative", "Operations overview"]
+          : submissionReadiness?.required_documents || ["Loss runs", "Claim narrative", "Operations overview"],
+        recommended_actions: backendSaysInsufficient
+          ? ["Review extracted claim rows", "Confirm claim amounts", "Explain open claims", "Add safety/controls narrative"]
+          : submissionReadiness?.recommended_actions || ["Confirm claim amounts", "Explain open claims", "Add safety/controls narrative"],
+        readiness_summary: backendSaysInsufficient
+          ? `Submission has ${visibleClaims.length} loaded claim(s) with $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Backend readiness was insufficient, so LossQ is using the visible claim rows until backend intelligence catches up.`
+          : submissionReadiness?.readiness_summary ||
+            `Submission has ${visibleClaims.length} loaded claim(s). Add narrative context before carrier release.`,
       }
     : submissionReadiness;
 
@@ -2874,13 +2935,7 @@ const trendNoteDisplay =
       <td className="py-4">
         <button
           type="button"
-          onClick={() => {
-            if (claim.id) {
-              router.push(`/claims/${claim.id}`);
-            } else {
-              setSelectedClaimDetail(claim);
-            }
-          }}
+          onClick={() => openClaimRecord(claim)}
           className="text-left text-blue-300 hover:text-blue-200 underline"
         >
           {claim.claim_number || "Unnamed Claim"}
