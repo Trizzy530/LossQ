@@ -110,22 +110,13 @@ def looks_like_carrier_name(value: str) -> bool:
 
 
 def clean_policy_value(value: str) -> str:
-    """
-    Prevent labels after the policy number from being stored as the policy number.
-
-    Example bad capture:
-    NG-45872-COMM Policy Period
-    should become:
-    NG-45872-COMM
-    """
-
     raw = clean_text(value)
 
     if not raw:
         return ""
 
     raw = re.split(
-        r"\b(?:policy period|effective|expiration|eff date|exp date|carrier|insured|producer|broker|valuation|report date|status|premium|line of business|lob)\b",
+        r"\b(?:policy period|effective|expiration|eff date|exp date|carrier|insured|producer|broker|valuation|report date|status|premium|line of business|lob|page)\b",
         raw,
         maxsplit=1,
         flags=re.I,
@@ -145,6 +136,23 @@ def clean_policy_value(value: str) -> str:
         return ""
 
     return policy
+
+
+def clean_named_insured(value: str) -> str:
+    cleaned = clean_text(value)
+
+    # Fix OCR/compact text like:
+    # NamedInsured: Good Living Developments LLCPolicyNumber: 10050749CA
+    cleaned = re.split(
+        r"\b(?:Policy\s*Number|PolicyNumber|Policy\s*Term|PolicyTerm|Report\s*Run\s*Date|ReportRunDate|Page\s+\d+|Claim\s+Number|ClaimNumber)\b",
+        cleaned,
+        maxsplit=1,
+        flags=re.I,
+    )[0]
+
+    cleaned = cleaned.strip(" :-|")
+
+    return clean_text(cleaned)
 
 
 def carrier_from_policy_schedule(text: str) -> str:
@@ -199,17 +207,35 @@ def extract_first_schedule_policy(text: str) -> str:
     return ""
 
 
+def extract_policy_period(text: str) -> tuple[str, str]:
+    patterns = [
+        r"Policy\s*Term\s*Claims\s*([0-9/.\-]+)\s*[-–]\s*([0-9/.\-]+)",
+        r"PolicyTerm\s*Claims\s*([0-9/.\-]+)\s*[-–]\s*([0-9/.\-]+)",
+        r"Policy\s*Period\s*[:\-]?\s*([0-9/.\-]+)\s*(?:to|[-–])\s*([0-9/.\-]+)",
+        r"PolicyPeriod\s*[:\-]?\s*([0-9/.\-]+)\s*(?:to|[-–])\s*([0-9/.\-]+)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text or "", re.I)
+        if match:
+            return parse_date(match.group(1)) or "", parse_date(match.group(2)) or ""
+
+    return "", ""
+
+
 def extract_profile(text: str) -> dict:
-    business_name = find_first(
+    business_name_raw = find_first(
         [
+            r"\bNamed\s*Insured\s*:\s*([^|\n]+)",
+            r"\bNamedInsured\s*:\s*([^|\n]+)",
             r"\bInsured\s*:\s*([^|\n]+)",
-            r"\bNamed Insured\s*[:\-]?\s*([^\n|]+)",
             r"\bAccount Name\s*[:\-]?\s*([^\n|]+)",
             r"\bACCT NAME\s*[:\-]?\s*([^\n|]+)",
-            r"^\s*([A-Z0-9&.,\' \-]{6,80}LLC)\s*$",
         ],
         text,
     )
+
+    business_name = clean_named_insured(business_name_raw)
 
     agency_name = find_first(
         [
@@ -227,7 +253,6 @@ def extract_profile(text: str) -> dict:
             r"\bAccount\s+No\.?\s*:\s*([A-Z0-9\-]+)",
             r"\bAccount\s+#\s*:\s*([A-Z0-9\-]+)",
             r"\bCustomer\s+No\.?\s*:\s*([A-Z0-9\-]+)",
-            r"\bCustomer\s+Number\s*[:\-]?\s*([A-Z0-9\-]+)",
             r"\bRisk\s+ID\s*[:\-]?\s*([A-Z0-9\-]+)",
         ],
         text,
@@ -239,7 +264,6 @@ def extract_profile(text: str) -> dict:
             r"\bCarrier Name\s*:\s*([^\n|]+)",
             r"\bInsurance Carrier\s*:\s*([^\n|]+)",
             r"\bCarrier\s*:\s*([^\n|]+)",
-            r"\b([A-Z][A-Za-z&.\' ]+ Insurance Company)\b",
         ],
         text,
     )
@@ -250,12 +274,10 @@ def extract_profile(text: str) -> dict:
     if not carrier_name:
         carrier_name = schedule_carrier
 
-    if not carrier_name and "vanliner" in (text or "").lower():
-        carrier_name = "Vanliner Insurance Company"
-
     raw_policy_number = find_first(
         [
             r"\bPolicy\s*(?:Number|No\.?|#)\s*:\s*([^\n|]+)",
+            r"\bPolicyNumber\s*:\s*([A-Z0-9\-]+)",
             r"\bPolicy\s*#\s*([^\n|]+)",
         ],
         text,
@@ -284,10 +306,22 @@ def extract_profile(text: str) -> dict:
         text,
     )
 
+    period_effective, period_expiration = extract_policy_period(text)
+
+    if not effective_date_raw and period_effective:
+        effective_date = period_effective
+    else:
+        effective_date = parse_date(effective_date_raw) or period_effective or ""
+
+    if not expiration_date_raw and period_expiration:
+        expiration_date = period_expiration
+    else:
+        expiration_date = parse_date(expiration_date_raw) or period_expiration or ""
+
     evaluation_date_raw = find_first(
         [
-            r"\bEval\s+Date\s*[:\-]?\s*([0-9/\-.]+)",
-            r"\bEvaluation\s+Date\s*[:\-]?\s*([0-9/\-.]+)",
+            r"\bReport\s*Run\s*Date\s*:\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})",
+            r"\bReportRunDate\s*:\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})",
             r"\bValuation Date\s*:\s*([0-9/\-.]+)",
             r"\bReport Date\s*:\s*([A-Za-z]+\s+\d{1,2},\s+\d{4})",
             r"\bVALUATION\s*[:\-]?\s*([0-9/\-.]+)",
@@ -297,15 +331,15 @@ def extract_profile(text: str) -> dict:
     )
 
     return {
-        "business_name": clean_text(business_name),
+        "business_name": business_name,
         "carrier_name": clean_text(carrier_name),
         "writing_carrier": clean_text(carrier_name),
         "agency_name": clean_text(agency_name),
         "account_number": clean_text(account_number),
         "customer_number": clean_text(account_number),
-        "producer_number": find_first([r"\bProducer\s+Number\s*[:\-]?\s*([A-Z0-9\-]+)"], text),
+        "producer_number": "",
         "policy_number": policy_number,
-        "effective_date": parse_date(effective_date_raw) or "",
-        "expiration_date": parse_date(expiration_date_raw) or "",
+        "effective_date": effective_date,
+        "expiration_date": expiration_date,
         "evaluation_date": parse_date(evaluation_date_raw) or "",
     }

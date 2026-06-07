@@ -13,60 +13,6 @@ def safe_float(value: Any) -> float:
         return 0.0
 
 
-def detect_summary_table_totals(text: str) -> dict:
-    # Detect summary rows like Total Claims / Open Claims ... 7 / 0 ... Net Incurred.
-    result = {
-        "reported_total_claims": None,
-        "reported_open_claims": None,
-        "reported_closed_claims": None,
-        "reported_total_paid": None,
-        "reported_total_reserve": None,
-        "reported_total_incurred": None,
-    }
-
-    best_line = ""
-
-    for line in (text or "").splitlines():
-        cleaned = clean_text(line)
-        if not cleaned:
-            continue
-
-        if not re.search(r"\b\d+\s*/\s*\d+\b", cleaned):
-            continue
-
-        amounts = money_values(cleaned)
-
-        if len(amounts) < 3:
-            continue
-
-        if "total" in cleaned.lower() or "net incurred" in (text or "").lower():
-            best_line = cleaned
-
-    if not best_line:
-        return result
-
-    claim_match = re.search(r"\b(\d+)\s*/\s*(\d+)\b", best_line)
-    amounts = money_values(best_line)
-
-    if claim_match:
-        total_claims = int(claim_match.group(1))
-        open_claims = int(claim_match.group(2))
-        result["reported_total_claims"] = total_claims
-        result["reported_open_claims"] = open_claims
-        result["reported_closed_claims"] = max(total_claims - open_claims, 0)
-
-    if len(amounts) >= 6 and amounts[-2] < 0:
-        result["reported_total_paid"] = round(float(amounts[-3]), 2)
-        result["reported_total_reserve"] = 0.0
-        result["reported_total_incurred"] = round(float(amounts[-1]), 2)
-    elif len(amounts) >= 3:
-        result["reported_total_paid"] = round(float(amounts[-3]), 2)
-        result["reported_total_reserve"] = round(float(amounts[-2]), 2)
-        result["reported_total_incurred"] = round(float(amounts[-1]), 2)
-
-    return result
-
-
 def detect_reported_totals(text: str) -> dict:
     lower = text.lower()
 
@@ -88,7 +34,8 @@ def detect_reported_totals(text: str) -> dict:
         value = lit_match.group(1).lower()
         reported_litigation_claims = 0 if value in {"none", "no", "zero"} else int(value)
 
-    total_claims_match = re.search(r"\btotal claims?\s*[:\-]?\s*(none|no|zero|\d+)", lower, re.I)
+    # Only match explicit summary phrases, not compact labels like TotalNetLoss.
+    total_claims_match = re.search(r"\btotal\s+claims?\s*[:\-]?\s*(none|no|zero|\d+)", lower, re.I)
     if total_claims_match:
         value = total_claims_match.group(1).lower()
         reported_total_claims = 0 if value in {"none", "no", "zero"} else int(value)
@@ -116,16 +63,14 @@ def detect_reported_totals(text: str) -> dict:
         if values:
             reported_total_incurred = values[-1]
 
-    summary_totals = detect_summary_table_totals(text)
-
     return {
-        "reported_total_claims": reported_total_claims if reported_total_claims is not None else summary_totals.get("reported_total_claims"),
-        "reported_open_claims": reported_open_claims if reported_open_claims is not None else summary_totals.get("reported_open_claims"),
-        "reported_closed_claims": reported_closed_claims if reported_closed_claims is not None else summary_totals.get("reported_closed_claims"),
+        "reported_total_claims": reported_total_claims,
+        "reported_open_claims": reported_open_claims,
+        "reported_closed_claims": reported_closed_claims,
         "reported_litigation_claims": reported_litigation_claims,
-        "reported_total_paid": reported_total_paid if reported_total_paid is not None else summary_totals.get("reported_total_paid"),
-        "reported_total_reserve": reported_total_reserve if reported_total_reserve is not None else summary_totals.get("reported_total_reserve"),
-        "reported_total_incurred": reported_total_incurred if reported_total_incurred is not None else summary_totals.get("reported_total_incurred"),
+        "reported_total_paid": reported_total_paid,
+        "reported_total_reserve": reported_total_reserve,
+        "reported_total_incurred": reported_total_incurred,
     }
 
 
@@ -137,15 +82,6 @@ def determine_renewal_signal(
     total_incurred: float,
     reported_totals: dict,
 ) -> str:
-    """
-    Renewal signal should not overstate risk or quality.
-
-    Important distinction:
-    - 0 claims is not "Strong Renewal" because there is no loss activity to analyze.
-      It should be labeled as clean/no-loss history and still reviewed normally.
-    - Low closed losses with zero reserves can be Good Renewal.
-    """
-
     reported_total_claims = reported_totals.get("reported_total_claims")
     reported_open_claims = reported_totals.get("reported_open_claims")
     reported_litigation_claims = reported_totals.get("reported_litigation_claims")
@@ -207,7 +143,11 @@ def validate_loss_run(
     if policies:
         passed_checks.append(f"Policy schedule detected with {len(policies)} policy row(s).")
     else:
-        warnings.append("No policy schedule rows were detected.")
+        # Policy schedule can be absent on compact carrier loss runs that have one policy header.
+        if profile.get("policy_number"):
+            passed_checks.append("Policy number detected from document header.")
+        else:
+            warnings.append("No policy schedule rows were detected.")
 
     if total_claims > 0:
         passed_checks.append(f"{total_claims} claim row(s) extracted.")
@@ -254,36 +194,11 @@ def validate_loss_run(
                 f"Reported total claims {reported_totals['reported_total_claims']} does not match extracted total claims {total_claims}."
             )
 
-    # Financial validation: use extracted math first, then compare to reported if available.
     financial_validation = "Passed"
-    has_recovery_or_net_incurred_layout = any(term in (text or "").lower() for term in ["ded. rec", "ded rec", "total rec", "net incurred", "other rec"])
 
-    if not has_recovery_or_net_incurred_layout and abs((total_paid + total_reserve) - total_incurred) > 1:
-        # Some reports already provide total incurred as the authoritative field,
-        # but in most loss runs paid + reserve should equal incurred.
+    if abs((total_paid + total_reserve) - total_incurred) > 1:
         warnings.append("Extracted paid plus reserve does not equal extracted total incurred.")
         financial_validation = "Needs Review"
-
-    if reported_totals.get("reported_total_paid") is not None:
-        if abs(reported_totals["reported_total_paid"] - total_paid) > 1:
-            warnings.append(
-                f"Reported total paid {reported_totals['reported_total_paid']} does not match extracted total paid {total_paid}."
-            )
-            financial_validation = "Needs Review"
-
-    if reported_totals.get("reported_total_reserve") is not None:
-        if abs(reported_totals["reported_total_reserve"] - total_reserve) > 1:
-            warnings.append(
-                f"Reported total reserve {reported_totals['reported_total_reserve']} does not match extracted total reserve {total_reserve}."
-            )
-            financial_validation = "Needs Review"
-
-    if reported_totals.get("reported_total_incurred") is not None:
-        if abs(reported_totals["reported_total_incurred"] - total_incurred) > 1:
-            warnings.append(
-                f"Reported total incurred {reported_totals['reported_total_incurred']} does not match extracted total incurred {total_incurred}."
-            )
-            financial_validation = "Needs Review"
 
     renewal_signal = determine_renewal_signal(
         total_claims=total_claims,
@@ -302,11 +217,10 @@ def validate_loss_run(
     if not profile.get("business_name"):
         confidence_score -= 10
 
-    if not policies:
+    if not policies and not profile.get("policy_number"):
         confidence_score -= 10
 
     if total_claims == 0 and "No Claims Reported" in renewal_signal:
-        # Keep high confidence for clean no-loss reports, but do not call it strong.
         confidence_score = min(confidence_score, 92)
 
     confidence_score = clamp_score(confidence_score)

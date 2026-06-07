@@ -10,17 +10,12 @@ DATE_RE = re.compile(
 )
 
 POLICY_RE = re.compile(
-    r"\b[A-Z]{1,6}[-\s]?[A-Z]{1,6}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,6})?\b",
+    r"\b[A-Z]{1,8}[-\s]?[A-Z]{1,8}[-\s]?\d{3,8}(?:[-\s]?[A-Z0-9]{1,8})?\b",
     re.I,
 )
 
-# Claim IDs:
-# - common LOB format: GL-23-0041, WC-24-0177, CA-24-2109, IM-24-0066
-# - standard carrier format: GRC-1001, CLM-10244, ABC-123456
-# - numeric carrier format: 00000203119, 203119, 123456789
-# The parser applies extra checks inside the claim section so policy numbers and all-zero placeholders are not mistaken for claims.
 CLAIM_RE = re.compile(
-    r"\b(?:(?:GL|WC|CA|IM|CG|AUTO|AL|BI|PD|PROP)[-\s]?(?:1[0-9]|2[0-9])[-\s]?[A-Z0-9]{3,8}\??|[A-Z]{2,6}[-\s]?\d{3,8}\??|\d{6,12})\b",
+    r"\b(?:(?:AU|GL|WC|CA|IM|CG|AUTO|AL|BI|PD|PROP)[-\s]?[A-Z0-9]{2,10}[-\s]?[A-Z0-9]{3,10}(?:[-\s]?[A-Z0-9]{3,10})?\??|[A-Z]{2,6}[-\s]?\d{3,8}\??)\b",
     re.I,
 )
 
@@ -58,16 +53,7 @@ def normalize_money(value: Any) -> float:
 
 
 def money_values(line: str) -> list[float]:
-    """
-    Extract true financial column values in the same left-to-right order
-    they appear in the claim row.
-    """
-
     text = clean_text(line)
-
-    scrubbed = CLAIM_RE.sub(" ", text)
-    scrubbed = POLICY_RE.sub(" ", scrubbed)
-    scrubbed = DATE_RE.sub(" ", scrubbed)
 
     token_pattern = re.compile(
         r"\(?\$[\s]*-?\d[\d,]*(?:\.\d{1,2})?\)?"
@@ -77,7 +63,7 @@ def money_values(line: str) -> list[float]:
 
     values: list[float] = []
 
-    for match in token_pattern.finditer(scrubbed):
+    for match in token_pattern.finditer(text):
         token = match.group(0)
         value = normalize_money(token)
 
@@ -87,38 +73,36 @@ def money_values(line: str) -> list[float]:
     return values
 
 
-def parse_date(value: Any) -> str:
-    if value is None:
-        return ""
-
+def parse_date(value: Any) -> str | None:
     raw = clean_text(value)
     if not raw:
-        return ""
+        return None
+
+    formats = [
+        "%m/%d/%Y",
+        "%m/%d/%y",
+        "%m-%d-%Y",
+        "%m-%d-%y",
+        "%Y-%m-%d",
+        "%Y/%m/%d",
+        "%m.%d.%Y",
+        "%m.%d.%y",
+        "%B %d, %Y",
+        "%b %d, %Y",
+    ]
+
+    for fmt in formats:
+        try:
+            return datetime.strptime(raw, fmt).date().isoformat()
+        except Exception:
+            pass
 
     match = DATE_RE.search(raw)
-    if not match:
-        return ""
+    if match:
+        return parse_date(match.group(0))
 
-    token = match.group(0).strip()
-    parts = re.split(r"[/-]", token)
+    return None
 
-    if len(parts) != 3:
-        return token
-
-    try:
-        month = int(parts[0])
-        day = int(parts[1])
-        year = int(parts[2])
-
-        if year < 100:
-            year += 2000 if year < 50 else 1900
-
-        if not (1 <= month <= 12 and 1 <= day <= 31 and 1900 <= year <= 2100):
-            return token
-
-        return f"{year:04d}-{month:02d}-{day:02d}"
-    except Exception:
-        return token
 
 def date_values(line: str) -> list[str]:
     dates = []
