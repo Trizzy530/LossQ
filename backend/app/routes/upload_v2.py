@@ -753,6 +753,7 @@ async def save_uploaded_files_v2(
         "v2_safe_claim_field_filter": True,
         "v2_claim_model_column_mapping": True,
         "v2_saved_claim_rows_with_ids": True,
+        "v2_multi_policy_claim_replacement": True,
         "saved_claims": total_saved,
         "existing_claims_deleted": total_existing_claims_deleted,
         "duplicates_skipped": total_duplicates_skipped,
