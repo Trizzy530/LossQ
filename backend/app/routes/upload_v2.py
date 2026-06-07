@@ -367,6 +367,7 @@ async def save_uploaded_files_v2(files, policy_number, db: Session, current_user
     return {
         "message": "Loss run file(s) uploaded successfully with V2 parser",
 	"v2_database_save_enabled": True,
+	"v2_hard_profile_save_enabled": True,
         "saved_claims": total_saved,
         "duplicates_skipped": total_duplicates_skipped,
         "policy_number": profile_data.get("policy_number"),
