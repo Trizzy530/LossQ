@@ -2,14 +2,15 @@ from __future__ import annotations
 
 import os
 from datetime import datetime
-from typing import List
+from typing import Any, Dict, List
 
 from fastapi import APIRouter, Depends, File, Form, UploadFile
+from sqlalchemy import func
 from sqlalchemy.orm import Session
 
+from app.models.account_profile import AccountProfile
 from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
-from app.models.account_profile import AccountProfile
 from app.role_utils import require_permission
 from app.services.audit import record_audit_event
 from app.services.lossq_loss_run_pipeline_v2 import parse_loss_run_upload
@@ -21,10 +22,160 @@ from app.routes.upload import (
     ensure_claim_timeline_columns,
     get_db,
     normalize_claim_data,
-    upsert_account_profile,
+    serialize_json,
 )
 
 router = APIRouter(prefix="/upload", tags=["Upload V2"])
+
+
+def _clean(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def _profile_name(profile_data: Dict[str, Any]) -> str:
+    return clean_profile_value(
+        profile_data.get("business_name")
+        or profile_data.get("insured")
+        or profile_data.get("named_insured")
+        or profile_data.get("account_name")
+        or profile_data.get("customer_name")
+        or profile_data.get("company_name")
+        or ""
+    )
+
+
+def _is_placeholder_name(value: Any) -> bool:
+    cleaned = _clean(value).lower()
+    return cleaned in {
+        "",
+        "business name not set",
+        "unnamed business",
+        "not set",
+        "none",
+        "null",
+        "-",
+    }
+
+
+def _safe_set_if_exists(obj: Any, field: str, value: Any):
+    if hasattr(obj, field):
+        setattr(obj, field, value)
+
+
+def force_save_account_profile_v2(
+    db: Session,
+    *,
+    profile_data: Dict[str, Any],
+    current_user: Dict[str, Any],
+):
+    """
+    Hard-save the V2 parsed profile into AccountProfile.
+
+    This directly creates or updates the account_profiles row for the user's
+    organization and policy number. It overwrites placeholder names like
+    "Business Name Not Set" when the parser has a real business_name.
+    """
+    policy_number = clean_profile_value(
+        profile_data.get("policy_number")
+        or profile_data.get("account_number")
+        or profile_data.get("customer_number")
+    ).upper()
+
+    if not policy_number:
+        return None
+
+    business_name = _profile_name(profile_data)
+
+    existing = (
+        db.query(AccountProfile)
+        .filter(AccountProfile.organization_id == current_user["organization_id"])
+        .filter(func.upper(AccountProfile.policy_number) == policy_number)
+        .first()
+    )
+
+    if not existing:
+        existing = AccountProfile(
+            organization_id=current_user["organization_id"],
+            policy_number=policy_number,
+        )
+        db.add(existing)
+        db.flush()
+
+    if business_name and (
+        _is_placeholder_name(getattr(existing, "business_name", ""))
+        or getattr(existing, "business_name", "") != business_name
+    ):
+        existing.business_name = business_name
+    elif _is_placeholder_name(getattr(existing, "business_name", "")):
+        existing.business_name = "Business Name Not Set"
+
+    carrier_name = clean_profile_value(profile_data.get("carrier_name"))
+    writing_carrier = clean_profile_value(
+        profile_data.get("writing_carrier") or profile_data.get("carrier_name")
+    )
+    agency_name = clean_profile_value(profile_data.get("agency_name"))
+
+    existing.carrier_name = carrier_name or getattr(existing, "carrier_name", None) or "Carrier Not Set"
+    existing.agency_name = agency_name or getattr(existing, "agency_name", None) or "Agency Not Set"
+    existing.policy_number = policy_number
+
+    existing.effective_date = (
+        clean_profile_value(profile_data.get("effective_date"))
+        or getattr(existing, "effective_date", None)
+        or "Not Set"
+    )
+    existing.expiration_date = (
+        clean_profile_value(profile_data.get("expiration_date"))
+        or getattr(existing, "expiration_date", None)
+        or "Not Set"
+    )
+    existing.evaluation_date = (
+        clean_profile_value(profile_data.get("evaluation_date"))
+        or getattr(existing, "evaluation_date", None)
+        or datetime.now().date().isoformat()
+    )
+
+    _safe_set_if_exists(
+        existing,
+        "writing_carrier",
+        writing_carrier or carrier_name or getattr(existing, "writing_carrier", None) or "Carrier Not Set",
+    )
+    _safe_set_if_exists(
+        existing,
+        "account_number",
+        clean_profile_value(profile_data.get("account_number")) or policy_number,
+    )
+    _safe_set_if_exists(
+        existing,
+        "customer_number",
+        clean_profile_value(profile_data.get("customer_number"))
+        or clean_profile_value(profile_data.get("account_number"))
+        or policy_number,
+    )
+    _safe_set_if_exists(
+        existing,
+        "producer_number",
+        clean_profile_value(profile_data.get("producer_number")),
+    )
+    _safe_set_if_exists(
+        existing,
+        "policies",
+        serialize_json(profile_data.get("policies") or [], []),
+    )
+    _safe_set_if_exists(
+        existing,
+        "validation",
+        serialize_json(profile_data.get("validation") or {}, {}),
+    )
+    _safe_set_if_exists(
+        existing,
+        "raw_text_preview",
+        clean_profile_value(profile_data.get("raw_text_preview")),
+    )
+
+    db.flush()
+    db.refresh(existing)
+    return existing
 
 
 @router.post("/loss-run-v2")
@@ -57,20 +208,25 @@ async def upload_multiple_loss_runs_v2(
     )
 
 
-async def save_uploaded_files_v2(files, policy_number, db: Session, current_user: dict):
+async def save_uploaded_files_v2(
+    files: List[UploadFile],
+    policy_number: str,
+    db: Session,
+    current_user: dict,
+):
     ensure_claim_timeline_columns(db)
     ensure_account_profile_columns(db)
-
     os.makedirs(UPLOAD_DIR, exist_ok=True)
 
     total_saved = 0
     total_duplicates_skipped = 0
     uploaded_files = []
-    all_parsed_claims = []
-    direct_profile = {}
+    all_parsed_claims: List[Dict[str, Any]] = []
+    latest_profile_data: Dict[str, Any] = {}
+    latest_saved_profile = None
 
     upload_session_id = datetime.now().strftime("%Y%m%d%H%M%S")
-    clean_input_policy = str(policy_number or "").strip()
+    clean_input_policy = clean_profile_value(policy_number)
 
     for file in files:
         content = await file.read()
@@ -91,11 +247,17 @@ async def save_uploaded_files_v2(files, policy_number, db: Session, current_user
             or []
         )
 
-        parsed_profile = parsed.get("profile") or {}
+        parsed_profile = dict(parsed.get("profile") or {})
         parsed_policies = parsed.get("policies") or parsed_profile.get("policies") or []
         parsed_validation = parsed.get("validation") or parsed_profile.get("validation") or {}
 
-        file_policy_number = clean_input_policy
+        file_policy_number = (
+            clean_input_policy
+            or clean_profile_value(parsed_profile.get("policy_number"))
+            or clean_profile_value(parsed.get("policy_number"))
+            or clean_profile_value(parsed_profile.get("account_number"))
+            or clean_profile_value(parsed.get("account_number"))
+        )
 
         claim_policy_number = ""
         for claim_data in parsed_claims:
@@ -104,31 +266,23 @@ async def save_uploaded_files_v2(files, policy_number, db: Session, current_user
                 claim_policy_number = claim_policy
                 break
 
-        parsed_policy = clean_profile_value(
-            parsed_profile.get("policy_number")
-            or parsed.get("policy_number")
-        )
-
-        parsed_account = clean_profile_value(
-            parsed_profile.get("account_number")
-            or parsed_profile.get("customer_number")
-            or parsed.get("account_number")
-        )
-
-        if parsed_policy:
-            file_policy_number = parsed_policy
-        elif claim_policy_number:
+        if not file_policy_number and claim_policy_number:
             file_policy_number = claim_policy_number
-        elif parsed_account:
-            file_policy_number = parsed_account
-        elif not file_policy_number:
+
+        if not file_policy_number:
             file_policy_number = f"UPLOAD-{upload_session_id}-{len(uploaded_files) + 1}"
 
-        if not parsed_profile.get("policy_number"):
-            parsed_profile["policy_number"] = file_policy_number
+        file_policy_number = clean_profile_value(file_policy_number).upper()
 
-        if not parsed_profile.get("account_number"):
-            parsed_profile["account_number"] = parsed_account or file_policy_number
+        parsed_profile["policy_number"] = file_policy_number
+        parsed_profile["account_number"] = (
+            clean_profile_value(parsed_profile.get("account_number"))
+            or file_policy_number
+        )
+        parsed_profile["customer_number"] = (
+            clean_profile_value(parsed_profile.get("customer_number"))
+            or parsed_profile["account_number"]
+        )
 
         if parsed_policies:
             parsed_profile["policies"] = parsed_policies
@@ -136,17 +290,12 @@ async def save_uploaded_files_v2(files, policy_number, db: Session, current_user
         if parsed_validation:
             parsed_profile["validation"] = parsed_validation
 
-        for key, value in parsed_profile.items():
-            if value and not direct_profile.get(key):
-                direct_profile[key] = value
-
-        if not direct_profile.get("policy_number"):
-            direct_profile["policy_number"] = file_policy_number
-
-        if not direct_profile.get("account_number"):
-            direct_profile["account_number"] = file_policy_number
-
-        all_parsed_claims.extend(parsed_claims)
+        latest_profile_data = parsed_profile
+        latest_saved_profile = force_save_account_profile_v2(
+            db,
+            profile_data=parsed_profile,
+            current_user=current_user,
+        )
 
         file_saved = 0
         file_duplicates = 0
@@ -161,7 +310,7 @@ async def save_uploaded_files_v2(files, policy_number, db: Session, current_user
             claim_number = str(normalized.get("claim_number") or "").strip().upper()
             policy_value = str(
                 normalized.get("policy_number") or file_policy_number
-            ).strip()
+            ).strip().upper()
 
             normalized["claim_number"] = claim_number
             normalized["policy_number"] = policy_value
@@ -170,13 +319,15 @@ async def save_uploaded_files_v2(files, policy_number, db: Session, current_user
                 print("Skipping claim without valid claim number")
                 continue
 
-            duplicate_query = db.query(Claim).filter(
-                Claim.organization_id == current_user["organization_id"],
-                Claim.claim_number == claim_number,
-                Claim.policy_number == policy_value,
+            existing_claim = (
+                db.query(Claim)
+                .filter(
+                    Claim.organization_id == current_user["organization_id"],
+                    Claim.claim_number == claim_number,
+                    Claim.policy_number == policy_value,
+                )
+                .first()
             )
-
-            existing_claim = duplicate_query.first()
 
             if existing_claim:
                 print(f"Skipping duplicate claim: {claim_number} / {policy_value}")
@@ -188,17 +339,17 @@ async def save_uploaded_files_v2(files, policy_number, db: Session, current_user
             file_saved += 1
             total_saved += 1
 
-        upload_record = UploadHistory(
-            filename=file.filename,
-            stored_path=file_path,
-            content_type=file.content_type,
-            claims_saved=file_saved,
-            uploaded_at=datetime.now().isoformat(),
-            uploaded_by_user_id=current_user["user_id"],
-            organization_id=current_user["organization_id"],
+        db.add(
+            UploadHistory(
+                filename=file.filename,
+                stored_path=file_path,
+                content_type=file.content_type,
+                claims_saved=file_saved,
+                uploaded_at=datetime.now().isoformat(),
+                uploaded_by_user_id=current_user["user_id"],
+                organization_id=current_user["organization_id"],
+            )
         )
-
-        db.add(upload_record)
 
         uploaded_files.append(
             {
@@ -209,173 +360,66 @@ async def save_uploaded_files_v2(files, policy_number, db: Session, current_user
             }
         )
 
-    profile_data = dict(direct_profile)
+        all_parsed_claims.extend(parsed_claims)
 
-    if not profile_data.get("policy_number"):
-        profile_data["policy_number"] = (
-            profile_data.get("account_number")
-            or clean_input_policy
-            or f"UPLOAD-{upload_session_id}"
+    if latest_profile_data:
+        latest_saved_profile = force_save_account_profile_v2(
+            db,
+            profile_data=latest_profile_data,
+            current_user=current_user,
         )
-
-    if not profile_data.get("account_number"):
-        profile_data["account_number"] = profile_data.get("policy_number")
-
-    if not profile_data.get("business_name"):
-        for claim_data in all_parsed_claims:
-            possible_name = clean_profile_value(
-                claim_data.get("business_name")
-                or claim_data.get("insured")
-                or claim_data.get("insured_name")
-                or claim_data.get("named_insured")
-                or claim_data.get("account_name")
-            )
-            if possible_name:
-                profile_data["business_name"] = possible_name
-                break
-
-    if not profile_data.get("carrier_name"):
-        profile_data["carrier_name"] = direct_profile.get("carrier_name") or ""
-
-    if not profile_data.get("writing_carrier"):
-        profile_data["writing_carrier"] = (
-            direct_profile.get("writing_carrier")
-            or direct_profile.get("carrier_name")
-            or ""
-        )
-
-    primary_claim_policy_number = ""
-    for claim_data in all_parsed_claims:
-        claim_policy_number = clean_profile_value(claim_data.get("policy_number"))
-        if claim_policy_number:
-            primary_claim_policy_number = claim_policy_number
-            break
-
-    profile_policy_number = clean_profile_value(profile_data.get("policy_number"))
-    profile_account_number = clean_profile_value(
-        profile_data.get("account_number") or profile_data.get("customer_number")
-    )
-
-    if primary_claim_policy_number and (
-        not profile_policy_number
-        or profile_policy_number == profile_account_number
-        or profile_policy_number.isdigit()
-    ):
-        profile_data["policy_number"] = primary_claim_policy_number
-
-    profile = upsert_account_profile(db, profile_data, current_user)
-
-    # Hard guarantee: ensure V2 creates/updates the saved AccountProfile row.
-    policy_key = clean_profile_value(profile_data.get("policy_number"))
-
-    if policy_key:
-        saved_profile = (
-            db.query(AccountProfile)
-            .filter(AccountProfile.organization_id == current_user["organization_id"])
-            .filter(AccountProfile.policy_number == policy_key)
-            .first()
-        )
-
-        if not saved_profile:
-            saved_profile = AccountProfile(
-                organization_id=current_user["organization_id"],
-                policy_number=policy_key,
-            )
-            db.add(saved_profile)
-            db.flush()
-
-        saved_profile.business_name = (
-            profile_data.get("business_name")
-            or profile_data.get("insured")
-            or profile_data.get("named_insured")
-            or profile_data.get("account_name")
-            or saved_profile.business_name
-            or "Business Name Not Set"
-        )
-
-        saved_profile.carrier_name = (
-            profile_data.get("carrier_name")
-            or saved_profile.carrier_name
-            or "Carrier Not Set"
-        )
-
-        if hasattr(saved_profile, "writing_carrier"):
-            saved_profile.writing_carrier = (
-                profile_data.get("writing_carrier")
-                or profile_data.get("carrier_name")
-                or saved_profile.writing_carrier
-                or "Carrier Not Set"
-            )
-
-        saved_profile.agency_name = (
-            profile_data.get("agency_name")
-            or saved_profile.agency_name
-            or "Agency Not Set"
-        )
-
-        if hasattr(saved_profile, "account_number"):
-            saved_profile.account_number = (
-                profile_data.get("account_number")
-                or saved_profile.account_number
-                or policy_key
-            )
-
-        saved_profile.effective_date = (
-            profile_data.get("effective_date")
-            or saved_profile.effective_date
-            or "Not Set"
-        )
-
-        saved_profile.expiration_date = (
-            profile_data.get("expiration_date")
-            or saved_profile.expiration_date
-            or "Not Set"
-        )
-
-        saved_profile.evaluation_date = (
-            profile_data.get("evaluation_date")
-            or saved_profile.evaluation_date
-            or datetime.now().date().isoformat()
-        )
-
-        profile = saved_profile
 
     record_audit_event(
         db,
         current_user=current_user,
         action="loss_run_uploaded_v2",
         resource_type="upload",
-        resource_id=profile_data.get("policy_number"),
+        resource_id=latest_profile_data.get("policy_number"),
         details={
             "parser": "lossq_loss_run_pipeline_v2",
-            "policy_number": profile_data.get("policy_number"),
-            "account_number": profile_data.get("account_number"),
-            "business_name": profile_data.get("business_name"),
+            "policy_number": latest_profile_data.get("policy_number"),
+            "account_number": latest_profile_data.get("account_number"),
+            "business_name": latest_profile_data.get("business_name"),
+            "saved_profile_business_name": getattr(latest_saved_profile, "business_name", None),
             "saved_claims": total_saved,
             "duplicates_skipped": total_duplicates_skipped,
-            "profile_auto_populated": bool(profile),
-        "saved_profile_business_name": getattr(profile, "business_name", None),
-        "saved_profile_policy_number": getattr(profile, "policy_number", None),
-            "policy_count": len(profile_data.get("policies") or []),
-            "validation": profile_data.get("validation") or {},
+            "profile_auto_populated": bool(latest_saved_profile),
+            "policy_count": len(latest_profile_data.get("policies") or []),
+            "validation": latest_profile_data.get("validation") or {},
             "uploaded_files": uploaded_files,
         },
     )
 
     db.commit()
 
+    saved_profile_policy_number = clean_profile_value(
+        latest_profile_data.get("policy_number")
+    ).upper()
+
+    saved_profile_after_commit = None
+    if saved_profile_policy_number:
+        saved_profile_after_commit = (
+            db.query(AccountProfile)
+            .filter(AccountProfile.organization_id == current_user["organization_id"])
+            .filter(func.upper(AccountProfile.policy_number) == saved_profile_policy_number)
+            .first()
+        )
+
     return {
         "message": "Loss run file(s) uploaded successfully with V2 parser",
-	"v2_database_save_enabled": True,
-	"v2_hard_profile_save_enabled": True,
+        "v2_database_save_enabled": True,
+        "v2_hard_profile_save_enabled": True,
+        "v2_direct_account_profile_save": True,
         "saved_claims": total_saved,
         "duplicates_skipped": total_duplicates_skipped,
-        "policy_number": profile_data.get("policy_number"),
-        "account_number": profile_data.get("account_number"),
-        "profile_auto_populated": bool(profile),
-        "profile": profile_data,
-        "policies": profile_data.get("policies") or [],
-        "validation": profile_data.get("validation") or {},
+        "policy_number": latest_profile_data.get("policy_number"),
+        "account_number": latest_profile_data.get("account_number"),
+        "profile_auto_populated": bool(saved_profile_after_commit),
+        "saved_profile_business_name": getattr(saved_profile_after_commit, "business_name", None),
+        "saved_profile_policy_number": getattr(saved_profile_after_commit, "policy_number", None),
+        "profile": latest_profile_data,
+        "policies": latest_profile_data.get("policies") or [],
+        "validation": latest_profile_data.get("validation") or {},
         "uploaded_files": uploaded_files,
         "claims": all_parsed_claims,
         "parsed_claims": all_parsed_claims,
