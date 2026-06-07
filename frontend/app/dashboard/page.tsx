@@ -295,6 +295,7 @@ function normalizeProfileName(item: any) {
   const [copilotQuestion, setCopilotQuestion] = useState("");
   const [copilotAnswer, setCopilotAnswer] = useState("");
   const [copilotLoading, setCopilotLoading] = useState(false);
+  const [selectedClaimDetail, setSelectedClaimDetail] = useState<any | null>(null);
 
   const [renewalMemo, setRenewalMemo] = useState("");
   const [memoLoading, setMemoLoading] = useState(false);
@@ -1039,7 +1040,7 @@ if (submissionBuilderRes.ok) {
     const uploadedFileNames = selectedFiles.map((file) => file.name).join(", ");
 
     const combinedClaims = uploadResults.flatMap((item) =>
-      item?.saved_claim_rows || item?.claims || item?.parsed_claims || item?.saved_claim_rows || []
+      item?.saved_claim_rows || item?.claims || item?.parsed_claims || []
     );
 
     const combinedPolicies = uploadResults.flatMap((item) =>
@@ -1497,34 +1498,49 @@ const localRenewalRiskLevel =
 const localCarrierAppetiteScore = localRenewalScore == null ? null : Math.max(20, Math.min(95, localRenewalScore - localLargeLossCount * 4));
 const localSubmissionReadinessScore = visibleClaims.length > 0 ? Math.min(95, 70 + Math.min(20, visibleClaims.length * 3)) : null;
 
+const backendInsufficientText = JSON.stringify({ summary, decision, carrierAppetite, submissionReadiness }).toLowerCase();
+const backendSaysInsufficient =
+  backendInsufficientText.includes("insufficient") ||
+  backendInsufficientText.includes("no account-specific claims") ||
+  backendInsufficientText.includes("no account specific claims") ||
+  Number(backendClaimsUsed || 0) === 0;
+
+const localRenewalDrivers = [
+  `${visibleClaims.length} claim(s) analyzed for the selected account.`,
+  `${localOpenClaimCount} open claim(s).`,
+  `$${Number(localClaimTotal || 0).toLocaleString()} total incurred.`,
+  `${localLargeLossCount} large loss claim(s) at or above $50,000.`,
+  `${localLitigationCount} litigation/attorney indicator(s).`,
+];
+
 const effectiveSummary =
   visibleClaims.length > 0
     ? {
         ...(summary || {}),
-        renewal_score: summary?.renewal_score ?? localRenewalScore,
-        renewal_risk_level: summary?.renewal_risk_level || localRenewalRiskLevel,
-        renewal_drivers:
-          summary?.renewal_drivers ||
-          [
-            `${visibleClaims.length} claim(s) analyzed for selected account.`,
-            `${localOpenClaimCount} open claim(s).`,
-            `$${Number(localClaimTotal || 0).toLocaleString()} total incurred.`,
-          ],
+        renewal_score: localRenewalScore,
+        renewal_risk_level: localRenewalRiskLevel,
+        renewal_drivers: localRenewalDrivers,
         carrier_concerns:
-          summary?.carrier_concerns ||
-          (localOpenClaimCount > 0 || localLargeLossCount > 0 || localLitigationCount > 0
+          localOpenClaimCount > 0 || localLargeLossCount > 0 || localLitigationCount > 0
             ? [
-                localOpenClaimCount > 0 ? "Open claim activity requires underwriting review." : "Claim activity should be reviewed.",
-                localLargeLossCount > 0 ? "Large loss severity may affect renewal terms." : "Loss frequency and severity appear manageable.",
-                localLitigationCount > 0 ? "Litigation/attorney involvement should be documented." : "No litigation indicator detected from visible claims.",
+                localOpenClaimCount > 0
+                  ? "Open claim activity requires underwriting review."
+                  : "Open claim count is controlled.",
+                localLargeLossCount > 0
+                  ? "Large loss severity may affect renewal terms."
+                  : "No claim over the large-loss threshold was detected.",
+                localLitigationCount > 0
+                  ? "Litigation/attorney involvement should be documented."
+                  : "No litigation indicator detected from visible claims.",
               ]
-            : ["Claims loaded. No major severity indicator detected from visible claims."]),
+            : ["Claims loaded. No major severity indicator detected from visible claims."],
         broker_recommendation:
-          summary?.broker_recommendation ||
-          "Use the loaded claims to prepare a carrier narrative, explain open claims, and document corrective actions before submission.",
+          "Use the loaded claims to prepare a carrier narrative, explain open claims, confirm reserves, and document corrective actions before submission.",
         renewal_summary:
-          summary?.renewal_summary ||
-          `LossQ analyzed ${visibleClaims.length} claim(s) with $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Renewal risk is ${localRenewalRiskLevel}.`,
+          `LossQ analyzed ${visibleClaims.length} claim(s) for the selected account with $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Renewal risk is ${localRenewalRiskLevel}.`,
+        claims_used: visibleClaims.length,
+        policy_numbers_used: activePolicyNumbers,
+        data_source: backendSaysInsufficient ? "local_visible_claims_fallback" : "local_visible_claims",
       }
     : summary;
 
@@ -1532,28 +1548,29 @@ const effectiveDecision =
   visibleClaims.length > 0
     ? {
         ...(decision || {}),
-        renewal_probability: decision?.renewal_probability ?? Math.max(35, Math.min(95, localRenewalScore || 50)),
+        renewal_probability: Math.max(35, Math.min(95, localRenewalScore || 50)),
         expected_premium_impact:
-          decision?.expected_premium_impact ||
-          (localRenewalRiskLevel === "Low"
+          localRenewalRiskLevel === "Low"
             ? "Flat to modest increase"
             : localRenewalRiskLevel === "Moderate"
             ? "Moderate increase possible"
-            : "Increase or restriction likely"),
-        carrier_appetite: decision?.carrier_appetite || (localCarrierAppetiteScore && localCarrierAppetiteScore >= 75 ? "Standard / Preferred" : "Selective"),
-        marketability_score: decision?.marketability_score ?? localCarrierAppetiteScore,
-        submission_readiness: decision?.submission_readiness || "Claims are loaded. Complete carrier narrative and open-claim explanations before submission.",
-        underwriting_concerns:
-          decision?.underwriting_concerns ||
-          [
-            `${visibleClaims.length} claim(s) in the selected account.`,
-            `${localOpenClaimCount} open claim(s).`,
-            `${localLargeLossCount} large loss claim(s) over $50,000.`,
-          ],
-        best_market_types: decision?.best_market_types || ["Standard market", "Middle-market commercial carrier", "E&S backup if loss activity worsens"],
+            : "Increase or restriction likely",
+        carrier_appetite: localCarrierAppetiteScore && localCarrierAppetiteScore >= 75 ? "Standard / Preferred" : "Selective",
+        marketability_score: localCarrierAppetiteScore,
+        submission_readiness:
+          "Claims are loaded. Complete carrier narrative, open-claim explanations, reserve notes, and corrective actions before submission.",
+        underwriting_concerns: [
+          `${visibleClaims.length} claim(s) in the selected account.`,
+          `${localOpenClaimCount} open claim(s).`,
+          `${localLargeLossCount} large loss claim(s) over $50,000.`,
+          `${localLitigationCount} litigation/attorney indicator(s).`,
+        ],
+        best_market_types: ["Standard market", "Middle-market commercial carrier", "E&S backup if loss activity worsens"],
         underwriter_decision_summary:
-          decision?.underwriter_decision_summary ||
-          `The account has ${visibleClaims.length} loaded claim(s) and $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Review open claims and severity before final carrier decision.`,
+          `The account has ${visibleClaims.length} loaded claim(s) and $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Review open claims, large losses, and reserve adequacy before final carrier decision.`,
+        claims_used: visibleClaims.length,
+        policy_numbers_used: activePolicyNumbers,
+        data_source: backendSaysInsufficient ? "local_visible_claims_fallback" : "local_visible_claims",
       }
     : decision;
 
@@ -1561,31 +1578,27 @@ const effectiveCarrierAppetite =
   visibleClaims.length > 0
     ? {
         ...(carrierAppetite || {}),
-        carrier_appetite_score: carrierAppetite?.carrier_appetite_score ?? localCarrierAppetiteScore,
+        carrier_appetite_score: localCarrierAppetiteScore,
         carrier_appetite_level:
-          carrierAppetite?.carrier_appetite_level ||
-          (localCarrierAppetiteScore == null
+          localCarrierAppetiteScore == null
             ? "Not Rated"
             : localCarrierAppetiteScore >= 80
             ? "Preferred"
             : localCarrierAppetiteScore >= 65
             ? "Standard"
-            : "Selective"),
-        best_fit_carriers:
-          carrierAppetite?.best_fit_carriers ||
-          [
-            { carrier_type: "Standard Commercial Carrier", match_score: localCarrierAppetiteScore || 60 },
-            { carrier_type: "Regional Middle Market", match_score: Math.max(45, (localCarrierAppetiteScore || 60) - 8) },
-          ],
-        carrier_match_reasons:
-          carrierAppetite?.carrier_match_reasons ||
-          ["Claims data is loaded for underwriting review.", "Market appetite depends on open claim status, severity, and loss narrative."],
+            : "Selective",
+        best_fit_carriers: [
+          { carrier_type: "Standard Commercial Carrier", match_score: localCarrierAppetiteScore || 60 },
+          { carrier_type: "Regional Middle Market", match_score: Math.max(45, (localCarrierAppetiteScore || 60) - 8) },
+        ],
+        carrier_match_reasons: [
+          "Claims data is loaded for underwriting review.",
+          "Market appetite depends on open claim status, severity, reserves, and loss narrative.",
+        ],
         market_strategy:
-          carrierAppetite?.market_strategy ||
-          "Market the account with a clear loss narrative, corrective actions, and open-claim status notes.",
-        placement_summary:
-          carrierAppetite?.placement_summary ||
-          `Carrier appetite is ${localRenewalRiskLevel === "Low" ? "favorable" : "selective"} based on ${visibleClaims.length} loaded claim(s).`,
+          "Market the account with a clear loss narrative, corrective actions, open-claim status notes, and reserve explanations.",
+        claims_used: visibleClaims.length,
+        policy_numbers_used: activePolicyNumbers,
       }
     : carrierAppetite;
 
@@ -2859,16 +2872,19 @@ const trendNoteDisplay =
       className="border-b border-white/10 text-slate-300"
     >
       <td className="py-4">
-        {claim.id ? (
-          <a
-            href={`/claims/${claim.id}`}
-            className="text-blue-300 hover:text-blue-200 underline"
-          >
-            {claim.claim_number || "Unnamed Claim"}
-          </a>
-        ) : (
-          claim.claim_number || "Unnamed Claim"
-        )}
+        <button
+          type="button"
+          onClick={() => {
+            if (claim.id) {
+              router.push(`/claims/${claim.id}`);
+            } else {
+              setSelectedClaimDetail(claim);
+            }
+          }}
+          className="text-left text-blue-300 hover:text-blue-200 underline"
+        >
+          {claim.claim_number || "Unnamed Claim"}
+        </button>
       </td>
 
       <td>{claim.line_of_business || "-"}</td>
@@ -2890,6 +2906,42 @@ const trendNoteDisplay =
 </tbody>
 </table>
 </div>
+
+{selectedClaimDetail && (
+  <div className="mt-6 rounded-2xl border border-blue-400/20 bg-blue-500/10 p-5">
+    <div className="flex items-start justify-between gap-4">
+      <div>
+        <p className="text-xs uppercase tracking-[0.25em] text-blue-200">Claim Detail Preview</p>
+        <h3 className="mt-2 text-xl font-bold text-white">{selectedClaimDetail.claim_number || "Unnamed Claim"}</h3>
+      </div>
+      <button
+        type="button"
+        onClick={() => setSelectedClaimDetail(null)}
+        className="rounded-lg border border-white/10 px-3 py-2 text-sm text-slate-300 hover:bg-white/10"
+      >
+        Close
+      </button>
+    </div>
+
+    <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
+      {[
+        ["Policy", selectedClaimDetail.policy_number || "-"],
+        ["Line", selectedClaimDetail.line_of_business || selectedClaimDetail.claim_type || "-"],
+        ["Status", selectedClaimDetail.status || "-"],
+        ["Total", `$${Number(getClaimIncurred(selectedClaimDetail)).toLocaleString()}`],
+      ].map(([label, value]) => (
+        <div key={label} className="rounded-xl border border-white/10 bg-slate-950/70 p-3">
+          <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">{label}</p>
+          <p className="mt-1 font-semibold text-white">{value}</p>
+        </div>
+      ))}
+    </div>
+
+    <p className="mt-4 text-slate-300">
+      {selectedClaimDetail.description || "No description available."}
+    </p>
+  </div>
+)}
 </section>
 )}
 </section>
