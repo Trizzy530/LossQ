@@ -1,7 +1,7 @@
 "use client";
 
 import { useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 
 const API =
   process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
@@ -65,14 +65,134 @@ function getValue(obj: AnyObject | null | undefined, keys: string[]) {
 
 function normalizeClaimPayload(data: any): AnyObject | null {
   if (!data) return null;
-
   if (Array.isArray(data)) return data[0] || null;
   if (data.claim && typeof data.claim === "object") return data.claim;
   if (data.data && typeof data.data === "object") return data.data;
   if (data.result && typeof data.result === "object") return data.result;
   if (typeof data === "object") return data;
-
   return null;
+}
+
+function getClaimNumber(claim: AnyObject | null | undefined) {
+  return clean(
+    getValue(claim, ["claim_number", "claimNo", "claim_no", "number", "claimNumber"])
+  );
+}
+
+function getPolicyNumber(claim: AnyObject | null | undefined) {
+  return clean(getValue(claim, ["policy_number", "policyNumber", "policy_no"]));
+}
+
+function sameText(a: any, b: any) {
+  return String(a || "").trim().toUpperCase() === String(b || "").trim().toUpperCase();
+}
+
+function parseMaybeJson(value: string | null) {
+  if (!value) return null;
+  try {
+    return JSON.parse(value);
+  } catch {
+    return null;
+  }
+}
+
+function collectClaimsFromStorage(): AnyObject[] {
+  if (typeof window === "undefined") return [];
+
+  const storageKeys = [
+    "lossq_claims",
+    "lossq_visible_claims",
+    "lossq_uploaded_claims",
+    "lossq_last_upload_claims",
+    "lossq_last_upload_review",
+    "lossq_last_upload_result",
+    "lossq_dashboard_state",
+    "lossq_selected_claim",
+  ];
+
+  const claims: AnyObject[] = [];
+
+  function addFromValue(value: any) {
+    if (!value) return;
+
+    if (Array.isArray(value)) {
+      value.forEach((item) => {
+        if (item && typeof item === "object") claims.push(item);
+      });
+      return;
+    }
+
+    if (value.claim && typeof value.claim === "object") {
+      claims.push(value.claim);
+    }
+
+    if (value.selectedClaim && typeof value.selectedClaim === "object") {
+      claims.push(value.selectedClaim);
+    }
+
+    ["claims", "parsed_claims", "saved_claim_rows", "visibleClaims"].forEach((key) => {
+      if (Array.isArray(value[key])) {
+        value[key].forEach((item: any) => {
+          if (item && typeof item === "object") claims.push(item);
+        });
+      }
+    });
+
+    if (value.profile && Array.isArray(value.profile.claims)) {
+      value.profile.claims.forEach((item: any) => {
+        if (item && typeof item === "object") claims.push(item);
+      });
+    }
+  }
+
+  for (const key of storageKeys) {
+    addFromValue(parseMaybeJson(localStorage.getItem(key)));
+    addFromValue(parseMaybeJson(sessionStorage.getItem(key)));
+  }
+
+  // Also scan all LossQ keys in case the dashboard used a newer cache key.
+  for (let i = 0; i < localStorage.length; i++) {
+    const key = localStorage.key(i) || "";
+    if (key.toLowerCase().includes("lossq")) {
+      addFromValue(parseMaybeJson(localStorage.getItem(key)));
+    }
+  }
+
+  const deduped: AnyObject[] = [];
+  const seen = new Set<string>();
+
+  for (const claim of claims) {
+    const key = [
+      claim.id || "",
+      getClaimNumber(claim),
+      getPolicyNumber(claim),
+      claim.total_incurred || "",
+    ].join("|");
+
+    if (!seen.has(key)) {
+      seen.add(key);
+      deduped.push(claim);
+    }
+  }
+
+  return deduped;
+}
+
+function findStoredClaim(claimId: string, queryClaimNumber?: string | null, queryPolicyNumber?: string | null) {
+  const claims = collectClaimsFromStorage();
+
+  return (
+    claims.find((item) => sameText(item?.id, claimId)) ||
+    claims.find((item) => sameText(getClaimNumber(item), claimId)) ||
+    (queryClaimNumber
+      ? claims.find(
+          (item) =>
+            sameText(getClaimNumber(item), queryClaimNumber) &&
+            (!queryPolicyNumber || sameText(getPolicyNumber(item), queryPolicyNumber))
+        )
+      : null) ||
+    null
+  );
 }
 
 function getClaimDisplay(claim: AnyObject | null, fallbackId: string) {
@@ -231,11 +351,16 @@ function Panel({ title, subtitle, children }: { title: string; subtitle?: string
 export default function ClaimDetailPage() {
   const router = useRouter();
   const params = useParams();
+  const searchParams = useSearchParams();
   const claimId = String(params?.id || "");
+
+  const queryClaimNumber = searchParams?.get("claim_number");
+  const queryPolicyNumber = searchParams?.get("policy_number");
 
   const [claim, setClaim] = useState<AnyObject | null>(null);
   const [loading, setLoading] = useState(true);
   const [message, setMessage] = useState("");
+  const [source, setSource] = useState("");
 
   function getToken() {
     if (typeof window === "undefined") return null;
@@ -276,8 +401,11 @@ export default function ClaimDetailPage() {
       try {
         setLoading(true);
         setMessage("");
+        setSource("");
+
         let foundClaim: AnyObject | null = null;
 
+        // 1. Try direct database ID route.
         const detailRes = await fetch(`${API}/claims/${encodeURIComponent(claimId)}`, {
           headers: authHeaders(),
         });
@@ -290,18 +418,31 @@ export default function ClaimDetailPage() {
 
         if (detailRes.ok) {
           foundClaim = normalizeClaimPayload(await safeJson(detailRes));
+          if (foundClaim) setSource("Database claim detail");
         }
 
-        const shouldFallback =
-          !foundClaim ||
-          (!foundClaim.claim_number &&
-            !foundClaim.policy_number &&
-            !foundClaim.total_incurred &&
-            !foundClaim.paid_amount &&
-            !foundClaim.reserve_amount);
+        // 2. Try backend claim_number + policy lookup if URL has query params.
+        if (!foundClaim && queryClaimNumber) {
+          const lookupUrl = new URL(`${API}/claims/lookup`);
+          lookupUrl.searchParams.set("claim_number", queryClaimNumber);
+          if (queryPolicyNumber) lookupUrl.searchParams.set("policy_number", queryPolicyNumber);
 
-        if (shouldFallback) {
-          const listRes = await fetch(`${API}/claims/`, {
+          const lookupRes = await fetch(lookupUrl.toString(), {
+            headers: authHeaders(),
+          });
+
+          if (lookupRes.ok) {
+            foundClaim = normalizeClaimPayload(await safeJson(lookupRes));
+            if (foundClaim) setSource("Backend claim lookup");
+          }
+        }
+
+        // 3. Try claims list from backend.
+        if (!foundClaim) {
+          const listUrl = new URL(`${API}/claims/`);
+          if (queryPolicyNumber) listUrl.searchParams.set("policy_number", queryPolicyNumber);
+
+          const listRes = await fetch(listUrl.toString(), {
             headers: authHeaders(),
           });
 
@@ -320,17 +461,32 @@ export default function ClaimDetailPage() {
                 : [];
 
             foundClaim =
-              list.find((item: AnyObject) => String(item?.id) === claimId) ||
-              list.find((item: AnyObject) => String(item?.claim_number) === claimId) ||
-              list.find((item: AnyObject) => String(item?.claimNo) === claimId) ||
+              list.find((item: AnyObject) => sameText(item?.id, claimId)) ||
+              list.find((item: AnyObject) => sameText(getClaimNumber(item), claimId)) ||
+              (queryClaimNumber
+                ? list.find(
+                    (item: AnyObject) =>
+                      sameText(getClaimNumber(item), queryClaimNumber) &&
+                      (!queryPolicyNumber || sameText(getPolicyNumber(item), queryPolicyNumber))
+                  )
+                : null) ||
               null;
+
+            if (foundClaim) setSource("Backend claims list");
           }
+        }
+
+        // 4. Last fallback: local/session storage, so stale numeric IDs do not
+        // create a dead page when the visible claim row has the real claim data.
+        if (!foundClaim) {
+          foundClaim = findStoredClaim(claimId, queryClaimNumber, queryPolicyNumber);
+          if (foundClaim) setSource("Dashboard cached claim preview");
         }
 
         if (!foundClaim) {
           setClaim(null);
           setMessage(
-            "Claim could not be loaded. The detail endpoint did not return this claim, and it was not found in the claims list."
+            "Claim could not be loaded. Re-open the Claims tab, or re-upload the loss run after the backend deployment finishes so the claim receives a saved database ID."
           );
           return;
         }
@@ -345,9 +501,9 @@ export default function ClaimDetailPage() {
     }
 
     loadClaim();
-  }, [claimId]);
+  }, [claimId, queryClaimNumber, queryPolicyNumber]);
 
-  const display = useMemo(() => getClaimDisplay(claim, claimId), [claim, claimId]);
+  const display = useMemo(() => getClaimDisplay(claim, queryClaimNumber || claimId), [claim, claimId, queryClaimNumber]);
 
   const litigationTone = display.litigation ? "red" : "green";
   const statusTone = display.status.toLowerCase().includes("open") ? "yellow" : "green";
@@ -403,6 +559,12 @@ export default function ClaimDetailPage() {
                 Modern claim detail view with underwriting context, litigation factor,
                 financial pressure, reserve status, and source claim fields.
               </p>
+
+              {source && (
+                <p className="mt-3 text-xs text-slate-500">
+                  Source: {source}
+                </p>
+              )}
             </div>
 
             <div className="grid grid-cols-2 gap-3 min-w-[280px]">
@@ -547,7 +709,7 @@ export default function ClaimDetailPage() {
                   />
                   <DetailCard
                     label="Backend Source"
-                    value="Normalized LossQ claim record"
+                    value={source || "Normalized LossQ claim record"}
                   />
                 </div>
               </Panel>
