@@ -2,8 +2,24 @@ from __future__ import annotations
 
 import io
 import re
-from collections import defaultdict
 from typing import Any, Dict, List, Tuple
+
+
+BAD_LABELS = {
+    "",
+    "POLICY",
+    "POLICYNUMBER",
+    "POLICYTERM",
+    "CLAIMS",
+    "YES",
+    "NO",
+    "CARRIER",
+    "NAMEDINSURED",
+    "REPORT",
+    "REPORTDATE",
+    "PAG",
+    "PAGE",
+}
 
 
 def _clean(value: Any) -> str:
@@ -26,32 +42,33 @@ def _money_to_float(value: Any) -> float:
         return 0.0
 
 
-def _find_first(patterns: List[str], text: str, default: str = "") -> str:
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
-        if match:
-            value = _clean(match.group(1))
-            if value:
-                return value
-    return default
-
-
-def _is_bad_policy(value: Any) -> bool:
-    value = _clean(value).upper()
-    if not value:
-        return True
-    if value in {"POLICY", "POLICY NUMBER", "ACCOUNT", "ACCOUNT NUMBER", "CLAIMS", "YES"}:
-        return True
-    if len(value) < 4:
-        return True
-    return False
+def _looks_like_policy(value: Any) -> bool:
+    policy = _normalize_policy(value)
+    if not policy or policy in BAD_LABELS:
+        return False
+    if policy.startswith("POLICY") or policy.startswith("CLAIM"):
+        return False
+    # Must have at least one digit and at least four characters.
+    return len(policy) >= 4 and bool(re.search(r"\d", policy))
 
 
 def _normalize_policy(value: Any) -> str:
-    value = _clean(value).upper()
-    value = value.replace(" ", "")
-    value = value.strip(":-|")
-    return value
+    raw = _clean(value).upper()
+
+    # Stop runaway captures from OCR/PDF extraction like:
+    # BRD-CA-204887-01POLICYTERM or 10050749CAPAGE1OF2
+    raw = re.split(
+        r"(POLICY\s*TERM|POLICYTERM|CLAIM\s*DETAILS|CLAIMDETAILS|REPORT\s*RUN|REPORTRUN|NAMED\s*INSURED|NAMEDINSURED|CARRIER|PAGE|LH\s*\d)",
+        raw,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+
+    raw = raw.replace(" ", "")
+    raw = raw.strip(":-|.,;")
+    raw = re.sub(r"[^A-Z0-9\-]", "", raw)
+
+    return raw
 
 
 def _extract_text_from_pdf(content: bytes) -> str:
@@ -70,7 +87,6 @@ def _extract_text_from_pdf(content: bytes) -> str:
 
     text = "\n".join(text_parts)
 
-    # Fallback for non-PDF text uploads.
     if not text.strip():
         try:
             text = content.decode("utf-8", errors="ignore")
@@ -80,17 +96,68 @@ def _extract_text_from_pdf(content: bytes) -> str:
     return text
 
 
+def _find_policy_numbers(text: str) -> List[Tuple[int, str]]:
+    found: List[Tuple[int, str]] = []
+
+    patterns = [
+        r"Policy\s*Number\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\s]{3,80})",
+        r"Policy\s*#\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\s]{3,80})",
+    ]
+
+    for pattern in patterns:
+        for match in re.finditer(pattern, text, flags=re.IGNORECASE):
+            policy = _normalize_policy(match.group(1))
+            if _looks_like_policy(policy):
+                found.append((match.start(), policy))
+
+    # Deduplicate while preserving position order.
+    deduped: List[Tuple[int, str]] = []
+    seen = set()
+    for pos, policy in sorted(found, key=lambda item: item[0]):
+        key = (pos, policy)
+        if key not in seen:
+            seen.add(key)
+            deduped.append((pos, policy))
+
+    return deduped
+
+
+def _nearest_policy_before(policy_positions: List[Tuple[int, str]], pos: int, fallback: str) -> str:
+    selected = fallback
+
+    for policy_pos, policy in policy_positions:
+        if policy_pos <= pos:
+            selected = policy
+        else:
+            break
+
+    return selected if _looks_like_policy(selected) else fallback
+
+
+def _find_first(patterns: List[str], text: str, default: str = "") -> str:
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            value = _clean(match.group(1))
+            if value:
+                return value
+    return default
+
+
 def _extract_profile(text: str) -> Dict[str, Any]:
+    policy_positions = _find_policy_numbers(text)
+    first_policy = policy_positions[0][1] if policy_positions else ""
+
     business_name = _find_first(
         [
-            r"Named\s*Insured\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Carrier\s*:|Report\s*Run\s*Date)",
-            r"Insured\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Carrier\s*:|Report\s*Run\s*Date)",
-            r"Account\s*Name\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Carrier\s*:|Report\s*Run\s*Date)",
+            r"Named\s*Insured\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Carrier\s*:|Policy\s*Term|Report\s*Run\s*Date)",
+            r"Insured\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Carrier\s*:|Policy\s*Term|Report\s*Run\s*Date)",
+            r"Account\s*Name\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Carrier\s*:|Policy\s*Term|Report\s*Run\s*Date)",
         ],
         text,
     )
 
-    if business_name.lower() in {"carrier", "policy", "claims", "yes"}:
+    if business_name.lower() in {"carrier", "policy", "claims", "yes", "policy term"}:
         business_name = ""
 
     carrier_name = _find_first(
@@ -102,16 +169,8 @@ def _extract_profile(text: str) -> Dict[str, Any]:
         text,
     )
 
-    if carrier_name.lower() in {"carrier", "policy", "claims", "yes"}:
+    if carrier_name.lower() in {"carrier", "policy", "claims", "yes", "policy term"}:
         carrier_name = ""
-
-    policy_candidates = [
-        _normalize_policy(x)
-        for x in re.findall(r"Policy\s*Number\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\s]{3,40})", text, flags=re.IGNORECASE)
-    ]
-    policy_candidates = [p for p in policy_candidates if not _is_bad_policy(p)]
-
-    policy_number = policy_candidates[0] if policy_candidates else ""
 
     effective_date = ""
     expiration_date = ""
@@ -128,9 +187,9 @@ def _extract_profile(text: str) -> Dict[str, Any]:
         "business_name": business_name,
         "carrier_name": carrier_name,
         "writing_carrier": carrier_name,
-        "policy_number": policy_number,
-        "account_number": policy_number,
-        "customer_number": policy_number,
+        "policy_number": first_policy,
+        "account_number": first_policy,
+        "customer_number": first_policy,
         "effective_date": effective_date,
         "expiration_date": expiration_date,
         "evaluation_date": "",
@@ -138,31 +197,16 @@ def _extract_profile(text: str) -> Dict[str, Any]:
     }
 
 
-def _find_policy_for_position(text: str, position: int, fallback_policy: str) -> str:
-    before = text[:position]
-    matches = list(
-        re.finditer(
-            r"Policy\s*Number\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\s]{3,40})",
-            before,
-            flags=re.IGNORECASE,
-        )
-    )
-
-    for match in reversed(matches):
-        policy = _normalize_policy(match.group(1))
-        if not _is_bad_policy(policy):
-            return policy
-
-    return fallback_policy
-
-
 def _extract_claim_sections(text: str, fallback_policy: str) -> List[Tuple[str, str, str]]:
     """
-    Returns tuples of (claim_number, policy_number, claim_section_text).
-    Uses actual "Claim Number:" anchors so policy numbers do not become claims.
+    Return (claim_number, policy_number, section_text).
+
+    This only accepts actual Claim Number anchors and rejects policy labels.
     """
+    policy_positions = _find_policy_numbers(text)
+
     claim_pattern = re.compile(
-        r"Claim\s*Number\s*[:\-]\s*([A-Z]{1,4}[-\s]?[A-Z0-9]{2,20}(?:[-\s][A-Z0-9]{2,20})*)",
+        r"Claim\s*Number\s*[:\-]?\s*([A-Z]{1,4}[-\s]?[A-Z0-9]{2,20}(?:[-\s][A-Z0-9]{2,20})*)",
         flags=re.IGNORECASE,
     )
 
@@ -171,18 +215,22 @@ def _extract_claim_sections(text: str, fallback_policy: str) -> List[Tuple[str, 
 
     for index, match in enumerate(matches):
         claim_number = _clean(match.group(1)).upper().replace(" ", "-")
-        claim_number = re.sub(r"-{2,}", "-", claim_number)
+        claim_number = re.sub(r"-{2,}", "-", claim_number).strip("-")
+
+        if not claim_number or claim_number in {"CLAIM", "CLAIM-NUMBER", "POLICY", "POLICYTERM"}:
+            continue
+
+        # Reject policy numbers being mistaken for claims.
+        if claim_number.startswith("BRD-") or claim_number.startswith("POLICY"):
+            continue
 
         start = match.start()
         end = matches[index + 1].start() if index + 1 < len(matches) else min(len(text), start + 2500)
         section = text[start:end]
 
-        if claim_number in {"CLAIM", "CLAIM-NUMBER", "POLICY"}:
-            continue
+        policy_number = _nearest_policy_before(policy_positions, start, fallback_policy)
 
-        policy_number = _find_policy_for_position(text, start, fallback_policy)
-
-        if _is_bad_policy(policy_number):
+        if not _looks_like_policy(policy_number):
             policy_number = fallback_policy
 
         sections.append((claim_number, policy_number, section))
@@ -201,7 +249,7 @@ def _extract_amounts_from_section(section: str) -> List[float]:
 
 def _extract_date(section: str, label: str) -> str:
     match = re.search(
-        rf"{re.escape(label)}\s*[:\-]\s*([0-9]{{1,2}}/[0-9]{{1,2}}/[0-9]{{2,4}})",
+        rf"{re.escape(label)}\s*[:\-]?\s*([0-9]{{1,2}}/[0-9]{{1,2}}/[0-9]{{2,4}})",
         section,
         flags=re.IGNORECASE,
     )
@@ -209,7 +257,7 @@ def _extract_date(section: str, label: str) -> str:
 
 
 def _extract_status(section: str) -> str:
-    match = re.search(r"Status\s*of\s*Loss\s*[:\-]\s*([A-Za-z]+)", section, flags=re.IGNORECASE)
+    match = re.search(r"Status\s*of\s*Loss\s*[:\-]?\s*([A-Za-z]+)", section, flags=re.IGNORECASE)
     if match:
         value = match.group(1).strip().title()
         if value.lower() in {"open", "closed", "pending", "reopened"}:
@@ -225,7 +273,7 @@ def _extract_status(section: str) -> str:
 
 def _extract_description(section: str) -> str:
     match = re.search(
-        r"Description\s*of\s*Loss\s*[:\-]\s*(.*?)(?:Claimant\s+Type\s+Of\s+Loss|Claimant\s+TypeOfLoss|$)",
+        r"Description\s*of\s*Loss\s*[:\-]?\s*(.*?)(?:Claimant\s+Type\s+Of\s+Loss|Claimant\s+TypeOfLoss|$)",
         section,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -257,20 +305,17 @@ def _extract_claims(text: str, fallback_policy: str) -> List[Dict[str, Any]]:
     for claim_number, policy_number, section in _extract_claim_sections(text, fallback_policy):
         amounts = _extract_amounts_from_section(section)
 
-        total_incurred = max(amounts) if amounts else 0.0
+        # In loss-run tables, Total Net Loss is generally the last positive
+        # dollar amount in the claim row/section. This avoids using a paid amount
+        # instead of net loss when recoveries exist.
+        total_incurred = amounts[-1] if amounts else 0.0
 
-        # Try to read paid and reserve from the table. For most loss runs, the
-        # largest amount is safest as the total net loss when extraction is messy.
-        paid_amount = total_incurred
+        paid_amount = amounts[0] if amounts else 0.0
         reserve_amount = 0.0
 
-        if re.search(r"\bOpen\b", section, flags=re.IGNORECASE) and len(amounts) >= 2:
-            # Open claims commonly show paid + remaining reserve + net loss.
-            # Keep total as largest, paid as first meaningful amount, reserve as
-            # the second-largest if it is below/equal total.
-            paid_amount = amounts[0]
-            possible_reserves = [a for a in amounts if a != paid_amount and a <= total_incurred]
-            reserve_amount = max(possible_reserves) if possible_reserves else 0.0
+        status = _extract_status(section)
+        if status.lower() == "open" and total_incurred > paid_amount:
+            reserve_amount = round(total_incurred - paid_amount, 2)
 
         claim = {
             "claim_number": claim_number,
@@ -280,7 +325,7 @@ def _extract_claims(text: str, fallback_policy: str) -> List[Dict[str, Any]]:
             "date_of_loss": _extract_date(section, "Loss Date"),
             "reported_date": _extract_date(section, "Loss Report Date"),
             "date_reported": _extract_date(section, "Loss Report Date"),
-            "status": _extract_status(section),
+            "status": status,
             "paid_amount": paid_amount,
             "reserve_amount": reserve_amount,
             "total_incurred": total_incurred,
@@ -297,7 +342,7 @@ def _policy_rollup(claims: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
     for claim in claims:
         policy_number = _normalize_policy(claim.get("policy_number"))
-        if _is_bad_policy(policy_number):
+        if not _looks_like_policy(policy_number):
             continue
 
         lob = _clean(claim.get("line_of_business")) or "Unknown"
@@ -321,11 +366,11 @@ def parse_loss_run_upload(filename: str, content: bytes) -> Dict[str, Any]:
     """
     Universal V2 parser entry point used by app.routes.upload_v2.
 
-    Goal: favor accuracy over over-extraction.
-    - Only creates claims from actual "Claim Number:" anchors.
-    - Rejects header labels like POLICY as policy numbers.
-    - Uses the nearest previous Policy Number as the claim policy.
-    - Reads dates/status/amounts from each claim section.
+    Accuracy goals:
+    - Do not turn labels like POLICYTERM into policy numbers.
+    - Do not turn policy numbers into fake claims.
+    - Only create claims from actual Claim Number anchors.
+    - Keep multiple policies in the policy rollup.
     """
     text = _extract_text_from_pdf(content)
     profile = _extract_profile(text)
@@ -333,7 +378,6 @@ def parse_loss_run_upload(filename: str, content: bytes) -> Dict[str, Any]:
     fallback_policy = profile.get("policy_number") or ""
     claims = _extract_claims(text, fallback_policy)
 
-    # If the first policy number is missing but claims have policies, use the first claim policy.
     if not profile.get("policy_number") and claims:
         profile["policy_number"] = claims[0].get("policy_number", "")
         profile["account_number"] = profile["policy_number"]
@@ -345,7 +389,7 @@ def parse_loss_run_upload(filename: str, content: bytes) -> Dict[str, Any]:
 
     validation = {
         "is_valid": bool(claims),
-        "confidence_score": 90 if claims else 40,
+        "confidence_score": 92 if claims else 40,
         "needs_manual_review": not bool(claims),
         "needs_review": [],
         "warnings": [],
