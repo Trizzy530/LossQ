@@ -69,7 +69,11 @@ def serialize_json(value: Any, fallback: Any):
         if value is None:
             return json.dumps(fallback)
         if isinstance(value, str):
-            return value
+            try:
+                json.loads(value)
+                return value
+            except Exception:
+                return json.dumps(fallback)
         return json.dumps(value)
     except Exception:
         return json.dumps(fallback)
@@ -87,7 +91,33 @@ def parse_json_value(value: Any, fallback: Any):
 
 
 def is_placeholder(value: Any) -> bool:
-    return clean_value(value).lower() in {"", "business name not set", "unnamed business", "not set", "none", "null", "-"}
+    cleaned = clean_value(value).lower()
+    return cleaned in {
+        "",
+        "business name not set",
+        "unnamed business",
+        "not set",
+        "none",
+        "null",
+        "-",
+        "carrier",
+        "policy",
+        "policyterm",
+        "upload",
+    }
+
+
+def is_valid_policy(value: Any) -> bool:
+    policy = normalize_policy_number(value)
+    if not policy:
+        return False
+    if policy in {"POLICY", "POLICYNUMBER", "POLICYTERM", "ACCOUNT", "ACCOUNTNUMBER", "UPLOAD"}:
+        return False
+    if policy.startswith("UPLOAD-"):
+        return False
+    if len(policy) < 4:
+        return False
+    return bool(re.search(r"\d", policy))
 
 
 def ensure_account_profile_columns(db: Session):
@@ -100,12 +130,21 @@ def ensure_account_profile_columns(db: Session):
         "validation": "TEXT",
         "raw_text_preview": "TEXT",
     }
+
     try:
         inspector = inspect(db.bind)
-        existing_columns = [column["name"] for column in inspector.get_columns("account_profiles")]
+        existing_columns = [
+            column["name"] for column in inspector.get_columns("account_profiles")
+        ]
+
         for column_name, column_type in required_columns.items():
             if column_name not in existing_columns:
-                db.execute(text(f"ALTER TABLE account_profiles ADD COLUMN {column_name} {column_type}"))
+                db.execute(
+                    text(
+                        f"ALTER TABLE account_profiles ADD COLUMN {column_name} {column_type}"
+                    )
+                )
+
         db.commit()
     except Exception as e:
         db.rollback()
@@ -114,9 +153,13 @@ def ensure_account_profile_columns(db: Session):
 
 def profile_to_dict(profile: AccountProfile):
     return {
+        "id": getattr(profile, "id", None),
         "business_name": clean_value(getattr(profile, "business_name", "")),
         "carrier_name": clean_value(getattr(profile, "carrier_name", "")),
-        "writing_carrier": clean_value(getattr(profile, "writing_carrier", "") or getattr(profile, "carrier_name", "")),
+        "writing_carrier": clean_value(
+            getattr(profile, "writing_carrier", "")
+            or getattr(profile, "carrier_name", "")
+        ),
         "agency_name": clean_value(getattr(profile, "agency_name", "")),
         "account_number": clean_value(getattr(profile, "account_number", "")),
         "customer_number": clean_value(getattr(profile, "customer_number", "")),
@@ -132,85 +175,382 @@ def profile_to_dict(profile: AccountProfile):
     }
 
 
-def build_policy_rollup_from_claims(claims: list[Claim]):
+def claim_policy_rollup(claims: list[Claim]):
     grouped: dict[str, dict[str, Any]] = {}
+
     for claim in claims:
         policy_number = normalize_policy_number(getattr(claim, "policy_number", ""))
-        if not policy_number:
+        if not is_valid_policy(policy_number):
             continue
+
         lob = clean_value(getattr(claim, "line_of_business", "")) or "Unknown"
         total = money_float(getattr(claim, "total_incurred", 0))
+
         if policy_number not in grouped:
-            grouped[policy_number] = {"policy_number": policy_number, "policy_type": lob, "line_of_business": lob, "claim_count": 0, "total_incurred": 0.0}
+            grouped[policy_number] = {
+                "policy_number": policy_number,
+                "policy_type": lob,
+                "line_of_business": lob,
+                "claim_count": 0,
+                "total_incurred": 0.0,
+            }
+
         grouped[policy_number]["claim_count"] += 1
         grouped[policy_number]["total_incurred"] += total
+
     return list(grouped.values())
 
 
-def find_profile_by_policy(db: Session, current_user: dict, normalized_policy_number: str):
-    profiles = db.query(AccountProfile).filter(AccountProfile.organization_id == current_user["organization_id"]).order_by(AccountProfile.id.desc()).all()
-    for profile in profiles:
-        data = profile_to_dict(profile)
-        direct_values = [data.get("policy_number"), data.get("account_number"), data.get("customer_number")]
-        if normalized_policy_number in [normalize_policy_number(v) for v in direct_values]:
-            return profile
-        for policy_item in data.get("policies") or []:
-            if normalize_policy_number(policy_item.get("policy_number")) == normalized_policy_number:
+def extract_business_name_from_text(text_value: Any) -> str:
+    text_value = clean_value(text_value)
+    if not text_value:
+        return ""
+
+    patterns = [
+        r"(?:Named\s*Insured|NamedInsured|Insured|Account\s*Name|Customer)\s*[:\-]\s*(.*?)(?:Policy\s*Number|PolicyNumber|Claim\s*Number|ClaimNumber|Report\s*Run\s*Date|ReportRunDate|Page\s+\d+|$)",
+        r"\b([A-Z][A-Za-z0-9&.,'’\-\s]{2,100}\s+(?:LLC|L\.L\.C\.|Inc\.?|Corporation|Corp\.?|Company|Co\.?|Ltd\.?))\b",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text_value, flags=re.IGNORECASE)
+        if match:
+            value = clean_value(match.group(1))
+            value = re.sub(r"([a-z])([A-Z])", r"\1 \2", value)
+            value = re.sub(
+                r"(?:Policy\s*Number|PolicyNumber|Claim\s*Number|ClaimNumber|Report\s*Run\s*Date|ReportRunDate).*",
+                "",
+                value,
+                flags=re.IGNORECASE,
+            )
+            value = clean_value(value)
+
+            if value and not is_placeholder(value):
+                return value[:120]
+
+    return ""
+
+
+def derive_business_name_from_claims(claims: list[Claim]) -> str:
+    for claim in claims:
+        description = clean_value(getattr(claim, "description", ""))
+        value = extract_business_name_from_text(description)
+        if value:
+            return value[:120]
+    return ""
+
+
+def all_claims_for_org(db: Session, current_user: dict):
+    return (
+        db.query(Claim)
+        .filter(Claim.organization_id == current_user["organization_id"])
+        .all()
+    )
+
+
+def claims_for_policy(db: Session, current_user: dict, policy_number: str):
+    normalized_policy = normalize_policy_number(policy_number)
+    return (
+        db.query(Claim)
+        .filter(
+            Claim.organization_id == current_user["organization_id"],
+            func.upper(func.trim(Claim.policy_number)) == normalized_policy,
+        )
+        .all()
+    )
+
+
+def best_template_profile(profiles: list[AccountProfile], policy_number: str | None = None):
+    if policy_number:
+        normalized_policy = normalize_policy_number(policy_number)
+        for profile in profiles:
+            data = profile_to_dict(profile)
+            if normalize_policy_number(data.get("policy_number")) == normalized_policy:
                 return profile
-    return None
+            if normalize_policy_number(data.get("account_number")) == normalized_policy:
+                return profile
+            for item in data.get("policies") or []:
+                if normalize_policy_number(item.get("policy_number")) == normalized_policy:
+                    return profile
+    return profiles[0] if profiles else None
 
 
-def create_profile_from_claims(db: Session, policy_number: str, claims: list[Claim], current_user: dict, template_profile: AccountProfile | None = None):
-    template = profile_to_dict(template_profile) if template_profile else {}
-    policies = build_policy_rollup_from_claims(claims)
+def profile_contains_policy(profile: AccountProfile, policy_number: str) -> bool:
+    normalized_policy = normalize_policy_number(policy_number)
+    data = profile_to_dict(profile)
+
+    if normalize_policy_number(data.get("policy_number")) == normalized_policy:
+        return True
+    if normalize_policy_number(data.get("account_number")) == normalized_policy:
+        return True
+    if normalize_policy_number(data.get("customer_number")) == normalized_policy:
+        return True
+
+    for item in data.get("policies") or []:
+        if normalize_policy_number(item.get("policy_number")) == normalized_policy:
+            return True
+
+    return False
+
+
+def create_profile_from_claims(
+    db: Session,
+    *,
+    policy_number: str,
+    claims: list[Claim],
+    current_user: dict,
+    template_profile: AccountProfile | None = None,
+):
+    policy_number = normalize_policy_number(policy_number)
+    policies = claim_policy_rollup(claims)
     total_incurred = sum(money_float(claim.total_incurred or 0) for claim in claims)
-    validation = {"is_valid": len(claims) > 0, "confidence_score": 85 if claims else 50, "needs_manual_review": not bool(claims), "needs_review": [] if claims else ["No claim rows were found."], "policy_count": len(policies), "claim_count": len(claims), "calculated_total_incurred": total_incurred}
+
+    business_name = ""
+    carrier_name = ""
+    writing_carrier = ""
+    agency_name = "Agency Not Set"
+    effective_date = "Not Set"
+    expiration_date = "Not Set"
+
+    if template_profile:
+        template_data = profile_to_dict(template_profile)
+        business_name = template_data.get("business_name", "")
+        carrier_name = template_data.get("carrier_name", "")
+        writing_carrier = template_data.get("writing_carrier", "") or carrier_name
+        agency_name = template_data.get("agency_name", "") or "Agency Not Set"
+        effective_date = template_data.get("effective_date", "") or "Not Set"
+        expiration_date = template_data.get("expiration_date", "") or "Not Set"
+        if not policies:
+            policies = template_data.get("policies") or []
+
+    if not business_name:
+        business_name = derive_business_name_from_claims(claims)
+
+    validation = {
+        "is_valid": len(claims) > 0,
+        "confidence_score": 90 if claims else 50,
+        "needs_manual_review": not bool(claims),
+        "needs_review": [] if claims else ["No claim rows were found."],
+        "policy_count": len(policies),
+        "claim_count": len(claims),
+        "calculated_total_incurred": total_incurred,
+    }
+
     profile = AccountProfile(
         organization_id=current_user["organization_id"],
-        business_name=template.get("business_name") or "Business Name Not Set",
-        carrier_name=template.get("carrier_name") or "Carrier Not Set",
-        writing_carrier=template.get("writing_carrier") or template.get("carrier_name") or "Carrier Not Set",
-        agency_name=template.get("agency_name") or "Agency Not Set",
+        business_name=business_name or "Business Name Not Set",
+        carrier_name=carrier_name or "Carrier Not Set",
+        writing_carrier=writing_carrier or carrier_name or "Carrier Not Set",
+        agency_name=agency_name or "Agency Not Set",
         account_number=policy_number,
         customer_number=policy_number,
         producer_number="",
         policy_number=policy_number,
-        effective_date=template.get("effective_date") or "Not Set",
-        expiration_date=template.get("expiration_date") or "Not Set",
+        effective_date=effective_date,
+        expiration_date=expiration_date,
         evaluation_date=datetime.now().date().isoformat(),
         policies=serialize_json(policies, []),
         validation=serialize_json(validation, {}),
         raw_text_preview="",
     )
+
     db.add(profile)
     db.commit()
     db.refresh(profile)
     return profile
 
 
+def repair_profile_policy_schedule(db: Session, profile: AccountProfile, claims: list[Claim]):
+    data = profile_to_dict(profile)
+    current_policies = data.get("policies") or []
+    claim_rollup = claim_policy_rollup(claims)
+
+    existing = {
+        normalize_policy_number(item.get("policy_number")): item
+        for item in current_policies
+        if normalize_policy_number(item.get("policy_number"))
+    }
+
+    for item in claim_rollup:
+        policy_key = normalize_policy_number(item.get("policy_number"))
+        if not is_valid_policy(policy_key):
+            continue
+
+        if policy_key in existing:
+            existing[policy_key].update(
+                {
+                    "claim_count": item.get("claim_count", 0),
+                    "total_incurred": item.get("total_incurred", 0),
+                    "line_of_business": existing[policy_key].get("line_of_business")
+                    or item.get("line_of_business")
+                    or "Unknown",
+                    "policy_type": existing[policy_key].get("policy_type")
+                    or item.get("policy_type")
+                    or item.get("line_of_business")
+                    or "Unknown",
+                }
+            )
+        else:
+            existing[policy_key] = item
+
+    repaired_policies = list(existing.values())
+    profile.policies = serialize_json(repaired_policies, [])
+
+    validation = data.get("validation") or {}
+    validation["policy_count"] = len(repaired_policies)
+    validation["claim_count"] = len(claims)
+    validation["calculated_total_incurred"] = sum(
+        money_float(claim.total_incurred or 0) for claim in claims
+    )
+    validation["is_valid"] = len(claims) > 0
+    validation["needs_manual_review"] = False if claims else True
+
+    profile.validation = serialize_json(validation, {})
+    db.commit()
+    db.refresh(profile)
+    return profile
+
+
+def find_profile_by_policy(db: Session, current_user: dict, normalized_policy_number: str):
+    profiles = (
+        db.query(AccountProfile)
+        .filter(AccountProfile.organization_id == current_user["organization_id"])
+        .order_by(AccountProfile.id.desc())
+        .all()
+    )
+    for profile in profiles:
+        if profile_contains_policy(profile, normalized_policy_number):
+            return profile
+    return None
+
+
 @router.get("/")
-def get_default_profile(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_default_profile(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     ensure_account_profile_columns(db)
-    profile = db.query(AccountProfile).filter(AccountProfile.organization_id == current_user["organization_id"]).order_by(AccountProfile.id.desc()).first()
-    if not profile:
-        return {"business_name": "", "carrier_name": "", "writing_carrier": "", "agency_name": "", "account_number": "", "customer_number": "", "producer_number": "", "policy_number": "", "effective_date": "", "expiration_date": "", "evaluation_date": "", "policies": [], "validation": {}, "profile_source": "blank"}
-    return profile_to_dict(profile)
+    profiles = (
+        db.query(AccountProfile)
+        .filter(AccountProfile.organization_id == current_user["organization_id"])
+        .order_by(AccountProfile.id.desc())
+        .all()
+    )
+    if profiles:
+        return profile_to_dict(profiles[0])
+
+    claims = all_claims_for_org(db, current_user)
+    policies = claim_policy_rollup(claims)
+    if policies:
+        policy_number = normalize_policy_number(policies[0].get("policy_number"))
+        profile = create_profile_from_claims(
+            db,
+            policy_number=policy_number,
+            claims=claims_for_policy(db, current_user, policy_number),
+            current_user=current_user,
+            template_profile=None,
+        )
+        return profile_to_dict(profile)
+
+    return {
+        "business_name": "",
+        "carrier_name": "",
+        "writing_carrier": "",
+        "agency_name": "",
+        "account_number": "",
+        "customer_number": "",
+        "producer_number": "",
+        "policy_number": "",
+        "effective_date": "",
+        "expiration_date": "",
+        "evaluation_date": "",
+        "policies": [],
+        "validation": {},
+        "profile_source": "blank",
+    }
 
 
 @router.get("/blank")
 def blank_profile():
-    return {"business_name": "", "carrier_name": "", "writing_carrier": "", "agency_name": "", "account_number": "", "customer_number": "", "producer_number": "", "policy_number": "", "effective_date": "", "expiration_date": "", "evaluation_date": "", "policies": [], "validation": {}, "profile_source": "blank"}
+    return {
+        "business_name": "",
+        "carrier_name": "",
+        "writing_carrier": "",
+        "agency_name": "",
+        "account_number": "",
+        "customer_number": "",
+        "producer_number": "",
+        "policy_number": "",
+        "effective_date": "",
+        "expiration_date": "",
+        "evaluation_date": "",
+        "policies": [],
+        "validation": {},
+        "profile_source": "blank",
+    }
 
 
 @router.get("/all")
-def get_all_profiles(db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_all_profiles(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     ensure_account_profile_columns(db)
-    profiles = db.query(AccountProfile).filter(AccountProfile.organization_id == current_user["organization_id"]).order_by(AccountProfile.id.desc()).all()
+
+    profiles = (
+        db.query(AccountProfile)
+        .filter(AccountProfile.organization_id == current_user["organization_id"])
+        .order_by(AccountProfile.id.desc())
+        .all()
+    )
+    claims = all_claims_for_org(db, current_user)
+    claim_rollup = claim_policy_rollup(claims)
+
+    if profiles:
+        for profile in profiles:
+            repair_profile_policy_schedule(db, profile, claims)
+        profiles = (
+            db.query(AccountProfile)
+            .filter(AccountProfile.organization_id == current_user["organization_id"])
+            .order_by(AccountProfile.id.desc())
+            .all()
+        )
+
+    existing_policy_numbers = set()
+    for profile in profiles:
+        data = profile_to_dict(profile)
+        for key in [data.get("policy_number"), data.get("account_number"), data.get("customer_number")]:
+            if is_valid_policy(key):
+                existing_policy_numbers.add(normalize_policy_number(key))
+        for item in data.get("policies") or []:
+            policy_key = normalize_policy_number(item.get("policy_number"))
+            if is_valid_policy(policy_key):
+                existing_policy_numbers.add(policy_key)
+
+    for policy_item in claim_rollup:
+        policy_number = normalize_policy_number(policy_item.get("policy_number"))
+        if not is_valid_policy(policy_number):
+            continue
+        if policy_number not in existing_policy_numbers:
+            template = best_template_profile(profiles, policy_number)
+            new_profile = create_profile_from_claims(
+                db,
+                policy_number=policy_number,
+                claims=claims_for_policy(db, current_user, policy_number),
+                current_user=current_user,
+                template_profile=template,
+            )
+            profiles.insert(0, new_profile)
+            existing_policy_numbers.add(policy_number)
+
     return [profile_to_dict(profile) for profile in profiles]
 
 
 @router.get("/policy/{policy_number}")
-def get_profile_by_policy(policy_number: str, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def get_profile_by_policy(
+    policy_number: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     ensure_account_profile_columns(db)
     normalized_policy_number = normalize_policy_number(policy_number)
     if not normalized_policy_number:
@@ -218,23 +558,41 @@ def get_profile_by_policy(policy_number: str, db: Session = Depends(get_db), cur
 
     profile = find_profile_by_policy(db, current_user, normalized_policy_number)
     if profile:
+        all_claims = all_claims_for_org(db, current_user)
+        profile = repair_profile_policy_schedule(db, profile, all_claims)
         profile_data = profile_to_dict(profile)
         if normalize_policy_number(profile_data.get("policy_number")) != normalized_policy_number:
             profile_data["selected_policy_number"] = normalized_policy_number
             profile_data["policy_number"] = normalized_policy_number
         return profile_data
 
-    claims = db.query(Claim).filter(Claim.organization_id == current_user["organization_id"], func.upper(func.trim(Claim.policy_number)) == normalized_policy_number).all()
+    claims = claims_for_policy(db, current_user, normalized_policy_number)
     if not claims:
         raise HTTPException(status_code=404, detail="Policy number not found")
 
-    template_profile = db.query(AccountProfile).filter(AccountProfile.organization_id == current_user["organization_id"]).order_by(AccountProfile.id.desc()).first()
-    repaired_profile = create_profile_from_claims(db, normalized_policy_number, claims, current_user, template_profile)
+    profiles = (
+        db.query(AccountProfile)
+        .filter(AccountProfile.organization_id == current_user["organization_id"])
+        .order_by(AccountProfile.id.desc())
+        .all()
+    )
+    template = best_template_profile(profiles, normalized_policy_number)
+    repaired_profile = create_profile_from_claims(
+        db,
+        policy_number=normalized_policy_number,
+        claims=claims,
+        current_user=current_user,
+        template_profile=template,
+    )
     return profile_to_dict(repaired_profile)
 
 
 @router.put("/")
-def upsert_account_profile(payload: AccountProfileUpdate, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def upsert_account_profile(
+    payload: AccountProfileUpdate,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     ensure_account_profile_columns(db)
     policy_number = normalize_policy_number(payload.policy_number)
     if not policy_number:
@@ -252,6 +610,7 @@ def upsert_account_profile(payload: AccountProfileUpdate, db: Session = Depends(
     profile.effective_date = clean_value(payload.effective_date) or "Not Set"
     profile.expiration_date = clean_value(payload.expiration_date) or "Not Set"
     profile.evaluation_date = clean_value(payload.evaluation_date) or datetime.now().date().isoformat()
+
     if hasattr(profile, "writing_carrier"):
         profile.writing_carrier = clean_value(payload.writing_carrier) or clean_value(payload.carrier_name) or "Carrier Not Set"
     if hasattr(profile, "account_number"):
@@ -266,20 +625,32 @@ def upsert_account_profile(payload: AccountProfileUpdate, db: Session = Depends(
         profile.validation = serialize_json(payload.validation, {})
     if hasattr(profile, "raw_text_preview"):
         profile.raw_text_preview = clean_value(payload.raw_text_preview)
+
     db.commit()
     db.refresh(profile)
     return profile_to_dict(profile)
 
 
 @router.delete("/")
-def delete_account_profile_by_query(policy_number: str, delete_claims: bool = True, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def delete_account_profile_by_query(
+    policy_number: str,
+    delete_claims: bool = True,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     return delete_profile(policy_number, delete_claims, db, current_user)
 
 
 @router.delete("/{policy_number}")
-def delete_profile(policy_number: str, delete_claims: bool = True, db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def delete_profile(
+    policy_number: str,
+    delete_claims: bool = True,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
     ensure_account_profile_columns(db)
     normalized_policy_number = normalize_policy_number(policy_number)
+
     profile = find_profile_by_policy(db, current_user, normalized_policy_number)
     related_policy_numbers = {normalized_policy_number}
     if profile:
@@ -288,13 +659,31 @@ def delete_profile(policy_number: str, delete_claims: bool = True, db: Session =
         related_policy_numbers.add(normalize_policy_number(data.get("account_number")))
         for item in data.get("policies") or []:
             related_policy_numbers.add(normalize_policy_number(item.get("policy_number")))
-    related_policy_numbers = {item for item in related_policy_numbers if item}
+    related_policy_numbers = {item for item in related_policy_numbers if item and is_valid_policy(item)}
+
+    profiles = [profile] if profile else []
     claims_deleted = 0
-    if delete_claims:
-        claims_deleted = db.query(Claim).filter(Claim.organization_id == current_user["organization_id"]).filter(func.upper(func.trim(Claim.policy_number)).in_(related_policy_numbers)).delete(synchronize_session=False)
+    if delete_claims and related_policy_numbers:
+        claims_deleted = (
+            db.query(Claim)
+            .filter(Claim.organization_id == current_user["organization_id"])
+            .filter(func.upper(func.trim(Claim.policy_number)).in_(related_policy_numbers))
+            .delete(synchronize_session=False)
+        )
+
     profiles_deleted = 0
-    if profile:
-        db.delete(profile)
-        profiles_deleted = 1
+    for item in profiles:
+        db.delete(item)
+        profiles_deleted += 1
+
     db.commit()
-    return {"deleted": profiles_deleted > 0 or claims_deleted > 0, "policy_number": normalized_policy_number, "profiles_deleted": profiles_deleted, "claims_deleted": claims_deleted, "related_policy_numbers": sorted(list(related_policy_numbers)), "message": "Profile and related claims deleted successfully." if (profiles_deleted > 0 or claims_deleted > 0) else "Profile not found."}
+    return {
+        "deleted": profiles_deleted > 0 or claims_deleted > 0,
+        "policy_number": normalized_policy_number,
+        "profiles_deleted": profiles_deleted,
+        "claims_deleted": claims_deleted,
+        "related_policy_numbers": sorted(list(related_policy_numbers)),
+        "message": "Profile and related claims deleted successfully."
+        if (profiles_deleted > 0 or claims_deleted > 0)
+        else "Profile not found.",
+    }
