@@ -154,6 +154,34 @@ def clean_named_insured(value: str) -> str:
 
     return clean_text(cleaned)
 
+def extract_compressed_named_insured(text: str) -> str:
+    """
+    Handles compressed carrier text like:
+    ReportRunDate:April 17, 2026NamedInsured: Good Living Developments LLCPolicyNumber: 10050749CA
+    """
+    if not text:
+        return ""
+
+    patterns = [
+        r"NamedInsured\s*:\s*(.*?)(?:PolicyNumber|Policy Number|PolicyNo|Policy No|ReportRunDate|Report Run Date|Page\s+\d+|$)",
+        r"Named Insured\s*:\s*(.*?)(?:Policy Number|PolicyNumber|PolicyNo|Policy No|Report Run Date|Page\s+\d+|$)",
+        r"Insured\s*:\s*(.*?)(?:Policy Number|PolicyNumber|PolicyNo|Policy No|Report Run Date|Page\s+\d+|$)",
+        r"Account Name\s*:\s*(.*?)(?:Policy Number|PolicyNumber|PolicyNo|Policy No|Report Run Date|Page\s+\d+|$)",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            value = match.group(1).strip()
+            value = re.sub(r"\s+", " ", value)
+            value = re.sub(r"Policy\s*Number.*$", "", value, flags=re.IGNORECASE).strip()
+            value = re.sub(r"PolicyNumber.*$", "", value, flags=re.IGNORECASE).strip()
+            value = re.sub(r"Report\s*Run\s*Date.*$", "", value, flags=re.IGNORECASE).strip()
+            value = re.sub(r"Page\s+\d+.*$", "", value, flags=re.IGNORECASE).strip()
+            return clean_named_insured(value)
+
+    return ""
+
 
 def carrier_from_policy_schedule(text: str) -> str:
     lines = split_lines(text)
@@ -236,6 +264,9 @@ def extract_profile(text: str) -> dict:
     )
 
     business_name = clean_named_insured(business_name_raw)
+   
+    if not business_name:
+        business_name = extract_compressed_named_insured(text)
 
     agency_name = find_first(
         [
