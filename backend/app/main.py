@@ -7,7 +7,8 @@ from app.database import Base, engine
 from app.routes import (
     auth,
     upload,
-    claims,
+    upload_v2,
+    claims,    
     summary,
     upload_history,
     reports,
@@ -92,6 +93,7 @@ app.add_middleware(
 
 app.include_router(auth.router)
 app.include_router(upload.router)
+app.include_router(upload_v2.router)
 app.include_router(claims.router)
 app.include_router(summary.router)
 app.include_router(upload_history.router)
