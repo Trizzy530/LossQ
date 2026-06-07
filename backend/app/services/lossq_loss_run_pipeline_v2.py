@@ -35,11 +35,11 @@ except Exception:  # pragma: no cover
 
 
 COVERAGE_KEYWORDS = {
-    "commercial auto": ["commercial auto", "business auto", "auto liability", "bap"],
+    "commercial auto": ["commercial auto", "business auto", "auto liability", "bap", "collision", "auto"],
     "general liability": ["general liability", "gl", "premises", "products completed"],
     "motor truck cargo": ["motor truck cargo", "cargo", "truck cargo"],
     "workers compensation": ["workers compensation", "workers comp", "wc", "work comp"],
-    "property": ["property", "commercial property"],
+    "property": ["property", "property damage", "commercial property"],
     "umbrella": ["umbrella", "excess"],
 }
 
@@ -91,11 +91,11 @@ def extract_profile(text: str, carrier_display_name: str) -> Dict[str, Any]:
 
     patterns = {
         "business_name": [
-            r"(?:insured|named insured|account name|customer)\s*[:\-]\s*(.+)",
+            r"(?:named\s*insured|namedinsured|insured|account name|customer)\s*[:\-]\s*(.+)",
             r"loss runs?\s+for\s+(.+)",
         ],
         "account_number": [r"(?:account number|account no|customer number|customer no)\s*[:\-]\s*([A-Z0-9\-]+)"],
-        "policy_number": [r"(?:policy number|policy no|account policy|policy)\s*[:\-]\s*([A-Z0-9\-]+)"],
+        "policy_number": [r"(?:policy number|policynumber|policy no|account policy|policy)\s*[:\-]\s*([A-Z0-9\-]+)"],
         "effective_date": [r"(?:effective date|policy effective|from)\s*[:\-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})"],
         "expiration_date": [r"(?:expiration date|expiry date|policy expiration|to)\s*[:\-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4})"],
         "agency_name": [r"(?:agency|producer|producing agency|broker)\s*[:\-]\s*(.+)"],
@@ -129,6 +129,7 @@ def clean_line(value: str) -> str:
     value = re.sub(r"\s{2,}", " ", value)
     value = re.split(r"\s{3,}|\n", value)[0].strip()
     return value
+
 
 def clean_profile_value(value: str) -> str:
     value = clean_line(value)
@@ -206,8 +207,9 @@ def extract_first_date(text: str, index: int = 0) -> str:
     return dates[index] if len(dates) > index else ""
 
 
-def extract_claims(text: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+def extract_claims(text: str, rows: List[Dict[str, Any]], default_policy_number: str = "") -> List[Dict[str, Any]]:
     claims: List[Dict[str, Any]] = []
+    default_policy_number = str(default_policy_number or "").strip().upper()
 
     if rows:
         for raw in rows:
@@ -215,6 +217,8 @@ def extract_claims(text: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
             if not looks_like_claim_row(row):
                 continue
             claim = normalize_claim(row)
+            if not claim.get("policy_number") and default_policy_number:
+                claim["policy_number"] = default_policy_number
             claims.append(claim)
 
     if claims:
@@ -228,14 +232,15 @@ def extract_claims(text: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
         cleaned_line = clean_line(line)
 
-        # Skip document header/profile lines so they do not become fake claims.
-                        # Skip document header/profile lines so they do not become fake claims.
         has_claim_signal = re.search(
             r"(Claim\s*Number|ClaimNumber|Claim\s*#|CLM\s*#|AU-|GL-|WC-|AUTO|Collision|Property\s+damage)",
             cleaned_line,
             flags=re.IGNORECASE,
         )
 
+        # Skip document header/profile lines so they do not become fake claims.
+        # If a compact line starts with PolicyTerm but also contains Claim Number,
+        # keep parsing it because it may hold the first claim.
         if re.search(
             r"^\s*(Policy\s*Number|PolicyNumber|ReportRunDate|Report\s*Run\s*Date|NamedInsured|Named\s+Insured|Page\s+\d+|PolicyTerm)\b",
             cleaned_line,
@@ -248,6 +253,12 @@ def extract_claims(text: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
             continue
 
         if not re.search(r"\$?[0-9][0-9,]*(?:\.\d{2})?", cleaned_line):
+            continue
+
+        policy_numbers = [p for p in extract_policy_numbers(cleaned_line) if "ACCT" not in p]
+        claim_number = extract_claim_number(cleaned_line)
+
+        if not claim_number:
             continue
 
         amounts = extract_amounts(cleaned_line)
@@ -267,7 +278,7 @@ def extract_claims(text: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
 
         claims.append({
             "claim_number": claim_number,
-            "policy_number": policy_numbers[0] if policy_numbers else "",
+            "policy_number": policy_numbers[0] if policy_numbers else default_policy_number,
             "line_of_business": coverage,
             "loss_date": extract_first_date(cleaned_line, 0),
             "reported_date": extract_first_date(cleaned_line, 1),
@@ -279,6 +290,7 @@ def extract_claims(text: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
         })
 
     return claims
+
 
 def looks_like_claim_row(row: Dict[str, Any]) -> bool:
     keys = set(row.keys())
@@ -311,19 +323,9 @@ def normalize_claim(row: Dict[str, Any]) -> Dict[str, Any]:
 def extract_claim_number(line: str) -> str:
     cleaned = clean_line(line)
 
-    # Do not treat policy/header lines as claim rows.
-    header_only_patterns = [
-        r"^\s*Policy\s*Number\s*:",
-        r"^\s*PolicyNumber\s*:",
-        r"^\s*ReportRunDate\s*:",
-        r"^\s*Report\s*Run\s*Date\s*:",
-        r"^\s*NamedInsured\s*:",
-        r"^\s*Named\s+Insured\s*:",
-        r"^\s*Page\s+\d+",
-        r"^\s*PolicyTerm\b",
-    ]
-
-    if any(re.search(pattern, cleaned, flags=re.IGNORECASE) for pattern in header_only_patterns):
+    # Do not treat policy/header lines as claim rows unless they contain
+    # an explicit claim number later in the same compact line.
+    if re.search(r"^\s*(Policy\s*Number|PolicyNumber|ReportRunDate|Report\s*Run\s*Date|NamedInsured|Named\s+Insured|Page\s+\d+)\b", cleaned, flags=re.IGNORECASE):
         return ""
 
     # Prefer explicit claim labels first.
@@ -352,6 +354,7 @@ def extract_claim_number(line: str) -> str:
                 return value
 
     return ""
+
 
 def extract_amounts(line: str) -> List[float]:
     values: List[float] = []
@@ -402,7 +405,7 @@ def parse_loss_run_upload(filename: str, content: bytes) -> Dict[str, Any]:
     carrier_template = detect_carrier(text)
     profile = extract_profile(text, carrier_template.display_name)
     policies = extract_policy_schedule(text, rows)
-    claims = extract_claims(text, rows)
+    claims = extract_claims(text, rows, profile.get("policy_number", ""))
     policies = rollup_policy_schedule(policies, claims)
     document_totals = extract_document_totals(text)
     validation = validate_loss_run_payload(profile, policies, claims, document_totals)
