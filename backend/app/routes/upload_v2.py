@@ -454,6 +454,7 @@ async def save_uploaded_files_v2(
     uploaded_files = []
     all_parsed_claims: List[Dict[str, Any]] = []
     all_repaired_claims: List[Dict[str, Any]] = []
+    saved_claim_rows: List[Dict[str, Any]] = []
     latest_profile_data: Dict[str, Any] = {}
     latest_saved_profile = None
 
@@ -522,6 +523,16 @@ async def save_uploaded_files_v2(
 
         rollup_from_claims = _build_policy_rollup_from_claims(repaired_claims)
 
+        detected_policy_numbers = {file_policy_number}
+        for claim in repaired_claims:
+            claim_policy_number = _clean(claim.get("policy_number")).upper()
+            if _valid_policy_number(claim_policy_number):
+                detected_policy_numbers.add(claim_policy_number)
+        for policy_item in rollup_from_claims:
+            policy_item_number = _clean(policy_item.get("policy_number")).upper()
+            if _valid_policy_number(policy_item_number):
+                detected_policy_numbers.add(policy_item_number)
+
         parsed_profile["policy_number"] = file_policy_number
         parsed_profile["account_number"] = (
             _first_real_value(parsed_profile.get("account_number"))
@@ -547,18 +558,25 @@ async def save_uploaded_files_v2(
             current_user=current_user,
         )
 
-        if file_policy_number and file_policy_number not in policies_replaced_this_upload:
+        policies_to_replace = [
+            policy_number_item
+            for policy_number_item in detected_policy_numbers
+            if _valid_policy_number(policy_number_item)
+            and policy_number_item not in policies_replaced_this_upload
+        ]
+
+        if policies_to_replace:
             existing_claims_deleted = (
                 db.query(Claim)
                 .filter(
                     Claim.organization_id == current_user["organization_id"],
-                    func.upper(func.trim(Claim.policy_number)) == file_policy_number,
+                    func.upper(func.trim(Claim.policy_number)).in_(policies_to_replace),
                 )
                 .delete(synchronize_session=False)
             )
 
             total_existing_claims_deleted += existing_claims_deleted
-            policies_replaced_this_upload.add(file_policy_number)
+            policies_replaced_this_upload.update(policies_to_replace)
             db.flush()
 
         file_saved = 0
@@ -622,7 +640,29 @@ async def save_uploaded_files_v2(
                 if key in claim_columns
             }
 
-            db.add(Claim(**safe_claim_data))
+            saved_claim = Claim(**safe_claim_data)
+            db.add(saved_claim)
+            db.flush()
+
+            saved_claim_rows.append(
+                {
+                    "id": getattr(saved_claim, "id", None),
+                    "claim_number": getattr(saved_claim, "claim_number", claim_number),
+                    "policy_number": getattr(saved_claim, "policy_number", policy_value),
+                    "line_of_business": getattr(saved_claim, "line_of_business", None),
+                    "claim_type": getattr(saved_claim, "claim_type", None),
+                    "date_of_loss": getattr(saved_claim, "date_of_loss", None),
+                    "date_reported": getattr(saved_claim, "date_reported", None),
+                    "status": getattr(saved_claim, "status", None),
+                    "description": getattr(saved_claim, "description", None),
+                    "paid_amount": getattr(saved_claim, "paid_amount", 0),
+                    "reserve_amount": getattr(saved_claim, "reserve_amount", 0),
+                    "total_incurred": getattr(saved_claim, "total_incurred", 0),
+                    "flag": getattr(saved_claim, "flag", None),
+                    "litigation": getattr(saved_claim, "litigation", False),
+                }
+            )
+
             file_saved += 1
             total_saved += 1
 
@@ -644,6 +684,7 @@ async def save_uploaded_files_v2(
                 "claims_saved": file_saved,
                 "duplicates_skipped": file_duplicates,
                 "existing_claims_deleted": total_existing_claims_deleted,
+                "policies_replaced": sorted(list(policies_replaced_this_upload)),
                 "policy_number": file_policy_number,
             }
         )
@@ -711,6 +752,7 @@ async def save_uploaded_files_v2(
         "v2_claim_money_date_status_repair": True,
         "v2_safe_claim_field_filter": True,
         "v2_claim_model_column_mapping": True,
+        "v2_saved_claim_rows_with_ids": True,
         "saved_claims": total_saved,
         "existing_claims_deleted": total_existing_claims_deleted,
         "duplicates_skipped": total_duplicates_skipped,
@@ -725,7 +767,8 @@ async def save_uploaded_files_v2(
         "policies": latest_profile_data.get("policies") or [],
         "validation": latest_profile_data.get("validation") or {},
         "uploaded_files": uploaded_files,
-        "claims": all_repaired_claims,
+        "claims": saved_claim_rows or all_repaired_claims,
+        "saved_claim_rows": saved_claim_rows,
         "parsed_claims": all_repaired_claims,
         "raw_parsed_claims": all_parsed_claims,
         "claim_count": len(all_repaired_claims),
