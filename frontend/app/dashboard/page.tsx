@@ -1039,7 +1039,7 @@ if (submissionBuilderRes.ok) {
     const uploadedFileNames = selectedFiles.map((file) => file.name).join(", ");
 
     const combinedClaims = uploadResults.flatMap((item) =>
-      item?.claims || item?.parsed_claims || item?.saved_claim_rows || []
+      item?.saved_claim_rows || item?.claims || item?.parsed_claims || item?.saved_claim_rows || []
     );
 
     const combinedPolicies = uploadResults.flatMap((item) =>
@@ -1062,6 +1062,7 @@ if (submissionBuilderRes.ok) {
           profile: primaryData?.profile || {},
           policies: combinedPolicies,
           claims: combinedClaims,
+          saved_claim_rows: uploadResults.flatMap((item) => item?.saved_claim_rows || []),
           validation: primaryData?.validation || primaryData?.profile?.validation || {},
           saved_claims: totalSavedClaims,
           raw_response: uploadResults.length === 1 ? primaryData : uploadResults,
@@ -1072,6 +1073,12 @@ if (submissionBuilderRes.ok) {
     setMessage(
       `Upload complete using V2 parser. Saved ${totalSavedClaims} claim(s). New file(s): ${uploadedFileNames}`
     );
+
+    window.setTimeout(() => {
+      setMessage((current) =>
+        current.startsWith("Upload complete using V2 parser") ? "" : current
+      );
+    }, 5000);
 
     if (primaryData?.profile) {
       const uploadedProfile = {
@@ -1468,6 +1475,141 @@ const openVisibleClaims = visibleClaims.filter((claim: any) => isOpenClaimStatus
 const closedVisibleClaims = visibleClaims.filter((claim: any) => !isOpenClaimStatus(claim));
 const groupedVisibleClaims = [...openVisibleClaims, ...closedVisibleClaims];
 
+const localClaimTotal = visibleClaims.reduce((sum: number, c: any) => sum + getClaimIncurred(c), 0);
+const localOpenClaimCount = openVisibleClaims.length;
+const localLitigationCount = visibleClaims.filter((c: any) => {
+  const text = `${c?.litigation || ""} ${c?.litigation_status || ""} ${c?.description || ""} ${c?.flag || ""}`.toLowerCase();
+  return text.includes("litigation") || text.includes("attorney") || text.includes("suit");
+}).length;
+const localLargeLossCount = visibleClaims.filter((c: any) => getClaimIncurred(c) >= 50000).length;
+const localRenewalPenalty = Math.min(70, localOpenClaimCount * 10 + localLitigationCount * 15 + localLargeLossCount * 10 + Math.max(0, visibleClaims.length - 3) * 4);
+const localRenewalScore = visibleClaims.length > 0 ? Math.max(30, 92 - localRenewalPenalty) : null;
+const localRenewalRiskLevel =
+  localRenewalScore == null
+    ? "Insufficient Data"
+    : localRenewalScore >= 80
+    ? "Low"
+    : localRenewalScore >= 65
+    ? "Moderate"
+    : localRenewalScore >= 50
+    ? "High"
+    : "Critical";
+const localCarrierAppetiteScore = localRenewalScore == null ? null : Math.max(20, Math.min(95, localRenewalScore - localLargeLossCount * 4));
+const localSubmissionReadinessScore = visibleClaims.length > 0 ? Math.min(95, 70 + Math.min(20, visibleClaims.length * 3)) : null;
+
+const effectiveSummary =
+  visibleClaims.length > 0
+    ? {
+        ...(summary || {}),
+        renewal_score: summary?.renewal_score ?? localRenewalScore,
+        renewal_risk_level: summary?.renewal_risk_level || localRenewalRiskLevel,
+        renewal_drivers:
+          summary?.renewal_drivers ||
+          [
+            `${visibleClaims.length} claim(s) analyzed for selected account.`,
+            `${localOpenClaimCount} open claim(s).`,
+            `$${Number(localClaimTotal || 0).toLocaleString()} total incurred.`,
+          ],
+        carrier_concerns:
+          summary?.carrier_concerns ||
+          (localOpenClaimCount > 0 || localLargeLossCount > 0 || localLitigationCount > 0
+            ? [
+                localOpenClaimCount > 0 ? "Open claim activity requires underwriting review." : "Claim activity should be reviewed.",
+                localLargeLossCount > 0 ? "Large loss severity may affect renewal terms." : "Loss frequency and severity appear manageable.",
+                localLitigationCount > 0 ? "Litigation/attorney involvement should be documented." : "No litigation indicator detected from visible claims.",
+              ]
+            : ["Claims loaded. No major severity indicator detected from visible claims."]),
+        broker_recommendation:
+          summary?.broker_recommendation ||
+          "Use the loaded claims to prepare a carrier narrative, explain open claims, and document corrective actions before submission.",
+        renewal_summary:
+          summary?.renewal_summary ||
+          `LossQ analyzed ${visibleClaims.length} claim(s) with $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Renewal risk is ${localRenewalRiskLevel}.`,
+      }
+    : summary;
+
+const effectiveDecision =
+  visibleClaims.length > 0
+    ? {
+        ...(decision || {}),
+        renewal_probability: decision?.renewal_probability ?? Math.max(35, Math.min(95, localRenewalScore || 50)),
+        expected_premium_impact:
+          decision?.expected_premium_impact ||
+          (localRenewalRiskLevel === "Low"
+            ? "Flat to modest increase"
+            : localRenewalRiskLevel === "Moderate"
+            ? "Moderate increase possible"
+            : "Increase or restriction likely"),
+        carrier_appetite: decision?.carrier_appetite || (localCarrierAppetiteScore && localCarrierAppetiteScore >= 75 ? "Standard / Preferred" : "Selective"),
+        marketability_score: decision?.marketability_score ?? localCarrierAppetiteScore,
+        submission_readiness: decision?.submission_readiness || "Claims are loaded. Complete carrier narrative and open-claim explanations before submission.",
+        underwriting_concerns:
+          decision?.underwriting_concerns ||
+          [
+            `${visibleClaims.length} claim(s) in the selected account.`,
+            `${localOpenClaimCount} open claim(s).`,
+            `${localLargeLossCount} large loss claim(s) over $50,000.`,
+          ],
+        best_market_types: decision?.best_market_types || ["Standard market", "Middle-market commercial carrier", "E&S backup if loss activity worsens"],
+        underwriter_decision_summary:
+          decision?.underwriter_decision_summary ||
+          `The account has ${visibleClaims.length} loaded claim(s) and $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Review open claims and severity before final carrier decision.`,
+      }
+    : decision;
+
+const effectiveCarrierAppetite =
+  visibleClaims.length > 0
+    ? {
+        ...(carrierAppetite || {}),
+        carrier_appetite_score: carrierAppetite?.carrier_appetite_score ?? localCarrierAppetiteScore,
+        carrier_appetite_level:
+          carrierAppetite?.carrier_appetite_level ||
+          (localCarrierAppetiteScore == null
+            ? "Not Rated"
+            : localCarrierAppetiteScore >= 80
+            ? "Preferred"
+            : localCarrierAppetiteScore >= 65
+            ? "Standard"
+            : "Selective"),
+        best_fit_carriers:
+          carrierAppetite?.best_fit_carriers ||
+          [
+            { carrier_type: "Standard Commercial Carrier", match_score: localCarrierAppetiteScore || 60 },
+            { carrier_type: "Regional Middle Market", match_score: Math.max(45, (localCarrierAppetiteScore || 60) - 8) },
+          ],
+        carrier_match_reasons:
+          carrierAppetite?.carrier_match_reasons ||
+          ["Claims data is loaded for underwriting review.", "Market appetite depends on open claim status, severity, and loss narrative."],
+        market_strategy:
+          carrierAppetite?.market_strategy ||
+          "Market the account with a clear loss narrative, corrective actions, and open-claim status notes.",
+        placement_summary:
+          carrierAppetite?.placement_summary ||
+          `Carrier appetite is ${localRenewalRiskLevel === "Low" ? "favorable" : "selective"} based on ${visibleClaims.length} loaded claim(s).`,
+      }
+    : carrierAppetite;
+
+const effectiveSubmissionReadiness =
+  visibleClaims.length > 0
+    ? {
+        ...(submissionReadiness || {}),
+        submission_readiness_score: submissionReadiness?.submission_readiness_score ?? localSubmissionReadinessScore,
+        submission_readiness_level:
+          submissionReadiness?.submission_readiness_level ||
+          (localSubmissionReadinessScore && localSubmissionReadinessScore >= 85 ? "Strong" : "Needs Review"),
+        carrier_confidence: submissionReadiness?.carrier_confidence || (localOpenClaimCount > 0 ? "Moderate" : "Good"),
+        submission_quality: submissionReadiness?.submission_quality || "Claims loaded; narrative review required.",
+        missing_items:
+          submissionReadiness?.missing_items ||
+          (localOpenClaimCount > 0 ? ["Open claim status updates", "Corrective action summary"] : ["Carrier-ready loss narrative"]),
+        required_documents: submissionReadiness?.required_documents || ["Loss runs", "Claim narrative", "Operations overview"],
+        recommended_actions: submissionReadiness?.recommended_actions || ["Confirm claim amounts", "Explain open claims", "Add safety/controls narrative"],
+        readiness_summary:
+          submissionReadiness?.readiness_summary ||
+          `Submission has ${visibleClaims.length} loaded claim(s). Add narrative context before carrier release.`,
+      }
+    : submissionReadiness;
+
 const scheduleClaimStats = visibleClaims.reduce((acc: AnyObject, claim: any) => {
   const claimPolicy = getClaimPolicyNumber(claim);
   if (!claimPolicy) return acc;
@@ -1826,14 +1968,14 @@ const trendNoteDisplay =
                 <MetricCard title="Total Claims" value={totalClaimsDisplay} />
                 <MetricCard title="Open Claims" value={openClaimsDisplay} />
                 <MetricCard title="Total Incurred" value={totalIncurredDisplay} />
-                <MetricCard title="Renewal Score" value={summary?.renewal_score ?? "-"} />
+                <MetricCard title="Renewal Score" value={effectiveSummary?.renewal_score ?? "-"} />
               </section>
 
               <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Risk Level" value={summary?.renewal_risk_level || "Not Rated"} />
-                <MetricCard title="Renewal Probability" value={decision?.renewal_probability != null ? `${decision.renewal_probability}%` : "-"} />
-                <MetricCard title="Carrier Appetite" value={carrierAppetite?.carrier_appetite_score != null ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
-                <MetricCard title="Submission Readiness" value={submissionReadiness?.submission_readiness_score != null ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
+                <MetricCard title="Risk Level" value={effectiveSummary?.renewal_risk_level || "Not Rated"} />
+                <MetricCard title="Renewal Probability" value={effectiveDecision?.renewal_probability != null ? `${effectiveDecision.renewal_probability}%` : "-"} />
+                <MetricCard title="Carrier Appetite" value={effectiveCarrierAppetite?.carrier_appetite_score != null ? `${effectiveCarrierAppetite.carrier_appetite_score}/100` : "-"} />
+                <MetricCard title="Submission Readiness" value={effectiveSubmissionReadiness?.submission_readiness_score != null ? `${effectiveSubmissionReadiness.submission_readiness_score}/100` : "-"} />
               </section>
 
               <section className="glass-panel p-6 md:p-8">
@@ -2054,24 +2196,24 @@ const trendNoteDisplay =
 
                 <div className="rounded-3xl border border-white/10 bg-slate-950/70 px-8 py-6 text-center min-w-[180px]">
                   <div className="text-5xl font-black">
-                    {summary?.renewal_score ?? "-"}
+                    {effectiveSummary?.renewal_score ?? "-"}
                   </div>
                   <div className="text-slate-400 text-sm mt-1">out of 100</div>
 
                   <div className="mt-4 inline-flex rounded-full border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-bold text-blue-200">
-                    {summary?.renewal_risk_level || "Not Rated"}
+                    {effectiveSummary?.renewal_risk_level || "Not Rated"}
                   </div>
                 </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-                <ListCard title="Renewal Drivers" items={summary?.renewal_drivers || ["No renewal drivers available."]} color="blue" />
-                <ListCard title="Carrier Concerns" items={summary?.carrier_concerns || ["No carrier concerns available."]} color="red" />
+                <ListCard title="Renewal Drivers" items={effectiveSummary?.renewal_drivers || ["No renewal drivers available."]} color="blue" />
+                <ListCard title="Carrier Concerns" items={effectiveSummary?.carrier_concerns || ["No carrier concerns available."]} color="red" />
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-                <TextCard title="Broker Recommendation" text={summary?.broker_recommendation || "Upload claims to generate a broker recommendation."} />
-                <TextCard title="Renewal Summary" text={summary?.renewal_summary || "No renewal summary available yet."} />
+                <TextCard title="Broker Recommendation" text={effectiveSummary?.broker_recommendation || "Upload claims to generate a broker recommendation."} />
+                <TextCard title="Renewal Summary" text={effectiveSummary?.renewal_summary || "No renewal summary available yet."} />
               </div>
             </section>
           )}
@@ -2087,21 +2229,21 @@ const trendNoteDisplay =
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Renewal Probability" value={decision?.renewal_probability != null ? `${decision.renewal_probability}%` : "-"} />
-                <MetricCard title="Premium Impact" value={decision?.expected_premium_impact || "-"} />
-                <MetricCard title="Carrier Appetite" value={decision?.carrier_appetite || "-"} />
-                <MetricCard title="Marketability Score" value={decision?.marketability_score != null ? `${decision.marketability_score}/100` : "-"} />
+                <MetricCard title="Renewal Probability" value={effectiveDecision?.renewal_probability != null ? `${effectiveDecision.renewal_probability}%` : "-"} />
+                <MetricCard title="Premium Impact" value={effectiveDecision?.expected_premium_impact || "-"} />
+                <MetricCard title="Carrier Appetite" value={effectiveDecision?.carrier_appetite || "-"} />
+                <MetricCard title="Marketability Score" value={effectiveDecision?.marketability_score != null ? `${effectiveDecision.marketability_score}/100` : "-"} />
               </div>
 
-              <TextCard title="Submission Readiness" text={decision?.submission_readiness || "No submission readiness available yet."} />
+              <TextCard title="Submission Readiness" text={effectiveDecision?.submission_readiness || "No submission readiness available yet."} />
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-                <ListCard title="Underwriting Concerns" items={decision?.underwriting_concerns || ["No underwriting concerns available."]} color="red" />
-                <ListCard title="Best Market Types" items={decision?.best_market_types || ["No market recommendation available."]} color="purple" />
+                <ListCard title="Underwriting Concerns" items={effectiveDecision?.underwriting_concerns || ["No underwriting concerns available."]} color="red" />
+                <ListCard title="Best Market Types" items={effectiveDecision?.best_market_types || ["No market recommendation available."]} color="purple" />
               </div>
 
               <div className="mt-6">
-                <TextCard title="Underwriter Decision Summary" text={decision?.underwriter_decision_summary || "No decision summary available yet."} />
+                <TextCard title="Underwriter Decision Summary" text={effectiveDecision?.underwriter_decision_summary || "No decision summary available yet."} />
               </div>
             </section>
           )}
@@ -2117,17 +2259,17 @@ const trendNoteDisplay =
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-                <MetricCard title="Appetite Score" value={carrierAppetite?.carrier_appetite_score != null ? `${carrierAppetite.carrier_appetite_score}/100` : "-"} />
-                <MetricCard title="Appetite Level" value={carrierAppetite?.carrier_appetite_level || "-"} />
-                <MetricCard title="Best Market" value={carrierAppetite?.best_fit_carriers?.[0]?.carrier_type || "-"} />
+                <MetricCard title="Appetite Score" value={effectiveCarrierAppetite?.carrier_appetite_score != null ? `${effectiveCarrierAppetite.carrier_appetite_score}/100` : "-"} />
+                <MetricCard title="Appetite Level" value={effectiveCarrierAppetite?.carrier_appetite_level || "-"} />
+                <MetricCard title="Best Market" value={effectiveCarrierAppetite?.best_fit_carriers?.[0]?.carrier_type || "-"} />
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <ListCard
                   title="Best Fit Markets"
                   items={
-                    carrierAppetite?.best_fit_carriers?.length
-                      ? carrierAppetite.best_fit_carriers.map(
+                    effectiveCarrierAppetite?.best_fit_carriers?.length
+                      ? effectiveCarrierAppetite.best_fit_carriers.map(
                           (item: any) =>
                             `${item.carrier_type} — ${item.match_score}/100 — ${item.fit}`
                         )
@@ -2138,7 +2280,7 @@ const trendNoteDisplay =
 
                 <ListCard
                   title="Appetite Reasons"
-                  items={carrierAppetite?.carrier_match_reasons || ["No carrier appetite reasons available."]}
+                  items={effectiveCarrierAppetite?.carrier_match_reasons || ["No carrier appetite reasons available."]}
                   color="purple"
                 />
               </div>
@@ -2146,12 +2288,12 @@ const trendNoteDisplay =
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
                 <TextCard
                   title="Market Strategy"
-                  text={carrierAppetite?.market_strategy || "No market strategy available yet."}
+                  text={effectiveCarrierAppetite?.market_strategy || "No market strategy available yet."}
                 />
 
                 <TextCard
                   title="Placement Summary"
-                  text={carrierAppetite?.placement_summary || "No placement summary available yet."}
+                  text={effectiveCarrierAppetite?.placement_summary || "No placement summary available yet."}
                 />
               </div>
             </section>
@@ -2168,22 +2310,22 @@ const trendNoteDisplay =
               </h2>
 
               <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-                <MetricCard title="Readiness Score" value={submissionReadiness?.submission_readiness_score != null ? `${submissionReadiness.submission_readiness_score}/100` : "-"} />
-                <MetricCard title="Readiness Level" value={submissionReadiness?.submission_readiness_level || "-"} />
-                <MetricCard title="Carrier Confidence" value={submissionReadiness?.carrier_confidence || "-"} />
-                <MetricCard title="Submission Quality" value={submissionReadiness?.submission_quality || "-"} />
+                <MetricCard title="Readiness Score" value={effectiveSubmissionReadiness?.submission_readiness_score != null ? `${effectiveSubmissionReadiness.submission_readiness_score}/100` : "-"} />
+                <MetricCard title="Readiness Level" value={effectiveSubmissionReadiness?.submission_readiness_level || "-"} />
+                <MetricCard title="Carrier Confidence" value={effectiveSubmissionReadiness?.carrier_confidence || "-"} />
+                <MetricCard title="Submission Quality" value={effectiveSubmissionReadiness?.submission_quality || "-"} />
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
                 <ListCard
                   title="Missing Items"
-                  items={submissionReadiness?.missing_items || ["No missing items available."]}
+                  items={effectiveSubmissionReadiness?.missing_items || ["No missing items available."]}
                   color="red"
                 />
 
                 <ListCard
                   title="Required Documents"
-                  items={submissionReadiness?.required_documents || ["No required documents available."]}
+                  items={effectiveSubmissionReadiness?.required_documents || ["No required documents available."]}
                   color="blue"
                 />
               </div>
@@ -2191,7 +2333,7 @@ const trendNoteDisplay =
               <div className="mt-6">
                 <ListCard
                   title="Recommended Actions"
-                  items={submissionReadiness?.recommended_actions || ["No recommended actions available."]}
+                  items={effectiveSubmissionReadiness?.recommended_actions || ["No recommended actions available."]}
                   color="purple"
                 />
               </div>
@@ -2199,7 +2341,7 @@ const trendNoteDisplay =
               <div className="mt-6">
                 <TextCard
                   title="Readiness Summary"
-                  text={submissionReadiness?.readiness_summary || "No readiness summary available yet."}
+                  text={effectiveSubmissionReadiness?.readiness_summary || "No readiness summary available yet."}
                 />
               </div>
             </section>
@@ -2414,8 +2556,8 @@ const trendNoteDisplay =
     </div>
 
     <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-      <MetricCard title="Renewal Score" value={summary?.renewal_score ?? "-"} />
-      <MetricCard title="Risk Level" value={summary?.renewal_risk_level || "Not Rated"} />
+      <MetricCard title="Renewal Score" value={effectiveSummary?.renewal_score ?? "-"} />
+      <MetricCard title="Risk Level" value={effectiveSummary?.renewal_risk_level || "Not Rated"} />
       <MetricCard
         title="Premium Forecast"
         value={
@@ -2427,8 +2569,8 @@ const trendNoteDisplay =
       <MetricCard
         title="Submission Readiness"
         value={
-          submissionReadiness?.submission_readiness_score != null
-            ? `${submissionReadiness.submission_readiness_score}/100`
+          effectiveSubmissionReadiness?.submission_readiness_score != null
+            ? `${effectiveSubmissionReadiness.submission_readiness_score}/100`
             : "-"
         }
       />
@@ -2474,8 +2616,8 @@ const trendNoteDisplay =
       <TextCard
         title="Carrier Appetite"
         text={
-          carrierAppetite?.placement_summary ||
-          carrierAppetite?.market_strategy ||
+          effectiveCarrierAppetite?.placement_summary ||
+          effectiveCarrierAppetite?.market_strategy ||
           "No carrier appetite summary available yet."
         }
       />
