@@ -350,6 +350,8 @@ async def save_uploaded_files_v2(
 
     total_saved = 0
     total_duplicates_skipped = 0
+    total_existing_claims_deleted = 0
+    policies_replaced_this_upload = set()
     uploaded_files = []
     all_parsed_claims: List[Dict[str, Any]] = []
     latest_profile_data: Dict[str, Any] = {}
@@ -426,6 +428,22 @@ async def save_uploaded_files_v2(
             profile_data=parsed_profile,
             current_user=current_user,
         )
+
+# Replace old claims for this policy so the dashboard shows the clean V2 result,
+# not old failed-parser rows from previous uploads.
+if file_policy_number and file_policy_number not in policies_replaced_this_upload:
+    existing_claims_deleted = (
+        db.query(Claim)
+        .filter(
+            Claim.organization_id == current_user["organization_id"],
+            func.upper(Claim.policy_number) == file_policy_number,
+        )
+        .delete(synchronize_session=False)
+    )
+
+    total_existing_claims_deleted += existing_claims_deleted
+    policies_replaced_this_upload.add(file_policy_number)
+    db.flush()
 
         file_saved = 0
         file_duplicates = 0
@@ -516,6 +534,7 @@ async def save_uploaded_files_v2(
             "saved_profile_carrier_name": getattr(latest_saved_profile, "carrier_name", None),
             "saved_claims": total_saved,
             "duplicates_skipped": total_duplicates_skipped,
+            "existing_claims_deleted": total_existing_claims_deleted,
             "profile_auto_populated": bool(latest_saved_profile),
             "policy_count": len(latest_profile_data.get("policies") or []),
             "validation": latest_profile_data.get("validation") or {},
