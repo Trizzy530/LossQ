@@ -32,8 +32,30 @@ def _clean(value: Any) -> str:
     return str(value or "").strip()
 
 
+def _clean_business_name(value: Any) -> str:
+    """
+    Business names must not be passed through older profile cleanup that may
+    treat placeholders too aggressively. Keep this universal and only remove
+    obvious trailing compressed labels.
+    """
+    text = str(value or "").strip()
+    if not text:
+        return ""
+
+    import re
+
+    text = re.sub(r"\s+", " ", text).strip(" :-|")
+    text = re.split(
+        r"(?:Policy\s*Number|PolicyNumber|Policy\s*Term|PolicyTerm|Report\s*Run\s*Date|ReportRunDate|Page\s+\d+|Claim\s*Number|ClaimNumber)",
+        text,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    return re.sub(r"\s+", " ", text).strip(" :-|")[:120]
+
+
 def _profile_name(profile_data: Dict[str, Any]) -> str:
-    return clean_profile_value(
+    return _clean_business_name(
         profile_data.get("business_name")
         or profile_data.get("insured")
         or profile_data.get("named_insured")
@@ -72,8 +94,8 @@ def force_save_account_profile_v2(
     Hard-save the V2 parsed profile into AccountProfile.
 
     This directly creates or updates the account_profiles row for the user's
-    organization and policy number. It overwrites placeholder names like
-    "Business Name Not Set" when the parser has a real business_name.
+    organization and policy number. It always overwrites placeholder names when
+    V2 parsed a real business_name.
     """
     policy_number = clean_profile_value(
         profile_data.get("policy_number")
@@ -101,10 +123,9 @@ def force_save_account_profile_v2(
         db.add(existing)
         db.flush()
 
-    if business_name and (
-        _is_placeholder_name(getattr(existing, "business_name", ""))
-        or getattr(existing, "business_name", "") != business_name
-    ):
+    # Critical fix: if V2 parsed a real name, force it onto the saved row.
+    # This intentionally overwrites "Business Name Not Set" and any stale name.
+    if business_name:
         existing.business_name = business_name
     elif _is_placeholder_name(getattr(existing, "business_name", "")):
         existing.business_name = "Business Name Not Set"
@@ -362,6 +383,7 @@ async def save_uploaded_files_v2(
 
         all_parsed_claims.extend(parsed_claims)
 
+    # Save again after claim inserts so any profile row created earlier is definitely current.
     if latest_profile_data:
         latest_saved_profile = force_save_account_profile_v2(
             db,
@@ -410,6 +432,7 @@ async def save_uploaded_files_v2(
         "v2_database_save_enabled": True,
         "v2_hard_profile_save_enabled": True,
         "v2_direct_account_profile_save": True,
+        "v2_business_name_force_overwrite": True,
         "saved_claims": total_saved,
         "duplicates_skipped": total_duplicates_skipped,
         "policy_number": latest_profile_data.get("policy_number"),
