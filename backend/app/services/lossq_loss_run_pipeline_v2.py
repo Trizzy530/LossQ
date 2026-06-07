@@ -105,7 +105,7 @@ def extract_profile(text: str, carrier_display_name: str) -> Dict[str, Any]:
         for pattern in field_patterns:
             match = re.search(pattern, text, flags=re.IGNORECASE)
             if match:
-                value = clean_line(match.group(1))
+                value = clean_profile_value(match.group(1)) if field == "business_name" else clean_line(match.group(1))
                 if value:
                     profile[field] = value[:120]
                     break
@@ -129,6 +129,16 @@ def clean_line(value: str) -> str:
     value = re.sub(r"\s{2,}", " ", value)
     value = re.split(r"\s{3,}|\n", value)[0].strip()
     return value
+
+def clean_profile_value(value: str) -> str:
+    value = clean_line(value)
+    value = re.split(
+        r"(?:Policy\s*Number|PolicyNumber|Policy\s*Term|PolicyTerm|Report\s*Run\s*Date|ReportRunDate|Page\s+\d+|Claim\s*Number|ClaimNumber)",
+        value,
+        maxsplit=1,
+        flags=re.IGNORECASE,
+    )[0]
+    return clean_line(value).strip(" :-|")
 
 
 def guess_coverage(line: str) -> str:
@@ -219,28 +229,25 @@ def extract_claims(text: str, rows: List[Dict[str, Any]]) -> List[Dict[str, Any]
         cleaned_line = clean_line(line)
 
         # Skip document header/profile lines so they do not become fake claims.
+                        # Skip document header/profile lines so they do not become fake claims.
+        has_claim_signal = re.search(
+            r"(Claim\s*Number|ClaimNumber|Claim\s*#|CLM\s*#|AU-|GL-|WC-|AUTO|Collision|Property\s+damage)",
+            cleaned_line,
+            flags=re.IGNORECASE,
+        )
+
         if re.search(
             r"^\s*(Policy\s*Number|PolicyNumber|ReportRunDate|Report\s*Run\s*Date|NamedInsured|Named\s+Insured|Page\s+\d+|PolicyTerm)\b",
             cleaned_line,
             flags=re.IGNORECASE,
-        ):
+        ) and not has_claim_signal:
             continue
 
         # Only parse lines that look like actual claim rows.
-        if not re.search(
-            r"(Claim\s*Number|ClaimNumber|Claim\s*#|CLM\s*#|AU-|GL-|WC-|AUTO|Collision|Property\s+damage)",
-            cleaned_line,
-            flags=re.IGNORECASE,
-        ):
+        if not has_claim_signal:
             continue
 
         if not re.search(r"\$?[0-9][0-9,]*(?:\.\d{2})?", cleaned_line):
-            continue
-
-        policy_numbers = [p for p in extract_policy_numbers(cleaned_line) if "ACCT" not in p]
-        claim_number = extract_claim_number(cleaned_line)
-
-        if not claim_number:
             continue
 
         amounts = extract_amounts(cleaned_line)
