@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import re
 from datetime import datetime
 from typing import Any, Dict, List
 
@@ -60,6 +61,149 @@ def _first_real_value(*values: Any) -> str:
     return ""
 
 
+def _safe_float(value: Any) -> float:
+    try:
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        cleaned = str(value).replace("$", "").replace(",", "").strip()
+        if cleaned in {"", "-", "None", "none", "null"}:
+            return 0.0
+        return float(cleaned)
+    except Exception:
+        return 0.0
+
+
+def _money_values_from_text(text: Any) -> List[float]:
+    text_value = str(text or "")
+    values: List[float] = []
+
+    for raw in re.findall(r"\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+(?:\.[0-9]{2}))", text_value):
+        try:
+            amount = float(raw.replace(",", ""))
+            # Ignore dates and tiny OCR fragments. Real claim dollars can be 0,
+            # but max-net-loss repair only needs meaningful positive values.
+            if amount > 0:
+                values.append(amount)
+        except Exception:
+            continue
+
+    return values
+
+
+def _extract_date_from_text(text: Any, label: str) -> str:
+    text_value = str(text or "")
+    match = re.search(
+        rf"{re.escape(label)}\s*[:\-]\s*([0-9]{{1,2}}/[0-9]{{1,2}}/[0-9]{{2,4}})",
+        text_value,
+        flags=re.IGNORECASE,
+    )
+    return match.group(1).strip() if match else ""
+
+
+def _extract_status_from_text(text: Any) -> str:
+    text_value = str(text or "")
+    match = re.search(
+        r"Status\s+of\s+Loss\s*[:\-]\s*([A-Za-z]+)",
+        text_value,
+        flags=re.IGNORECASE,
+    )
+    if match:
+        status = match.group(1).strip().title()
+        if status.lower() in {"closed", "open", "pending", "reopened"}:
+            return status
+
+    if re.search(r"\bClosed\b", text_value, flags=re.IGNORECASE):
+        return "Closed"
+    if re.search(r"\bOpen\b", text_value, flags=re.IGNORECASE):
+        return "Open"
+
+    return ""
+
+
+def _normalize_line_of_business(value: Any, description: Any) -> str:
+    current = _clean(value)
+    desc = str(description or "").lower()
+
+    if current and current.lower() not in {"unknown", "not set", "none"}:
+        return current
+
+    if "collision" in desc or "vehicle" in desc or "auto" in desc:
+        return "Commercial Auto"
+
+    if "property damage" in desc or "damaged floor" in desc or "damaged wall" in desc:
+        return "Property"
+
+    return current or "Unknown"
+
+
+def _repair_claim_values(claim_data: Dict[str, Any], fallback_policy_number: str) -> Dict[str, Any]:
+    """
+    Universal claim repair after V2 parsing.
+
+    Fixes common OCR/table extraction issues:
+    - policy term accidentally captured as loss date
+    - blank status even when "Status of Loss: Closed" appears
+    - total incurred pulled as $0, $2, or another tiny fragment instead of total net loss
+    - paid amount left blank even though the loss table shows Total Paid
+    """
+    repaired = dict(claim_data or {})
+    description = repaired.get("description") or repaired.get("loss_description") or ""
+
+    loss_date_from_text = _extract_date_from_text(description, "Loss Date")
+    reported_date_from_text = _extract_date_from_text(description, "Loss Report Date")
+    status_from_text = _extract_status_from_text(description)
+
+    if loss_date_from_text:
+        repaired["loss_date"] = loss_date_from_text
+
+    if reported_date_from_text:
+        repaired["reported_date"] = reported_date_from_text
+
+    if status_from_text:
+        repaired["status"] = status_from_text
+
+    amounts = _money_values_from_text(description)
+    max_amount = max(amounts) if amounts else 0.0
+
+    current_total = _safe_float(
+        repaired.get("total_incurred")
+        or repaired.get("total_amount")
+        or repaired.get("incurred")
+        or repaired.get("total_net_loss")
+    )
+
+    # Replace obviously wrong totals like $0, $2, $49 when the text shows a
+    # much larger total net loss. This keeps the parser universal and does not
+    # hard-code any claim number or company name.
+    if max_amount > 0 and (current_total <= 0 or current_total < (max_amount * 0.50)):
+        repaired["total_incurred"] = max_amount
+        repaired["total_amount"] = max_amount
+        repaired["total_net_loss"] = max_amount
+
+    paid_amount = _safe_float(repaired.get("paid_amount") or repaired.get("paid"))
+    if max_amount > 0 and paid_amount <= 0:
+        repaired["paid_amount"] = max_amount
+        repaired["paid"] = max_amount
+
+    reserve_amount = _safe_float(
+        repaired.get("reserve_amount")
+        or repaired.get("reserve")
+        or repaired.get("remaining_reserves")
+    )
+    if reserve_amount <= 0:
+        repaired["reserve_amount"] = 0
+
+    repaired["policy_number"] = _clean(repaired.get("policy_number") or fallback_policy_number).upper()
+    repaired["line_of_business"] = _normalize_line_of_business(
+        repaired.get("line_of_business"),
+        description,
+    )
+
+    return repaired
+
+
 def _profile_name(profile_data: Dict[str, Any]) -> str:
     return _first_real_value(
         profile_data.get("business_name"),
@@ -106,20 +250,42 @@ def _policy_number_from_profile(profile_data: Dict[str, Any]) -> str:
     ).upper()
 
 
+def _build_policy_rollup_from_claims(claims: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    rollup: Dict[str, Dict[str, Any]] = {}
+
+    for claim in claims:
+        policy_number = _clean(claim.get("policy_number")).upper()
+        if not policy_number:
+            continue
+
+        lob = _clean(claim.get("line_of_business")) or "Unknown"
+        total = _safe_float(claim.get("total_incurred") or claim.get("total_amount"))
+
+        if policy_number not in rollup:
+            rollup[policy_number] = {
+                "policy_number": policy_number,
+                "policy_type": lob,
+                "line_of_business": lob,
+                "claim_count": 0,
+                "total_incurred": 0.0,
+            }
+
+        rollup[policy_number]["claim_count"] += 1
+        rollup[policy_number]["total_incurred"] += total
+
+        if rollup[policy_number]["line_of_business"] in {"", "Unknown"} and lob:
+            rollup[policy_number]["line_of_business"] = lob
+            rollup[policy_number]["policy_type"] = lob
+
+    return list(rollup.values())
+
+
 def force_save_account_profile_v2(
     db: Session,
     *,
     profile_data: Dict[str, Any],
     current_user: Dict[str, Any],
 ):
-    """
-    Universal hard-save for V2 profile data.
-
-    This does not hard-code any customer or carrier.
-    It uses whatever V2 parsed from the uploaded document and forces every
-    duplicate AccountProfile row for the same organization + policy number to
-    receive the parsed values.
-    """
     policy_number = _policy_number_from_profile(profile_data)
     if not policy_number:
         return None
@@ -132,7 +298,7 @@ def force_save_account_profile_v2(
     matching_profiles = (
         db.query(AccountProfile)
         .filter(AccountProfile.organization_id == current_user["organization_id"])
-        .filter(func.upper(AccountProfile.policy_number) == policy_number)
+        .filter(func.upper(func.trim(AccountProfile.policy_number)) == policy_number)
         .all()
     )
 
@@ -154,7 +320,7 @@ def force_save_account_profile_v2(
         if carrier_name:
             profile.carrier_name = carrier_name
         elif _is_placeholder(getattr(profile, "carrier_name", "")):
-            profile.carrier_name = "Carrier Not Detected"
+            profile.carrier_name = "Carrier Not Set"
 
         if agency_name:
             profile.agency_name = agency_name
@@ -187,7 +353,7 @@ def force_save_account_profile_v2(
             writing_carrier
             or carrier_name
             or (
-                "Carrier Not Detected"
+                "Carrier Not Set"
                 if _is_placeholder(getattr(profile, "writing_carrier", ""))
                 else getattr(profile, "writing_carrier", "")
             ),
@@ -238,7 +404,7 @@ def force_save_account_profile_v2(
     saved = (
         db.query(AccountProfile)
         .filter(AccountProfile.organization_id == current_user["organization_id"])
-        .filter(func.upper(AccountProfile.policy_number) == policy_number)
+        .filter(func.upper(func.trim(AccountProfile.policy_number)) == policy_number)
         .order_by(AccountProfile.id.desc())
         .first()
     )
@@ -296,6 +462,7 @@ async def save_uploaded_files_v2(
 
     uploaded_files = []
     all_parsed_claims: List[Dict[str, Any]] = []
+    all_repaired_claims: List[Dict[str, Any]] = []
     latest_profile_data: Dict[str, Any] = {}
     latest_saved_profile = None
 
@@ -348,6 +515,13 @@ async def save_uploaded_files_v2(
 
         file_policy_number = clean_profile_value(file_policy_number).upper()
 
+        repaired_claims = [
+            _repair_claim_values(claim_data, file_policy_number)
+            for claim_data in parsed_claims
+        ]
+
+        rollup_from_claims = _build_policy_rollup_from_claims(repaired_claims)
+
         parsed_profile["policy_number"] = file_policy_number
         parsed_profile["account_number"] = (
             _first_real_value(parsed_profile.get("account_number"))
@@ -358,11 +532,13 @@ async def save_uploaded_files_v2(
             or parsed_profile["account_number"]
         )
 
-        if parsed_policies:
-            parsed_profile["policies"] = parsed_policies
+        parsed_profile["policies"] = parsed_policies or rollup_from_claims
 
-        if parsed_validation:
-            parsed_profile["validation"] = parsed_validation
+        calculated_total = sum(_safe_float(c.get("total_incurred")) for c in repaired_claims)
+        parsed_profile["validation"] = parsed_validation or {}
+        parsed_profile["validation"]["claim_count"] = len(repaired_claims)
+        parsed_profile["validation"]["calculated_total_incurred"] = round(calculated_total, 2)
+        parsed_profile["validation"]["policy_count"] = len(parsed_profile["policies"] or [])
 
         latest_profile_data = parsed_profile
         latest_saved_profile = force_save_account_profile_v2(
@@ -372,17 +548,18 @@ async def save_uploaded_files_v2(
         )
 
         # Replace old claims for this policy once per upload request.
-        # This removes previous failed-parser/duplicate rows so the dashboard
-        # shows the clean V2 claim count for the latest uploaded file.
+        # This prevents old failed-parser rows, deleted profile leftovers, and
+        # stale duplicate rows from continuing to drive dashboard metrics.
         if file_policy_number and file_policy_number not in policies_replaced_this_upload:
             existing_claims_deleted = (
-    db.query(Claim)
-    .filter(
-        Claim.organization_id == current_user["organization_id"],
-        func.upper(func.trim(Claim.policy_number)) == file_policy_number,
-    )
-    .delete(synchronize_session=False)
-)
+                db.query(Claim)
+                .filter(
+                    Claim.organization_id == current_user["organization_id"],
+                    func.upper(func.trim(Claim.policy_number)) == file_policy_number,
+                )
+                .delete(synchronize_session=False)
+            )
+
             total_existing_claims_deleted += existing_claims_deleted
             policies_replaced_this_upload.add(file_policy_number)
             db.flush()
@@ -390,7 +567,7 @@ async def save_uploaded_files_v2(
         file_saved = 0
         file_duplicates = 0
 
-        for claim_data in parsed_claims:
+        for claim_data in repaired_claims:
             normalized = normalize_claim_data(
                 raw=claim_data,
                 fallback_policy_number=file_policy_number,
@@ -405,6 +582,16 @@ async def save_uploaded_files_v2(
             normalized["claim_number"] = claim_number
             normalized["policy_number"] = policy_value
 
+            # Re-apply repaired values after normalize_claim_data in case the
+            # shared normalizer defaults blank status/dates/amounts.
+            normalized["loss_date"] = claim_data.get("loss_date") or normalized.get("loss_date")
+            normalized["reported_date"] = claim_data.get("reported_date") or normalized.get("reported_date")
+            normalized["status"] = claim_data.get("status") or normalized.get("status") or "Open"
+            normalized["line_of_business"] = claim_data.get("line_of_business") or normalized.get("line_of_business")
+            normalized["paid_amount"] = _safe_float(claim_data.get("paid_amount") or normalized.get("paid_amount"))
+            normalized["reserve_amount"] = _safe_float(claim_data.get("reserve_amount") or normalized.get("reserve_amount"))
+            normalized["total_incurred"] = _safe_float(claim_data.get("total_incurred") or normalized.get("total_incurred"))
+
             if not claim_number or claim_number == "UNKNOWN":
                 print("Skipping claim without valid claim number")
                 continue
@@ -414,7 +601,7 @@ async def save_uploaded_files_v2(
                 .filter(
                     Claim.organization_id == current_user["organization_id"],
                     Claim.claim_number == claim_number,
-                    Claim.policy_number == policy_value,
+                    func.upper(func.trim(Claim.policy_number)) == policy_value,
                 )
                 .first()
             )
@@ -452,6 +639,7 @@ async def save_uploaded_files_v2(
         )
 
         all_parsed_claims.extend(parsed_claims)
+        all_repaired_claims.extend(repaired_claims)
 
     if latest_profile_data:
         latest_saved_profile = force_save_account_profile_v2(
@@ -496,7 +684,7 @@ async def save_uploaded_files_v2(
         saved_profile_after_commit = (
             db.query(AccountProfile)
             .filter(AccountProfile.organization_id == current_user["organization_id"])
-            .filter(func.upper(AccountProfile.policy_number) == saved_profile_policy_number)
+            .filter(func.upper(func.trim(AccountProfile.policy_number)) == saved_profile_policy_number)
             .order_by(AccountProfile.id.desc())
             .first()
         )
@@ -510,6 +698,7 @@ async def save_uploaded_files_v2(
         "v2_duplicate_profile_update_enabled": True,
         "v2_carrier_fallback_enabled": True,
         "v2_replace_old_policy_claims": True,
+        "v2_claim_money_date_status_repair": True,
         "saved_claims": total_saved,
         "existing_claims_deleted": total_existing_claims_deleted,
         "duplicates_skipped": total_duplicates_skipped,
@@ -524,7 +713,8 @@ async def save_uploaded_files_v2(
         "policies": latest_profile_data.get("policies") or [],
         "validation": latest_profile_data.get("validation") or {},
         "uploaded_files": uploaded_files,
-        "claims": all_parsed_claims,
-        "parsed_claims": all_parsed_claims,
-        "claim_count": len(all_parsed_claims),
+        "claims": all_repaired_claims,
+        "parsed_claims": all_repaired_claims,
+        "raw_parsed_claims": all_parsed_claims,
+        "claim_count": len(all_repaired_claims),
     }

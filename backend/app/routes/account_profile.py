@@ -43,8 +43,7 @@ def get_db():
 def clean_value(value: Any) -> str:
     value = str(value or "").strip()
     value = re.sub(r"\s+", " ", value)
-    value = value.strip(" :-|")
-    return value
+    return value.strip(" :-|")
 
 
 def normalize_policy_number(value: Any) -> str:
@@ -347,8 +346,9 @@ def get_profile_by_policy(
         db.query(AccountProfile)
         .filter(
             AccountProfile.organization_id == current_user["organization_id"],
-            func.upper(AccountProfile.policy_number) == normalized_policy_number,
+            func.upper(func.trim(AccountProfile.policy_number)) == normalized_policy_number,
         )
+        .order_by(AccountProfile.id.desc())
         .first()
     )
 
@@ -362,7 +362,7 @@ def get_profile_by_policy(
             db.query(Claim)
             .filter(
                 Claim.organization_id == current_user["organization_id"],
-                func.upper(Claim.policy_number) == normalized_policy_number,
+                func.upper(func.trim(Claim.policy_number)) == normalized_policy_number,
             )
             .all()
         )
@@ -384,7 +384,7 @@ def get_profile_by_policy(
         db.query(Claim)
         .filter(
             Claim.organization_id == current_user["organization_id"],
-            func.upper(Claim.policy_number) == normalized_policy_number,
+            func.upper(func.trim(Claim.policy_number)) == normalized_policy_number,
         )
         .all()
     )
@@ -419,8 +419,9 @@ def upsert_account_profile(
         db.query(AccountProfile)
         .filter(
             AccountProfile.organization_id == current_user["organization_id"],
-            func.upper(AccountProfile.policy_number) == policy_number,
+            func.upper(func.trim(AccountProfile.policy_number)) == policy_number,
         )
+        .order_by(AccountProfile.id.desc())
         .first()
     )
 
@@ -469,60 +470,20 @@ def upsert_account_profile(
     return profile_to_dict(profile)
 
 
-@router.delete("/cleanup-placeholder-profiles")
-def cleanup_placeholder_profiles(
-    keep_policy_numbers: str = "",
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    ensure_account_profile_columns(db)
-
-    keep_set = {
-        item.strip().upper()
-        for item in str(keep_policy_numbers or "").split(",")
-        if item.strip()
-    }
-
-    profiles = (
-        db.query(AccountProfile)
-        .filter(AccountProfile.organization_id == current_user["organization_id"])
-        .all()
-    )
-
-    deleted_policy_numbers = []
-
-    for profile in profiles:
-        policy_number = normalize_policy_number(profile.policy_number)
-        business_name = clean_value(profile.business_name)
-
-        if policy_number in keep_set:
-            continue
-
-        if is_placeholder(business_name):
-            deleted_policy_numbers.append(policy_number)
-            db.delete(profile)
-
-    db.commit()
-
-    return {
-        "deleted_count": len(deleted_policy_numbers),
-        "deleted_policy_numbers": deleted_policy_numbers[:200],
-        "kept_policy_numbers": sorted(list(keep_set)),
-    }
-
-
 @router.delete("/")
 def delete_account_profile_by_query(
     policy_number: str,
+    delete_claims: bool = True,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return delete_profile(policy_number, db, current_user)
+    return delete_profile(policy_number, delete_claims, db, current_user)
 
 
 @router.delete("/{policy_number}")
 def delete_profile(
     policy_number: str,
+    delete_claims: bool = True,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -530,27 +491,39 @@ def delete_profile(
 
     normalized_policy_number = normalize_policy_number(policy_number)
 
-    profile = (
+    profiles = (
         db.query(AccountProfile)
         .filter(
             AccountProfile.organization_id == current_user["organization_id"],
-            func.upper(AccountProfile.policy_number) == normalized_policy_number,
+            func.upper(func.trim(AccountProfile.policy_number)) == normalized_policy_number,
         )
-        .first()
+        .all()
     )
 
-    if not profile:
-        return {
-            "deleted": False,
-            "policy_number": normalized_policy_number,
-            "message": "Profile not found.",
-        }
+    claims_deleted = 0
+    if delete_claims:
+        claims_deleted = (
+            db.query(Claim)
+            .filter(
+                Claim.organization_id == current_user["organization_id"],
+                func.upper(func.trim(Claim.policy_number)) == normalized_policy_number,
+            )
+            .delete(synchronize_session=False)
+        )
 
-    db.delete(profile)
+    profiles_deleted = 0
+    for profile in profiles:
+        db.delete(profile)
+        profiles_deleted += 1
+
     db.commit()
 
     return {
-        "deleted": True,
+        "deleted": profiles_deleted > 0 or claims_deleted > 0,
         "policy_number": normalized_policy_number,
-        "message": "Profile deleted successfully.",
+        "profiles_deleted": profiles_deleted,
+        "claims_deleted": claims_deleted,
+        "message": "Profile and related claims deleted successfully."
+        if (profiles_deleted > 0 or claims_deleted > 0)
+        else "Profile not found.",
     }
