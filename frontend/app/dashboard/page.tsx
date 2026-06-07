@@ -22,6 +22,7 @@ const API =
 
 const SESSION_TIMEOUT_MS = 1000 * 60 * 60 * 24;
 const PROFILE_CACHE_KEY = "lossq_account_profiles";
+const SELECTED_POLICY_CACHE_KEY = "lossq_selected_policy_number";
 
 type AnyObject = Record<string, any>;
 
@@ -69,6 +70,22 @@ function getClaimPolicyNumber(claim: any) {
       claim?.policy ||
       claim?.policy_id
   );
+}
+
+
+function isOpenClaimStatus(claim: any) {
+  const status = String(claim?.status || "").trim().toLowerCase();
+
+  if (!status) return false;
+
+  return [
+    "open",
+    "pending",
+    "reopened",
+    "active",
+    "in progress",
+    "watch",
+  ].includes(status);
 }
 
 function toMoneyNumber(value: any) {
@@ -130,6 +147,27 @@ function getCachedProfiles(): AnyObject[] {
 function setCachedProfiles(profiles: AnyObject[]) {
   if (typeof window === "undefined") return;
   localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(profiles));
+}
+
+
+function getCachedSelectedPolicy() {
+  if (typeof window === "undefined") return "";
+  return normalizePolicyNumber(localStorage.getItem(SELECTED_POLICY_CACHE_KEY));
+}
+
+function setCachedSelectedPolicy(policyNumber: any) {
+  if (typeof window === "undefined") return;
+
+  const normalized = normalizePolicyNumber(policyNumber);
+
+  if (normalized) {
+    localStorage.setItem(SELECTED_POLICY_CACHE_KEY, normalized);
+  }
+}
+
+function clearCachedSelectedPolicy() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(SELECTED_POLICY_CACHE_KEY);
 }
 
 function mergeProfiles(existing: AnyObject[], incoming: AnyObject[]) {
@@ -251,7 +289,7 @@ export default function DashboardPage() {
       }
 
       setAuthReady(true);
-      await loadDashboard();
+      await loadDashboard(getCachedSelectedPolicy());
     }
 
     validateSession();
@@ -342,6 +380,7 @@ export default function DashboardPage() {
     setTimeline({});
     setRenewalMemo("");
     setCopilotAnswer("");
+    clearCachedSelectedPolicy();
     setMessage("New blank account profile started.");
     setActiveTool("profiles");
   }
@@ -355,14 +394,17 @@ export default function DashboardPage() {
     setDashboardLoading(true);
     setDashboardError("");
 
+    const cachedPolicyNumber = getCachedSelectedPolicy();
+    const requestedPolicyNumber = normalizePolicyNumber(policyNumberOverride || cachedPolicyNumber);
+
     try {
       await loadProfileList();
 
       let activeProfile = profile;
 
-      if (policyNumberOverride) {
+      if (requestedPolicyNumber) {
         const selectedRes = await fetch(
-          `${API}/account-profile/policy/${encodeURIComponent(policyNumberOverride)}`,
+          `${API}/account-profile/policy/${encodeURIComponent(requestedPolicyNumber)}`,
           { headers: authHeaders() }
         );
 
@@ -375,7 +417,7 @@ export default function DashboardPage() {
         if (selectedRes.ok) {
           const fetchedProfile = (await safeJson(selectedRes)) || {};
           const cachedMatch = getCachedProfiles().find(
-            (item) => item?.policy_number === policyNumberOverride
+            (item) => normalizePolicyNumber(item?.policy_number) === requestedPolicyNumber
           );
 
           activeProfile = {
@@ -399,7 +441,7 @@ export default function DashboardPage() {
           }
         } else {
           const cachedMatch = getCachedProfiles().find(
-            (item) => item?.policy_number === policyNumberOverride
+            (item) => normalizePolicyNumber(item?.policy_number) === requestedPolicyNumber
           );
 
           if (cachedMatch) {
@@ -453,12 +495,16 @@ export default function DashboardPage() {
       }
 
       const policyNumber =
-        policyNumberOverride ||
+        requestedPolicyNumber ||
         activeProfile?.policy_number ||
         profile?.policy_number ||
         "";
 
       const hasPolicy = policyNumber && policyNumber !== "Policy Not Set";
+
+      if (hasPolicy) {
+        setCachedSelectedPolicy(policyNumber);
+      }
 
       /*
         Always fetch all organization claims here.
@@ -629,6 +675,8 @@ if (submissionBuilderRes.ok) {
   async function selectAccount(policyNumber: string) {
     if (!policyNumber) return;
 
+    setCachedSelectedPolicy(policyNumber);
+
     setMessage(`Loading policy ${policyNumber}...`);
     setCopilotAnswer("");
     setRenewalMemo("");
@@ -740,6 +788,7 @@ if (submissionBuilderRes.ok) {
       setProfile(savedProfile);
       updateProfileList([savedProfile]);
       setMessage("Account profile saved.");
+      setCachedSelectedPolicy(savedProfile.policy_number);
       await loadDashboard(savedProfile.policy_number);
     } catch {
       updateProfileList([payload]);
@@ -899,6 +948,7 @@ if (submissionBuilderRes.ok) {
       "";
 
     if (uploadedPolicyNumber) {
+      setCachedSelectedPolicy(uploadedPolicyNumber);
       await loadDashboard(uploadedPolicyNumber);
     }
 
@@ -1207,6 +1257,10 @@ const openClaims = hasActiveAccount
 const totalIncurred = hasActiveAccount
   ? visibleClaims.reduce((sum: number, c: any) => sum + getClaimIncurred(c), 0)
   : Number(backendMetrics?.total_incurred ?? 0);
+
+const openVisibleClaims = visibleClaims.filter((claim: any) => isOpenClaimStatus(claim));
+const closedVisibleClaims = visibleClaims.filter((claim: any) => !isOpenClaimStatus(claim));
+const groupedVisibleClaims = [...openVisibleClaims, ...closedVisibleClaims];
 
 const scheduleClaimStats = visibleClaims.reduce((acc: AnyObject, claim: any) => {
   const claimPolicy = getClaimPolicyNumber(claim);
@@ -2451,7 +2505,7 @@ const trendNoteDisplay =
     </tr>
   )}
 
-  {visibleClaims.map((claim: any) => (
+  {groupedVisibleClaims.map((claim: any) => (
     <tr
       key={claim.id || claim.claim_number}
       className="border-b border-white/10 text-slate-300"
