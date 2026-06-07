@@ -257,6 +257,20 @@ async def upload_multiple_loss_runs_v2(
         current_user=current_user,
     )
 
+@router.post("/loss-run-v2")
+async def upload_loss_run_v2(
+    file: UploadFile = File(...),
+    policy_number: str = Form(default=""),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(require_permission("upload")),
+):
+    return await save_uploaded_files_v2(
+        files=[file],
+        policy_number=policy_number,
+        db=db,
+        current_user=current_user,
+    )
+
 
 async def save_uploaded_files_v2(
     files: List[UploadFile],
