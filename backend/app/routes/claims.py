@@ -1,6 +1,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
-from sqlalchemy import text, inspect
+from sqlalchemy import text, inspect, func
+from typing import Any
 
 from app.database import SessionLocal
 from app.models.claim import Claim
@@ -17,8 +18,31 @@ def get_db():
         db.close()
 
 
+def clean_value(value: Any) -> str:
+    return str(value or "").strip()
+
+
+def normalize_policy_number(value: Any) -> str:
+    return clean_value(value).upper()
+
+
+def money_float(value: Any) -> float:
+    try:
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        cleaned = str(value).replace("$", "").replace(",", "").strip()
+        if cleaned in {"", "-", "None", "none", "null"}:
+            return 0.0
+        return float(cleaned)
+    except Exception:
+        return 0.0
+
+
 def ensure_claim_timeline_columns(db: Session):
     required_columns = {
+        "date_of_loss": "VARCHAR",
         "date_reported": "VARCHAR",
         "date_closed": "VARCHAR",
         "open_days": "INTEGER",
@@ -27,41 +51,55 @@ def ensure_claim_timeline_columns(db: Session):
 
     try:
         inspector = inspect(db.bind)
-        existing_columns = [
-            column["name"] for column in inspector.get_columns("claims")
-        ]
-
+        existing_columns = [column["name"] for column in inspector.get_columns("claims")]
         for column_name, column_type in required_columns.items():
             if column_name not in existing_columns:
-                db.execute(
-                    text(f"ALTER TABLE claims ADD COLUMN {column_name} {column_type}")
-                )
-
+                db.execute(text(f"ALTER TABLE claims ADD COLUMN {column_name} {column_type}"))
         db.commit()
     except Exception as e:
         db.rollback()
         print(f"Claim timeline column check failed: {e}")
 
-    try:
-        result = db.execute(text("PRAGMA table_info(claims)"))
-        existing_columns = [row[1] for row in result.fetchall()]
 
-        for column_name, column_type in required_columns.items():
-            if column_name not in existing_columns:
-                db.execute(
-                    text(f"ALTER TABLE claims ADD COLUMN {column_name} {column_type}")
-                )
-
-        db.commit()
-    except Exception:
-        db.rollback()
+def claim_to_dict(claim: Claim):
+    return {
+        "id": getattr(claim, "id", None),
+        "claim_number": clean_value(getattr(claim, "claim_number", "")),
+        "policy_id": getattr(claim, "policy_id", None),
+        "policy_number": clean_value(getattr(claim, "policy_number", "")),
+        "line_of_business": clean_value(getattr(claim, "line_of_business", "")),
+        "claim_type": clean_value(getattr(claim, "claim_type", "")),
+        "cause_of_loss": clean_value(getattr(claim, "cause_of_loss", "")),
+        "claimant_type": clean_value(getattr(claim, "claimant_type", "")),
+        "date_of_loss": clean_value(getattr(claim, "date_of_loss", "")),
+        "date_reported": clean_value(getattr(claim, "date_reported", "")),
+        "date_closed": clean_value(getattr(claim, "date_closed", "")),
+        "open_days": getattr(claim, "open_days", None),
+        "claim_age": getattr(claim, "claim_age", None),
+        "status": clean_value(getattr(claim, "status", "")),
+        "description": clean_value(getattr(claim, "description", "")),
+        "paid_amount": money_float(getattr(claim, "paid_amount", 0)),
+        "reserve_amount": money_float(getattr(claim, "reserve_amount", 0)),
+        "total_incurred": money_float(getattr(claim, "total_incurred", 0)),
+        "litigation": bool(getattr(claim, "litigation", False)),
+        "litigation_status": clean_value(getattr(claim, "litigation_status", "")),
+        "attorney_assigned": bool(getattr(claim, "attorney_assigned", False)),
+        "suit_filed": bool(getattr(claim, "suit_filed", False)),
+        "venue_state": clean_value(getattr(claim, "venue_state", "")),
+        "injury_type": clean_value(getattr(claim, "injury_type", "")),
+        "flag": clean_value(getattr(claim, "flag", "")),
+        "organization_id": getattr(claim, "organization_id", None),
+        "uploaded_by_user_id": getattr(claim, "uploaded_by_user_id", None),
+        "uploaded_at": clean_value(getattr(claim, "uploaded_at", "")),
+    }
 
 
 def score_claim(claim):
     score = 0
-    total = float(claim.total_incurred or 0)
-    reserve = float(claim.reserve_amount or 0)
-    paid = float(claim.paid_amount or 0)
+    total = money_float(getattr(claim, "total_incurred", 0))
+    reserve = money_float(getattr(claim, "reserve_amount", 0))
+    paid = money_float(getattr(claim, "paid_amount", 0))
+    status = clean_value(getattr(claim, "status", "")).lower()
 
     if total >= 250000:
         score += 50
@@ -72,15 +110,12 @@ def score_claim(claim):
     elif total >= 10000:
         score += 10
 
-    if claim.litigation:
+    if bool(getattr(claim, "litigation", False)):
         score += 30
-
-    if claim.attorney_assigned:
+    if bool(getattr(claim, "attorney_assigned", False)):
         score += 15
-
-    if claim.status == "Open":
+    if status == "open":
         score += 10
-
     if reserve > paid:
         score += 10
 
@@ -98,28 +133,23 @@ def score_claim(claim):
 
 def build_claim_ai_analysis(claim):
     score, severity = score_claim(claim)
-
-    total = float(claim.total_incurred or 0)
-    reserve = float(claim.reserve_amount or 0)
-    paid = float(claim.paid_amount or 0)
+    total = money_float(getattr(claim, "total_incurred", 0))
+    reserve = money_float(getattr(claim, "reserve_amount", 0))
+    paid = money_float(getattr(claim, "paid_amount", 0))
+    status = clean_value(getattr(claim, "status", ""))
+    claim_number = clean_value(getattr(claim, "claim_number", ""))
 
     risk_factors = []
-
-    if claim.status == "Open":
+    if status.lower() == "open":
         risk_factors.append("Open claim")
-
     if reserve > 0:
         risk_factors.append("Outstanding reserve")
-
     if reserve > paid:
         risk_factors.append("Reserve exceeds paid amount")
-
-    if claim.litigation:
+    if bool(getattr(claim, "litigation", False)):
         risk_factors.append("Litigation exposure")
-
-    if claim.attorney_assigned:
+    if bool(getattr(claim, "attorney_assigned", False)):
         risk_factors.append("Attorney involvement")
-
     if total >= 100000:
         risk_factors.append("High incurred severity")
 
@@ -129,113 +159,84 @@ def build_claim_ai_analysis(claim):
     elif reserve >= 25000:
         reserve_concern = "Moderate"
 
-    litigation_exposure = (
-        "Elevated litigation exposure detected" if claim.litigation else "None detected"
-    )
-
-    renewal_impact = "Low renewal impact"
-    if severity in ["Severe", "Catastrophic"]:
-        renewal_impact = "High renewal impact"
-    elif severity == "Moderate":
-        renewal_impact = "Moderate renewal impact"
-
     broker_actions = []
-
-    if claim.status == "Open":
+    if status.lower() == "open":
         broker_actions.append("Obtain updated claim status before renewal submission")
-
     if reserve > paid:
         broker_actions.append("Explain reserve strategy and expected resolution timeline")
-
-    if claim.litigation:
+    if bool(getattr(claim, "litigation", False)):
         broker_actions.append("Provide defense counsel update and litigation narrative")
-
     if total >= 100000:
         broker_actions.append("Prepare severe-loss explanation and corrective action summary")
-
     if not broker_actions:
         broker_actions.append("No major broker action required beyond standard documentation")
 
     underwriter_narrative = (
-        f"Claim {claim.claim_number or 'N/A'} involves "
-        f"{claim.line_of_business or 'an unspecified line of business'} exposure "
-        f"with a reported cause of loss of {claim.cause_of_loss or 'not specified'}. "
-        f"The claim currently shows paid losses of ${paid:,.2f}, reserves of ${reserve:,.2f}, "
-        f"and total incurred losses of ${total:,.2f}. "
-        f"Based on severity, reserve position, litigation status, and claim status, "
-        f"this claim is classified as {severity}."
-    )
-
-    risk_summary = (
-        f"This claim presents {severity.lower()} underwriting risk. "
-        f"Key concerns include "
-        f"{', '.join(risk_factors) if risk_factors else 'no major risk indicators detected'}."
-    )
-
-    litigation_analysis = (
-        "Litigation exposure is present and should be addressed with a defense update, "
-        "current legal status, and expected resolution timeline."
-        if claim.litigation or claim.attorney_assigned
-        else "No litigation or attorney involvement is currently identified."
-    )
-
-    broker_talking_points = []
-
-    if claim.status == "Open":
-        broker_talking_points.append("Explain current claim status and expected closure timeline")
-
-    if reserve > 0:
-        broker_talking_points.append("Provide reserve explanation and development trend")
-
-    if total >= 100000:
-        broker_talking_points.append("Prepare large-loss narrative for carrier review")
-
-    if claim.litigation or claim.attorney_assigned:
-        broker_talking_points.append("Include litigation update and defense strategy")
-
-    if not broker_talking_points:
-        broker_talking_points.append("Position claim as controlled with no major escalation indicators")
-
-    ai_summary = (
-        f"Claim {claim.claim_number} is classified as {severity} severity with a score of {score}. "
-        f"The claim has paid losses of ${paid:,.2f}, reserves of ${reserve:,.2f}, "
-        f"and total incurred exposure of ${total:,.2f}. "
-        f"Primary underwriting concerns include: "
-        f"{', '.join(risk_factors) if risk_factors else 'no major concerns detected'}."
+        f"Claim {claim_number or 'N/A'} involves "
+        f"{clean_value(getattr(claim, 'line_of_business', '')) or 'an unspecified line of business'} exposure. "
+        f"The claim shows paid losses of ${paid:,.2f}, reserves of ${reserve:,.2f}, "
+        f"and total incurred losses of ${total:,.2f}. This claim is classified as {severity}."
     )
 
     return {
         "severity_score": score,
         "severity": severity,
         "reserve_concern": reserve_concern,
-        "litigation_exposure": litigation_exposure,
-        "renewal_impact": renewal_impact,
+        "litigation_exposure": "Elevated litigation exposure detected" if bool(getattr(claim, "litigation", False)) else "None detected",
+        "renewal_impact": "High renewal impact" if severity in ["Severe", "Catastrophic"] else ("Moderate renewal impact" if severity == "Moderate" else "Low renewal impact"),
         "risk_factors": risk_factors,
         "broker_actions": broker_actions,
-        "ai_summary": ai_summary,
+        "ai_summary": (
+            f"Claim {claim_number} is classified as {severity} severity with a score of {score}. "
+            f"Paid: ${paid:,.2f}; reserve: ${reserve:,.2f}; total incurred: ${total:,.2f}."
+        ),
         "underwriter_narrative": underwriter_narrative,
-        "risk_summary": risk_summary,
-        "litigation_analysis": litigation_analysis,
-        "broker_talking_points": broker_talking_points,
+        "risk_summary": f"This claim presents {severity.lower()} underwriting risk.",
+        "litigation_analysis": "No litigation or attorney involvement is currently identified." if not bool(getattr(claim, "litigation", False)) else "Litigation exposure is present and should be addressed.",
+        "broker_talking_points": broker_actions,
     }
 
 
 @router.get("/")
 def get_claims(
     policy_number: str | None = Query(default=None),
+    claim_number: str | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     ensure_claim_timeline_columns(db)
-
-    query = db.query(Claim).filter(
-        Claim.organization_id == current_user["organization_id"]
-    )
+    query = db.query(Claim).filter(Claim.organization_id == current_user["organization_id"])
 
     if policy_number:
-        query = query.filter(Claim.policy_number == policy_number)
+        normalized_policy = normalize_policy_number(policy_number)
+        query = query.filter(func.upper(func.trim(Claim.policy_number)) == normalized_policy)
 
-    return query.order_by(Claim.id.desc()).all()
+    if claim_number:
+        normalized_claim = clean_value(claim_number).upper()
+        query = query.filter(func.upper(func.trim(Claim.claim_number)) == normalized_claim)
+
+    claims = query.order_by(Claim.id.desc()).all()
+    return [claim_to_dict(claim) for claim in claims]
+
+
+@router.get("/lookup")
+def lookup_claim(
+    claim_number: str = Query(...),
+    policy_number: str | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    ensure_claim_timeline_columns(db)
+    query = db.query(Claim).filter(
+        Claim.organization_id == current_user["organization_id"],
+        func.upper(func.trim(Claim.claim_number)) == clean_value(claim_number).upper(),
+    )
+    if policy_number:
+        query = query.filter(func.upper(func.trim(Claim.policy_number)) == normalize_policy_number(policy_number))
+    claim = query.order_by(Claim.id.desc()).first()
+    if not claim:
+        raise HTTPException(status_code=404, detail="Claim not found")
+    return {"claim": claim_to_dict(claim), **build_claim_ai_analysis(claim)}
 
 
 @router.get("/{claim_id}")
@@ -245,22 +246,10 @@ def get_claim_detail(
     current_user: dict = Depends(get_current_user),
 ):
     ensure_claim_timeline_columns(db)
-
-    claim = (
-        db.query(Claim)
-        .filter(
-            Claim.id == claim_id,
-            Claim.organization_id == current_user["organization_id"],
-        )
-        .first()
-    )
-
+    claim = db.query(Claim).filter(
+        Claim.id == claim_id,
+        Claim.organization_id == current_user["organization_id"],
+    ).first()
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
-
-    analysis = build_claim_ai_analysis(claim)
-
-    return {
-        "claim": claim,
-        **analysis,
-    }
+    return {"claim": claim_to_dict(claim), **build_claim_ai_analysis(claim)}
