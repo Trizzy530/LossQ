@@ -415,6 +415,8 @@ def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
     )
 
     db.add(new_profile)
+    db.flush()
+    db.refresh(new_profile)
     return new_profile
 
 @router.post("/loss-run")
