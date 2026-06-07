@@ -77,90 +77,15 @@ def get_all_profiles(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    profiles = (
+    # Saved Carrier Profiles should only show real saved account profiles.
+    # Do not list every policy number found in old claim rows, because that pollutes
+    # the dropdown with stale uploads and header/parser artifacts.
+    return (
         db.query(AccountProfile)
         .filter(AccountProfile.organization_id == current_user["organization_id"])
         .order_by(AccountProfile.id.desc())
         .all()
     )
-
-    profile_policy_numbers = {
-        str(profile.policy_number or "").strip().upper()
-        for profile in profiles
-        if str(profile.policy_number or "").strip()
-    }
-
-    claim_policy_rows = (
-        db.query(Claim.policy_number)
-        .filter(
-            Claim.organization_id == current_user["organization_id"],
-            Claim.policy_number.isnot(None),
-            Claim.policy_number != "",
-        )
-        .distinct()
-        .all()
-    )
-
-    fallback_profiles = []
-
-    for row in claim_policy_rows:
-        policy_number = str(row[0] or "").strip().upper()
-
-        if not policy_number or policy_number in profile_policy_numbers:
-            continue
-
-        claims = (
-            db.query(Claim)
-            .filter(
-                Claim.organization_id == current_user["organization_id"],
-                func.upper(Claim.policy_number) == policy_number,
-            )
-            .all()
-        )
-
-        if not claims:
-            continue
-
-        carrier_name = "Carrier Not Set"
-        business_name = "Business Name Not Set"
-
-        fallback_profiles.append(
-            {
-                "id": f"claims-{policy_number}",
-                "business_name": business_name,
-                "carrier_name": carrier_name,
-                "writing_carrier": carrier_name,
-                "agency_name": "",
-                "account_number": policy_number,
-                "customer_number": "",
-                "producer_number": "",
-                "policy_number": policy_number,
-                "effective_date": "",
-                "expiration_date": "",
-                "evaluation_date": "",
-                "profile_source": "claims_fallback",
-                "claim_count": len(claims),
-                "open_claims": len(
-                    [
-                        claim
-                        for claim in claims
-                        if str(claim.status or "").strip().lower()
-                        in ["open", "pending", "reopened", "active", "in progress"]
-                    ]
-                ),
-                "closed_claims": len(
-                    [
-                        claim
-                        for claim in claims
-                        if str(claim.status or "").strip().lower()
-                        in ["closed", "resolved", "settled"]
-                    ]
-                ),
-                "total_incurred": sum(float(claim.total_incurred or 0) for claim in claims),
-            }
-        )
-
-    return profiles + fallback_profiles
 
 
 @router.get("/policy/{policy_number}")
