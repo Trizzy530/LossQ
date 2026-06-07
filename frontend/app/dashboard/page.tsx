@@ -944,12 +944,28 @@ if (submissionBuilderRes.ok) {
     if (primaryData?.profile) {
       const uploadedProfile = {
         ...primaryData.profile,
+
+        insured:
+          primaryData?.profile?.insured ||
+          primaryData?.profile?.business_name ||
+          primaryData?.profile?.named_insured ||
+          primaryData?.business_name ||
+          "",
+
+        business_name:
+          primaryData?.profile?.business_name ||
+          primaryData?.profile?.insured ||
+          primaryData?.profile?.named_insured ||
+          primaryData?.business_name ||
+          "",
+
         policies: firstNonEmptyArray(
           primaryData?.policies,
           primaryData?.profile?.policies,
           primaryData?.account_profile?.policies,
           combinedPolicies
         ),
+
         validation: primaryData?.validation || primaryData?.profile?.validation || {},
       };
 
