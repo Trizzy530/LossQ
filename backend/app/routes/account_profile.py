@@ -210,6 +210,72 @@ def upsert_account_profile(
 
     return profile
 
+@router.delete("/cleanup-placeholder-profiles")
+def cleanup_placeholder_profiles(
+    keep_policy_numbers: str = "",
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    keep_set = {
+        item.strip().upper()
+        for item in str(keep_policy_numbers or "").split(",")
+        if item.strip()
+    }
+
+    business_placeholders = {
+        "",
+        "business name not set",
+        "unnamed business",
+        "not set",
+        "none",
+        "null",
+    }
+
+    carrier_placeholders = {
+        "",
+        "carrier not set",
+        "business name not set",
+        "unnamed business",
+        "not set",
+        "none",
+        "null",
+    }
+
+    profiles = (
+        db.query(AccountProfile)
+        .filter(AccountProfile.organization_id == current_user["organization_id"])
+        .all()
+    )
+
+    deleted_policy_numbers = []
+
+    for profile in profiles:
+        policy_number = str(profile.policy_number or "").strip().upper()
+        business_name = str(profile.business_name or "").strip().lower()
+        carrier_name = str(
+            profile.carrier_name or profile.writing_carrier or ""
+        ).strip().lower()
+
+        if policy_number in keep_set:
+            continue
+
+        is_placeholder_business = business_name in business_placeholders
+        is_placeholder_carrier = carrier_name in carrier_placeholders
+
+        if is_placeholder_business and is_placeholder_carrier:
+            deleted_policy_numbers.append(policy_number)
+            db.delete(profile)
+
+    db.commit()
+
+    return {
+        "message": "Placeholder carrier profiles cleaned.",
+        "deleted_count": len(deleted_policy_numbers),
+        "deleted_policy_numbers": deleted_policy_numbers[:200],
+        "kept_policy_numbers": sorted(list(keep_set)),
+    }
+
+
 @router.delete("/delete")
 def delete_account_profile_by_query(
     policy_number: str,
