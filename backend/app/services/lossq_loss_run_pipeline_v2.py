@@ -19,12 +19,14 @@ BAD_LABELS = {
     "REPORTDATE",
     "PAG",
     "PAGE",
+    "UPLOAD",
 }
 
 
 def _clean(value: Any) -> str:
     value = str(value or "").strip()
-    value = re.sub(r"\s+", " ", value)
+    value = re.sub(r"[ \t]+", " ", value)
+    value = re.sub(r"\n\s+", "\n", value)
     return value.strip(" :-|\t\r\n")
 
 
@@ -42,21 +44,9 @@ def _money_to_float(value: Any) -> float:
         return 0.0
 
 
-def _looks_like_policy(value: Any) -> bool:
-    policy = _normalize_policy(value)
-    if not policy or policy in BAD_LABELS:
-        return False
-    if policy.startswith("POLICY") or policy.startswith("CLAIM"):
-        return False
-    # Must have at least one digit and at least four characters.
-    return len(policy) >= 4 and bool(re.search(r"\d", policy))
-
-
 def _normalize_policy(value: Any) -> str:
     raw = _clean(value).upper()
 
-    # Stop runaway captures from OCR/PDF extraction like:
-    # BRD-CA-204887-01POLICYTERM or 10050749CAPAGE1OF2
     raw = re.split(
         r"(POLICY\s*TERM|POLICYTERM|CLAIM\s*DETAILS|CLAIMDETAILS|REPORT\s*RUN|REPORTRUN|NAMED\s*INSURED|NAMEDINSURED|CARRIER|PAGE|LH\s*\d)",
         raw,
@@ -67,8 +57,20 @@ def _normalize_policy(value: Any) -> str:
     raw = raw.replace(" ", "")
     raw = raw.strip(":-|.,;")
     raw = re.sub(r"[^A-Z0-9\-]", "", raw)
-
     return raw
+
+
+def _looks_like_policy(value: Any) -> bool:
+    policy = _normalize_policy(value)
+    if not policy or policy in BAD_LABELS:
+        return False
+    if policy.startswith("POLICY") or policy.startswith("CLAIM"):
+        return False
+    if len(policy) < 4:
+        return False
+    if not re.search(r"\d", policy):
+        return False
+    return True
 
 
 def _extract_text_from_pdf(content: bytes) -> str:
@@ -96,12 +98,75 @@ def _extract_text_from_pdf(content: bytes) -> str:
     return text
 
 
+def _nonempty_lines(text: str) -> List[str]:
+    return [_clean(line) for line in text.splitlines() if _clean(line)]
+
+
+def _extract_header_blocks(text: str) -> List[Dict[str, str]]:
+    """
+    Handles both formats:
+      Named Insured: ABC LLC
+      Policy Number: 123
+    and messy PDF extraction:
+      Report Run Date:
+      Named Insured:
+      Carrier:
+      Policy Number:
+      Policy Term:
+      April 17, 2026
+      ABC LLC
+      Carrier Name
+      POL-123
+      01/01/24 - 01/01/25
+    """
+    lines = _nonempty_lines(text)
+    blocks: List[Dict[str, str]] = []
+
+    for i in range(len(lines)):
+        window = [line.lower().replace(" ", "") for line in lines[i : i + 5]]
+
+        if (
+            len(window) >= 5
+            and window[0].startswith("reportrundate")
+            and window[1].startswith("namedinsured")
+            and window[2].startswith("carrier")
+            and window[3].startswith("policynumber")
+            and window[4].startswith("policyterm")
+        ):
+            values = lines[i + 5 : i + 10]
+            if len(values) >= 5:
+                candidate = {
+                    "report_run_date": values[0],
+                    "business_name": values[1],
+                    "carrier_name": values[2],
+                    "writing_carrier": values[2],
+                    "policy_number": _normalize_policy(values[3]),
+                    "policy_term": values[4],
+                }
+                if _looks_like_policy(candidate["policy_number"]):
+                    blocks.append(candidate)
+
+    return blocks
+
+
+def _find_inline_value(patterns: List[str], text: str) -> str:
+    for pattern in patterns:
+        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            value = _clean(match.group(1))
+            if value:
+                return value
+    return ""
+
+
 def _find_policy_numbers(text: str) -> List[Tuple[int, str]]:
     found: List[Tuple[int, str]] = []
 
+    # Inline format only. The block format is handled separately so Policy Term
+    # does not become the captured policy value.
     patterns = [
-        r"Policy\s*Number\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\s]{3,80})",
-        r"Policy\s*#\s*[:\-]?\s*([A-Z0-9][A-Z0-9\-\s]{3,80})",
+        r"Policy\s*Number\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\s]{3,60})",
+        r"Policy\s*#\s*[:\-]\s*([A-Z0-9][A-Z0-9\-\s]{3,60})",
     ]
 
     for pattern in patterns:
@@ -110,13 +175,29 @@ def _find_policy_numbers(text: str) -> List[Tuple[int, str]]:
             if _looks_like_policy(policy):
                 found.append((match.start(), policy))
 
-    # Deduplicate while preserving position order.
+    # Add block-format policy positions.
+    lines = _nonempty_lines(text)
+    char_pos = 0
+    for line in lines:
+        idx = text.find(line, char_pos)
+        if idx >= 0:
+            char_pos = idx + len(line)
+
+    for block in _extract_header_blocks(text):
+        policy = block.get("policy_number", "")
+        if _looks_like_policy(policy):
+            # Approximate position by locating policy in full text.
+            pos = text.find(block.get("policy_number", ""))
+            if pos < 0:
+                pos = 0
+            found.append((pos, policy))
+
+    # Deduplicate by policy and position order.
     deduped: List[Tuple[int, str]] = []
     seen = set()
     for pos, policy in sorted(found, key=lambda item: item[0]):
-        key = (pos, policy)
-        if key not in seen:
-            seen.add(key)
+        if policy not in seen:
+            seen.add(policy)
             deduped.append((pos, policy))
 
     return deduped
@@ -134,21 +215,11 @@ def _nearest_policy_before(policy_positions: List[Tuple[int, str]], pos: int, fa
     return selected if _looks_like_policy(selected) else fallback
 
 
-def _find_first(patterns: List[str], text: str, default: str = "") -> str:
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE | re.DOTALL)
-        if match:
-            value = _clean(match.group(1))
-            if value:
-                return value
-    return default
-
-
 def _extract_profile(text: str) -> Dict[str, Any]:
-    policy_positions = _find_policy_numbers(text)
-    first_policy = policy_positions[0][1] if policy_positions else ""
+    blocks = _extract_header_blocks(text)
+    first_block = blocks[0] if blocks else {}
 
-    business_name = _find_first(
+    business_name = first_block.get("business_name") or _find_inline_value(
         [
             r"Named\s*Insured\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Carrier\s*:|Policy\s*Term|Report\s*Run\s*Date)",
             r"Insured\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Carrier\s*:|Policy\s*Term|Report\s*Run\s*Date)",
@@ -160,7 +231,7 @@ def _extract_profile(text: str) -> Dict[str, Any]:
     if business_name.lower() in {"carrier", "policy", "claims", "yes", "policy term"}:
         business_name = ""
 
-    carrier_name = _find_first(
+    carrier_name = first_block.get("carrier_name") or _find_inline_value(
         [
             r"Carrier\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Named\s*Insured|Policy\s*Term)",
             r"Insurance\s*Company\s*[:\-]\s*(.*?)(?:\n|Policy\s*Number|Named\s*Insured|Policy\s*Term)",
@@ -172,13 +243,25 @@ def _extract_profile(text: str) -> Dict[str, Any]:
     if carrier_name.lower() in {"carrier", "policy", "claims", "yes", "policy term"}:
         carrier_name = ""
 
+    policy_positions = _find_policy_numbers(text)
+    first_policy = first_block.get("policy_number") or (policy_positions[0][1] if policy_positions else "")
+
     effective_date = ""
     expiration_date = ""
+
+    policy_term = first_block.get("policy_term", "")
     term_match = re.search(
-        r"Policy\s*Term\s*[:\-]?\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})\s*[-–]\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})",
-        text,
-        flags=re.IGNORECASE,
+        r"([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})\s*[-–]\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})",
+        policy_term,
     )
+
+    if not term_match:
+        term_match = re.search(
+            r"Policy\s*Term\s*[:\-]?\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})\s*[-–]\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})",
+            text,
+            flags=re.IGNORECASE,
+        )
+
     if term_match:
         effective_date = term_match.group(1)
         expiration_date = term_match.group(2)
@@ -198,15 +281,11 @@ def _extract_profile(text: str) -> Dict[str, Any]:
 
 
 def _extract_claim_sections(text: str, fallback_policy: str) -> List[Tuple[str, str, str]]:
-    """
-    Return (claim_number, policy_number, section_text).
-
-    This only accepts actual Claim Number anchors and rejects policy labels.
-    """
     policy_positions = _find_policy_numbers(text)
 
+    # Capture only the token immediately after Claim Number. Stop before Loss Date.
     claim_pattern = re.compile(
-        r"Claim\s*Number\s*[:\-]?\s*([A-Z]{1,4}[-\s]?[A-Z0-9]{2,20}(?:[-\s][A-Z0-9]{2,20})*)",
+        r"Claim\s*Number\s*[:\-]?\s*(?:\n\s*)?([A-Z]{1,4}-[A-Z0-9]{2,10}-[0-9]{2,10}|[A-Z]{1,4}-[0-9]{2,10}-[0-9]{2,10})",
         flags=re.IGNORECASE,
     )
 
@@ -220,7 +299,6 @@ def _extract_claim_sections(text: str, fallback_policy: str) -> List[Tuple[str, 
         if not claim_number or claim_number in {"CLAIM", "CLAIM-NUMBER", "POLICY", "POLICYTERM"}:
             continue
 
-        # Reject policy numbers being mistaken for claims.
         if claim_number.startswith("BRD-") or claim_number.startswith("POLICY"):
             continue
 
@@ -249,7 +327,7 @@ def _extract_amounts_from_section(section: str) -> List[float]:
 
 def _extract_date(section: str, label: str) -> str:
     match = re.search(
-        rf"{re.escape(label)}\s*[:\-]?\s*([0-9]{{1,2}}/[0-9]{{1,2}}/[0-9]{{2,4}})",
+        rf"{re.escape(label)}\s*[:\-]?\s*(?:\n\s*)?([0-9]{{1,2}}/[0-9]{{1,2}}/[0-9]{{2,4}})",
         section,
         flags=re.IGNORECASE,
     )
@@ -257,7 +335,7 @@ def _extract_date(section: str, label: str) -> str:
 
 
 def _extract_status(section: str) -> str:
-    match = re.search(r"Status\s*of\s*Loss\s*[:\-]?\s*([A-Za-z]+)", section, flags=re.IGNORECASE)
+    match = re.search(r"Status\s*of\s*Loss\s*[:\-]?\s*(?:\n\s*)?([A-Za-z]+)", section, flags=re.IGNORECASE)
     if match:
         value = match.group(1).strip().title()
         if value.lower() in {"open", "closed", "pending", "reopened"}:
@@ -273,7 +351,7 @@ def _extract_status(section: str) -> str:
 
 def _extract_description(section: str) -> str:
     match = re.search(
-        r"Description\s*of\s*Loss\s*[:\-]?\s*(.*?)(?:Claimant\s+Type\s+Of\s+Loss|Claimant\s+TypeOfLoss|$)",
+        r"Description\s*of\s*Loss\s*[:\-]?\s*(.*?)(?:Claimant\s+Type\s+Of\s+Loss|Claimant\s+TypeOfLoss|Claimant\s*\n|$)",
         section,
         flags=re.IGNORECASE | re.DOTALL,
     )
@@ -305,9 +383,7 @@ def _extract_claims(text: str, fallback_policy: str) -> List[Dict[str, Any]]:
     for claim_number, policy_number, section in _extract_claim_sections(text, fallback_policy):
         amounts = _extract_amounts_from_section(section)
 
-        # In loss-run tables, Total Net Loss is generally the last positive
-        # dollar amount in the claim row/section. This avoids using a paid amount
-        # instead of net loss when recoveries exist.
+        # Last positive dollar value is usually Total Net Loss for the claim row.
         total_incurred = amounts[-1] if amounts else 0.0
 
         paid_amount = amounts[0] if amounts else 0.0
@@ -363,15 +439,6 @@ def _policy_rollup(claims: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
 
 
 def parse_loss_run_upload(filename: str, content: bytes) -> Dict[str, Any]:
-    """
-    Universal V2 parser entry point used by app.routes.upload_v2.
-
-    Accuracy goals:
-    - Do not turn labels like POLICYTERM into policy numbers.
-    - Do not turn policy numbers into fake claims.
-    - Only create claims from actual Claim Number anchors.
-    - Keep multiple policies in the policy rollup.
-    """
     text = _extract_text_from_pdf(content)
     profile = _extract_profile(text)
 
