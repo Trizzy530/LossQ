@@ -488,9 +488,9 @@ function normalizeProfileName(item: any) {
           );
 
           if (cachedMatch) {
-            activeProfile = cachedMatch;
-            setProfile(cachedMatch);
-          }
+  activeProfile = normalizeProfileName(cachedMatch);
+  setProfile(activeProfile);
+}
         }
       } else {
         const profileRes = await fetch(`${API}/account-profile/`, {
@@ -509,25 +509,49 @@ function normalizeProfileName(item: any) {
             (item) => item?.policy_number === fetchedProfile?.policy_number
           );
 
-          activeProfile = {
-            ...(cachedMatch || {}),
-            ...fetchedProfile,
-            policies:
-              fetchedProfile?.policies ||
-              cachedMatch?.policies ||
-              profile?.policies ||
-              [],
-            validation:
-              fetchedProfile?.validation ||
-              cachedMatch?.validation ||
-              profile?.validation ||
-              {},
-          };
+          activeProfile = normalizeProfileName({
+  ...(cachedMatch || {}),
+  ...fetchedProfile,
+
+  business_name:
+    fetchedProfile?.business_name ||
+    fetchedProfile?.insured ||
+    fetchedProfile?.named_insured ||
+    fetchedProfile?.account_name ||
+    cachedMatch?.business_name ||
+    cachedMatch?.insured ||
+    cachedMatch?.named_insured ||
+    cachedMatch?.account_name ||
+    "",
+
+  insured:
+    fetchedProfile?.insured ||
+    fetchedProfile?.business_name ||
+    fetchedProfile?.named_insured ||
+    fetchedProfile?.account_name ||
+    cachedMatch?.insured ||
+    cachedMatch?.business_name ||
+    cachedMatch?.named_insured ||
+    cachedMatch?.account_name ||
+    "",
+
+  policies:
+    fetchedProfile?.policies ||
+    cachedMatch?.policies ||
+    profile?.policies ||
+    [],
+  validation:
+    fetchedProfile?.validation ||
+    cachedMatch?.validation ||
+    profile?.validation ||
+    {},
+});
 
           setProfile(activeProfile || {});
-          if (activeProfile?.policy_number) {
-            updateProfileList([activeProfile]);
-          }
+if (activeProfile?.policy_number) {
+  updateProfileList([activeProfile]);
+}
+
         } else {
           const cachedProfiles = getCachedProfiles();
           if (cachedProfiles.length > 0 && !activeProfile?.policy_number) {
