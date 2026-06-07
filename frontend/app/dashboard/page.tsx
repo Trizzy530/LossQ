@@ -233,7 +233,30 @@ export default function DashboardPage() {
   const [timeline, setTimeline] = useState<any>({});
   const [profile, setProfile] = useState<any>({});
   const [profiles, setProfiles] = useState<any[]>([]);
+function getAccountDisplayName(item: any) {
+  return (
+    item?.business_name ||
+    item?.insured ||
+    item?.named_insured ||
+    item?.account_name ||
+    item?.customer_name ||
+    item?.company_name ||
+    item?.name ||
+    ""
+  );
+}
+
+function normalizeProfileName(item: any) {
+  const accountName = getAccountDisplayName(item);
+
+  return {
+    ...item,
+    business_name: accountName || item?.business_name || "",
+    insured: item?.insured || accountName || "",
+  };
+}
   const [files, setFiles] = useState<FileList | null>(null);
+
 
   const [message, setMessage] = useState("");
   const [authReady, setAuthReady] = useState(false);
@@ -313,21 +336,44 @@ export default function DashboardPage() {
   }
 
   function updateProfileList(incomingProfiles: AnyObject[]) {
+    const cleanedIncoming = (incomingProfiles || [])
+      .filter(Boolean)
+      .map((item) => normalizeProfileName(item));
+
     setProfiles((prev) => {
-      const merged = mergeProfiles(prev, incomingProfiles);
-      setCachedProfiles(merged);
-      return merged;
+      const merged = [...cleanedIncoming, ...prev.map((item) => normalizeProfileName(item))];
+      const seen = new Set<string>();
+
+      return merged.filter((item) => {
+        const key =
+          item?.policy_number ||
+          item?.account_number ||
+          item?.id ||
+          `${getAccountDisplayName(item)}-${item?.carrier_name || ""}`;
+
+        if (!key) return true;
+        if (seen.has(String(key))) return false;
+
+        seen.add(String(key));
+        return true;
+      });
     });
   }
 
   async function loadProfileList() {
-    const cached = getCachedProfiles();
-
-    if (cached.length > 0) {
-      setProfiles(cached);
-    }
-
     try {
+      const cachedProfiles =
+        typeof window !== "undefined"
+          ? JSON.parse(localStorage.getItem("lossq_cached_profiles") || "[]")
+          : [];
+
+      if (Array.isArray(cachedProfiles) && cachedProfiles.length > 0) {
+        const normalizedCached = cachedProfiles.map((item: AnyObject) =>
+          normalizeProfileName(item)
+        );
+        setProfiles(normalizedCached);
+      }
+
       const profilesRes = await fetch(`${API}/account-profile/all`, {
         headers: authHeaders(),
       });
@@ -335,27 +381,24 @@ export default function DashboardPage() {
       if (profilesRes.status === 401 || profilesRes.status === 403) {
         clearSession();
         router.replace("/login?expired=1");
-        return cached;
+        return;
       }
 
-      if (profilesRes.ok) {
-        const profilesData = await safeJson(profilesRes);
-        const normalized = normalizeProfiles(profilesData);
-
-        if (normalized.length > 0) {
-          const merged = mergeProfiles(cached, normalized);
-          setProfiles(merged);
-          setCachedProfiles(merged);
-          return merged;
-        }
+      if (!profilesRes.ok) {
+        return;
       }
+
+      const data = await safeJson(profilesRes);
+      const serverProfiles = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.profiles)
+        ? data.profiles
+        : [];
+
+      updateProfileList(serverProfiles);
     } catch {
-      if (cached.length > 0) {
-        setMessage("Loaded saved account workspace. Backend profile list unavailable.");
-      }
+      // Keep dashboard usable if profile list fetch fails.
     }
-
-    return cached;
   }
 
   function newBlankProfile() {
@@ -1243,12 +1286,12 @@ const activePolicyNumbers = Array.from(
 );
 
 const hasActiveAccount = Boolean(
-  displayProfile?.business_name ||
+  getAccountDisplayName(displayProfile) ||
     displayProfile?.carrier_name ||
     displayProfile?.policy_number ||
     activePolicyNumbers.length > 0 ||
     summary?.claims_used != null ||
-    submissionBuilder?.claims_used != null
+    claims.length > 0
 );
 
 const visibleClaims = hasActiveAccount
@@ -1794,7 +1837,7 @@ const trendNoteDisplay =
                         <option value="">Select saved profile...</option>
                         {profiles.map((item) => (
                           <option key={item.id || item.policy_number} value={item.policy_number}>
-                            {(item.business_name || "Unnamed Business") +
+                            {(getAccountDisplayName(item) || "Unnamed Business") +
                               " — " +
                               (item.policy_number || "No Policy Number")}
                           </option>
@@ -2600,7 +2643,7 @@ const trendNoteDisplay =
             <div>
               <h2 className="font-semibold">AI Underwriting Copilot</h2>
               <p className="text-xs text-slate-400">
-                Account: {profile?.business_name || "No account selected"} | Policy: {displayProfile?.policy_number || "-"}
+                 Account: {getAccountDisplayName(profile) || "No account selected"} | Policy: {displayProfile?.policy_number || "N/A"}
               </p>
             </div>
 
