@@ -79,11 +79,12 @@ def _money_values_from_text(text: Any) -> List[float]:
     text_value = str(text or "")
     values: List[float] = []
 
-    for raw in re.findall(r"\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+(?:\.[0-9]{2}))", text_value):
+    for raw in re.findall(
+        r"\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+(?:\.[0-9]{2}))",
+        text_value,
+    ):
         try:
             amount = float(raw.replace(",", ""))
-            # Ignore dates and tiny OCR fragments. Real claim dollars can be 0,
-            # but max-net-loss repair only needs meaningful positive values.
             if amount > 0:
                 values.append(amount)
         except Exception:
@@ -109,6 +110,7 @@ def _extract_status_from_text(text: Any) -> str:
         text_value,
         flags=re.IGNORECASE,
     )
+
     if match:
         status = match.group(1).strip().title()
         if status.lower() in {"closed", "open", "pending", "reopened"}:
@@ -139,15 +141,6 @@ def _normalize_line_of_business(value: Any, description: Any) -> str:
 
 
 def _repair_claim_values(claim_data: Dict[str, Any], fallback_policy_number: str) -> Dict[str, Any]:
-    """
-    Universal claim repair after V2 parsing.
-
-    Fixes common OCR/table extraction issues:
-    - policy term accidentally captured as loss date
-    - blank status even when "Status of Loss: Closed" appears
-    - total incurred pulled as $0, $2, or another tiny fragment instead of total net loss
-    - paid amount left blank even though the loss table shows Total Paid
-    """
     repaired = dict(claim_data or {})
     description = repaired.get("description") or repaired.get("loss_description") or ""
 
@@ -174,9 +167,8 @@ def _repair_claim_values(claim_data: Dict[str, Any], fallback_policy_number: str
         or repaired.get("total_net_loss")
     )
 
-    # Replace obviously wrong totals like $0, $2, $49 when the text shows a
-    # much larger total net loss. This keeps the parser universal and does not
-    # hard-code any claim number or company name.
+    # Repair obvious OCR/table mistakes like $0, $2, or $49 when the claim text
+    # contains a much larger total net loss.
     if max_amount > 0 and (current_total <= 0 or current_total < (max_amount * 0.50)):
         repaired["total_incurred"] = max_amount
         repaired["total_amount"] = max_amount
@@ -375,29 +367,10 @@ def force_save_account_profile_v2(
             or policy_number,
         )
 
-        _safe_set_if_exists(
-            profile,
-            "producer_number",
-            _first_real_value(profile_data.get("producer_number")),
-        )
-
-        _safe_set_if_exists(
-            profile,
-            "policies",
-            serialize_json(profile_data.get("policies") or [], []),
-        )
-
-        _safe_set_if_exists(
-            profile,
-            "validation",
-            serialize_json(profile_data.get("validation") or {}, {}),
-        )
-
-        _safe_set_if_exists(
-            profile,
-            "raw_text_preview",
-            _clean(profile_data.get("raw_text_preview")),
-        )
+        _safe_set_if_exists(profile, "producer_number", _first_real_value(profile_data.get("producer_number")))
+        _safe_set_if_exists(profile, "policies", serialize_json(profile_data.get("policies") or [], []))
+        _safe_set_if_exists(profile, "validation", serialize_json(profile_data.get("validation") or {}, {}))
+        _safe_set_if_exists(profile, "raw_text_preview", _clean(profile_data.get("raw_text_preview")))
 
     db.flush()
 
@@ -468,6 +441,8 @@ async def save_uploaded_files_v2(
 
     upload_session_id = datetime.now().strftime("%Y%m%d%H%M%S")
     clean_input_policy = clean_profile_value(policy_number)
+
+    claim_columns = {column.name for column in Claim.__table__.columns}
 
     for file in files:
         content = await file.read()
@@ -547,9 +522,6 @@ async def save_uploaded_files_v2(
             current_user=current_user,
         )
 
-        # Replace old claims for this policy once per upload request.
-        # This prevents old failed-parser rows, deleted profile leftovers, and
-        # stale duplicate rows from continuing to drive dashboard metrics.
         if file_policy_number and file_policy_number not in policies_replaced_this_upload:
             existing_claims_deleted = (
                 db.query(Claim)
@@ -582,8 +554,6 @@ async def save_uploaded_files_v2(
             normalized["claim_number"] = claim_number
             normalized["policy_number"] = policy_value
 
-            # Re-apply repaired values after normalize_claim_data in case the
-            # shared normalizer defaults blank status/dates/amounts.
             normalized["loss_date"] = claim_data.get("loss_date") or normalized.get("loss_date")
             normalized["reported_date"] = claim_data.get("reported_date") or normalized.get("reported_date")
             normalized["status"] = claim_data.get("status") or normalized.get("status") or "Open"
@@ -612,7 +582,13 @@ async def save_uploaded_files_v2(
                 total_duplicates_skipped += 1
                 continue
 
-            db.add(Claim(**normalized))
+            safe_claim_data = {
+                key: value
+                for key, value in normalized.items()
+                if key in claim_columns
+            }
+
+            db.add(Claim(**safe_claim_data))
             file_saved += 1
             total_saved += 1
 
@@ -699,6 +675,7 @@ async def save_uploaded_files_v2(
         "v2_carrier_fallback_enabled": True,
         "v2_replace_old_policy_claims": True,
         "v2_claim_money_date_status_repair": True,
+        "v2_safe_claim_field_filter": True,
         "saved_claims": total_saved,
         "existing_claims_deleted": total_existing_claims_deleted,
         "duplicates_skipped": total_duplicates_skipped,
