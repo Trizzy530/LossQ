@@ -338,17 +338,17 @@ function normalizeProfileName(item: any) {
   function updateProfileList(incomingProfiles: AnyObject[]) {
     const cleanedIncoming = (incomingProfiles || [])
       .filter(Boolean)
-      .map((item) => normalizeProfileName(item));
+      .map((item) => normalizeProfileName(item))
+      .filter((item) => item?.policy_number || item?.account_number || getAccountDisplayName(item));
 
     setProfiles((prev) => {
       const merged = [...cleanedIncoming, ...prev.map((item) => normalizeProfileName(item))];
       const seen = new Set<string>();
 
-      return merged.filter((item) => {
+      const next = merged.filter((item) => {
         const key =
-          item?.policy_number ||
-          item?.account_number ||
-          item?.id ||
+          normalizePolicyNumber(item?.policy_number || item?.account_number) ||
+          String(item?.id || "") ||
           `${getAccountDisplayName(item)}-${item?.carrier_name || ""}`;
 
         if (!key) return true;
@@ -357,15 +357,15 @@ function normalizeProfileName(item: any) {
         seen.add(String(key));
         return true;
       });
+
+      setCachedProfiles(next);
+      return next;
     });
   }
 
   async function loadProfileList() {
     try {
-      const cachedProfiles =
-        typeof window !== "undefined"
-          ? JSON.parse(localStorage.getItem("lossq_cached_profiles") || "[]")
-          : [];
+      const cachedProfiles = getCachedProfiles();
 
       if (Array.isArray(cachedProfiles) && cachedProfiles.length > 0) {
         const normalizedCached = cachedProfiles.map((item: AnyObject) =>
@@ -782,7 +782,7 @@ if (submissionBuilderRes.ok) {
     setMessage(`Deleting profile ${policyNumber}...`);
 
     const res = await fetch(
-  `${API}/account-profile/delete?policy_number=${encodeURIComponent(policyNumber)}`,
+  `${API}/account-profile/?policy_number=${encodeURIComponent(policyNumber)}&delete_claims=true`,
   {
     method: "DELETE",
     headers: authHeaders(),
@@ -854,6 +854,7 @@ if (submissionBuilderRes.ok) {
 
       setProfile(savedProfile);
       updateProfileList([savedProfile]);
+      setCachedProfiles(mergeProfiles(getCachedProfiles(), [savedProfile]));
       setMessage("Account profile saved.");
       setCachedSelectedPolicy(savedProfile.policy_number);
       await loadDashboard(savedProfile.policy_number);
@@ -1038,11 +1039,12 @@ if (submissionBuilderRes.ok) {
 
       setProfile(uploadedProfile);
       updateProfileList([uploadedProfile]);
+      setCachedProfiles(mergeProfiles(getCachedProfiles(), [uploadedProfile]));
     }
 
-    // Clear stale organization-wide claims immediately after upload.
-    // loadDashboard(uploadedPolicyNumber) will reload the selected account safely.
-    setClaims([]);
+    // Use the fresh upload response immediately so the dashboard does not look blank
+    // while the saved backend routes reload.
+    setClaims(combinedClaims);
 
     const uploadedPolicyNumber =
       primaryData?.profile?.policy_number ||
@@ -1059,6 +1061,10 @@ if (submissionBuilderRes.ok) {
     }
 
     setActiveTool("overview");
+
+    window.setTimeout(() => {
+      setMessage("");
+    }, 8000);
   } catch (error: any) {
     setMessage(
       `Upload failed before completion. Backend may have crashed. Error: ${
