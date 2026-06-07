@@ -33,11 +33,14 @@ PLACEHOLDER_VALUES = {
     "",
     "business name not set",
     "unnamed business",
+    "carrier",
     "carrier not set",
     "carrier not detected",
+    "writing carrier",
     "writing carrier not set",
     "writing carrier not detected",
     "agency not set",
+    "policy",
     "not set",
     "none",
     "null",
@@ -80,7 +83,7 @@ def _money_values_from_text(text: Any) -> List[float]:
     values: List[float] = []
 
     for raw in re.findall(
-        r"\$?\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+(?:\.[0-9]{2}))",
+        r"\$\s*([0-9]{1,3}(?:,[0-9]{3})*(?:\.[0-9]{2})|[0-9]+(?:\.[0-9]{2}))",
         text_value,
     ):
         try:
@@ -128,14 +131,20 @@ def _normalize_line_of_business(value: Any, description: Any) -> str:
     current = _clean(value)
     desc = str(description or "").lower()
 
-    if current and current.lower() not in {"unknown", "not set", "none"}:
+    if current and current.lower() not in {"unknown", "not set", "none", "policy"}:
         return current
 
-    if "collision" in desc or "vehicle" in desc or "auto" in desc:
+    if "workers comp" in desc or "employee" in desc:
+        return "Workers Comp"
+
+    if "cargo" in desc:
+        return "Cargo"
+
+    if "collision" in desc or "vehicle" in desc or "auto" in desc or "truck" in desc:
         return "Commercial Auto"
 
     if "property damage" in desc or "damaged floor" in desc or "damaged wall" in desc:
-        return "Property"
+        return "General Liability"
 
     return current or "Unknown"
 
@@ -150,9 +159,11 @@ def _repair_claim_values(claim_data: Dict[str, Any], fallback_policy_number: str
 
     if loss_date_from_text:
         repaired["loss_date"] = loss_date_from_text
+        repaired["date_of_loss"] = loss_date_from_text
 
     if reported_date_from_text:
         repaired["reported_date"] = reported_date_from_text
+        repaired["date_reported"] = reported_date_from_text
 
     if status_from_text:
         repaired["status"] = status_from_text
@@ -242,12 +253,19 @@ def _policy_number_from_profile(profile_data: Dict[str, Any]) -> str:
     ).upper()
 
 
+def _valid_policy_number(value: Any) -> bool:
+    policy = _clean(value).upper()
+    if not policy or policy in {"POLICY", "POLICY NUMBER", "ACCOUNT", "ACCOUNT NUMBER"}:
+        return False
+    return bool(re.search(r"[A-Z0-9]", policy)) and len(policy) >= 4
+
+
 def _build_policy_rollup_from_claims(claims: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     rollup: Dict[str, Dict[str, Any]] = {}
 
     for claim in claims:
         policy_number = _clean(claim.get("policy_number")).upper()
-        if not policy_number:
+        if not _valid_policy_number(policy_number):
             continue
 
         lob = _clean(claim.get("line_of_business")) or "Unknown"
@@ -279,7 +297,7 @@ def force_save_account_profile_v2(
     current_user: Dict[str, Any],
 ):
     policy_number = _policy_number_from_profile(profile_data)
-    if not policy_number:
+    if not _valid_policy_number(policy_number):
         return None
 
     business_name = _profile_name(profile_data)
@@ -478,14 +496,14 @@ async def save_uploaded_files_v2(
         claim_policy_number = ""
         for claim_data in parsed_claims:
             claim_policy = clean_profile_value(claim_data.get("policy_number"))
-            if claim_policy:
+            if _valid_policy_number(claim_policy):
                 claim_policy_number = claim_policy
                 break
 
-        if not file_policy_number and claim_policy_number:
+        if not _valid_policy_number(file_policy_number) and claim_policy_number:
             file_policy_number = claim_policy_number
 
-        if not file_policy_number:
+        if not _valid_policy_number(file_policy_number):
             file_policy_number = f"UPLOAD-{upload_session_id}-{len(uploaded_files) + 1}"
 
         file_policy_number = clean_profile_value(file_policy_number).upper()
@@ -493,6 +511,13 @@ async def save_uploaded_files_v2(
         repaired_claims = [
             _repair_claim_values(claim_data, file_policy_number)
             for claim_data in parsed_claims
+        ]
+
+        # Drop obvious header/non-claim rows.
+        repaired_claims = [
+            claim for claim in repaired_claims
+            if _clean(claim.get("claim_number")).upper() not in {"", "UNKNOWN", "CLAIM NUMBER"}
+            and _valid_policy_number(claim.get("policy_number"))
         ]
 
         rollup_from_claims = _build_policy_rollup_from_claims(repaired_claims)
@@ -507,7 +532,7 @@ async def save_uploaded_files_v2(
             or parsed_profile["account_number"]
         )
 
-        parsed_profile["policies"] = parsed_policies or rollup_from_claims
+        parsed_profile["policies"] = rollup_from_claims or parsed_policies
 
         calculated_total = sum(_safe_float(c.get("total_incurred")) for c in repaired_claims)
         parsed_profile["validation"] = parsed_validation or {}
@@ -554,8 +579,17 @@ async def save_uploaded_files_v2(
             normalized["claim_number"] = claim_number
             normalized["policy_number"] = policy_value
 
-            normalized["loss_date"] = claim_data.get("loss_date") or normalized.get("loss_date")
-            normalized["reported_date"] = claim_data.get("reported_date") or normalized.get("reported_date")
+            # Map repaired fields into the actual Claim model columns.
+            normalized["date_of_loss"] = (
+                claim_data.get("date_of_loss")
+                or claim_data.get("loss_date")
+                or normalized.get("date_of_loss")
+            )
+            normalized["date_reported"] = (
+                claim_data.get("date_reported")
+                or claim_data.get("reported_date")
+                or normalized.get("date_reported")
+            )
             normalized["status"] = claim_data.get("status") or normalized.get("status") or "Open"
             normalized["line_of_business"] = claim_data.get("line_of_business") or normalized.get("line_of_business")
             normalized["paid_amount"] = _safe_float(claim_data.get("paid_amount") or normalized.get("paid_amount"))
@@ -676,6 +710,7 @@ async def save_uploaded_files_v2(
         "v2_replace_old_policy_claims": True,
         "v2_claim_money_date_status_repair": True,
         "v2_safe_claim_field_filter": True,
+        "v2_claim_model_column_mapping": True,
         "saved_claims": total_saved,
         "existing_claims_deleted": total_existing_claims_deleted,
         "duplicates_skipped": total_duplicates_skipped,
