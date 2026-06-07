@@ -865,71 +865,92 @@ if (submissionBuilderRes.ok) {
   }
 
   try {
-    setMessage("Uploading and analyzing loss runs...");
+    setMessage("Uploading and analyzing loss runs with V2 parser...");
 
-    const formData = new FormData();
+    const uploadResults: any[] = [];
 
     /*
       IMPORTANT:
+      Universal OCR + Document Intelligence V2 currently accepts one file at a time.
+      For multiple files, we upload each file through /upload/loss-run-v2 separately.
       Do not force the old selected policy number into a new upload.
       The parser should decide the account number, policy schedule, and claim policies.
     */
 
-    let endpoint = `${API}/upload/loss-run`;
+    for (const file of selectedFiles) {
+      const formData = new FormData();
+      formData.append("file", file);
 
-    if (selectedFiles.length === 1) {
-      formData.append("file", selectedFiles[0]);
-    } else {
-      endpoint = `${API}/upload/loss-runs`;
-      selectedFiles.forEach((file) => formData.append("files", file));
+      const res = await fetch(`${API}/upload/loss-run-v2`, {
+        method: "POST",
+        headers: authHeaders(),
+        body: formData,
+      });
+
+      const data = await safeJson(res);
+
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (!res.ok) {
+        setMessage(`Upload failed. Backend returned ${res.status}: ${JSON.stringify(data)}`);
+        return;
+      }
+
+      uploadResults.push(data);
     }
 
-    const res = await fetch(endpoint, {
-      method: "POST",
-      headers: authHeaders(),
-      body: formData,
-    });
-
-    const data = await safeJson(res);
-
-    if (res.status === 401 || res.status === 403) {
-      clearSession();
-      router.replace("/login?expired=1");
-      return;
-    }
-
-    if (!res.ok) {
-      setMessage(`Upload failed. Backend returned ${res.status}: ${JSON.stringify(data)}`);
-      return;
-    }
-
+    const primaryData = uploadResults[uploadResults.length - 1] || {};
     const uploadedFileNames = selectedFiles.map((file) => file.name).join(", ");
+
+    const combinedClaims = uploadResults.flatMap((item) =>
+      item?.claims || item?.parsed_claims || item?.saved_claim_rows || []
+    );
+
+    const combinedPolicies = uploadResults.flatMap((item) =>
+      item?.policies || item?.profile?.policies || item?.account_profile?.policies || []
+    );
+
+    const totalSavedClaims = uploadResults.reduce(
+      (sum, item) => sum + Number(item?.saved_claims || item?.claim_count || 0),
+      0
+    );
 
     if (typeof window !== "undefined") {
       localStorage.setItem(
         "lossq_last_upload_review",
         JSON.stringify({
           uploaded_at: new Date().toISOString(),
-          uploaded_files: data?.uploaded_files || selectedFiles.map((file) => file.name),
-          profile: data?.profile || {},
-          policies: data?.policies || data?.profile?.policies || [],
-          claims: data?.claims || data?.parsed_claims || data?.saved_claim_rows || [],
-          validation: data?.validation || data?.profile?.validation || {},
-          saved_claims: data?.saved_claims || 0,
-          raw_response: data || {},
+          uploaded_files: uploadResults.flatMap((item) => item?.uploaded_files || []).length
+            ? uploadResults.flatMap((item) => item?.uploaded_files || [])
+            : selectedFiles.map((file) => file.name),
+          profile: primaryData?.profile || {},
+          policies: combinedPolicies,
+          claims: combinedClaims,
+          validation: primaryData?.validation || primaryData?.profile?.validation || {},
+          saved_claims: totalSavedClaims,
+          raw_response: uploadResults.length === 1 ? primaryData : uploadResults,
         })
       );
     }
 
     setMessage(
-      `Upload complete. Saved ${data?.saved_claims || 0} claim(s). New file: ${uploadedFileNames}`
+      `Upload complete using V2 parser. Saved ${totalSavedClaims} claim(s). New file(s): ${uploadedFileNames}`
     );
 
-    if (data?.profile) {
+    if (primaryData?.profile) {
       const uploadedProfile = {
-        ...data.profile,
-        policies: firstNonEmptyArray(data?.policies, data?.profile?.policies, data?.account_profile?.policies),
-        validation: data?.validation || data?.profile?.validation || {},
+        ...primaryData.profile,
+        policies: firstNonEmptyArray(
+          primaryData?.policies,
+          primaryData?.profile?.policies,
+          primaryData?.account_profile?.policies,
+          combinedPolicies
+        ),
+        validation: primaryData?.validation || primaryData?.profile?.validation || {},
       };
 
       setProfile(uploadedProfile);
@@ -941,15 +962,17 @@ if (submissionBuilderRes.ok) {
     setClaims([]);
 
     const uploadedPolicyNumber =
-      data?.profile?.policy_number ||
-      data?.profile?.account_number ||
-      data?.account_profile?.policy_number ||
-      data?.policy_number ||
+      primaryData?.profile?.policy_number ||
+      primaryData?.profile?.account_number ||
+      primaryData?.account_profile?.policy_number ||
+      primaryData?.policy_number ||
       "";
 
     if (uploadedPolicyNumber) {
       setCachedSelectedPolicy(uploadedPolicyNumber);
       await loadDashboard(uploadedPolicyNumber);
+    } else {
+      await loadDashboard();
     }
 
     setActiveTool("overview");
