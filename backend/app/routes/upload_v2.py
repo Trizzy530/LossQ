@@ -9,6 +9,7 @@ from sqlalchemy.orm import Session
 
 from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
+from app.models.account_profile import AccountProfile
 from app.role_utils import require_permission
 from app.services.audit import record_audit_event
 from app.services.lossq_loss_run_pipeline_v2 import parse_loss_run_upload
@@ -264,6 +265,81 @@ async def save_uploaded_files_v2(files, policy_number, db: Session, current_user
 
     profile = upsert_account_profile(db, profile_data, current_user)
 
+    # Hard guarantee: ensure V2 creates/updates the saved AccountProfile row.
+    policy_key = clean_profile_value(profile_data.get("policy_number"))
+
+    if policy_key:
+        saved_profile = (
+            db.query(AccountProfile)
+            .filter(AccountProfile.organization_id == current_user["organization_id"])
+            .filter(AccountProfile.policy_number == policy_key)
+            .first()
+        )
+
+        if not saved_profile:
+            saved_profile = AccountProfile(
+                organization_id=current_user["organization_id"],
+                policy_number=policy_key,
+            )
+            db.add(saved_profile)
+            db.flush()
+
+        saved_profile.business_name = (
+            profile_data.get("business_name")
+            or profile_data.get("insured")
+            or profile_data.get("named_insured")
+            or profile_data.get("account_name")
+            or saved_profile.business_name
+            or "Business Name Not Set"
+        )
+
+        saved_profile.carrier_name = (
+            profile_data.get("carrier_name")
+            or saved_profile.carrier_name
+            or "Carrier Not Set"
+        )
+
+        if hasattr(saved_profile, "writing_carrier"):
+            saved_profile.writing_carrier = (
+                profile_data.get("writing_carrier")
+                or profile_data.get("carrier_name")
+                or saved_profile.writing_carrier
+                or "Carrier Not Set"
+            )
+
+        saved_profile.agency_name = (
+            profile_data.get("agency_name")
+            or saved_profile.agency_name
+            or "Agency Not Set"
+        )
+
+        if hasattr(saved_profile, "account_number"):
+            saved_profile.account_number = (
+                profile_data.get("account_number")
+                or saved_profile.account_number
+                or policy_key
+            )
+
+        saved_profile.effective_date = (
+            profile_data.get("effective_date")
+            or saved_profile.effective_date
+            or "Not Set"
+        )
+
+        saved_profile.expiration_date = (
+            profile_data.get("expiration_date")
+            or saved_profile.expiration_date
+            or "Not Set"
+        )
+
+        saved_profile.evaluation_date = (
+            profile_data.get("evaluation_date")
+            or saved_profile.evaluation_date
+            or datetime.now().date().isoformat()
+        )
+
+        profile = saved_profile
+
     record_audit_event(
         db,
         current_user=current_user,
@@ -278,6 +354,8 @@ async def save_uploaded_files_v2(files, policy_number, db: Session, current_user
             "saved_claims": total_saved,
             "duplicates_skipped": total_duplicates_skipped,
             "profile_auto_populated": bool(profile),
+        "saved_profile_business_name": getattr(profile, "business_name", None),
+        "saved_profile_policy_number": getattr(profile, "policy_number", None),
             "policy_count": len(profile_data.get("policies") or []),
             "validation": profile_data.get("validation") or {},
             "uploaded_files": uploaded_files,
