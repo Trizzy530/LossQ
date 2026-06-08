@@ -23,6 +23,7 @@ const API =
 const SESSION_TIMEOUT_MS = 1000 * 60 * 60 * 24;
 const PROFILE_CACHE_KEY = "lossq_account_profiles";
 const SELECTED_POLICY_CACHE_KEY = "lossq_selected_policy_number";
+const SELECTED_CLAIM_CACHE_KEY = "lossq_selected_claim";
 
 type AnyObject = Record<string, any>;
 
@@ -170,6 +171,39 @@ function clearCachedSelectedPolicy() {
   localStorage.removeItem(SELECTED_POLICY_CACHE_KEY);
 }
 
+function getCachedSelectedClaim(): AnyObject | null {
+  if (typeof window === "undefined") return null;
+
+  try {
+    const raw =
+      sessionStorage.getItem(SELECTED_CLAIM_CACHE_KEY) ||
+      localStorage.getItem(SELECTED_CLAIM_CACHE_KEY);
+
+    const parsed = raw ? JSON.parse(raw) : null;
+    return parsed && typeof parsed === "object" ? parsed : null;
+  } catch {
+    return null;
+  }
+}
+
+function setCachedSelectedClaim(claim: AnyObject) {
+  if (typeof window === "undefined") return;
+
+  if (claim && typeof claim === "object") {
+    const value = JSON.stringify(claim);
+    sessionStorage.setItem(SELECTED_CLAIM_CACHE_KEY, value);
+    localStorage.setItem(SELECTED_CLAIM_CACHE_KEY, value);
+  }
+}
+
+function clearCachedSelectedClaim() {
+  if (typeof window === "undefined") return;
+
+  sessionStorage.removeItem(SELECTED_CLAIM_CACHE_KEY);
+  localStorage.removeItem(SELECTED_CLAIM_CACHE_KEY);
+}
+
+
 function getCachedLastUploadReview(): AnyObject {
   if (typeof window === "undefined") return {};
 
@@ -308,6 +342,21 @@ function normalizeProfileName(item: any) {
   const [copilotAnswer, setCopilotAnswer] = useState("");
   const [copilotLoading, setCopilotLoading] = useState(false);
   const [selectedClaimDetail, setSelectedClaimDetail] = useState<any | null>(null);
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const toolParam = new URLSearchParams(window.location.search).get("tool");
+
+    if (toolParam !== "claims") return;
+
+    const cachedClaim = getCachedSelectedClaim();
+
+    if (cachedClaim) {
+      setSelectedClaimDetail(cachedClaim);
+    }
+  }, []);
+
 
   const [renewalMemo, setRenewalMemo] = useState("");
   const [memoLoading, setMemoLoading] = useState(false);
@@ -1399,31 +1448,70 @@ async function exportExecutiveReport() {
   async function openClaimRecord(claim: any) {
     if (!claim) return;
 
+    setSelectedClaimDetail(claim);
+    setCachedSelectedClaim(claim);
+
+    const claimNumber =
+      claim?.claim_number ||
+      claim?.claimNumber ||
+      claim?.claim_no ||
+      claim?.number ||
+      "";
+
+    const policyNumber =
+      claim?.policy_number ||
+      claim?.policyNumber ||
+      claim?.policy_no ||
+      profile?.policy_number ||
+      "";
+
     if (claim?.id) {
-      router.push(`/claims/${claim.id}`);
+      router.push(
+        `/claims/${claim.id}?claim_number=${encodeURIComponent(
+          claimNumber
+        )}&policy_number=${encodeURIComponent(policyNumber)}`
+      );
       return;
     }
 
     try {
-      setMessage(`Opening claim ${getClaimNumberValue(claim) || "detail"}...`);
+      setMessage(`Opening claim ${getClaimNumberValue(claim)} detail...`);
 
       const res = await fetch(`${API}/claims/`, { headers: authHeaders() });
-      const data = res.ok ? await safeJson(res) : [];
-      const serverClaims = Array.isArray(data) ? data : [];
-      const match = serverClaims.find((item: any) => sameClaimRecord(item, claim) && item?.id);
+      const data = res.ok ? await safeJson(res) : null;
+
+      const serverClaims = Array.isArray(data)
+        ? data
+        : Array.isArray(data?.claims)
+        ? data.claims
+        : [];
+
+      const match = serverClaims.find((item: any) => sameClaimRecord(item, claim));
 
       if (match?.id) {
-        router.push(`/claims/${match.id}`);
+        const mergedClaim = {
+          ...claim,
+          ...match,
+        };
+
+        setCachedSelectedClaim(mergedClaim);
+
+        router.push(
+          `/claims/${match.id}?claim_number=${encodeURIComponent(
+            claimNumber || match?.claim_number || ""
+          )}&policy_number=${encodeURIComponent(
+            policyNumber || match?.policy_number || ""
+          )}`
+        );
         return;
       }
-    } catch {
-      // Fall through to in-page preview if backend lookup is unavailable.
-    }
 
-    setSelectedClaimDetail(claim);
-    setMessage(
-      "Claim detail opened in preview because the saved database claim ID was not returned. Re-upload this file after the backend deploy finishes to enable full claim detail pages."
-    );
+      setMessage(
+        "Claim detail opened in preview because the saved database claim ID was not returned."
+      );
+    } catch {
+      setMessage("Claim detail opened in preview because claim lookup failed.");
+    }
   }
 
   function logout() {
