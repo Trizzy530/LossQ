@@ -840,32 +840,129 @@ if (submissionBuilderRes.ok) {
     setMessage(`Loaded policy ${policyNumber}.`);
   }
 
-  async function deleteProfile(policyNumber: string) {
-  const confirmed = confirm(`Delete profile ${policyNumber}?`);
+  async function deleteProfile(profileToDelete: any) {
+  const profileId = profileToDelete?.id;
+  const policyNumber =
+    profileToDelete?.policy_number ||
+    profileToDelete?.account_number ||
+    profileToDelete?.customer_number ||
+    "";
+
+  const profileLabel =
+    profileToDelete?.business_name ||
+    profileToDelete?.account_name ||
+    policyNumber ||
+    "this profile";
+
+  if (!profileId && !policyNumber) {
+    setMessage("No saved profile selected to delete.");
+    return;
+  }
+
+  const confirmed = confirm(`Delete ${profileLabel}?`);
   if (!confirmed) return;
 
   const removeProfileLocally = () => {
     setProfiles((prev) => {
-      const next = prev.filter((p) => p.policy_number !== policyNumber);
+      const next = prev.filter((p) => {
+        if (profileId && p?.id === profileId) return false;
+        if (!profileId && policyNumber && p?.policy_number === policyNumber) return false;
+        return true;
+      });
+
       setCachedProfiles(next);
       return next;
     });
 
-    if (profile?.policy_number === policyNumber) {
+    localStorage.removeItem(SELECTED_POLICY_CACHE_KEY);
+
+    if (
+      (profileId && profile?.id === profileId) ||
+      (policyNumber && profile?.policy_number === policyNumber)
+    ) {
       newBlankProfile();
     }
   };
 
   try {
-    setMessage(`Deleting profile ${policyNumber}...`);
+    setMessage(`Deleting ${profileLabel}...`);
 
-    const res = await fetch(
-  `${API}/account-profile/delete?policy_number=${encodeURIComponent(policyNumber)}`,
-  {
-    method: "DELETE",
-    headers: authHeaders(),
+    const deleteUrl = profileId
+      ? `${API}/account-profile/id/${encodeURIComponent(String(profileId))}?delete_claims=true`
+      : `${API}/account-profile/?policy_number=${encodeURIComponent(policyNumber)}&delete_claims=true`;
+
+    const res = await fetch(deleteUrl, {
+      method: "DELETE",
+      headers: authHeaders(),
+    });
+
+    if (res.status === 401 || res.status === 403) {
+      clearSession();
+      router.replace("/login?expired=1");
+      return;
+    }
+
+    const data = await safeJson(res);
+
+    if (!res.ok || data?.deleted === false) {
+      removeProfileLocally();
+      setMessage(
+        `Removed ${profileLabel} from workspace. Backend response: ${
+          data?.message || res.status
+        }`
+      );
+      return;
+    }
+
+    removeProfileLocally();
+    setMessage(`Deleted ${profileLabel}.`);
+  } catch {
+    removeProfileLocally();
+    setMessage(`Deleted local profile ${profileLabel}. Backend delete unavailable.`);
   }
-);
+}
+
+
+async function saveProfile() {
+  const payload = {
+    id: profile?.id || null,
+    business_name: profile?.business_name || "",
+    carrier_name: profile?.carrier_name || "",
+    writing_carrier: profile?.writing_carrier || profile?.carrier_name || "",
+    agency_name: profile?.agency_name || "",
+    account_number: profile?.account_number || profile?.policy_number || "",
+    customer_number: profile?.customer_number || profile?.account_number || profile?.policy_number || "",
+    producer_number: profile?.producer_number || "",
+    policy_number: profile?.policy_number || profile?.account_number || "",
+    effective_date: profile?.effective_date || "",
+    expiration_date: profile?.expiration_date || "",
+    evaluation_date: profile?.evaluation_date || "",
+    policies: Array.isArray(profile?.policies) ? profile.policies : [],
+    validation: profile?.validation || {},
+    raw_text_preview: profile?.raw_text_preview || "",
+  };
+
+  const saveKey =
+    payload.account_number ||
+    payload.customer_number ||
+    payload.policy_number;
+
+  if (!saveKey) {
+    setMessage("Account number or policy number is required before saving.");
+    return;
+  }
+
+  try {
+    setMessage("Saving account profile...");
+
+    const res = await fetch(`${API}/account-profile/`, {
+      method: "PUT",
+      headers: {
+        "Content-Type": "application/json",
+        ...authHeaders(),
+      },
+      body: JSON.stringify(payload),
+    });
 
     if (res.status === 401 || res.status === 403) {
       clearSession();
@@ -874,72 +971,34 @@ if (submissionBuilderRes.ok) {
     }
 
     if (!res.ok) {
-      removeProfileLocally();
-      setMessage(
-        `Removed profile ${policyNumber} from workspace. Backend returned ${res.status}.`
-      );
+      updateProfileList([payload]);
+      setMessage("Saved profile locally. Backend save failed.");
       return;
     }
 
-    removeProfileLocally();
-    setMessage(`Deleted profile ${policyNumber}.`);
+    const savedData = await safeJson(res);
+    const savedProfile = savedData?.id ? savedData : payload;
+
+    setProfile(savedProfile);
+    updateProfileList([savedProfile]);
+
+    const selectedPolicy =
+      savedProfile?.policy_number ||
+      savedProfile?.account_number ||
+      savedProfile?.customer_number ||
+      "";
+
+    if (selectedPolicy) {
+      setCachedSelectedPolicy(selectedPolicy);
+      await loadDashboard(selectedPolicy);
+    }
+
+    setMessage("Account profile saved.");
   } catch {
-    removeProfileLocally();
-    setMessage(`Deleted local profile ${policyNumber}. Backend delete unavailable.`);
+    updateProfileList([payload]);
+    setMessage("Saved profile locally. Backend save unavailable.");
   }
 }
-
-  async function saveProfile() {
-    const payload = {
-      business_name: profile.business_name || "",
-      carrier_name: profile.carrier_name || "",
-      agency_name: profile.agency_name || "",
-      policy_number: profile.policy_number || "",
-      effective_date: profile.effective_date || "",
-      expiration_date: profile.expiration_date || "",
-      evaluation_date: profile.evaluation_date || "",
-    };
-
-    if (!payload.policy_number) {
-      setMessage("Policy number is required before saving.");
-      return;
-    }
-
-    try {
-      const res = await fetch(`${API}/account-profile/`, {
-        method: "PUT",
-        headers: {
-          "Content-Type": "application/json",
-          ...authHeaders(),
-        },
-        body: JSON.stringify(payload),
-      });
-
-      if (res.status === 401 || res.status === 403) {
-        clearSession();
-        router.replace("/login?expired=1");
-        return;
-      }
-
-      if (!res.ok) {
-        updateProfileList([payload]);
-        setMessage("Saved profile locally. Backend save failed.");
-        return;
-      }
-
-      const savedData = await safeJson(res);
-      const savedProfile = savedData?.policy_number ? savedData : payload;
-
-      setProfile(savedProfile);
-      updateProfileList([savedProfile]);
-      setMessage("Account profile saved.");
-      setCachedSelectedPolicy(savedProfile.policy_number);
-      await loadDashboard(savedProfile.policy_number);
-    } catch {
-      updateProfileList([payload]);
-      setMessage("Saved profile locally. Backend save unavailable.");
-    }
-  }
 
   async function lookupPolicy() {
     if (!profile.policy_number) {
@@ -2194,7 +2253,7 @@ const trendNoteDisplay =
                     {profile?.policy_number && (
                       <button
                         type="button"
-                        onClick={() => deleteProfile(profile.policy_number)}
+                        onClick={() => deleteProfile(profile)}
                         className="btn-danger"
                       >
                         Delete Profile
