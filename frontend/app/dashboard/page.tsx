@@ -1983,11 +1983,15 @@ const localRenewalRiskLevel =
 const localCarrierAppetiteScore = localRenewalScore == null ? null : Math.max(20, Math.min(95, localRenewalScore - localLargeLossCount * 4));
 const localSubmissionReadinessScore = intelligenceClaims.length > 0 ? Math.min(95, 70 + Math.min(20, visibleClaims.length * 3)) : null;
 
-const backendInsufficientText = JSON.stringify({ summary, decision, carrierAppetite, submissionReadiness }).toLowerCase();
+const backendInsufficientText = JSON.stringify({ summary, decision, carrierAppetite, submissionReadiness, premiumForecast, carrierMatch }).toLowerCase();
 const backendSaysInsufficient =
   backendInsufficientText.includes("insufficient") ||
   backendInsufficientText.includes("no account-specific claims") ||
   backendInsufficientText.includes("no account specific claims") ||
+  backendInsufficientText.includes("no validated claims") ||
+  backendInsufficientText.includes("not parsed or validated") ||
+  backendInsufficientText.includes("claims were not parsed") ||
+  backendInsufficientText.includes("no carrier match generated") ||
   Number(backendClaimsUsed || 0) === 0;
 
 const localRenewalDrivers = [
@@ -2087,6 +2091,23 @@ const effectiveCarrierAppetite =
       }
     : carrierAppetite;
 
+function isInsufficientBackendMessage(value: any) {
+  const text = String(value || "").toLowerCase();
+
+  return (
+    !text ||
+    text.includes("insufficient") ||
+    text.includes("no validated claims") ||
+    text.includes("no carrier match generated") ||
+    text.includes("claims were not parsed") ||
+    text.includes("not parsed or validated") ||
+    text.includes("claims were not validated") ||
+    text.includes("no account-specific claims") ||
+    text.includes("no account specific claims") ||
+    text.includes("no forecast generated")
+  );
+}
+
 const localPremiumIncreasePercent =
   visibleClaims.length > 0
     ? localRenewalRiskLevel === "Low"
@@ -2131,8 +2152,7 @@ const effectivePremiumForecast =
                 `${localLitigationCount} litigation/attorney indicator(s).`,
               ],
         forecast_summary:
-          premiumForecast?.forecast_summary &&
-          !String(premiumForecast.forecast_summary).toLowerCase().includes("insufficient")
+          !isInsufficientBackendMessage(premiumForecast?.forecast_summary)
             ? premiumForecast.forecast_summary
             : `LossQ has validated claim rows for this account. Without current premium/exposure data, this is a claim-based renewal pressure estimate. The modeled premium movement is approximately ${localPremiumIncreasePercent ?? 0}% based on claim frequency, severity, open claims, litigation indicators, and total incurred losses.`,
         claims_used: intelligenceClaims.length,
@@ -2141,13 +2161,21 @@ const effectivePremiumForecast =
       }
     : premiumForecast;
 
+const backendTopCarriersAreUsable =
+  Array.isArray(carrierMatch?.top_carriers) &&
+  carrierMatch.top_carriers.length > 0 &&
+  !carrierMatch.top_carriers.some((item: any) =>
+    isInsufficientBackendMessage(
+      `${item?.carrier || ""} ${item?.reason || ""} ${item?.fit || ""} ${item?.summary || ""}`
+    )
+  );
+
 const effectiveCarrierMatch =
   validatedClaimsAvailable
     ? {
         ...(carrierMatch || {}),
         recommended_carrier:
-          carrierMatch?.recommended_carrier &&
-          !String(carrierMatch.recommended_carrier).toLowerCase().includes("insufficient")
+          !isInsufficientBackendMessage(carrierMatch?.recommended_carrier)
             ? carrierMatch.recommended_carrier
             : displayProfile?.carrier_name ||
               displayProfile?.writing_carrier ||
@@ -2155,7 +2183,7 @@ const effectiveCarrierMatch =
         recommended_score:
           carrierMatch?.recommended_score ?? Math.max(45, Math.min(90, localCarrierAppetiteScore || 60)),
         top_carriers:
-          carrierMatch?.top_carriers?.length
+          backendTopCarriersAreUsable
             ? carrierMatch.top_carriers
             : [
                 {
@@ -2181,8 +2209,7 @@ const effectiveCarrierMatch =
                 },
               ],
         carrier_match_summary:
-          carrierMatch?.carrier_match_summary &&
-          !String(carrierMatch.carrier_match_summary).toLowerCase().includes("insufficient")
+          !isInsufficientBackendMessage(carrierMatch?.carrier_match_summary)
             ? carrierMatch.carrier_match_summary
             : `LossQ matched this account using ${intelligenceClaims.length} validated claim row(s), $${Number(localClaimTotal || 0).toLocaleString()} total incurred, ${localOpenClaimCount} open claim(s), and ${localLitigationCount} litigation/attorney indicator(s). Recommended market strategy should focus on the current carrier, standard commercial markets, and a backup market if claim severity or reserves require it.`,
         claims_used: intelligenceClaims.length,
