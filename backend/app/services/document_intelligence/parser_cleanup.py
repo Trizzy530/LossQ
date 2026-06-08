@@ -598,6 +598,10 @@ def cleanup_loss_run_extraction(
     if raw_text:
         parsed["raw_text_preview"] = raw_text[:12000]
 
+        print("\n\n================ LOSSQ RAW TEXT DEBUG START ================")
+        print(raw_text[:20000])
+        print("================ LOSSQ RAW TEXT DEBUG END ================\n\n")
+
     business_name = _extract_business_name(raw_text) if raw_text else ""
     carrier_name = _extract_carrier_name(raw_text) if raw_text else ""
     policies = _extract_policy_rows(raw_text) if raw_text else []
