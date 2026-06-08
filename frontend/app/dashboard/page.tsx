@@ -2063,6 +2063,116 @@ const effectiveDecision =
       }
     : decision;
 
+const localClaimLines = Array.from(
+  new Set(
+    intelligenceClaims
+      .map((claim: any) =>
+        String(
+          claim?.line_of_business ||
+            claim?.lineOfBusiness ||
+            claim?.claim_type ||
+            claim?.claimType ||
+            claim?.coverage ||
+            ""
+        ).toLowerCase()
+      )
+      .filter(Boolean)
+  )
+);
+
+const appetiteHasAuto = localClaimLines.some(
+  (line) => line.includes("auto") || line.includes("truck")
+);
+const appetiteHasGL = localClaimLines.some(
+  (line) => line.includes("general") || line.includes("liability")
+);
+const appetiteHasWC = localClaimLines.some(
+  (line) => line.includes("worker") || line.includes("comp")
+);
+const appetiteHasCargo = localClaimLines.some((line) => line.includes("cargo"));
+
+const appetiteOpenClaimsCount = intelligenceClaims.filter((claim: any) =>
+  isOpenClaimStatus(claim)
+).length;
+
+const appetiteTotalReserve = intelligenceClaims.reduce((sum: number, claim: any) => {
+  return (
+    sum +
+    toMoneyNumber(
+      claim?.reserve_amount ||
+        claim?.reserveAmount ||
+        claim?.reserve ||
+        claim?.outstanding_reserve ||
+        0
+    )
+  );
+}, 0);
+
+const appetiteHasLargeLoss = intelligenceClaims.some(
+  (claim: any) => getClaimIncurred(claim) >= 50000
+);
+
+const appetiteHasOpenReserveConcern =
+  appetiteOpenClaimsCount > 0 && appetiteTotalReserve > 25000;
+
+const localCarrierBuckets = [];
+
+if (appetiteHasAuto) {
+  localCarrierBuckets.push({
+    carrier_type: appetiteHasOpenReserveConcern
+      ? "Transportation / Commercial Auto Selective Market"
+      : "Transportation-Focused Standard Auto Market",
+    match_score: Math.max(
+      35,
+      Math.min(92, (localCarrierAppetiteScore || 60) + (appetiteHasOpenReserveConcern ? -8 : 6))
+    ),
+    fit: appetiteHasOpenReserveConcern ? "Conditional fit" : "Strong fit",
+  });
+}
+
+if (appetiteHasGL) {
+  localCarrierBuckets.push({
+    carrier_type: appetiteHasLargeLoss
+      ? "Regional Casualty / General Liability Selective Market"
+      : "Regional General Liability Market",
+    match_score: Math.max(
+      35,
+      Math.min(90, (localCarrierAppetiteScore || 60) + (appetiteHasLargeLoss ? -5 : 4))
+    ),
+    fit: appetiteHasLargeLoss ? "Moderate fit with narrative" : "Moderate fit",
+  });
+}
+
+if (appetiteHasWC) {
+  localCarrierBuckets.push({
+    carrier_type:
+      appetiteOpenClaimsCount > 0
+        ? "Workers Comp Loss-Sensitive Market"
+        : "Workers Comp Standard Market",
+    match_score: Math.max(
+      35,
+      Math.min(88, (localCarrierAppetiteScore || 60) - (appetiteOpenClaimsCount > 0 ? 6 : 0))
+    ),
+    fit: appetiteOpenClaimsCount > 0 ? "Conditional fit" : "Standard fit",
+  });
+}
+
+if (appetiteHasCargo) {
+  localCarrierBuckets.push({
+    carrier_type: "Motor Truck Cargo Market",
+    match_score: Math.max(40, Math.min(90, (localCarrierAppetiteScore || 60) + 3)),
+    fit: "Line-specific fit",
+  });
+}
+
+if (localCarrierBuckets.length === 0) {
+  localCarrierBuckets.push({
+    carrier_type: "Commercial Casualty Market",
+    match_score: localCarrierAppetiteScore || 60,
+    fit: "Needs coverage classification",
+  });
+}
+
 const effectiveCarrierAppetite =
   validatedClaimsAvailable
     ? {
@@ -2076,20 +2186,39 @@ const effectiveCarrierAppetite =
             : localCarrierAppetiteScore >= 65
             ? "Standard"
             : "Selective",
-        best_fit_carriers: [
-          { carrier_type: "Standard Commercial Carrier", match_score: localCarrierAppetiteScore || 60 },
-          { carrier_type: "Regional Middle Market", match_score: Math.max(45, (localCarrierAppetiteScore || 60) - 8) },
-        ],
+        best_fit_carriers: localCarrierBuckets.sort(
+          (a, b) => Number(b.match_score || 0) - Number(a.match_score || 0)
+        ),
         carrier_match_reasons: [
-          "Claims data is loaded for underwriting review.",
-          "Market appetite depends on open claim status, severity, reserves, and loss narrative.",
+          `${intelligenceClaims.length} claim(s) are loaded across ${
+            localClaimLines.length || 1
+          } coverage line(s).`,
+          appetiteHasOpenReserveConcern
+            ? "Open reserve exposure requires a clear claim-status and reserve adequacy narrative."
+            : "Reserve exposure appears manageable based on currently visible claims.",
+          appetiteHasLargeLoss
+            ? "Large-loss activity may limit preferred-market appetite until the account story is explained."
+            : "No severe large-loss concentration is currently driving the appetite result.",
+          appetiteHasAuto
+            ? "Transportation and commercial auto markets should be prioritized because auto liability claims are present."
+            : "Market selection should follow the dominant coverage lines shown in the claim data.",
         ],
-        market_strategy:
-          "Market the account with a clear loss narrative, corrective actions, open-claim status notes, and reserve explanations.",
+        market_strategy: appetiteHasOpenReserveConcern
+          ? "Market this account through transportation-focused and selective casualty channels first. Include a clear loss narrative, open-claim status, reserve explanation, corrective actions, driver/safety controls, and claim closure plan."
+          : "Market this account to standard commercial markets first, with regional and selective markets as backup. Include loss narrative, corrective actions, and current claim status notes.",
+        placement_summary:
+          localCarrierAppetiteScore != null && localCarrierAppetiteScore >= 65
+            ? `Claims are loaded for this account. Appetite is ${localCarrierAppetiteScore}/100, making the account marketable in standard-to-selective channels depending on carrier tolerance by line of business.`
+            : `Claims are loaded for this account. Appetite is ${localCarrierAppetiteScore || 0}/100, so the account should be approached through selective markets with a strong underwriting narrative.`,
         claims_used: intelligenceClaims.length,
-        policy_numbers_used: activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
+        policy_numbers_used:
+          activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
+        data_source: backendSaysInsufficient
+          ? "local_visible_claims_fallback"
+          : "local_visible_claims",
       }
     : carrierAppetite;
+
 
 function isInsufficientBackendMessage(value: any) {
   const text = String(value || "").toLowerCase();
