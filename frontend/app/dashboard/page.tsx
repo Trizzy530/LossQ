@@ -216,6 +216,11 @@ function getCachedLastUploadReview(): AnyObject {
   }
 }
 
+function clearCachedLastUploadReview() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem("lossq_last_upload_review");
+}
+
 function claimMatchesPolicySet(claim: any, policySet: Set<string>) {
   if (!policySet || policySet.size === 0) return false;
   return policySet.has(getClaimPolicyNumber(claim));
@@ -492,14 +497,26 @@ function normalizeProfileName(item: any) {
   }
 
   function newBlankProfile() {
+    resetActiveWorkspace("New blank account profile started.");
+    setActiveTool("profiles");
+  }
+
+  function resetActiveWorkspace(messageText?: string) {
     setProfile({
       business_name: "",
       carrier_name: "",
+      writing_carrier: "",
       agency_name: "",
+      account_number: "",
+      customer_number: "",
+      producer_number: "",
       policy_number: "",
       effective_date: "",
       expiration_date: "",
       evaluation_date: "",
+      policies: [],
+      validation: {},
+      raw_text_preview: "",
     });
 
     setClaims([]);
@@ -513,9 +530,15 @@ function normalizeProfileName(item: any) {
     setTimeline({});
     setRenewalMemo("");
     setCopilotAnswer("");
+    setSelectedClaimDetail(null);
+
     clearCachedSelectedPolicy();
-    setMessage("New blank account profile started.");
-    setActiveTool("profiles");
+    clearCachedSelectedClaim();
+    clearCachedLastUploadReview();
+
+    if (messageText) {
+      setMessage(messageText);
+    }
   }
 
   async function loadDashboard(policyNumberOverride?: string) {
@@ -899,6 +922,8 @@ if (submissionBuilderRes.ok) {
 
   const profileLabel =
     profileToDelete?.business_name ||
+    profileToDelete?.insured ||
+    profileToDelete?.named_insured ||
     profileToDelete?.account_name ||
     policyNumber ||
     "this profile";
@@ -915,7 +940,14 @@ if (submissionBuilderRes.ok) {
     setProfiles((prev) => {
       const next = prev.filter((p) => {
         if (profileId && p?.id === profileId) return false;
-        if (!profileId && policyNumber && p?.policy_number === policyNumber) return false;
+
+        const existingPolicy =
+          p?.policy_number ||
+          p?.account_number ||
+          p?.customer_number ||
+          "";
+
+        if (!profileId && policyNumber && existingPolicy === policyNumber) return false;
         return true;
       });
 
@@ -923,19 +955,15 @@ if (submissionBuilderRes.ok) {
       return next;
     });
 
-    localStorage.removeItem(SELECTED_POLICY_CACHE_KEY);
-
-    if (
-      (profileId && profile?.id === profileId) ||
-      (policyNumber && profile?.policy_number === policyNumber)
-    ) {
-      newBlankProfile();
-    }
+    resetActiveWorkspace();
+    setActiveTool("profiles");
   };
 
-  try {
-    setMessage(`Deleting ${profileLabel}...`);
+  // Clear the UI immediately so charts and Recharts data arrays reset right away.
+  removeProfileLocally();
+  setMessage(`Deleting ${profileLabel}...`);
 
+  try {
     const deleteUrl = profileId
       ? `${API}/account-profile/id/${encodeURIComponent(String(profileId))}?delete_claims=true`
       : `${API}/account-profile/?policy_number=${encodeURIComponent(policyNumber)}&delete_claims=true`;
@@ -954,7 +982,6 @@ if (submissionBuilderRes.ok) {
     const data = await safeJson(res);
 
     if (!res.ok || data?.deleted === false) {
-      removeProfileLocally();
       setMessage(
         `Removed ${profileLabel} from workspace. Backend response: ${
           data?.message || res.status
@@ -963,10 +990,8 @@ if (submissionBuilderRes.ok) {
       return;
     }
 
-    removeProfileLocally();
     setMessage(`Deleted ${profileLabel}.`);
   } catch {
-    removeProfileLocally();
     setMessage(`Deleted local profile ${profileLabel}. Backend delete unavailable.`);
   }
 }
@@ -1118,6 +1143,7 @@ async function saveProfile() {
   }
 
   try {
+    clearCachedLastUploadReview();
     setMessage("Uploading and analyzing loss runs with V2 parser...");
 
     const uploadResults: any[] = [];
@@ -1647,8 +1673,7 @@ const hasActiveAccount = Boolean(
     displayProfile?.carrier_name ||
     displayProfile?.policy_number ||
     activePolicyNumbers.length > 0 ||
-    summary?.claims_used != null ||
-    claims.length > 0
+    summary?.claims_used != null
 );
 
 const filteredVisibleClaims = hasActiveAccount
@@ -1992,33 +2017,37 @@ function buildPolicyScheduleLineData() {
   return objectToChartData(grouped);
 }
 
-const timelineLossTrendData = objectToChartData(timeline?.incurred_by_year || {});
-const backendLossTrendData = objectToChartData(backendMetrics?.yearly_incurred || {});
+const chartSourceReady = hasActiveAccount && visibleClaims.length > 0;
+const chartTimeline = chartSourceReady ? timeline : {};
+const chartBackendMetrics = chartSourceReady ? backendMetrics : {};
+
+const timelineLossTrendData = objectToChartData(chartTimeline?.incurred_by_year || {});
+const backendLossTrendData = objectToChartData(chartBackendMetrics?.yearly_incurred || {});
 const visibleLossTrendData = buildVisibleClaimYearlyData();
-const lossTrendData = chartHasData(timelineLossTrendData)
+const lossTrendData = chartSourceReady && chartHasData(timelineLossTrendData)
   ? timelineLossTrendData
-  : chartHasData(backendLossTrendData)
+  : chartSourceReady && chartHasData(backendLossTrendData)
   ? backendLossTrendData
-  : chartHasData(visibleLossTrendData)
+  : chartSourceReady && chartHasData(visibleLossTrendData)
   ? visibleLossTrendData
-  : totalIncurred > 0
+  : chartSourceReady && totalIncurred > 0
   ? [{ name: "Account Total", value: totalIncurred }]
   : [];
 
-const timelineAgingData = objectToChartData(timeline?.open_claim_aging || {});
-const agingData = chartHasData(timelineAgingData)
+const timelineAgingData = objectToChartData(chartTimeline?.open_claim_aging || {});
+const agingData = chartSourceReady && chartHasData(timelineAgingData)
   ? timelineAgingData
-  : totalClaims > 0
+  : chartSourceReady && totalClaims > 0
   ? [
       { name: "Open", value: openClaims },
       { name: "Closed", value: closedClaims },
     ]
   : [];
 
-const timelineSeverityData = objectToChartData(timeline?.severity_heatmap || {});
-const severityData = chartHasData(timelineSeverityData)
+const timelineSeverityData = objectToChartData(chartTimeline?.severity_heatmap || {});
+const severityData = chartSourceReady && chartHasData(timelineSeverityData)
   ? timelineSeverityData
-  : totalClaims > 0
+  : chartSourceReady && totalClaims > 0
   ? [
       { name: "Standard Claims", value: Math.max(totalClaims - litigationClaims - flaggedClaims, 0) },
       { name: "Flagged", value: flaggedClaims },
@@ -2027,26 +2056,28 @@ const severityData = chartHasData(timelineSeverityData)
     ].filter((item) => Number(item.value || 0) > 0)
   : [];
 
-const timelineLineData = objectToChartData(timeline?.incurred_by_line || {});
+const timelineLineData = objectToChartData(chartTimeline?.incurred_by_line || {});
 const visibleLineData = buildVisibleClaimLineData();
 const policyLineData = buildPolicyScheduleLineData();
-const lineData = chartHasData(timelineLineData)
+const lineData = chartSourceReady && chartHasData(timelineLineData)
   ? timelineLineData
-  : chartHasData(visibleLineData)
+  : chartSourceReady && chartHasData(visibleLineData)
   ? visibleLineData
-  : chartHasData(policyLineData)
+  : chartSourceReady && chartHasData(policyLineData)
   ? policyLineData
-  : totalIncurred > 0
+  : chartSourceReady && totalIncurred > 0
   ? [{ name: "Account Total", value: totalIncurred }]
   : [];
 
 const reservePressureDisplay =
-  timeline?.reserve_pressure ||
-  (totalReserve > totalIncurred && totalReserve > 0
-    ? "High"
-    : openClaims > 0
-    ? "Elevated"
-    : "Low");
+  chartSourceReady
+    ? chartTimeline?.reserve_pressure ||
+      (totalReserve > totalIncurred && totalReserve > 0
+        ? "High"
+        : openClaims > 0
+        ? "Elevated"
+        : "Low")
+    : "-";
 
 const trendNoteDisplay =
   timeline?.trend_note ||
