@@ -1497,6 +1497,7 @@ function buildReportPayload() {
 
   const currentUploadApplies =
     currentUploadClaims.length > 0 &&
+    (activePolicyNumbers.length === 0 && currentUploadClaims.length > 0) ||
     activePolicyNumbers.some((policyNumber) => currentUploadPolicies.has(policyNumber));
 
   const reportClaims =
@@ -1526,8 +1527,8 @@ function buildReportPayload() {
     summary: effectiveSummary || summary || {},
     decision: effectiveDecision || decision || {},
     carrier_appetite: effectiveCarrierAppetite || carrierAppetite || {},
-    carrier_match: carrierMatch || {},
-    premium_forecast: premiumForecast || {},
+    carrier_match: effectiveCarrierMatch || carrierMatch || {},
+    premium_forecast: effectivePremiumForecast || premiumForecast || {},
     submission_readiness: effectiveSubmissionReadiness || submissionReadiness || {},
     policy_numbers_used: policyNumbersForReport,
     profile_id: profile?.id || displayProfile?.id || null,
@@ -1852,6 +1853,38 @@ const filteredVisibleClaims = hasActiveAccount
     })
   : [];
 
+const currentUploadReview = getCachedCurrentUpload();
+const currentUploadClaims = Array.isArray(currentUploadReview?.claims)
+  ? currentUploadReview.claims
+  : [];
+const currentUploadPolicySet = new Set(
+  [
+    currentUploadReview?.profile?.policy_number,
+    currentUploadReview?.profile?.account_number,
+    ...(Array.isArray(currentUploadReview?.policy_numbers)
+      ? currentUploadReview.policy_numbers
+      : []),
+    ...(Array.isArray(currentUploadReview?.policies)
+      ? currentUploadReview.policies.map((item: any) => item?.policy_number)
+      : []),
+  ]
+    .map((item: any) => normalizePolicyNumber(item))
+    .filter(Boolean)
+);
+const currentUploadMatches = currentUploadClaims.filter((claim: any) => {
+  const claimPolicy = getClaimPolicyNumber(claim);
+
+  if (activePolicyNumbers.length > 0) {
+    return activePolicyNumbers.includes(claimPolicy);
+  }
+
+  if (currentUploadPolicySet.size > 0) {
+    return currentUploadPolicySet.has(claimPolicy);
+  }
+
+  return false;
+});
+
 const lastUploadReview = getCachedLastUploadReview();
 const lastUploadClaims = Array.isArray(lastUploadReview?.claims)
   ? lastUploadReview.claims
@@ -1871,9 +1904,28 @@ const lastUploadPolicySet = new Set(
 const visibleClaims =
   filteredVisibleClaims.length > 0
     ? filteredVisibleClaims
+    : currentUploadMatches.length > 0
+    ? currentUploadMatches
     : activePolicyNumbers.some((policyNumber) => lastUploadPolicySet.has(policyNumber))
     ? lastUploadClaims
     : [];
+
+function hasValidatedClaimData(claim: any) {
+  if (!claim || typeof claim !== "object") return false;
+
+  const hasClaimNumber = Boolean(getClaimNumberValue(claim));
+  const hasPolicy = Boolean(getClaimPolicyNumber(claim));
+  const hasAmount =
+    getClaimIncurred(claim) > 0 ||
+    toMoneyNumber(claim?.paid_amount || claim?.paid || claim?.paid_loss) > 0 ||
+    toMoneyNumber(claim?.reserve_amount || claim?.reserve || claim?.outstanding_reserve) > 0;
+
+  return hasClaimNumber && hasPolicy && hasAmount;
+}
+
+const validatedVisibleClaims = visibleClaims.filter((claim: any) => hasValidatedClaimData(claim));
+const intelligenceClaims = validatedVisibleClaims.length > 0 ? validatedVisibleClaims : visibleClaims;
+const validatedClaimsAvailable = intelligenceClaims.length > 0;
 
 const backendMetrics =
   summary?.renewal_metrics ||
@@ -1909,15 +1961,15 @@ const openVisibleClaims = visibleClaims.filter((claim: any) => isOpenClaimStatus
 const closedVisibleClaims = visibleClaims.filter((claim: any) => !isOpenClaimStatus(claim));
 const groupedVisibleClaims = [...openVisibleClaims, ...closedVisibleClaims];
 
-const localClaimTotal = visibleClaims.reduce((sum: number, c: any) => sum + getClaimIncurred(c), 0);
-const localOpenClaimCount = openVisibleClaims.length;
-const localLitigationCount = visibleClaims.filter((c: any) => {
+const localClaimTotal = intelligenceClaims.reduce((sum: number, c: any) => sum + getClaimIncurred(c), 0);
+const localOpenClaimCount = intelligenceClaims.filter((claim: any) => isOpenClaimStatus(claim)).length;
+const localLitigationCount = intelligenceClaims.filter((c: any) => {
   const text = `${c?.litigation || ""} ${c?.litigation_status || ""} ${c?.description || ""} ${c?.flag || ""}`.toLowerCase();
   return text.includes("litigation") || text.includes("attorney") || text.includes("suit");
 }).length;
-const localLargeLossCount = visibleClaims.filter((c: any) => getClaimIncurred(c) >= 50000).length;
-const localRenewalPenalty = Math.min(70, localOpenClaimCount * 10 + localLitigationCount * 15 + localLargeLossCount * 10 + Math.max(0, visibleClaims.length - 3) * 4);
-const localRenewalScore = visibleClaims.length > 0 ? Math.max(30, 92 - localRenewalPenalty) : null;
+const localLargeLossCount = intelligenceClaims.filter((c: any) => getClaimIncurred(c) >= 50000).length;
+const localRenewalPenalty = Math.min(70, localOpenClaimCount * 10 + localLitigationCount * 15 + localLargeLossCount * 10 + Math.max(0, intelligenceClaims.length - 3) * 4);
+const localRenewalScore = intelligenceClaims.length > 0 ? Math.max(30, 92 - localRenewalPenalty) : null;
 const localRenewalRiskLevel =
   localRenewalScore == null
     ? "Insufficient Data"
@@ -1929,7 +1981,7 @@ const localRenewalRiskLevel =
     ? "High"
     : "Critical";
 const localCarrierAppetiteScore = localRenewalScore == null ? null : Math.max(20, Math.min(95, localRenewalScore - localLargeLossCount * 4));
-const localSubmissionReadinessScore = visibleClaims.length > 0 ? Math.min(95, 70 + Math.min(20, visibleClaims.length * 3)) : null;
+const localSubmissionReadinessScore = intelligenceClaims.length > 0 ? Math.min(95, 70 + Math.min(20, visibleClaims.length * 3)) : null;
 
 const backendInsufficientText = JSON.stringify({ summary, decision, carrierAppetite, submissionReadiness }).toLowerCase();
 const backendSaysInsufficient =
@@ -1939,7 +1991,7 @@ const backendSaysInsufficient =
   Number(backendClaimsUsed || 0) === 0;
 
 const localRenewalDrivers = [
-  `${visibleClaims.length} claim(s) analyzed for the selected account.`,
+  `${intelligenceClaims.length} claim(s) analyzed for the selected account.`,
   `${localOpenClaimCount} open claim(s).`,
   `$${Number(localClaimTotal || 0).toLocaleString()} total incurred.`,
   `${localLargeLossCount} large loss claim(s) at or above $50,000.`,
@@ -1947,7 +1999,7 @@ const localRenewalDrivers = [
 ];
 
 const effectiveSummary =
-  visibleClaims.length > 0
+  validatedClaimsAvailable
     ? {
         ...(summary || {}),
         renewal_score: localRenewalScore,
@@ -1970,15 +2022,15 @@ const effectiveSummary =
         broker_recommendation:
           "Use the loaded claims to prepare a carrier narrative, explain open claims, confirm reserves, and document corrective actions before submission.",
         renewal_summary:
-          `LossQ analyzed ${visibleClaims.length} claim(s) for the selected account with $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Renewal risk is ${localRenewalRiskLevel}.`,
-        claims_used: visibleClaims.length,
-        policy_numbers_used: activePolicyNumbers,
+          `LossQ analyzed ${intelligenceClaims.length} claim(s) for the selected account with $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Renewal risk is ${localRenewalRiskLevel}.`,
+        claims_used: intelligenceClaims.length,
+        policy_numbers_used: activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
         data_source: backendSaysInsufficient ? "local_visible_claims_fallback" : "local_visible_claims",
       }
     : summary;
 
 const effectiveDecision =
-  visibleClaims.length > 0
+  validatedClaimsAvailable
     ? {
         ...(decision || {}),
         renewal_probability: Math.max(35, Math.min(95, localRenewalScore || 50)),
@@ -1993,7 +2045,7 @@ const effectiveDecision =
         submission_readiness:
           "Claims are loaded. Complete carrier narrative, open-claim explanations, reserve notes, and corrective actions before submission.",
         underwriting_concerns: [
-          `${visibleClaims.length} claim(s) in the selected account.`,
+          `${intelligenceClaims.length} claim(s) in the selected account.`,
           `${localOpenClaimCount} open claim(s).`,
           `${localLargeLossCount} large loss claim(s) over $50,000.`,
           `${localLitigationCount} litigation/attorney indicator(s).`,
@@ -2001,14 +2053,14 @@ const effectiveDecision =
         best_market_types: ["Standard market", "Middle-market commercial carrier", "E&S backup if loss activity worsens"],
         underwriter_decision_summary:
           `The account has ${visibleClaims.length} loaded claim(s) and $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Review open claims, large losses, and reserve adequacy before final carrier decision.`,
-        claims_used: visibleClaims.length,
-        policy_numbers_used: activePolicyNumbers,
+        claims_used: intelligenceClaims.length,
+        policy_numbers_used: activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
         data_source: backendSaysInsufficient ? "local_visible_claims_fallback" : "local_visible_claims",
       }
     : decision;
 
 const effectiveCarrierAppetite =
-  visibleClaims.length > 0
+  validatedClaimsAvailable
     ? {
         ...(carrierAppetite || {}),
         carrier_appetite_score: localCarrierAppetiteScore,
@@ -2030,13 +2082,117 @@ const effectiveCarrierAppetite =
         ],
         market_strategy:
           "Market the account with a clear loss narrative, corrective actions, open-claim status notes, and reserve explanations.",
-        claims_used: visibleClaims.length,
-        policy_numbers_used: activePolicyNumbers,
+        claims_used: intelligenceClaims.length,
+        policy_numbers_used: activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
       }
     : carrierAppetite;
 
-const effectiveSubmissionReadiness =
+const localPremiumIncreasePercent =
   visibleClaims.length > 0
+    ? localRenewalRiskLevel === "Low"
+      ? 5
+      : localRenewalRiskLevel === "Moderate"
+      ? 12
+      : localRenewalRiskLevel === "High"
+      ? 25
+      : 40
+    : null;
+
+const localPremiumConfidence = visibleClaims.length > 0 ? Math.min(85, 55 + Math.min(30, visibleClaims.length * 5)) : null;
+
+const effectivePremiumForecast =
+  validatedClaimsAvailable
+    ? {
+        ...(premiumForecast || {}),
+        current_premium: premiumForecast?.current_premium ?? 0,
+        expected_renewal_premium: premiumForecast?.expected_renewal_premium ?? 0,
+        expected_increase_percent:
+          premiumForecast?.expected_increase_percent ?? localPremiumIncreasePercent,
+        confidence_score: premiumForecast?.confidence_score ?? localPremiumConfidence,
+        best_case_percent:
+          premiumForecast?.best_case_percent ??
+          (localPremiumIncreasePercent != null ? Math.max(0, localPremiumIncreasePercent - 8) : 0),
+        likely_range_percent:
+          premiumForecast?.likely_range_percent ||
+          (localPremiumIncreasePercent != null
+            ? `${Math.max(0, localPremiumIncreasePercent - 5)}% to ${localPremiumIncreasePercent + 10}%`
+            : "-"),
+        worst_case_percent:
+          premiumForecast?.worst_case_percent ??
+          (localPremiumIncreasePercent != null ? localPremiumIncreasePercent + 18 : 0),
+        forecast_drivers:
+          premiumForecast?.forecast_drivers?.length
+            ? premiumForecast.forecast_drivers
+            : [
+                `${intelligenceClaims.length} validated claim row(s) loaded for the selected account.`,
+                `${localOpenClaimCount} open claim(s) affecting renewal pressure.`,
+                `$${Number(localClaimTotal || 0).toLocaleString()} total incurred losses.`,
+                `${localLargeLossCount} large loss claim(s) at or above $50,000.`,
+                `${localLitigationCount} litigation/attorney indicator(s).`,
+              ],
+        forecast_summary:
+          premiumForecast?.forecast_summary &&
+          !String(premiumForecast.forecast_summary).toLowerCase().includes("insufficient")
+            ? premiumForecast.forecast_summary
+            : `LossQ has validated claim rows for this account. Without current premium/exposure data, this is a claim-based renewal pressure estimate. The modeled premium movement is approximately ${localPremiumIncreasePercent ?? 0}% based on claim frequency, severity, open claims, litigation indicators, and total incurred losses.`,
+        claims_used: intelligenceClaims.length,
+        policy_numbers_used: activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
+        data_source: backendSaysInsufficient ? "local_visible_claims_fallback" : "local_visible_claims",
+      }
+    : premiumForecast;
+
+const effectiveCarrierMatch =
+  validatedClaimsAvailable
+    ? {
+        ...(carrierMatch || {}),
+        recommended_carrier:
+          carrierMatch?.recommended_carrier &&
+          !String(carrierMatch.recommended_carrier).toLowerCase().includes("insufficient")
+            ? carrierMatch.recommended_carrier
+            : displayProfile?.carrier_name ||
+              displayProfile?.writing_carrier ||
+              "Standard Commercial Market",
+        recommended_score:
+          carrierMatch?.recommended_score ?? Math.max(45, Math.min(90, localCarrierAppetiteScore || 60)),
+        top_carriers:
+          carrierMatch?.top_carriers?.length
+            ? carrierMatch.top_carriers
+            : [
+                {
+                  carrier:
+                    displayProfile?.carrier_name ||
+                    displayProfile?.writing_carrier ||
+                    "Current / Incumbent Carrier",
+                  match_score: Math.max(45, Math.min(90, localCarrierAppetiteScore || 60)),
+                  fit: localRenewalRiskLevel === "Low" ? "Preferred renewal candidate" : "Renewal review candidate",
+                  reason: "Current account data and validated claim rows are available for underwriting review.",
+                },
+                {
+                  carrier: "Regional Commercial Carrier",
+                  match_score: Math.max(40, Math.min(82, (localCarrierAppetiteScore || 60) - 6)),
+                  fit: "Backup market",
+                  reason: "Suitable backup market when claim narrative, reserves, and corrective actions are documented.",
+                },
+                {
+                  carrier: "Selective / E&S Backup Market",
+                  match_score: Math.max(35, Math.min(75, (localCarrierAppetiteScore || 60) - 12)),
+                  fit: "Contingency market",
+                  reason: "Useful if open claims, severity, or litigation concerns limit standard-market appetite.",
+                },
+              ],
+        carrier_match_summary:
+          carrierMatch?.carrier_match_summary &&
+          !String(carrierMatch.carrier_match_summary).toLowerCase().includes("insufficient")
+            ? carrierMatch.carrier_match_summary
+            : `LossQ matched this account using ${intelligenceClaims.length} validated claim row(s), $${Number(localClaimTotal || 0).toLocaleString()} total incurred, ${localOpenClaimCount} open claim(s), and ${localLitigationCount} litigation/attorney indicator(s). Recommended market strategy should focus on the current carrier, standard commercial markets, and a backup market if claim severity or reserves require it.`,
+        claims_used: intelligenceClaims.length,
+        policy_numbers_used: activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
+        data_source: backendSaysInsufficient ? "local_visible_claims_fallback" : "local_visible_claims",
+      }
+    : carrierMatch;
+
+const effectiveSubmissionReadiness =
+  validatedClaimsAvailable
     ? {
         ...(submissionReadiness || {}),
         submission_readiness_score: backendSaysInsufficient
@@ -2831,19 +2987,19 @@ const trendNoteDisplay =
     <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
       <MetricCard
         title="Recommended Carrier"
-        value={carrierMatch?.recommended_carrier || "-"}
+        value={effectiveCarrierMatch?.recommended_carrier || "-"}
       />
       <MetricCard
         title="Match Score"
         value={
-          carrierMatch?.recommended_score != null
-            ? `${carrierMatch.recommended_score}/100`
+          effectiveCarrierMatch?.recommended_score != null
+            ? `${effectiveCarrierMatch.recommended_score}/100`
             : "-"
         }
       />
       <MetricCard
         title="Carriers Ranked"
-        value={carrierMatch?.top_carriers?.length || 0}
+        value={effectiveCarrierMatch?.top_carriers?.length || 0}
       />
     </div>
 
@@ -2851,10 +3007,10 @@ const trendNoteDisplay =
       <ListCard
         title="Top Carrier Matches"
         items={
-          carrierMatch?.top_carriers?.length
-            ? carrierMatch.top_carriers.map(
+          effectiveCarrierMatch?.top_carriers?.length
+            ? effectiveCarrierMatch.top_carriers.map(
                 (item: any) =>
-                  `${item.carrier} — ${item.match_score}/100 — ${item.fit}`
+                  `${item.carrier || item.carrier_name || 'Carrier'} — ${item.match_score ?? item.recommended_score ?? item.score ?? '-'}/100 — ${item.fit || item.appetite || 'Market fit'}`
               )
             : ["No carrier matches available yet."]
         }
@@ -2864,9 +3020,9 @@ const trendNoteDisplay =
       <ListCard
         title="Carrier Match Reasons"
         items={
-          carrierMatch?.top_carriers?.length
-            ? carrierMatch.top_carriers.map(
-                (item: any) => `${item.carrier}: ${item.reason}`
+          effectiveCarrierMatch?.top_carriers?.length
+            ? effectiveCarrierMatch.top_carriers.map(
+                (item: any) => `${item.carrier || item.carrier_name || 'Carrier'}: ${item.reason || item.match_reason || item.fit || 'Claims data supports underwriting review.'}`
               )
             : ["No carrier match reasons available yet."]
         }
@@ -2878,7 +3034,7 @@ const trendNoteDisplay =
       <TextCard
         title="Carrier Match Summary"
         text={
-          carrierMatch?.carrier_match_summary ||
+          effectiveCarrierMatch?.carrier_match_summary ||
           "No carrier match summary available yet."
         }
       />
@@ -2900,49 +3056,49 @@ const trendNoteDisplay =
       <MetricCard
         title="Current Premium"
         value={`$${Number(
-          premiumForecast?.current_premium || 0
+          effectivePremiumForecast?.current_premium || 0
         ).toLocaleString()}`}
       />
 
       <MetricCard
         title="Expected Renewal"
         value={`$${Number(
-          premiumForecast?.expected_renewal_premium || 0
+          effectivePremiumForecast?.expected_renewal_premium || 0
         ).toLocaleString()}`}
       />
 
       <MetricCard
         title="Expected Increase"
-        value={`${premiumForecast?.expected_increase_percent || 0}%`}
+        value={`${effectivePremiumForecast?.expected_increase_percent || 0}%`}
       />
 
       <MetricCard
         title="Confidence"
-        value={`${premiumForecast?.confidence_score || 0}%`}
+        value={`${effectivePremiumForecast?.confidence_score || 0}%`}
       />
     </div>
 
     <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
       <MetricCard
         title="Best Case"
-        value={`${premiumForecast?.best_case_percent || 0}%`}
+        value={`${effectivePremiumForecast?.best_case_percent || 0}%`}
       />
 
       <MetricCard
         title="Likely Range"
-        value={premiumForecast?.likely_range_percent || "-"}
+        value={effectivePremiumForecast?.likely_range_percent || "-"}
       />
 
       <MetricCard
         title="Worst Case"
-        value={`${premiumForecast?.worst_case_percent || 0}%`}
+        value={`${effectivePremiumForecast?.worst_case_percent || 0}%`}
       />
     </div>
 
     <ListCard
       title="Forecast Drivers"
       items={
-        premiumForecast?.forecast_drivers || [
+        effectivePremiumForecast?.forecast_drivers || [
           "No forecast drivers available."
         ]
       }
@@ -2953,7 +3109,7 @@ const trendNoteDisplay =
       <TextCard
         title="Forecast Summary"
         text={
-          premiumForecast?.forecast_summary ||
+          effectivePremiumForecast?.forecast_summary ||
           "No forecast summary available."
         }
       />
@@ -3032,8 +3188,8 @@ const trendNoteDisplay =
       <MetricCard
         title="Premium Forecast"
         value={
-          premiumForecast?.expected_increase_percent != null
-            ? `${premiumForecast.expected_increase_percent}%`
+          effectivePremiumForecast?.expected_increase_percent != null
+            ? `${effectivePremiumForecast.expected_increase_percent}%`
             : "-"
         }
       />
@@ -3096,7 +3252,7 @@ const trendNoteDisplay =
       <TextCard
         title="Premium Forecast"
         text={
-          premiumForecast?.forecast_summary ||
+          effectivePremiumForecast?.forecast_summary ||
           "No premium forecast summary available yet."
         }
       />
