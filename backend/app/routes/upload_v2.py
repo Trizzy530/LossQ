@@ -760,21 +760,132 @@ def _fallback_extract_claims_from_raw_text(raw_text: Any, policies: List[Dict[st
     return claims
 
 
-def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any]) -> Dict[str, Any]:
+
+
+def _fallback_extract_full_text_from_content(content: bytes | None) -> str:
+    if not content:
+        return ""
+
+    try:
+        from io import BytesIO
+        from pypdf import PdfReader
+
+        reader = PdfReader(BytesIO(content))
+        parts = []
+
+        for page in reader.pages:
+            page_text = page.extract_text() or ""
+            if page_text.strip():
+                parts.append(page_text)
+
+        return "\n".join(parts).strip()
+    except Exception:
+        return ""
+
+
+def _fallback_policy_lob_from_policy_number(policy_number: Any) -> str:
+    policy = _clean(policy_number).upper()
+
+    if "-AL-" in policy:
+        return "Auto Liability"
+    if "-GL-" in policy:
+        return "General Liability"
+    if "-WC-" in policy:
+        return "Workers Comp"
+    if "-CG-" in policy:
+        return "Motor Truck Cargo"
+
+    return "Unknown"
+
+
+def _fallback_enrich_policy_schedule(raw_text: Any, policies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not policies:
+        return []
+
+    lines = [_clean(line) for line in str(raw_text or "").replace("\r", "\n").splitlines()]
+    lines = [line for line in lines if line]
+
+    enriched: List[Dict[str, Any]] = []
+
+    for policy in policies:
+        if not isinstance(policy, dict):
+            continue
+
+        item = dict(policy)
+        policy_number = _fallback_policy_item_number(item)
+
+        if not policy_number:
+            continue
+
+        inferred_lob = _fallback_policy_lob_from_policy_number(policy_number)
+
+        current_lob = _clean(
+            item.get("line_of_business")
+            or item.get("policy_type")
+            or item.get("coverage")
+            or item.get("lob")
+        )
+
+        if not current_lob or current_lob.lower() == "unknown":
+            item["line_of_business"] = inferred_lob
+            item["policy_type"] = inferred_lob
+            item["coverage"] = inferred_lob
+            item["lob"] = inferred_lob
+
+        effective = _clean(item.get("effective_date") or item.get("effective"))
+        expiration = _clean(item.get("expiration_date") or item.get("expiration"))
+
+        for index, line in enumerate(lines):
+            if _clean(line).upper() != policy_number:
+                continue
+
+            nearby = lines[max(0, index - 8):min(len(lines), index + 12)]
+            dates = [
+                value for value in nearby
+                if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}", value)
+            ]
+
+            if not effective and len(dates) >= 1:
+                effective = dates[0]
+
+            if not expiration and len(dates) >= 2:
+                expiration = dates[1]
+
+            break
+
+        if effective:
+            item["effective_date"] = effective
+            item["effective"] = effective
+
+        if expiration:
+            item["expiration_date"] = expiration
+            item["expiration"] = expiration
+
+        item["policy_number"] = policy_number
+        enriched.append(item)
+
+    return enriched
+
+
+
+def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any], content: bytes | None = None) -> Dict[str, Any]:
     if not isinstance(parsed, dict):
         return parsed
 
     profile = dict(parsed.get("profile") or {})
 
+    full_content_text = _fallback_extract_full_text_from_content(content)
+
     raw_text = (
-        parsed.get("raw_text_preview")
+        full_content_text
         or parsed.get("raw_text")
         or parsed.get("text")
         or parsed.get("extracted_text")
-        or profile.get("raw_text_preview")
         or profile.get("raw_text")
         or profile.get("text")
         or profile.get("extracted_text")
+        or parsed.get("raw_text_preview")
+        or profile.get("raw_text_preview")
         or ""
     )
 
@@ -789,6 +900,7 @@ def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any]) -> Dict[str, Any]
     fallback_policies = _fallback_extract_policies_from_raw_text(raw_text)
 
     if fallback_policies and len(fallback_policies) > len(existing_policies):
+        fallback_policies = _fallback_enrich_policy_schedule(raw_text, fallback_policies)
         parsed["policies"] = fallback_policies
         profile["policies"] = fallback_policies
         parsed["policy_count"] = len(fallback_policies)
@@ -797,6 +909,13 @@ def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any]) -> Dict[str, Any]
         if not _valid_policy_number(current_policy):
             parsed["policy_number"] = fallback_policies[0]["policy_number"]
             profile["policy_number"] = fallback_policies[0]["policy_number"]
+
+    elif existing_policies:
+        enriched_existing_policies = _fallback_enrich_policy_schedule(raw_text, existing_policies)
+        if enriched_existing_policies:
+            parsed["policies"] = enriched_existing_policies
+            profile["policies"] = enriched_existing_policies
+            parsed["policy_count"] = len(enriched_existing_policies)
 
     policies_for_claims = parsed.get("policies") or profile.get("policies") or fallback_policies
     fallback_claims = _fallback_extract_claims_from_raw_text(raw_text, policies_for_claims)
@@ -1017,7 +1136,7 @@ async def save_uploaded_files_v2(
             filename=(file.filename or safe_filename),
             content=content,
         )
-        parsed = _apply_raw_text_fallback_if_needed(parsed)
+        parsed = _apply_raw_text_fallback_if_needed(parsed, content=content)
 
         parsed_claims = (
             parsed.get("claims")
