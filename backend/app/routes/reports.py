@@ -7028,30 +7028,97 @@ def report_policy_numbers_from_profile(profile):
     return seen
 
 
-def find_report_profile(db: Session, current_user: dict, requested_policy: str | None, existing_profile=None):
-    existing = profile_to_report_dict(existing_profile)
+def report_profile_has_real_account_data(profile):
+    """Return True when a profile has real account details instead of generated placeholders."""
+    profile = profile_to_report_dict(profile)
+    placeholder_names = {"", "-", "SELECTED ACCOUNT", "ACCOUNT", "UNKNOWN", "POLICY NOT SET"}
+    name = normalize_report_policy(
+        profile.get("business_name")
+        or profile.get("insured")
+        or profile.get("named_insured")
+        or profile.get("account_name")
+    )
+    carrier = normalize_report_policy(profile.get("carrier_name") or profile.get("writing_carrier"))
+    agency = normalize_report_policy(profile.get("agency_name"))
+    account = normalize_report_policy(profile.get("account_number") or profile.get("customer_number"))
+    policies = report_policy_numbers_from_profile(profile)
+    return (
+        name not in placeholder_names
+        or carrier not in placeholder_names
+        or agency not in placeholder_names
+        or account not in placeholder_names
+        or len(policies) > 1
+    )
+
+
+def report_profile_score(profile, requested_policy: str | None = None):
+    """Higher score means this profile is safer to use for a PDF context."""
+    profile = profile_to_report_dict(profile)
     requested = normalize_report_policy(requested_policy)
-    existing_numbers = report_policy_numbers_from_profile(existing)
-    if existing and (not requested or requested in existing_numbers or normalize_report_policy(existing.get("policy_number")) == requested):
-        return existing
+    numbers = report_policy_numbers_from_profile(profile)
+    score = 0
+
+    if requested and requested in numbers:
+        score += 1000
+    if report_profile_has_real_account_data(profile):
+        score += 250
+    if normalize_report_policy(profile.get("business_name")) not in {"", "-", "SELECTED ACCOUNT", "UNKNOWN"}:
+        score += 100
+    if normalize_report_policy(profile.get("carrier_name") or profile.get("writing_carrier")) not in {"", "-", "UNKNOWN"}:
+        score += 75
+    if normalize_report_policy(profile.get("account_number") or profile.get("customer_number")) not in {"", "-", "UNKNOWN"}:
+        score += 50
+    if isinstance(profile.get("policies"), list):
+        score += min(100, len(profile.get("policies") or []) * 10)
+    if profile.get("id"):
+        try:
+            score += min(50, int(profile.get("id") or 0) % 50)
+        except Exception:
+            pass
+    return score
+
+
+def find_report_profile(db: Session, current_user: dict, requested_policy: str | None, existing_profile=None):
+    """
+    Prefer the saved AccountProfile row over the placeholder profile returned by account engines.
+
+    The previous report build could accept base_profile first. When base_profile was a generated
+    placeholder like Selected Account / BRD-CA-204887-01, the PDF never reached the real saved
+    AccountProfile row, so reports exported empty account details and no child policy schedule.
+    """
+    requested = normalize_report_policy(requested_policy)
+    existing = profile_to_report_dict(existing_profile)
 
     org_id = current_user.get("organization_id")
     query = db.query(AccountProfile)
     if org_id is not None:
         query = query.filter(AccountProfile.organization_id == org_id)
-    profiles = query.order_by(AccountProfile.id.desc()).all()
+
+    profiles = [profile_to_report_dict(obj) for obj in query.order_by(AccountProfile.id.desc()).all()]
 
     if requested:
-        for obj in profiles:
-            profile = profile_to_report_dict(obj)
-            numbers = report_policy_numbers_from_profile(profile)
-            if requested in numbers:
-                return profile
+        exact_matches = [
+            profile for profile in profiles
+            if requested in report_policy_numbers_from_profile(profile)
+        ]
+        if exact_matches:
+            exact_matches.sort(key=lambda item: report_profile_score(item, requested), reverse=True)
+            return exact_matches[0]
+
+    # If the engine gave a real saved-looking profile, use it only after DB exact matching.
+    if existing and report_profile_has_real_account_data(existing):
+        return existing
+
+    # If no exact match is available, do not keep a placeholder. Use the best real saved profile.
+    real_profiles = [profile for profile in profiles if report_profile_has_real_account_data(profile)]
+    if real_profiles:
+        real_profiles.sort(key=lambda item: report_profile_score(item, requested), reverse=True)
+        return real_profiles[0]
 
     if existing:
         return existing
 
-    return profile_to_report_dict(profiles[0]) if profiles else {}
+    return profiles[0] if profiles else {}
 
 
 def claim_matches_report_policies(claim, policy_numbers):
