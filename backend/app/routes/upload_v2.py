@@ -192,7 +192,78 @@ def _normalize_line_of_business(value: Any, description: Any) -> str:
     return current or "Unknown"
 
 
-def _repair_claim_values(claim_data: Dict[str, Any], fallback_policy_number: str) -> Dict[str, Any]:
+
+
+def _policy_by_claim_prefix(claim_number: Any, policies: List[Dict[str, Any]]) -> str:
+    claim = _clean(claim_number).upper()
+
+    if not claim or not isinstance(policies, list):
+        return ""
+
+    for policy in policies:
+        policy_number = _policy_item_number(policy)
+        policy_upper = policy_number.upper()
+
+        if claim.startswith("AL") and "-AL-" in policy_upper:
+            return policy_number
+        if claim.startswith("GL") and "-GL-" in policy_upper:
+            return policy_number
+        if claim.startswith("WC") and "-WC-" in policy_upper:
+            return policy_number
+        if claim.startswith(("CG", "MT", "CARGO")) and "-CG-" in policy_upper:
+            return policy_number
+
+    return ""
+
+
+def _claim_number_looks_real(value: Any) -> bool:
+    claim_number = _clean(value).upper()
+
+    if not claim_number or claim_number in FAKE_CLAIM_VALUES:
+        return False
+
+    if claim_number in BAD_POLICY_VALUES:
+        return False
+
+    # Real claim numbers should include at least one digit.
+    if not re.search(r"\d", claim_number):
+        return False
+
+    # Avoid policy/header fragments like GP-AL-240177-01 being treated as a claim number.
+    if re.match(r"^[A-Z]{2,6}-(AL|GL|WC|CG)-[A-Z0-9]+-\d{1,4}$", claim_number):
+        return False
+
+    return True
+
+
+def _claim_debug_summary(label: str, claims: Any) -> Dict[str, Any]:
+    if not isinstance(claims, list):
+        return {
+            f"{label}_count": 0,
+            f"{label}_sample": [],
+        }
+
+    sample = []
+    for claim in claims[:10]:
+        if isinstance(claim, dict):
+            sample.append({
+                "claim_number": claim.get("claim_number") or claim.get("claimNumber"),
+                "policy_number": claim.get("policy_number") or claim.get("policyNumber"),
+                "paid_amount": claim.get("paid_amount") or claim.get("paid"),
+                "reserve_amount": claim.get("reserve_amount") or claim.get("reserve"),
+                "total_incurred": claim.get("total_incurred") or claim.get("total_amount") or claim.get("incurred"),
+                "line_of_business": claim.get("line_of_business"),
+            })
+
+    return {
+        f"{label}_count": len(claims),
+        f"{label}_sample": sample,
+    }
+
+
+
+
+def _repair_claim_values(claim_data: Dict[str, Any], fallback_policy_number: str, parsed_policies: List[Dict[str, Any]] | None = None) -> Dict[str, Any]:
     repaired = dict(claim_data or {})
     description = repaired.get("description") or repaired.get("loss_description") or ""
 
@@ -241,7 +312,16 @@ def _repair_claim_values(claim_data: Dict[str, Any], fallback_policy_number: str
     if reserve_amount <= 0:
         repaired["reserve_amount"] = 0
 
-    repaired["policy_number"] = _clean(repaired.get("policy_number") or fallback_policy_number).upper()
+    mapped_policy_number = _policy_by_claim_prefix(
+        repaired.get("claim_number") or repaired.get("claimNumber"),
+        parsed_policies or [],
+    )
+
+    repaired["policy_number"] = _clean(
+        mapped_policy_number
+        or repaired.get("policy_number")
+        or fallback_policy_number
+    ).upper()
     repaired["line_of_business"] = _normalize_line_of_business(
         repaired.get("line_of_business"),
         description,
@@ -597,6 +677,7 @@ async def save_uploaded_files_v2(
     uploaded_files = []
     all_parsed_claims: List[Dict[str, Any]] = []
     all_repaired_claims: List[Dict[str, Any]] = []
+    all_filtered_out_claims: List[Dict[str, Any]] = []
     saved_claim_rows: List[Dict[str, Any]] = []
     latest_profile_data: Dict[str, Any] = {}
     latest_saved_profile = None
@@ -667,17 +748,27 @@ async def save_uploaded_files_v2(
         file_policy_number = clean_profile_value(file_policy_number).upper()
 
         repaired_claims = [
-            _repair_claim_values(claim_data, file_policy_number)
+            _repair_claim_values(claim_data, file_policy_number, parsed_policies)
             for claim_data in parsed_claims
         ]
 
-        # Drop obvious header/non-claim rows before rollup/save.
-        repaired_claims = [
-            claim for claim in repaired_claims
-            if _clean(claim.get("claim_number")).upper() not in FAKE_CLAIM_VALUES
-            and _valid_policy_number(claim.get("policy_number"))
-            and _claim_has_money(claim)
-        ]
+        # Drop obvious header/non-claim rows before rollup/save, but keep valid claims
+        # with real claim numbers, real policy numbers, and any nonzero money field.
+        filtered_repaired_claims = []
+        filtered_out_claims = []
+
+        for claim in repaired_claims:
+            if (
+                _claim_number_looks_real(claim.get("claim_number"))
+                and _valid_policy_number(claim.get("policy_number"))
+                and _claim_has_money(claim)
+            ):
+                filtered_repaired_claims.append(claim)
+            else:
+                filtered_out_claims.append(claim)
+
+        repaired_claims = filtered_repaired_claims
+        all_filtered_out_claims.extend(filtered_out_claims)
 
         rollup_from_claims = _filter_policy_schedule_items(
             _build_policy_rollup_from_claims(repaired_claims)
@@ -900,6 +991,11 @@ async def save_uploaded_files_v2(
             .first()
         )
 
+    raw_claim_debug = _claim_debug_summary("raw_parsed_claims_debug", all_parsed_claims)
+    repaired_claim_debug = _claim_debug_summary("repaired_claims_debug", all_repaired_claims)
+    filtered_out_claim_debug = _claim_debug_summary("filtered_out_claims_debug", all_filtered_out_claims)
+    saved_claim_debug = _claim_debug_summary("saved_claim_rows_debug", saved_claim_rows)
+
     return {
         "message": "Loss run file(s) uploaded successfully with V2 parser",
         "v2_database_save_enabled": True,
@@ -914,6 +1010,11 @@ async def save_uploaded_files_v2(
         "v2_claim_model_column_mapping": True,
         "v2_saved_claim_rows_with_ids": True,
         "v2_multi_policy_claim_replacement": True,
+        "v2_claim_debug_enabled": True,
+        **raw_claim_debug,
+        **repaired_claim_debug,
+        **filtered_out_claim_debug,
+        **saved_claim_debug,
         "saved_claims": total_saved,
         "existing_claims_deleted": total_existing_claims_deleted,
         "duplicates_skipped": total_duplicates_skipped,
