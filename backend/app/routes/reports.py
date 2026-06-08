@@ -6,6 +6,7 @@ from io import BytesIO
 import html
 import os
 import base64
+import json
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -26,6 +27,8 @@ from reportlab.platypus import (
 
 from app.database import SessionLocal
 from app.auth_utils import get_current_user
+from app.models.claim import Claim
+from app.models.account_profile import AccountProfile
 from app.routes.summary import (
     build_underwriting_intelligence,
     get_claims_for_account,
@@ -6945,21 +6948,192 @@ def get_metrics(claims):
     }
 
 
+
+
+BAD_POLICY_VALUES = {"", "-", "NONE", "NULL", "UNKNOWN", "POLICY", "POLICY NUMBER", "LOB", "DELETE", "POLICY NOT SET"}
+
+
+def normalize_report_policy(value):
+    return clean(value).upper()
+
+
+def valid_report_policy(value):
+    normalized = normalize_report_policy(value)
+    return normalized and normalized not in BAD_POLICY_VALUES
+
+
+def parse_report_json(value, default):
+    if value in [None, ""]:
+        return default
+    if isinstance(value, (list, dict)):
+        return value
+    try:
+        parsed = json.loads(value)
+        return parsed if parsed is not None else default
+    except Exception:
+        return default
+
+
+def profile_to_report_dict(profile_obj):
+    if not profile_obj:
+        return {}
+    if isinstance(profile_obj, dict):
+        profile = dict(profile_obj)
+    else:
+        profile = {
+            "id": getattr(profile_obj, "id", None),
+            "business_name": getattr(profile_obj, "business_name", "") or "",
+            "insured": getattr(profile_obj, "insured", "") or getattr(profile_obj, "business_name", "") or "",
+            "carrier_name": getattr(profile_obj, "carrier_name", "") or "",
+            "writing_carrier": getattr(profile_obj, "writing_carrier", "") or getattr(profile_obj, "carrier_name", "") or "",
+            "agency_name": getattr(profile_obj, "agency_name", "") or "",
+            "account_number": getattr(profile_obj, "account_number", "") or "",
+            "customer_number": getattr(profile_obj, "customer_number", "") or "",
+            "producer_number": getattr(profile_obj, "producer_number", "") or "",
+            "policy_number": getattr(profile_obj, "policy_number", "") or "",
+            "effective_date": getattr(profile_obj, "effective_date", "") or "",
+            "expiration_date": getattr(profile_obj, "expiration_date", "") or "",
+            "evaluation_date": getattr(profile_obj, "evaluation_date", "") or "",
+            "policies": parse_report_json(getattr(profile_obj, "policies", None), []),
+            "validation": parse_report_json(getattr(profile_obj, "validation", None), {}),
+            "raw_text_preview": getattr(profile_obj, "raw_text_preview", "") or "",
+        }
+    profile["policies"] = parse_report_json(profile.get("policies"), [])
+    profile["validation"] = parse_report_json(profile.get("validation"), {})
+    if not profile.get("business_name"):
+        profile["business_name"] = profile.get("insured") or profile.get("named_insured") or profile.get("account_name") or ""
+    if not profile.get("insured"):
+        profile["insured"] = profile.get("business_name") or ""
+    return profile
+
+
+def report_policy_numbers_from_profile(profile):
+    profile = profile_to_report_dict(profile)
+    numbers = []
+    for key in ["policy_number", "account_number", "customer_number"]:
+        value = profile.get(key)
+        if valid_report_policy(value):
+            numbers.append(normalize_report_policy(value))
+    for item in profile.get("policies") or []:
+        if not isinstance(item, dict):
+            continue
+        for key in ["policy_number", "policy", "policy_no", "policyNumber"]:
+            value = item.get(key)
+            if valid_report_policy(value):
+                numbers.append(normalize_report_policy(value))
+    seen = []
+    for number in numbers:
+        if number not in seen:
+            seen.append(number)
+    return seen
+
+
+def find_report_profile(db: Session, current_user: dict, requested_policy: str | None, existing_profile=None):
+    existing = profile_to_report_dict(existing_profile)
+    requested = normalize_report_policy(requested_policy)
+    existing_numbers = report_policy_numbers_from_profile(existing)
+    if existing and (not requested or requested in existing_numbers or normalize_report_policy(existing.get("policy_number")) == requested):
+        return existing
+
+    org_id = current_user.get("organization_id")
+    query = db.query(AccountProfile)
+    if org_id is not None:
+        query = query.filter(AccountProfile.organization_id == org_id)
+    profiles = query.order_by(AccountProfile.id.desc()).all()
+
+    if requested:
+        for obj in profiles:
+            profile = profile_to_report_dict(obj)
+            numbers = report_policy_numbers_from_profile(profile)
+            if requested in numbers:
+                return profile
+
+    if existing:
+        return existing
+
+    return profile_to_report_dict(profiles[0]) if profiles else {}
+
+
+def claim_matches_report_policies(claim, policy_numbers):
+    if not policy_numbers:
+        return False
+    claim_policy = normalize_report_policy(getattr(claim, "policy_number", ""))
+    return claim_policy in set(policy_numbers)
+
+
+def report_claims_for_policies(db: Session, current_user: dict, policy_numbers):
+    policy_numbers = [normalize_report_policy(p) for p in (policy_numbers or []) if valid_report_policy(p)]
+    if not policy_numbers:
+        return []
+    org_id = current_user.get("organization_id")
+    query = db.query(Claim)
+    if org_id is not None:
+        query = query.filter(Claim.organization_id == org_id)
+    if hasattr(Claim, "is_deleted"):
+        query = query.filter((Claim.is_deleted == False) | (Claim.is_deleted.is_(None)))
+    # Pull organization claims and filter in Python so account policy schedules and mixed case values still match.
+    claims = query.all()
+    return [claim for claim in claims if claim_matches_report_policies(claim, policy_numbers)]
+
+
+def merge_report_claims(primary, fallback):
+    merged = []
+    seen = set()
+    for claim in list(primary or []) + list(fallback or []):
+        key = (
+            normalize_report_policy(getattr(claim, "claim_number", "")),
+            normalize_report_policy(getattr(claim, "policy_number", "")),
+            getattr(claim, "id", None),
+        )
+        if key in seen:
+            continue
+        seen.add(key)
+        merged.append(claim)
+    return merged
 def build_context(db: Session, current_user: dict, policy_number: str | None):
-    claims, policy_numbers_used, profile = get_claims_for_account(db, current_user, policy_number)
+    """
+    Report/export context must be account-aware.
+
+    The dashboard can show claims from the selected profile's child policy schedule, but PDF routes run
+    only on the backend. This context builder therefore expands the selected account into all related
+    policy numbers before calculating metrics, executive report values, and carrier packet values.
+    """
+    base_claims, base_policy_numbers, base_profile = get_claims_for_account(db, current_user, policy_number)
+
+    profile = find_report_profile(db, current_user, policy_number, base_profile)
+    profile_policy_numbers = report_policy_numbers_from_profile(profile)
+
+    requested_policy = normalize_report_policy(policy_number)
+    policy_numbers_used = []
+    for item in list(base_policy_numbers or []) + profile_policy_numbers + ([requested_policy] if requested_policy else []):
+        if valid_report_policy(item) and normalize_report_policy(item) not in policy_numbers_used:
+            policy_numbers_used.append(normalize_report_policy(item))
+
+    account_claims = report_claims_for_policies(db, current_user, policy_numbers_used)
+    claims = merge_report_claims(base_claims, account_claims)
+
+    # If the old account engine returned a placeholder profile/policy with zero claims, make one more
+    # pass using only the saved account profile schedule. This is what makes BRD/SA/BMA child policies
+    # populate reports and packets instead of exporting Selected Account / Insufficient Data.
+    if not claims and profile_policy_numbers:
+        policy_numbers_used = profile_policy_numbers
+        claims = report_claims_for_policies(db, current_user, policy_numbers_used)
+
+    effective_policy_number = policy_numbers_used[0] if policy_numbers_used else policy_number
+
     quality = data_quality(claims, policy_numbers_used, profile)
     summary = build_underwriting_intelligence(claims)
-    decision = build_underwriter_decision_engine(claims, policy_number)
-    appetite = build_carrier_appetite_engine(claims, policy_number)
-    carrier_match = build_carrier_match_engine(claims, policy_number)
-    forecast = build_premium_forecast_engine(claims, policy_number)
+    decision = build_underwriter_decision_engine(claims, effective_policy_number)
+    appetite = build_carrier_appetite_engine(claims, effective_policy_number)
+    carrier_match = build_carrier_match_engine(claims, effective_policy_number)
+    forecast = build_premium_forecast_engine(claims, effective_policy_number)
     metrics = get_metrics(claims)
 
     summary_metrics = summary.get("renewal_metrics") or summary.get("metrics") or {}
     decision_metrics = decision.get("decision_metrics") or {}
     forecast_metrics = forecast.get("forecast_metrics") or {}
 
-    # Prefer the guarded account-aware engine metrics when available.
+    # Prefer engine metrics only when they do not erase real claim totals collected for the selected account.
     for source in [summary_metrics, decision_metrics, forecast_metrics]:
         for key in [
             "total_claims",
@@ -6973,7 +7147,35 @@ def build_context(db: Session, current_user: dict, policy_number: str | None):
             "largest_loss",
         ]:
             if key in source and source.get(key) is not None:
-                metrics[key] = source[key]
+                value = source.get(key)
+                if key in {"total_claims", "total_paid", "total_reserve", "total_incurred", "largest_loss"} and metrics.get(key, 0):
+                    continue
+                metrics[key] = value
+
+    # Attach context so PDF sections can show exactly which account policies drove the output.
+    summary["policy_numbers_used"] = policy_numbers_used
+    decision["policy_numbers_used"] = policy_numbers_used
+    appetite["policy_numbers_used"] = policy_numbers_used
+    carrier_match["policy_numbers_used"] = policy_numbers_used
+    forecast["policy_numbers_used"] = policy_numbers_used
+
+    if claims and (summary.get("renewal_score") is None or "insufficient" in clean(summary.get("renewal_risk_level")).lower()):
+        # Safety fallback if the intelligence engine refuses to score even though claims are present.
+        open_claims = metrics.get("open_claims", 0)
+        litigation = metrics.get("litigation_claims", 0)
+        large_loss = 1 if money(metrics.get("largest_loss", 0)) >= 50000 else 0
+        penalty = min(70, open_claims * 10 + litigation * 15 + large_loss * 10 + max(0, metrics.get("total_claims", 0) - 3) * 4)
+        score = max(30, 92 - penalty)
+        level = "Low" if score >= 80 else "Moderate" if score >= 65 else "High" if score >= 50 else "Critical"
+        summary["renewal_score"] = score
+        summary["renewal_risk_level"] = level
+        summary["renewal_summary"] = summary.get("renewal_summary") or (
+            f"LossQ analyzed {metrics.get('total_claims', 0)} claim(s) across the selected account policy schedule with "
+            f"{dollars(metrics.get('total_incurred', 0))} in total incurred losses."
+        )
+        summary["broker_recommendation"] = summary.get("broker_recommendation") or (
+            "Prepare a carrier-ready loss narrative, explain open claims and reserves, and attach corrective action details."
+        )
 
     return {
         "claims": claims,
@@ -6988,7 +7190,6 @@ def build_context(db: Session, current_user: dict, policy_number: str | None):
         "metrics": metrics,
         "creator": get_creator(current_user),
     }
-
 
 def make_doc(title: str):
     buffer = BytesIO()
@@ -7273,7 +7474,7 @@ class ModernCorporateExecutivePage(Flowable):
         profile = self.profile
         metrics = self.metrics
         summary = self.summary
-        insured = clean(profile.get("business_name")) or "Selected Account"
+        insured = clean(profile.get("business_name") or profile.get("insured") or profile.get("named_insured") or profile.get("account_name")) or "Selected Account"
         period = f"{clean(profile.get('effective_date')) or '-'} - {clean(profile.get('expiration_date')) or '-'}"
         policy = clean(self.policy_number or profile.get("policy_number")) or "-"
         carrier = clean(profile.get("writing_carrier") or profile.get("carrier_name")) or "-"
@@ -7369,10 +7570,19 @@ class ModernCorporateExecutivePage(Flowable):
         c.drawCentredString(3.42 * inch, risk_y + 0.28 * inch, score_text)
         c.setFont("Helvetica-Bold", 12)
         c.drawCentredString(5.98 * inch, risk_y + 0.75 * inch, "RISK LEVEL")
-        c.setFont("Helvetica-Bold", 24)
-        c.drawCentredString(5.98 * inch, risk_y + 0.38 * inch, risk_text)
-        c.setFont("Helvetica-Bold", 9)
-        c.drawCentredString(5.98 * inch, risk_y + 0.16 * inch, "HIGH RENEWAL RISK" if risk_text in ["CRITICAL", "HIGH"] else "RENEWAL POSITION")
+
+        # Keep long labels like INSUFFICIENT DATA inside the risk box instead of overlapping the gauge.
+        if len(risk_text) > 14 and " " in risk_text:
+            risk_parts = risk_text.split(" ", 1)
+            c.setFont("Helvetica-Bold", 15)
+            c.drawCentredString(5.98 * inch, risk_y + 0.45 * inch, risk_parts[0])
+            c.drawCentredString(5.98 * inch, risk_y + 0.27 * inch, risk_parts[1])
+        else:
+            c.setFont("Helvetica-Bold", 20 if len(risk_text) > 10 else 24)
+            c.drawCentredString(5.98 * inch, risk_y + 0.36 * inch, risk_text)
+
+        c.setFont("Helvetica-Bold", 8.5)
+        c.drawCentredString(5.98 * inch, risk_y + 0.12 * inch, "HIGH RENEWAL RISK" if risk_text in ["CRITICAL", "HIGH"] else "RENEWAL POSITION")
 
         # Executive summary panel
         panel_y = risk_y - 1.15 * inch
@@ -7515,10 +7725,16 @@ class ExecutiveRiskGauge(Flowable):
         # Risk level text
         c.setFont("Helvetica-Bold", 15)
         c.drawCentredString(5.9 * inch, 0.96 * inch, "RISK LEVEL")
-        c.setFont("Helvetica-Bold", 28)
-        c.drawCentredString(5.9 * inch, 0.52 * inch, risk_text)
-        c.setFont("Helvetica-Bold", 12)
-        c.drawCentredString(5.9 * inch, 0.22 * inch, posture)
+        if len(risk_text) > 14 and " " in risk_text:
+            risk_parts = risk_text.split(" ", 1)
+            c.setFont("Helvetica-Bold", 17)
+            c.drawCentredString(5.9 * inch, 0.62 * inch, risk_parts[0])
+            c.drawCentredString(5.9 * inch, 0.40 * inch, risk_parts[1])
+        else:
+            c.setFont("Helvetica-Bold", 22 if len(risk_text) > 10 else 28)
+            c.drawCentredString(5.9 * inch, 0.52 * inch, risk_text)
+        c.setFont("Helvetica-Bold", 10)
+        c.drawCentredString(5.9 * inch, 0.18 * inch, posture)
         c.restoreState()
 
 
@@ -7716,7 +7932,7 @@ def executive_report_pdf(
 
     buffer, doc, styles = make_doc("LossQ Executive Underwriting Report")
     story = []
-    insured = clean(profile.get("business_name")) or "Selected Account"
+    insured = clean(profile.get("business_name") or profile.get("insured") or profile.get("named_insured") or profile.get("account_name")) or "Selected Account"
     risk_level = clean(summary.get("renewal_risk_level") or summary.get("risk_level") or "Not Rated")
     renewal_score = summary.get("renewal_score")
 
@@ -7792,7 +8008,7 @@ def carrier_packet_pdf(
 
     buffer, doc, styles = make_doc("LossQ Carrier Submission Packet")
     story = []
-    insured = clean(profile.get("business_name")) or "Selected Account"
+    insured = clean(profile.get("business_name") or profile.get("insured") or profile.get("named_insured") or profile.get("account_name")) or "Selected Account"
     risk_level = clean(summary.get("renewal_risk_level") or "Not Rated")
     renewal_score = summary.get("renewal_score")
 
