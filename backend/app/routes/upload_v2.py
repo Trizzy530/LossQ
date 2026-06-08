@@ -49,6 +49,48 @@ PLACEHOLDER_VALUES = {
 }
 
 
+FAKE_CLAIM_VALUES = {
+    "",
+    "UNKNOWN",
+    "CLAIM NUMBER",
+    "CLAIM-NUMBER",
+    "CLAIM NO",
+    "CLAIM-NO",
+    "LOSS RUN",
+    "LOSS-RUN",
+    "AUTO-LIABILITY",
+    "AUTO LIABILITY",
+    "GENERAL-LIABILITY",
+    "GENERAL LIABILITY",
+    "WORKERS-COMP",
+    "WORKERS COMP",
+    "WORKERS-COMPENSATION",
+    "WORKERS COMPENSATION",
+    "MOTOR-TRUCK-CARGO",
+    "MOTOR TRUCK CARGO",
+    "CARGO",
+    "GL-GATE",
+    "AL-GATE",
+    "WC-GATE",
+    "CG-GATE",
+}
+
+BAD_POLICY_VALUES = {
+    "",
+    "POLICY",
+    "POLICY NUMBER",
+    "ACCOUNT",
+    "ACCOUNT NUMBER",
+    "MUTUAL-INSURANCE",
+    "GENERAL-LIABILITY",
+    "AUTO-LIABILITY",
+    "WORKERS-COMP",
+    "WORKERS-COMPENSATION",
+    "MOTOR-TRUCK-CARGO",
+    "CARGO",
+}
+
+
 def _clean(value: Any) -> str:
     return clean_profile_value(value)
 
@@ -256,9 +298,26 @@ def _policy_number_from_profile(profile_data: Dict[str, Any]) -> str:
 
 def _valid_policy_number(value: Any) -> bool:
     policy = _clean(value).upper()
-    if not policy or policy in {"POLICY", "POLICY NUMBER", "ACCOUNT", "ACCOUNT NUMBER"}:
+
+    if not policy or policy in BAD_POLICY_VALUES:
         return False
+
+    if policy.startswith("UPLOAD-"):
+        return False
+
+    # Reject coverage/header labels that are not real policy numbers.
+    if policy in FAKE_CLAIM_VALUES:
+        return False
+
     return bool(re.search(r"[A-Z0-9]", policy)) and len(policy) >= 4
+
+
+def _claim_has_money(claim: Dict[str, Any]) -> bool:
+    return (
+        _safe_float(claim.get("total_incurred") or claim.get("total_amount") or claim.get("incurred")) > 0
+        or _safe_float(claim.get("paid_amount") or claim.get("paid")) > 0
+        or _safe_float(claim.get("reserve_amount") or claim.get("reserve")) > 0
+    )
 
 
 def _build_policy_rollup_from_claims(claims: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -520,11 +579,12 @@ async def save_uploaded_files_v2(
             for claim_data in parsed_claims
         ]
 
-        # Drop obvious header/non-claim rows.
+        # Drop obvious header/non-claim rows before rollup/save.
         repaired_claims = [
             claim for claim in repaired_claims
-            if _clean(claim.get("claim_number")).upper() not in {"", "UNKNOWN", "CLAIM NUMBER"}
+            if _clean(claim.get("claim_number")).upper() not in FAKE_CLAIM_VALUES
             and _valid_policy_number(claim.get("policy_number"))
+            and _claim_has_money(claim)
         ]
 
         rollup_from_claims = _build_policy_rollup_from_claims(repaired_claims)
@@ -549,7 +609,7 @@ async def save_uploaded_files_v2(
             or parsed_profile["account_number"]
         )
 
-        parsed_profile["policies"] = rollup_from_claims or parsed_policies
+        parsed_profile["policies"] = parsed_policies or rollup_from_claims
 
         calculated_total = sum(_safe_float(c.get("total_incurred")) for c in repaired_claims)
         parsed_profile["validation"] = parsed_validation or {}
