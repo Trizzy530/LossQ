@@ -11,6 +11,7 @@ except Exception:  # pragma: no cover
 
 
 MONEY_RE = re.compile(r"\(?\$?\s*([0-9]{1,3}(?:,[0-9]{3})*|[0-9]+)(?:\.(\d{2}))?\)?")
+MONEY_TOKEN_RE = re.compile(r"\(?\$\s*[0-9]{1,3}(?:,[0-9]{3})*(?:\.\d{2})?\)?|\(?\$\s*[0-9]+(?:\.\d{2})?\)?")
 DATE_RE = re.compile(r"\b(?:\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2})\b")
 
 POLICY_RE = re.compile(
@@ -346,7 +347,12 @@ def _is_fake_header_claim(claim: Dict[str, Any], policies: List[Dict[str, Any]])
         return True
 
     if re.fullmatch(r"(?:AL|GL|WC|CG)[-\s]?\d{3,}", claim_upper):
-        return True
+        for policy in policies:
+            policy_number = _normalize_policy_number(policy.get("policy_number"))
+            compact_policy = policy_number.replace("-", "")
+            compact_claim = claim_upper.replace("-", "").replace(" ", "")
+            if compact_claim and compact_claim in compact_policy:
+                return True
 
     incurred = _money_to_float(
         claim.get("total_incurred")
@@ -372,6 +378,29 @@ def _is_fake_header_claim(claim: Dict[str, Any], policies: List[Dict[str, Any]])
     return False
 
 
+
+def _claim_match_is_inside_policy_number(line: str, match: re.Match[str]) -> bool:
+    """
+    Prevent policy numbers like GP-AL-240177-01 from creating fake claims like AL-240177.
+    """
+    start = match.start()
+    end = match.end()
+
+    for policy_match in POLICY_RE.finditer(line):
+        if policy_match.start() <= start and end <= policy_match.end():
+            return True
+
+    before = line[max(0, start - 4):start].upper()
+    after = line[end:end + 4].upper()
+
+    if before.endswith("GP-") or before.endswith("GP "):
+        return True
+
+    if re.match(r"[-\s]?\d{1,4}\b", after):
+        return True
+
+    return False
+
 def _extract_claim_rows_from_raw_text(raw_text: str, policies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     claims: List[Dict[str, Any]] = []
     seen = set()
@@ -391,6 +420,9 @@ def _extract_claim_rows_from_raw_text(raw_text: str, policies: List[Dict[str, An
         if not claim_match:
             continue
 
+        if _claim_match_is_inside_policy_number(clean_line, claim_match):
+            continue
+
         claim_number = _normalize_spaces(claim_match.group(0)).upper().replace(" ", "-")
 
         if claim_number in seen:
@@ -400,7 +432,7 @@ def _extract_claim_rows_from_raw_text(raw_text: str, policies: List[Dict[str, An
         if upper_claim in KNOWN_FAKE_CLAIM_VALUES:
             continue
 
-        money_values = [_money_to_float(m.group(0)) for m in MONEY_RE.finditer(clean_line)]
+        money_values = [_money_to_float(m.group(0)) for m in MONEY_TOKEN_RE.finditer(clean_line)]
         money_values = [value for value in money_values if value != 0]
 
         dates = DATE_RE.findall(clean_line)
