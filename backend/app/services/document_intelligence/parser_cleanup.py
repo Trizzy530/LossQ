@@ -4,6 +4,95 @@ import re
 from io import BytesIO
 from typing import Any, Dict, List, Optional, Tuple
 
+FAKE_CLAIM_NUMBERS = {
+    "",
+    "UNKNOWN",
+    "CLAIM NUMBER",
+    "CLAIM-NUMBER",
+    "CLAIM NO",
+    "CLAIM-NO",
+    "AUTO-LIABILITY",
+    "AUTO LIABILITY",
+    "GENERAL-LIABILITY",
+    "GENERAL LIABILITY",
+    "WORKERS-COMP",
+    "WORKERS COMP",
+    "WORKERS-COMPENSATION",
+    "WORKERS COMPENSATION",
+    "MOTOR-TRUCK-CARGO",
+    "MOTOR TRUCK CARGO",
+    "GL-GATE",
+    "AL-GATE",
+    "WC-GATE",
+    "CG-GATE",
+    "PROPERTY-DAMAGE",
+    "LOSS-RUN",
+}
+
+
+def _lossq_filter_money(value: Any) -> float:
+    try:
+        if value is None:
+            return 0.0
+
+        if isinstance(value, (int, float)):
+            return float(value)
+
+        cleaned = str(value).replace("$", "").replace(",", "").replace("(", "-").replace(")", "").strip()
+
+        if cleaned in {"", "-", "None", "none", "null"}:
+            return 0.0
+
+        return float(cleaned)
+    except Exception:
+        return 0.0
+
+
+def filter_fake_claims(claims: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cleaned: list[dict[str, Any]] = []
+
+    for claim in claims or []:
+        if not isinstance(claim, dict):
+            continue
+
+        claim_number = str(
+            claim.get("claim_number")
+            or claim.get("claimNumber")
+            or claim.get("claim_no")
+            or claim.get("claimNo")
+            or ""
+        ).strip().upper()
+
+        total = _lossq_filter_money(
+            claim.get("total_incurred")
+            or claim.get("totalIncurred")
+            or claim.get("total_amount")
+            or claim.get("incurred")
+            or claim.get("total_net_loss")
+        )
+
+        paid = _lossq_filter_money(
+            claim.get("paid_amount")
+            or claim.get("paid")
+            or claim.get("paid_loss")
+        )
+
+        reserve = _lossq_filter_money(
+            claim.get("reserve_amount")
+            or claim.get("reserve")
+            or claim.get("remaining_reserves")
+        )
+
+        if not claim_number or claim_number in FAKE_CLAIM_NUMBERS:
+            continue
+
+        if total == 0 and paid == 0 and reserve == 0:
+            continue
+
+        cleaned.append(claim)
+
+    return cleaned
+
 try:
     from pypdf import PdfReader
 except Exception:  # pragma: no cover
@@ -591,6 +680,41 @@ def cleanup_loss_run_extraction(
     """
 
     if not isinstance(parsed, dict):
+        return parsed
+
+    claims = (
+        parsed.get("claims")
+        or parsed.get("parsed_claims")
+        or parsed.get("claim_rows")
+        or parsed.get("losses")
+        or []
+    )
+
+    claims = filter_fake_claims(claims)
+
+    if claims:
+        parsed["claims"] = claims
+        parsed["parsed_claims"] = claims
+        parsed["claim_count"] = len(claims)
+        parsed["total_incurred"] = round(
+            sum(
+                _lossq_filter_money(
+                    claim.get("total_incurred")
+                    or claim.get("totalIncurred")
+                    or claim.get("total_amount")
+                    or claim.get("incurred")
+                    or claim.get("total_net_loss")
+                )
+                for claim in claims
+            ),
+            2,
+        )
+    else:
+        parsed["claims"] = []
+        parsed["parsed_claims"] = []
+        parsed["claim_count"] = 0
+
+
         return parsed
 
     raw_text = _collect_raw_text(parsed, filename=filename or "", content=content)
