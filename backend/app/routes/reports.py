@@ -7518,10 +7518,10 @@ def table(data, widths=None, header=True, font_size=8, header_color=NAVY):
         ("GRID", (0, 0), (-1, -1), 0.25, BORDER),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, SOFT]),
-        ("LEFTPADDING", (0, 0), (-1, -1), 3 if font_size <= 6.5 else 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 3 if font_size <= 6.5 else 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 4 if font_size <= 6.5 else 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 4 if font_size <= 6.5 else 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2.5 if font_size <= 7 else 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2.5 if font_size <= 7 else 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 3.5 if font_size <= 7 else 5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5 if font_size <= 7 else 5),
     ]
     if not header:
         style.extend(
@@ -7982,6 +7982,36 @@ def profile_rows(profile, policy_number, creator):
     ]
 
 
+
+def compact_carrier_value(value):
+    value = clean(value) or "-"
+    replacements = {
+        "Statewide Auto & Casualty Insurance Company": "Statewide Auto &\nCasualty Insurance Co.",
+        "State Auto Property and Casualty Insurance Company": "State Auto Property &\nCasualty Insurance Co.",
+        "Travelers Property Casualty Company of America": "Travelers Property\nCasualty Co.",
+        "Berkley Mid-Atlantic Insurance Company": "Berkley Mid-Atlantic\nInsurance Co.",
+        "National General Insurance Company": "National General\nInsurance Co.",
+        "Progressive Commercial": "Progressive\nCommercial",
+        "Liberty Mutual Insurance Company": "Liberty Mutual\nInsurance Co.",
+    }
+    if value in replacements:
+        return replacements[value]
+    if len(value) > 26:
+        parts = value.replace(" Insurance Company", " Insurance Co.").split()
+        midpoint = max(1, len(parts) // 2)
+        return " ".join(parts[:midpoint]) + "\n" + " ".join(parts[midpoint:])
+    return value
+
+
+def compact_policy_number_value(value):
+    value = clean(value) or "-"
+    if len(value) > 18 and "-" in value:
+        parts = value.split("-")
+        if len(parts) >= 3:
+            return "-".join(parts[:2]) + "\n" + "-".join(parts[2:])
+    return value
+
+
 def policy_schedule_table(profile, policy_numbers_used):
     policies = profile.get("policies") or []
     rows = [["Policy Type", "Policy Number", "Carrier", "Effective", "Expiration"]]
@@ -7990,15 +8020,15 @@ def policy_schedule_table(profile, policy_numbers_used):
             rows.append(
                 [
                     clean(item.get("policy_type") or item.get("line_coverage") or item.get("line_of_business") or "Needs Review"),
-                    clean(item.get("policy_number")) or "-",
-                    clean(item.get("writing_carrier") or item.get("carrier") or profile.get("carrier_name")) or "-",
+                    compact_policy_number_value(item.get("policy_number")),
+                    compact_carrier_value(item.get("writing_carrier") or item.get("carrier") or profile.get("carrier_name")),
                     clean(item.get("effective_date")) or "-",
                     clean(item.get("expiration_date")) or "-",
                 ]
             )
     elif policy_numbers_used:
         for pn in policy_numbers_used:
-            rows.append(["Account Policy", pn, clean(profile.get("carrier_name")) or "-", "-", "-"])
+            rows.append(["Account Policy", compact_policy_number_value(pn), compact_carrier_value(profile.get("carrier_name")), "-", "-"])
     else:
         rows.append(["No policy schedule available", "-", "-", "-", "-"])
     return rows
@@ -8064,7 +8094,7 @@ def cover(story, styles, report_title, profile, policy_number, creator):
     story.append(Spacer(1, 0.10 * inch))
     story.append(title(report_title, styles))
     story.append(subtitle("Renewal, claims, and underwriting intelligence summary.", styles))
-    story.append(table(profile_rows(profile, policy_number or profile.get("policy_number"), creator), widths=[1.7 * inch, 5.0 * inch], header=False, font_size=8.2))
+    story.append(table(profile_rows(profile, policy_number or profile.get("policy_number"), creator), widths=[1.55 * inch, 5.15 * inch], header=False, font_size=7.4))
 
 
 def executive_first_page(story, styles, profile, policy_number, creator, summary, metrics):
@@ -8100,7 +8130,7 @@ def build_executive_pdf_response(ctx, policy_number=None):
 
     story.append(PageBreak())
     story.append(heading("Account Overview", styles))
-    story.append(table(profile_rows(profile, policy_number or profile.get("policy_number"), creator), widths=[1.7 * inch, 5.0 * inch], header=False, font_size=8.2))
+    story.append(table(profile_rows(profile, policy_number or profile.get("policy_number"), creator), widths=[1.55 * inch, 5.15 * inch], header=False, font_size=7.4))
 
     story.append(heading("Premium Forecast", styles))
     story.append(table([
@@ -8123,11 +8153,11 @@ def build_executive_pdf_response(ctx, policy_number=None):
             carrier_match.get("recommended_carrier") or "-",
             f"{carrier_match.get('recommended_score')}/100" if carrier_match.get("recommended_score") is not None else "-",
         ],
-    ], widths=[1.7 * inch] * 4, header_color=PURPLE))
+    ], widths=[1.7 * inch] * 4, font_size=7, header_color=PURPLE))
     story.append(p(carrier_match.get("carrier_match_summary") or appetite.get("placement_summary") or "No carrier match summary available.", styles))
 
     story.append(heading("Policy Schedule", styles))
-    story.append(table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.45 * inch, 1.75 * inch, 1.45 * inch, 1.0 * inch, 1.0 * inch], header_color=NAVY))
+    story.append(table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.28 * inch, 1.55 * inch, 2.15 * inch, 0.82 * inch, 0.82 * inch], font_size=6.4, header_color=NAVY))
 
     story.append(PageBreak())
     story.append(heading("Top Claims by Total Incurred", styles))
@@ -8252,7 +8282,7 @@ def build_carrier_packet_pdf_response(ctx, policy_number=None):
     story.append(p(summary.get("broker_recommendation") or summary.get("renewal_summary") or f"This submission presents {insured} for carrier underwriting review based on {metrics['total_claims']} account-specific claim(s).", styles))
 
     story.append(heading("Policy Schedule", styles))
-    story.append(table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.45 * inch, 1.75 * inch, 1.45 * inch, 1.0 * inch, 1.0 * inch], header_color=NAVY))
+    story.append(table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.28 * inch, 1.55 * inch, 2.15 * inch, 0.82 * inch, 0.82 * inch], font_size=6.4, header_color=NAVY))
 
     story.append(heading("Loss Summary", styles))
     story.append(table([
