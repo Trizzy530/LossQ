@@ -475,7 +475,11 @@ async def save_uploaded_files_v2(
             buffer.write(content)
 
         parsed = parse_loss_run_upload(file.filename or safe_filename, content)
-        parsed = cleanup_loss_run_extraction(parsed)
+        parsed = cleanup_loss_run_extraction(
+            parsed,
+            filename=(file.filename or locals().get("safe_filename", "")),
+            content=content,
+        )
 
         parsed_claims = (
             parsed.get("claims")
