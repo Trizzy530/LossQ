@@ -533,6 +533,300 @@ def _build_policy_rollup_from_claims(claims: List[Dict[str, Any]]) -> List[Dict[
     return list(rollup.values())
 
 
+
+
+def _fallback_policy_item_number(policy_item: Any) -> str:
+    if isinstance(policy_item, dict):
+        return _clean(
+            policy_item.get("policy_number")
+            or policy_item.get("policyNumber")
+            or policy_item.get("account_number")
+            or policy_item.get("accountNumber")
+        ).upper()
+
+    return _clean(policy_item).upper()
+
+
+def _fallback_extract_next_line_label(raw_text: Any, label: str) -> str:
+    lines = [_clean(line) for line in str(raw_text or "").replace("\r", "\n").splitlines()]
+    label_lower = label.lower().strip()
+
+    for index, line in enumerate(lines):
+        if line.lower().strip() == label_lower and index + 1 < len(lines):
+            return _clean(lines[index + 1])
+
+        if line.lower().startswith(label_lower + ":"):
+            return _clean(line.split(":", 1)[1])
+
+    return ""
+
+
+def _fallback_lob_from_policy(policy_number: Any) -> str:
+    policy = _clean(policy_number).upper()
+
+    if "-AL-" in policy:
+        return "Auto Liability"
+    if "-GL-" in policy:
+        return "General Liability"
+    if "-WC-" in policy:
+        return "Workers Comp"
+    if "-CG-" in policy:
+        return "Motor Truck Cargo"
+
+    return "Unknown"
+
+
+def _fallback_extract_policies_from_raw_text(raw_text: Any) -> List[Dict[str, Any]]:
+    lines = [_clean(line) for line in str(raw_text or "").replace("\r", "\n").splitlines()]
+    policies: List[Dict[str, Any]] = []
+    seen = set()
+
+    policy_re = re.compile(r"^[A-Z]{2,6}-(?:AL|GL|WC|CG)-[A-Z0-9]+-\d{1,4}$", re.IGNORECASE)
+
+    for index, line in enumerate(lines):
+        policy_number = _clean(line).upper()
+
+        if not policy_re.fullmatch(policy_number):
+            continue
+
+        if policy_number in seen:
+            continue
+
+        lob = _fallback_lob_from_policy(policy_number)
+
+        nearby = lines[max(0, index - 6):min(len(lines), index + 8)]
+        dates = [
+            item for item in nearby
+            if re.fullmatch(r"\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}", item)
+        ]
+
+        policy = {
+            "policy_number": policy_number,
+            "line_of_business": lob,
+            "policy_type": lob,
+        }
+
+        if len(dates) >= 1:
+            policy["effective_date"] = dates[0]
+        if len(dates) >= 2:
+            policy["expiration_date"] = dates[1]
+
+        policies.append(policy)
+        seen.add(policy_number)
+
+    return policies
+
+
+def _fallback_money(value: Any) -> float:
+    text_value = _clean(value)
+    match = re.search(r"\$?\s*(\d{1,3}(?:,\d{3})*(?:\.\d{2})|\d+(?:\.\d{2}))", text_value)
+
+    if not match:
+        return 0.0
+
+    return _safe_float(match.group(1))
+
+
+def _fallback_is_money_line(value: Any) -> bool:
+    return bool(
+        re.fullmatch(
+            r"\$?\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})|\$?\s*\d+(?:\.\d{2})",
+            _clean(value),
+        )
+    )
+
+
+def _fallback_is_date_or_dash(value: Any) -> bool:
+    return bool(
+        re.fullmatch(
+            r"\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2}|-",
+            _clean(value),
+        )
+    )
+
+
+def _fallback_extract_claims_from_raw_text(raw_text: Any, policies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    lines = [_clean(line) for line in str(raw_text or "").replace("\r", "\n").splitlines()]
+    lines = [line for line in lines if line]
+
+    valid_policies = []
+    for policy in policies or []:
+        policy_number = _fallback_policy_item_number(policy)
+        if _valid_policy_number(policy_number):
+            valid_policies.append(policy_number)
+
+    if not valid_policies:
+        return []
+
+    claim_re = re.compile(r"^(?:AL|GL|WC|CG|MT|CARGO)-[A-Z0-9-]+$", re.IGNORECASE)
+
+    claims: List[Dict[str, Any]] = []
+    seen = set()
+
+    for index, line in enumerate(lines):
+        policy_number = _clean(line).upper()
+
+        if policy_number not in valid_policies:
+            continue
+
+        if index + 8 >= len(lines):
+            continue
+
+        claim_number = _clean(lines[index + 1]).upper()
+
+        if not claim_re.fullmatch(claim_number):
+            continue
+
+        if not re.search(r"\d", claim_number):
+            continue
+
+        if claim_number in seen:
+            continue
+
+        block = lines[index:index + 18]
+
+        money_indexes = []
+        for offset, item in enumerate(block):
+            if _fallback_is_money_line(item):
+                money_indexes.append(offset)
+
+        if len(money_indexes) < 3:
+            continue
+
+        paid_index = money_indexes[0]
+        reserve_index = money_indexes[1]
+        total_index = money_indexes[2]
+
+        paid = _fallback_money(block[paid_index])
+        reserve = _fallback_money(block[reserve_index])
+        total = _fallback_money(block[total_index])
+
+        if paid <= 0 and reserve <= 0 and total <= 0:
+            continue
+
+        date_values = [
+            item for item in block[2:paid_index]
+            if _fallback_is_date_or_dash(item)
+        ]
+
+        status = ""
+        description_parts = []
+
+        for item in block[2:paid_index]:
+            clean_item = _clean(item)
+            lower_item = clean_item.lower()
+
+            if lower_item in {"open", "closed", "pending", "reopened"}:
+                status = clean_item.title()
+                continue
+
+            if _fallback_is_date_or_dash(clean_item):
+                continue
+
+            if clean_item:
+                description_parts.append(clean_item)
+
+        if not status:
+            status = "Open" if reserve > 0 else "Closed"
+
+        lob = _fallback_lob_from_policy(policy_number)
+        description = _clean(" ".join(description_parts))
+
+        claim = {
+            "claim_number": claim_number,
+            "policy_number": policy_number,
+            "line_of_business": lob,
+            "claim_type": lob,
+            "date_of_loss": date_values[0] if len(date_values) >= 1 and date_values[0] != "-" else "",
+            "loss_date": date_values[0] if len(date_values) >= 1 and date_values[0] != "-" else "",
+            "date_reported": date_values[1] if len(date_values) >= 2 and date_values[1] != "-" else "",
+            "reported_date": date_values[1] if len(date_values) >= 2 and date_values[1] != "-" else "",
+            "closed_date": date_values[2] if len(date_values) >= 3 and date_values[2] != "-" else "",
+            "status": status,
+            "description": description,
+            "loss_description": description,
+            "paid_amount": paid,
+            "paid": paid,
+            "reserve_amount": reserve,
+            "reserve": reserve,
+            "total_incurred": total,
+            "total_amount": total,
+            "total_net_loss": total,
+        }
+
+        claims.append(claim)
+        seen.add(claim_number)
+
+    return claims
+
+
+def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any]) -> Dict[str, Any]:
+    if not isinstance(parsed, dict):
+        return parsed
+
+    profile = dict(parsed.get("profile") or {})
+
+    raw_text = (
+        parsed.get("raw_text_preview")
+        or parsed.get("raw_text")
+        or parsed.get("text")
+        or parsed.get("extracted_text")
+        or profile.get("raw_text_preview")
+        or profile.get("raw_text")
+        or profile.get("text")
+        or profile.get("extracted_text")
+        or ""
+    )
+
+    if not raw_text:
+        return parsed
+
+    existing_claims = parsed.get("claims") or parsed.get("parsed_claims") or []
+    existing_policies = parsed.get("policies") or profile.get("policies") or []
+
+    fallback_business = _fallback_extract_next_line_label(raw_text, "Named Insured")
+    fallback_carrier = _fallback_extract_next_line_label(raw_text, "Writing Carrier")
+    fallback_policies = _fallback_extract_policies_from_raw_text(raw_text)
+
+    if fallback_policies and len(fallback_policies) > len(existing_policies):
+        parsed["policies"] = fallback_policies
+        profile["policies"] = fallback_policies
+        parsed["policy_count"] = len(fallback_policies)
+
+        current_policy = _clean(parsed.get("policy_number")).upper()
+        if not _valid_policy_number(current_policy):
+            parsed["policy_number"] = fallback_policies[0]["policy_number"]
+            profile["policy_number"] = fallback_policies[0]["policy_number"]
+
+    policies_for_claims = parsed.get("policies") or profile.get("policies") or fallback_policies
+    fallback_claims = _fallback_extract_claims_from_raw_text(raw_text, policies_for_claims)
+
+    if fallback_business and not _first_real_value(parsed.get("business_name"), profile.get("business_name")):
+        parsed["business_name"] = fallback_business
+        parsed["named_insured"] = fallback_business
+        profile["business_name"] = fallback_business
+        profile["named_insured"] = fallback_business
+
+    if fallback_carrier and not _first_real_value(parsed.get("carrier_name"), profile.get("carrier_name")):
+        parsed["carrier_name"] = fallback_carrier
+        parsed["writing_carrier"] = fallback_carrier
+        profile["carrier_name"] = fallback_carrier
+        profile["writing_carrier"] = fallback_carrier
+
+    if fallback_claims and len(fallback_claims) > len(existing_claims):
+        parsed["claims"] = fallback_claims
+        parsed["parsed_claims"] = fallback_claims
+        parsed["claim_count"] = len(fallback_claims)
+        parsed["total_incurred"] = round(
+            sum(_safe_float(claim.get("total_incurred")) for claim in fallback_claims),
+            2,
+        )
+
+    parsed["profile"] = profile
+    return parsed
+
+
+
 def force_save_account_profile_v2(
     db: Session,
     *,
@@ -723,6 +1017,7 @@ async def save_uploaded_files_v2(
             filename=(file.filename or safe_filename),
             content=content,
         )
+        parsed = _apply_raw_text_fallback_if_needed(parsed)
 
         parsed_claims = (
             parsed.get("claims")
