@@ -305,8 +305,10 @@ def _valid_policy_number(value: Any) -> bool:
     if policy.startswith("UPLOAD-"):
         return False
 
-    # Reject coverage/header labels that are not real policy numbers.
     if policy in FAKE_CLAIM_VALUES:
+        return False
+
+    if _looks_like_fake_policy_fragment(policy):
         return False
 
     return bool(re.search(r"[A-Z0-9]", policy)) and len(policy) >= 4
@@ -318,6 +320,87 @@ def _claim_has_money(claim: Dict[str, Any]) -> bool:
         or _safe_float(claim.get("paid_amount") or claim.get("paid")) > 0
         or _safe_float(claim.get("reserve_amount") or claim.get("reserve")) > 0
     )
+
+
+
+
+def _policy_item_number(policy_item: Any) -> str:
+    if isinstance(policy_item, dict):
+        return _clean(
+            policy_item.get("policy_number")
+            or policy_item.get("policyNumber")
+            or policy_item.get("account_number")
+            or policy_item.get("accountNumber")
+        ).upper()
+
+    return _clean(policy_item).upper()
+
+
+def _looks_like_fake_policy_fragment(policy_number: Any) -> bool:
+    policy = _clean(policy_number).upper()
+
+    if not policy:
+        return True
+
+    fake_tokens = {
+        "MUTU-AL",
+        "PORT-AL",
+        "TOT-AL",
+        "GENER-AL",
+        "ACTU-AL",
+        "MANU-AL",
+        "DETAIL-AL",
+        "NORM-AL",
+        "PARTI-AL",
+        "MUTUAL-INSURANCE",
+        "GENERAL-LIABILITY",
+        "AUTO-LIABILITY",
+        "WORKERS-COMP",
+        "MOTOR-TRUCK-CARGO",
+        "TOTAL-INCURRED",
+        "PARTIAL-EXPORT",
+        "PORTAL-EXPORT",
+    }
+
+    if any(token in policy for token in fake_tokens):
+        return True
+
+    # Real policy numbers almost always carry at least one digit.
+    # This blocks header fragments made only from words.
+    if not re.search(r"\d", policy):
+        return True
+
+    return False
+
+
+def _filter_policy_schedule_items(policies: Any) -> List[Dict[str, Any]]:
+    if not isinstance(policies, list):
+        return []
+
+    cleaned: List[Dict[str, Any]] = []
+    seen = set()
+
+    for item in policies:
+        if not isinstance(item, dict):
+            continue
+
+        policy_number = _policy_item_number(item)
+
+        if not _valid_policy_number(policy_number):
+            continue
+
+        if _looks_like_fake_policy_fragment(policy_number):
+            continue
+
+        if policy_number in seen:
+            continue
+
+        row = dict(item)
+        row["policy_number"] = policy_number
+        cleaned.append(row)
+        seen.add(policy_number)
+
+    return cleaned
 
 
 def _build_policy_rollup_from_claims(claims: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
@@ -549,10 +632,19 @@ async def save_uploaded_files_v2(
 
         parsed_profile = dict(parsed.get("profile") or {})
         parsed_policies = parsed.get("policies") or parsed_profile.get("policies") or []
+        parsed_policies = _filter_policy_schedule_items(parsed_policies)
         parsed_validation = parsed.get("validation") or parsed_profile.get("validation") or {}
+
+        schedule_policy_number = ""
+        for policy_item in parsed_policies:
+            policy_item_number = _policy_item_number(policy_item)
+            if _valid_policy_number(policy_item_number):
+                schedule_policy_number = policy_item_number
+                break
 
         file_policy_number = (
             clean_input_policy
+            or schedule_policy_number
             or _first_real_value(parsed_profile.get("policy_number"))
             or _first_real_value(parsed.get("policy_number"))
             or _first_real_value(parsed_profile.get("account_number"))
@@ -587,7 +679,9 @@ async def save_uploaded_files_v2(
             and _claim_has_money(claim)
         ]
 
-        rollup_from_claims = _build_policy_rollup_from_claims(repaired_claims)
+        rollup_from_claims = _filter_policy_schedule_items(
+            _build_policy_rollup_from_claims(repaired_claims)
+        )
 
         detected_policy_numbers = {file_policy_number}
         for claim in repaired_claims:

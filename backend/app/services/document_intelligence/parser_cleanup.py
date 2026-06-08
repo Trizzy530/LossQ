@@ -1,28 +1,36 @@
-
 from __future__ import annotations
 
 import re
 from io import BytesIO
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 try:
     from pypdf import PdfReader
-except Exception:
+except Exception:  # pragma: no cover
     PdfReader = None
 
 
+MONEY_RE = re.compile(r"\(?\$?\s*([0-9]{1,3}(?:,[0-9]{3})*|[0-9]+)(?:\.(\d{2}))?\)?")
+MONEY_TOKEN_RE = re.compile(r"\(?\$\s*[0-9]{1,3}(?:,[0-9]{3})*(?:\.\d{2})?\)?|\(?\$\s*[0-9]+(?:\.\d{2})?\)?")
 DATE_RE = re.compile(r"\b(?:\d{1,2}/\d{1,2}/\d{2,4}|\d{4}-\d{2}-\d{2})\b")
-MONEY_TOKEN_RE = re.compile(r"\(?\$[\s]*[0-9]{1,3}(?:,[0-9]{3})*(?:\.\d{2})?\)?|\(?\$[\s]*[0-9]+(?:\.\d{2})?\)?")
-CLAIM_RE = re.compile(r"\b(?:AL|GL|WC|CG|AUTO|CARGO|MT)[-\s][A-Z0-9]{2,25}\b", re.IGNORECASE)
-POLICY_RE = re.compile(r"\b[A-Z]{2,6}[-\s]*(?:AL|GL|WC|CG|AUTO|CARGO|MT)[-\s]*[A-Z0-9]{3,12}(?:[-\s]*\d{1,4})?\b", re.IGNORECASE)
 
-FAKE_CLAIM_VALUES = {
-    "AUTO-LIABILITY", "AUTO LIABILITY",
-    "GENERAL-LIABILITY", "GENERAL LIABILITY",
-    "WORKERS-COMP", "WORKERS COMP", "WORKERS-COMPENSATION", "WORKERS COMPENSATION",
-    "MOTOR-TRUCK-CARGO", "MOTOR TRUCK CARGO",
-    "CARGO", "CLAIM-NO", "CLAIM-NUMBER", "LOSS-RUN",
-    "GL-GATE", "AL-GATE", "WC-GATE", "CG-GATE",
+POLICY_RE = re.compile(
+    r"\b(?:GP|[A-Z]{2,6})[-\s]?(?:AL|AUTO|GL|WC|CG|CARGO|MT|MT-CARGO)[-\s]?[A-Z0-9]{3,12}(?:[-\s]?\d{1,4})?\b",
+    re.IGNORECASE,
+)
+
+KNOWN_FAKE_CLAIM_VALUES = {
+    "AUTO-LIABILITY",
+    "AUTO LIABILITY",
+    "GENERAL-LIABILITY",
+    "GENERAL LIABILITY",
+    "WORKERS-COMP",
+    "WORKERS COMP",
+    "WORKERS-COMPENSATION",
+    "WORKERS COMPENSATION",
+    "MOTOR-TRUCK-CARGO",
+    "MOTOR TRUCK CARGO",
+    "CARGO",
 }
 
 
@@ -30,292 +38,489 @@ def _as_dict(value: Any) -> Dict[str, Any]:
     return value if isinstance(value, dict) else {}
 
 
-def _clean_text(value: Any) -> str:
+def _get_nested(data: Dict[str, Any], *keys: str) -> Any:
+    current: Any = data
+    for key in keys:
+        if not isinstance(current, dict):
+            return None
+        current = current.get(key)
+    return current
+
+
+def _first_text(*values: Any) -> str:
+    for value in values:
+        if isinstance(value, str) and value.strip():
+            return value.strip()
+    return ""
+
+
+def _normalize_spaces(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "")).strip()
 
 
-def _normalize_policy(value: Any) -> str:
-    text = _clean_text(value).upper().replace(" ", "-")
+def _normalize_policy_number(value: Any) -> str:
+    text = _normalize_spaces(value).upper()
+    text = text.replace(" ", "-")
     text = re.sub(r"-+", "-", text)
     return text.strip("-")
 
 
-def _money(value: Any) -> float:
+def _money_to_float(value: Any) -> float:
     if value is None:
         return 0.0
+
     if isinstance(value, (int, float)):
         return float(value)
 
     text = str(value).strip()
-    neg = text.startswith("(") and text.endswith(")")
+    if not text:
+        return 0.0
+
+    negative = text.startswith("(") and text.endswith(")")
     text = text.replace("$", "").replace(",", "").replace("(", "").replace(")", "").strip()
 
     try:
         amount = float(text)
-        return -amount if neg else amount
+        return -amount if negative else amount
     except Exception:
-        return 0.0
+        match = MONEY_RE.search(str(value))
+        if not match:
+            return 0.0
+        whole = match.group(1).replace(",", "")
+        cents = match.group(2) or "00"
+        amount = float(f"{whole}.{cents}")
+        return -amount if negative else amount
 
 
-def _pdf_text(filename: str, content: Optional[bytes]) -> str:
-    if not content or not filename.lower().endswith(".pdf") or PdfReader is None:
+def _extract_pdf_text(filename: str, content: Optional[bytes]) -> str:
+    if not content:
+        return ""
+
+    if not filename.lower().endswith(".pdf"):
+        return ""
+
+    if PdfReader is None:
         return ""
 
     try:
         reader = PdfReader(BytesIO(content))
-        parts = []
+        parts: List[str] = []
+
         for page_index, page in enumerate(reader.pages, start=1):
             page_text = page.extract_text() or ""
             if page_text.strip():
                 parts.append(f"--- PAGE {page_index} ---\n{page_text}")
-        return "\n\n".join(parts)
+
+        return "\n\n".join(parts).strip()
     except Exception as exc:
         print("LossQ cleanup PDF text fallback failed:", str(exc))
         return ""
 
 
-def _raw_text(parsed: Dict[str, Any], filename: str, content: Optional[bytes]) -> str:
+def _collect_raw_text(parsed: Dict[str, Any], filename: str = "", content: Optional[bytes] = None) -> str:
     profile = _as_dict(parsed.get("profile"))
     account = _as_dict(parsed.get("account"))
+    metadata = _as_dict(parsed.get("metadata"))
 
-    candidates = [
+    raw_text = _first_text(
         parsed.get("raw_text_preview"),
         parsed.get("raw_text"),
         parsed.get("text"),
         parsed.get("extracted_text"),
         profile.get("raw_text_preview"),
         profile.get("raw_text"),
+        profile.get("text"),
+        profile.get("extracted_text"),
         account.get("raw_text_preview"),
         account.get("raw_text"),
-    ]
+        metadata.get("raw_text_preview"),
+        metadata.get("raw_text"),
+    )
 
-    for item in candidates:
-        if isinstance(item, str) and item.strip():
-            return item.strip()
+    if not raw_text:
+        raw_text = _extract_pdf_text(filename, content)
 
-    return _pdf_text(filename, content)
+    return raw_text
 
 
-def _label_value(raw_text: str, labels: List[str]) -> str:
+def _extract_after_label(raw_text: str, labels: List[str]) -> str:
     for label in labels:
-        match = re.search(rf"{re.escape(label)}\s*[:\-]\s*(.+?)(?:\n|$)", raw_text, re.IGNORECASE)
+        pattern = re.compile(
+            rf"{re.escape(label)}\s*[:\-]\s*(.+?)(?:\n|$)",
+            re.IGNORECASE,
+        )
+        match = pattern.search(raw_text)
         if match:
-            value = _clean_text(match.group(1))
+            value = _normalize_spaces(match.group(1))
+            value = re.sub(r"\s{2,}.*$", "", value).strip()
             if value:
                 return value
     return ""
 
 
-def _business_name(raw_text: str) -> str:
-    return _label_value(raw_text, ["Named Insured", "Insured Name", "Business Name", "Account Name", "Applicant"])
+def _extract_business_name(raw_text: str) -> str:
+    value = _extract_after_label(
+        raw_text,
+        [
+            "Named Insured",
+            "Insured Name",
+            "Business Name",
+            "Account Name",
+            "Applicant",
+        ],
+    )
+
+    if value:
+        return value
+
+    match = re.search(
+        r"\b([A-Z][A-Za-z0-9&.,' -]+?(?:LLC|INC\.?|CORP\.?|COMPANY|CO\.|LTD\.?))\b",
+        raw_text,
+        re.IGNORECASE,
+    )
+    return _normalize_spaces(match.group(1)) if match else ""
 
 
-def _carrier_name(raw_text: str) -> str:
-    return _label_value(raw_text, ["Writing Carrier", "Carrier Name", "Insurer Name", "Insurer", "Insurance Company"])
+def _extract_carrier_name(raw_text: str) -> str:
+    value = _extract_after_label(
+        raw_text,
+        [
+            "Writing Carrier",
+            "Carrier Name",
+            "Insurer Name",
+            "Insurer",
+            "Insurance Company",
+            "Company",
+        ],
+    )
+
+    if value:
+        return value
+
+    match = re.search(
+        r"\b([A-Z][A-Za-z0-9&.,' -]+?(?:Insurance Co\.?|Insurance Company|Mutual Insurance Co\.?|Mutual|Indemnity|Casualty|Underwriters))\b",
+        raw_text,
+        re.IGNORECASE,
+    )
+    return _normalize_spaces(match.group(1)) if match else ""
 
 
-def _lob_from_text(text: str) -> str:
+def _line_of_business_from_text(text: str) -> str:
     upper = text.upper()
-    if "WC" in upper or "WORKERS" in upper:
+
+    if "WORK" in upper and ("COMP" in upper or "COMPENSATION" in upper):
         return "Workers Comp"
-    if "GL" in upper or "GENERAL" in upper:
+
+    if "GENERAL" in upper and "LIAB" in upper:
         return "General Liability"
-    if "CG" in upper or "CARGO" in upper or "MOTOR TRUCK" in upper:
+
+    if "CARGO" in upper:
         return "Motor Truck Cargo"
-    if "AL" in upper or "AUTO" in upper:
+
+    if "AUTO" in upper or "AL-" in upper or "-AL-" in upper:
         return "Auto Liability"
-    return "Unknown"
+
+    return ""
 
 
-def _extract_policies(raw_text: str) -> List[Dict[str, Any]]:
-    compact = re.sub(r"\s+", " ", raw_text or "")
+def _extract_policy_rows(raw_text: str) -> List[Dict[str, Any]]:
     policies: List[Dict[str, Any]] = []
     seen = set()
 
-    generic = re.compile(r"\b([A-Z]{2,6})[-\s]*(AL|GL|WC|CG|AUTO|CARGO|MT)[-\s]*([A-Z0-9]{3,12})(?:[-\s]*(\d{1,4}))?\b", re.IGNORECASE)
-
-    for match in generic.finditer(compact):
-        carrier_prefix = match.group(1).upper()
-        code = match.group(2).upper()
-        middle = match.group(3).upper()
-        suffix = match.group(4)
-
-        if code == "AUTO":
-            code = "AL"
-        if code in {"CARGO", "MT"}:
-            code = "CG"
-
-        if suffix:
-            policy_number = f"{carrier_prefix}-{code}-{middle}-{suffix.zfill(2)}"
-        else:
-            policy_number = f"{carrier_prefix}-{code}-{middle}"
-
-        policy_number = _normalize_policy(policy_number)
-
-        fake_policy_values = {"GENERAL-LIABILITY", "AUTO-LIABILITY", "WORKERS-COMP", "MOTOR-TRUCK-CARGO", "MUTUAL-INSURANCE"}
-        if policy_number in fake_policy_values:
+    for line in raw_text.splitlines():
+        clean_line = _normalize_spaces(line)
+        if not clean_line:
             continue
 
-        if policy_number not in seen:
-            policies.append({
+        policy_matches = list(POLICY_RE.finditer(clean_line))
+        if not policy_matches:
+            continue
+
+        for match in policy_matches:
+            policy_number = _normalize_policy_number(match.group(0))
+            if policy_number in seen:
+                continue
+
+            lob = _line_of_business_from_text(clean_line)
+            if not lob:
+                lob = _line_of_business_from_text(policy_number)
+
+            dates = DATE_RE.findall(clean_line)
+
+            policy = {
                 "policy_number": policy_number,
-                "line_of_business": _lob_from_text(policy_number),
-            })
+                "line_of_business": lob or "Unknown",
+            }
+
+            if len(dates) >= 1:
+                policy["effective_date"] = dates[0]
+            if len(dates) >= 2:
+                policy["expiration_date"] = dates[1]
+
+            policies.append(policy)
             seen.add(policy_number)
 
     return policies
 
 
-def _policy_for_claim(claim_number: str, policies: List[Dict[str, Any]]) -> str:
+def _claim_policy_from_claim_number(claim_number: str, policies: List[Dict[str, Any]]) -> str:
     upper = claim_number.upper()
 
+    policy_by_lob = {
+        "AL": "",
+        "GL": "",
+        "WC": "",
+        "CG": "",
+    }
+
     for policy in policies:
-        policy_number = _normalize_policy(policy.get("policy_number"))
-        if upper.startswith("AL-") and "-AL-" in policy_number:
-            return policy_number
-        if upper.startswith("GL-") and "-GL-" in policy_number:
-            return policy_number
-        if upper.startswith("WC-") and "-WC-" in policy_number:
-            return policy_number
-        if upper.startswith(("CG-", "MT-", "CARGO-")) and "-CG-" in policy_number:
-            return policy_number
+        policy_number = _normalize_policy_number(policy.get("policy_number"))
+        lob = _line_of_business_from_text(
+            f"{policy.get('line_of_business', '')} {policy_number}"
+        ).upper()
 
-    return policies[0]["policy_number"] if policies else ""
+        if "AUTO" in lob:
+            policy_by_lob["AL"] = policy_number
+        elif "GENERAL" in lob:
+            policy_by_lob["GL"] = policy_number
+        elif "WORKERS" in lob:
+            policy_by_lob["WC"] = policy_number
+        elif "CARGO" in lob:
+            policy_by_lob["CG"] = policy_number
+
+    if upper.startswith(("AL-", "AUTO-", "CA-", "AU-")):
+        return policy_by_lob.get("AL", "")
+
+    if upper.startswith(("GL-", "GENERAL-")):
+        return policy_by_lob.get("GL", "")
+
+    if upper.startswith(("WC-", "WORK-")):
+        return policy_by_lob.get("WC", "")
+
+    if upper.startswith(("CG-", "CARGO-", "MT-")):
+        return policy_by_lob.get("CG", "")
+
+    return ""
 
 
-def _inside_policy(line: str, match: re.Match[str]) -> bool:
-    start, end = match.start(), match.end()
-    for policy_match in POLICY_RE.finditer(line):
-        if policy_match.start() <= start and end <= policy_match.end():
+def _lob_from_claim_number_or_policy(claim_number: str, policy_number: str) -> str:
+    text = f"{claim_number} {policy_number}".upper()
+
+    if text.startswith(("WC-", "WORK-")) or "-WC-" in text:
+        return "Workers Comp"
+
+    if text.startswith(("GL-", "GENERAL-")) or "-GL-" in text:
+        return "General Liability"
+
+    if text.startswith(("CG-", "CARGO-", "MT-")) or "-CG-" in text or "CARGO" in text:
+        return "Motor Truck Cargo"
+
+    if text.startswith(("AL-", "AUTO-", "CA-", "AU-")) or "-AL-" in text:
+        return "Auto Liability"
+
+    return ""
+
+
+def _is_fake_header_claim(claim: Dict[str, Any], policies: List[Dict[str, Any]]) -> bool:
+    claim_number = _normalize_spaces(claim.get("claim_number") or claim.get("claimNumber"))
+    claim_upper = claim_number.upper()
+
+    if not claim_upper:
+        return True
+
+    normalized_fake_values = {value.upper() for value in KNOWN_FAKE_CLAIM_VALUES}
+
+    if claim_upper in normalized_fake_values:
+        return True
+
+    policy_numbers = {
+        _normalize_policy_number(policy.get("policy_number"))
+        for policy in policies
+        if policy.get("policy_number")
+    }
+
+    if _normalize_policy_number(claim_upper) in policy_numbers:
+        return True
+
+    # Common parser failure: fragments from policy/header rows become zero-dollar claims.
+    if claim_upper in {"AL", "GL", "WC", "CG", "AUTO", "LIABILITY"}:
+        return True
+
+    if re.fullmatch(r"(?:AL|GL|WC|CG)[-\s]?\d{3,}", claim_upper):
+        for policy in policies:
+            policy_number = _normalize_policy_number(policy.get("policy_number"))
+            compact_policy = policy_number.replace("-", "")
+            compact_claim = claim_upper.replace("-", "").replace(" ", "")
+            if compact_claim and compact_claim in compact_policy:
+                return True
+
+    incurred = _money_to_float(
+        claim.get("total_incurred")
+        or claim.get("incurred")
+        or claim.get("total")
+        or claim.get("amount")
+    )
+
+    paid = _money_to_float(claim.get("paid") or claim.get("paid_amount"))
+    reserve = _money_to_float(claim.get("reserve") or claim.get("reserve_amount"))
+
+    description = _normalize_spaces(
+        claim.get("description")
+        or claim.get("loss_description")
+        or claim.get("claim_description")
+        or claim.get("cause_of_loss")
+    )
+
+    if incurred == 0 and paid == 0 and reserve == 0:
+        if _line_of_business_from_text(claim_upper) or _line_of_business_from_text(description):
             return True
-    before = line[max(0, start - 4):start].upper()
-    after = line[end:end + 4].upper()
-    if before.endswith(("GP-", "GP ")):
-        return True
-    if re.match(r"[-\s]?\d{1,4}\b", after):
-        return True
+
     return False
 
 
-def _extract_claims_from_text(raw_text: str, policies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    if not raw_text:
-        return []
 
-    normalized = raw_text.replace("\r", "\n")
-    lines = [_clean_text(line) for line in normalized.splitlines() if _clean_text(line)]
+def _claim_match_is_inside_policy_number(line: str, match: re.Match[str]) -> bool:
+    """
+    Prevent policy numbers like GP-AL-240177-01 from creating fake claims like AL-240177.
+    """
+    start = match.start()
+    end = match.end()
+
+    for policy_match in POLICY_RE.finditer(line):
+        if policy_match.start() <= start and end <= policy_match.end():
+            return True
+
+    before = line[max(0, start - 4):start].upper()
+    after = line[end:end + 4].upper()
+
+    if before.endswith("GP-") or before.endswith("GP "):
+        return True
+
+    if re.match(r"[-\s]?\d{1,4}\b", after):
+        return True
+
+    return False
+
+def _extract_claim_rows_from_raw_text(raw_text: str, policies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     claims: List[Dict[str, Any]] = []
     seen = set()
 
-    for index, line in enumerate(lines):
-        matches = list(CLAIM_RE.finditer(line))
-        if not matches:
+    claim_number_re = re.compile(r"\b(?:AL|GL|WC|CG|AUTO|CARGO|MT)[- ][A-Z0-9]{3,20}\b", re.IGNORECASE)
+
+    for line in raw_text.splitlines():
+        clean_line = _normalize_spaces(line)
+        if not clean_line:
             continue
 
-        for match in matches:
-            if _inside_policy(line, match):
-                continue
+        # Skip pure policy/header lines.
+        if POLICY_RE.search(clean_line) and not claim_number_re.search(clean_line):
+            continue
 
-            claim_number = _clean_text(match.group(0)).upper().replace(" ", "-")
-            claim_number = re.sub(r"-+", "-", claim_number)
+        claim_match = claim_number_re.search(clean_line)
+        if not claim_match:
+            continue
 
-            if claim_number in FAKE_CLAIM_VALUES:
-                continue
-            if claim_number in seen:
-                continue
+        if _claim_match_is_inside_policy_number(clean_line, claim_match):
+            continue
 
-            window_lines = lines[index:index + 5]
-            block = " ".join(window_lines)
+        claim_number = _normalize_spaces(claim_match.group(0)).upper().replace(" ", "-")
 
-            if claim_number in FAKE_CLAIM_VALUES:
-                continue
+        if claim_number in seen:
+            continue
 
-            money_values = [_money(m.group(0)) for m in MONEY_TOKEN_RE.finditer(block)]
-            money_values = [m for m in money_values if m != 0]
+        upper_claim = claim_number.upper()
+        if upper_claim in KNOWN_FAKE_CLAIM_VALUES:
+            continue
 
-            if not money_values:
-                continue
+        money_values = [_money_to_float(m.group(0)) for m in MONEY_TOKEN_RE.finditer(clean_line)]
+        money_values = [value for value in money_values if value != 0]
 
-            dates = DATE_RE.findall(block)
-            policy_number = _policy_for_claim(claim_number, policies)
-            lob = _lob_from_text(f"{claim_number} {policy_number}")
+        dates = DATE_RE.findall(clean_line)
+        policy_number = _claim_policy_from_claim_number(claim_number, policies)
 
-            total_incurred = money_values[-1]
-            reserve = money_values[-2] if len(money_values) >= 2 else 0.0
-            paid = money_values[-3] if len(money_values) >= 3 else max(total_incurred - reserve, 0.0)
+        total_incurred = money_values[-1] if money_values else 0.0
+        reserve = money_values[-2] if len(money_values) >= 2 else 0.0
+        paid = money_values[-3] if len(money_values) >= 3 else max(total_incurred - reserve, 0.0)
 
-            status = "Closed"
-            if re.search(r"\bopen\b", block, re.IGNORECASE) or reserve > 0:
-                status = "Open"
-            elif re.search(r"\bclosed\b", block, re.IGNORECASE):
-                status = "Closed"
+        description = clean_line[claim_match.end():].strip(" -|")
+        description = re.sub(r"\$?\(?[0-9,]+(?:\.\d{2})?\)?", "", description)
+        description = DATE_RE.sub("", description)
+        description = _normalize_spaces(description)
 
-            description = block
-            description = CLAIM_RE.sub("", description)
-            description = DATE_RE.sub("", description)
-            description = MONEY_TOKEN_RE.sub("", description)
-            description = re.sub(r"\b(open|closed|pending)\b", "", description, flags=re.IGNORECASE)
-            description = _clean_text(description)
+        claim = {
+            "claim_number": claim_number,
+            "policy_number": policy_number,
+            "line_of_business": _lob_from_claim_number_or_policy(claim_number, policy_number) or "Unknown",
+            "description": description,
+            "loss_description": description,
+            "paid": round(paid, 2),
+            "reserve": round(reserve, 2),
+            "total_incurred": round(total_incurred, 2),
+            "status": "Open" if reserve > 0 else "Closed",
+        }
 
-            claims.append({
-                "claim_number": claim_number,
-                "policy_number": policy_number,
-                "line_of_business": lob,
-                "date_of_loss": dates[0] if dates else "",
-                "date_reported": dates[1] if len(dates) > 1 else "",
-                "description": description,
-                "loss_description": description,
-                "paid": round(paid, 2),
-                "reserve": round(reserve, 2),
-                "total_incurred": round(total_incurred, 2),
-                "status": status,
-            })
-            seen.add(claim_number)
+        if len(dates) >= 1:
+            claim["date_of_loss"] = dates[0]
+        if len(dates) >= 2:
+            claim["date_reported"] = dates[1]
+
+        claims.append(claim)
+        seen.add(claim_number)
 
     return claims
 
 
-def _clean_existing_claims(claims: Any, policies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    if not isinstance(claims, list):
+def _clean_existing_claims(existing_claims: Any, policies: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    if not isinstance(existing_claims, list):
         return []
 
-    cleaned = []
+    cleaned: List[Dict[str, Any]] = []
     seen = set()
-    policy_numbers = {_normalize_policy(p.get("policy_number")) for p in policies}
 
-    for item in claims:
+    for item in existing_claims:
         if not isinstance(item, dict):
             continue
 
         claim = dict(item)
-        claim_number = _clean_text(claim.get("claim_number") or claim.get("claimNumber")).upper().replace(" ", "-")
 
+        if _is_fake_header_claim(claim, policies):
+            continue
+
+        claim_number = _normalize_spaces(claim.get("claim_number") or claim.get("claimNumber")).upper().replace(" ", "-")
         if not claim_number:
             continue
-        if claim_number in FAKE_CLAIM_VALUES:
-            continue
-        if claim_number in policy_numbers:
-            continue
+
         if claim_number in seen:
             continue
 
-        total = _money(claim.get("total_incurred") or claim.get("incurred") or claim.get("amount"))
-        paid = _money(claim.get("paid") or claim.get("paid_amount"))
-        reserve = _money(claim.get("reserve") or claim.get("reserve_amount"))
+        policy_number = _normalize_policy_number(claim.get("policy_number") or claim.get("policyNumber"))
 
-        if total == 0 and paid == 0 and reserve == 0:
-            continue
+        if not policy_number:
+            policy_number = _claim_policy_from_claim_number(claim_number, policies)
 
-        policy_number = _normalize_policy(claim.get("policy_number") or claim.get("policyNumber"))
-        if not policy_number or policy_number in {"GENERAL-LIABILITY", "AUTO-LIABILITY", "WORKERS-COMP", "MUTUAL-INSURANCE"}:
-            policy_number = _policy_for_claim(claim_number, policies)
+        lob = (
+            _normalize_spaces(claim.get("line_of_business") or claim.get("lob") or claim.get("coverage_type"))
+            or _lob_from_claim_number_or_policy(claim_number, policy_number)
+            or "Unknown"
+        )
 
         claim["claim_number"] = claim_number
         claim["policy_number"] = policy_number
-        claim["line_of_business"] = claim.get("line_of_business") or _lob_from_text(f"{claim_number} {policy_number}")
-        claim["paid"] = round(paid, 2)
-        claim["reserve"] = round(reserve, 2)
-        claim["total_incurred"] = round(total, 2)
-        claim["status"] = claim.get("status") or ("Open" if reserve > 0 else "Closed")
+        claim["line_of_business"] = lob
+        claim["total_incurred"] = round(
+            _money_to_float(
+                claim.get("total_incurred")
+                or claim.get("incurred")
+                or claim.get("total")
+                or claim.get("amount")
+            ),
+            2,
+        )
+        claim["paid"] = round(_money_to_float(claim.get("paid") or claim.get("paid_amount")), 2)
+        claim["reserve"] = round(_money_to_float(claim.get("reserve") or claim.get("reserve_amount")), 2)
+
+        if not claim.get("status"):
+            claim["status"] = "Open" if claim["reserve"] > 0 else "Closed"
 
         cleaned.append(claim)
         seen.add(claim_number)
@@ -324,41 +529,19 @@ def _clean_existing_claims(claims: Any, policies: List[Dict[str, Any]]) -> List[
 
 
 def _claim_total(claims: List[Dict[str, Any]]) -> float:
-    return round(sum(_money(claim.get("total_incurred")) for claim in claims), 2)
+    return round(sum(_money_to_float(claim.get("total_incurred")) for claim in claims), 2)
 
 
-def cleanup_loss_run_extraction(
-    parsed: Dict[str, Any],
-    filename: str = "",
-    content: bytes | None = None,
-) -> Dict[str, Any]:
-    if not isinstance(parsed, dict):
-        return parsed
-
-    raw_text = _raw_text(parsed, filename or "", content)
-
-    if raw_text:
-        parsed["raw_text_preview"] = raw_text[:12000]
-
-    business_name = _business_name(raw_text) if raw_text else ""
-    carrier_name = _carrier_name(raw_text) if raw_text else ""
-    policies = _extract_policies(raw_text) if raw_text else []
-
-    existing_claims = parsed.get("claims") or parsed.get("parsed_claims") or parsed.get("claim_rows") or parsed.get("losses") or []
-    cleaned_existing = _clean_existing_claims(existing_claims, policies)
-    rebuilt_claims = _extract_claims_from_text(raw_text, policies) if raw_text else []
-
-    final_claims = rebuilt_claims if len(rebuilt_claims) >= len(cleaned_existing) else cleaned_existing
-
-    profile = parsed.get("profile") if isinstance(parsed.get("profile"), dict) else {}
-    account = parsed.get("account") if isinstance(parsed.get("account"), dict) else {}
+def _apply_profile(parsed: Dict[str, Any], business_name: str, carrier_name: str, policies: List[Dict[str, Any]]) -> None:
+    profile = _as_dict(parsed.get("profile"))
+    account = _as_dict(parsed.get("account"))
 
     if business_name:
         parsed["business_name"] = business_name
-        parsed["named_insured"] = business_name
         profile["business_name"] = business_name
-        profile["named_insured"] = business_name
         account["business_name"] = business_name
+        parsed["named_insured"] = business_name
+        profile["named_insured"] = business_name
 
     if carrier_name:
         parsed["carrier_name"] = carrier_name
@@ -370,18 +553,82 @@ def cleanup_loss_run_extraction(
     if policies:
         parsed["policies"] = policies
         profile["policies"] = policies
-        parsed["policy_count"] = len(policies)
 
-        current_policy = _normalize_policy(parsed.get("policy_number"))
-        bad_policy_values = {
-            "", "UPLOAD", "MUTUAL-INSURANCE", "GENERAL-LIABILITY",
-            "AUTO-LIABILITY", "WORKERS-COMP", "MOTOR-TRUCK-CARGO", "CARGO",
-        }
+        primary_policy = policies[0].get("policy_number", "")
+        if primary_policy:
+            parsed["policy_number"] = primary_policy
+            profile["policy_number"] = primary_policy
+            account["policy_number"] = primary_policy
 
-        if current_policy.startswith("UPLOAD-") or current_policy in bad_policy_values:
-            parsed["policy_number"] = policies[0]["policy_number"]
-            profile["policy_number"] = policies[0]["policy_number"]
-            account["policy_number"] = policies[0]["policy_number"]
+        first_effective = policies[0].get("effective_date")
+        first_expiration = policies[0].get("expiration_date")
+
+        if first_effective:
+            profile["effective_date"] = first_effective
+            account["effective_date"] = first_effective
+            parsed["effective_date"] = first_effective
+
+        if first_expiration:
+            profile["expiration_date"] = first_expiration
+            account["expiration_date"] = first_expiration
+            parsed["expiration_date"] = first_expiration
+
+    parsed["profile"] = profile
+    parsed["account"] = account
+
+
+def cleanup_loss_run_extraction(
+    parsed: Dict[str, Any],
+    filename: str = "",
+    content: bytes | None = None,
+) -> Dict[str, Any]:
+    """
+    Final cleanup layer for messy loss run extraction.
+
+    This function is intentionally defensive because normal OCR/parser output can vary.
+    It now accepts the uploaded file bytes so the cleanup layer can extract PDF text
+    directly when raw_text/raw_text_preview was not passed forward by the normal route.
+    """
+
+    if not isinstance(parsed, dict):
+        return parsed
+
+    raw_text = _collect_raw_text(parsed, filename=filename or "", content=content)
+
+    if raw_text:
+        parsed["raw_text_preview"] = raw_text[:12000]
+
+        print("\n\n================ LOSSQ RAW TEXT DEBUG START ================")
+        print(raw_text[:20000])
+        print("================ LOSSQ RAW TEXT DEBUG END ================\n\n")
+
+    business_name = _extract_business_name(raw_text) if raw_text else ""
+    carrier_name = _extract_carrier_name(raw_text) if raw_text else ""
+    policies = _extract_policy_rows(raw_text) if raw_text else []
+
+    existing_claims = (
+        parsed.get("claims")
+        or parsed.get("parsed_claims")
+        or parsed.get("claim_rows")
+        or parsed.get("losses")
+        or []
+    )
+
+    cleaned_claims = _clean_existing_claims(existing_claims, policies)
+
+    raw_claims = _extract_claim_rows_from_raw_text(raw_text, policies) if raw_text else []
+
+    # Prefer raw-text claim extraction when the existing parser clearly over-counted by treating
+    # policy/header rows as claims. This fixes messy multi-line PDFs without disrupting normal uploads.
+    if raw_claims:
+        if not cleaned_claims:
+            final_claims = raw_claims
+        elif len(cleaned_claims) > len(raw_claims) and len(raw_claims) >= 3:
+            final_claims = raw_claims
+        else:
+            final_claims = cleaned_claims
+    else:
+        final_claims = cleaned_claims
 
     if final_claims:
         parsed["claims"] = final_claims
@@ -389,7 +636,18 @@ def cleanup_loss_run_extraction(
         parsed["claim_count"] = len(final_claims)
         parsed["total_incurred"] = _claim_total(final_claims)
 
-    parsed["profile"] = profile
-    parsed["account"] = account
+    if policies:
+        parsed["policy_count"] = len(policies)
+
+    _apply_profile(parsed, business_name, carrier_name, policies)
+
+    # Prevent fallback UPLOAD-* values from winning when real profile/policy data exists.
+    policy_number = _normalize_policy_number(parsed.get("policy_number"))
+    if policy_number.startswith("UPLOAD-") and policies:
+        real_policy = policies[0].get("policy_number", "")
+        if real_policy:
+            parsed["policy_number"] = real_policy
+            parsed.setdefault("profile", {})["policy_number"] = real_policy
+            parsed.setdefault("account", {})["policy_number"] = real_policy
 
     return parsed
