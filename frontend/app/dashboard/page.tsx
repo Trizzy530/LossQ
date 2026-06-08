@@ -24,6 +24,7 @@ const SESSION_TIMEOUT_MS = 1000 * 60 * 60 * 24;
 const PROFILE_CACHE_KEY = "lossq_account_profiles";
 const SELECTED_POLICY_CACHE_KEY = "lossq_selected_policy_number";
 const SELECTED_CLAIM_CACHE_KEY = "lossq_selected_claim";
+const CURRENT_UPLOAD_CACHE_KEY = "lossq_current_upload_claims";
 
 type AnyObject = Record<string, any>;
 
@@ -219,6 +220,28 @@ function getCachedLastUploadReview(): AnyObject {
 function clearCachedLastUploadReview() {
   if (typeof window === "undefined") return;
   localStorage.removeItem("lossq_last_upload_review");
+}
+
+function getCachedCurrentUpload(): AnyObject {
+  if (typeof window === "undefined") return {};
+
+  try {
+    const raw = localStorage.getItem(CURRENT_UPLOAD_CACHE_KEY);
+    const parsed = raw ? JSON.parse(raw) : {};
+    return parsed && typeof parsed === "object" ? parsed : {};
+  } catch {
+    return {};
+  }
+}
+
+function setCachedCurrentUpload(upload: AnyObject) {
+  if (typeof window === "undefined") return;
+  localStorage.setItem(CURRENT_UPLOAD_CACHE_KEY, JSON.stringify(upload || {}));
+}
+
+function clearCachedCurrentUpload() {
+  if (typeof window === "undefined") return;
+  localStorage.removeItem(CURRENT_UPLOAD_CACHE_KEY);
 }
 
 function claimMatchesPolicySet(claim: any, policySet: Set<string>) {
@@ -535,6 +558,7 @@ function normalizeProfileName(item: any) {
     clearCachedSelectedPolicy();
     clearCachedSelectedClaim();
     clearCachedLastUploadReview();
+    clearCachedCurrentUpload();
 
     if (messageText) {
       setMessage(messageText);
@@ -702,7 +726,11 @@ if (activeProfile?.policy_number) {
 
       if (claimsRes.ok) {
         const claimsData = await safeJson(claimsRes);
-        const serverClaims = Array.isArray(claimsData) ? claimsData : [];
+        const serverClaims = Array.isArray(claimsData)
+          ? claimsData
+          : Array.isArray(claimsData?.claims)
+          ? claimsData.claims
+          : [];
 
         const policySet = new Set(
           [
@@ -722,26 +750,50 @@ if (activeProfile?.policy_number) {
           claimMatchesPolicySet(claim, policySet)
         );
 
+        const currentUpload = getCachedCurrentUpload();
+        const currentUploadPolicies = new Set(
+          (Array.isArray(currentUpload?.policy_numbers) ? currentUpload.policy_numbers : [])
+            .map((item: any) => normalizePolicyNumber(item))
+            .filter(Boolean)
+        );
+        const currentUploadClaims = Array.isArray(currentUpload?.claims)
+          ? currentUpload.claims
+          : [];
+        const currentUploadMatches = currentUploadClaims.filter((claim: any) =>
+          claimMatchesPolicySet(claim, policySet)
+        );
+        const currentUploadApplies =
+          currentUploadMatches.length > 0 &&
+          Array.from(policySet).some((policy) => currentUploadPolicies.has(policy));
+
         const cachedUpload = getCachedLastUploadReview();
         const cachedUploadClaims = Array.isArray(cachedUpload?.claims)
           ? cachedUpload.claims
           : [];
-        const cachedMatches = cachedUploadClaims.filter((claim: any) =>
-          claimMatchesPolicySet(claim, policySet)
-        );
+        const cachedMatches = currentUploadApplies
+          ? []
+          : cachedUploadClaims.filter((claim: any) => claimMatchesPolicySet(claim, policySet));
 
-        // Important: /claims/ can return a limited or stale organization-wide list.
-        // Do not let that erase the fresh upload claims stored locally from the upload response.
-        setClaims(
-          serverMatches.length > 0
-            ? mergeClaimsByNumber(serverClaims, cachedMatches)
-            : cachedMatches.length > 0
-            ? cachedMatches
-            : serverClaims
-        );
+        // Priority:
+        // 1. Current upload response for this selected policy/account.
+        // 2. Backend server matches for the selected policy/account.
+        // 3. Older cache only when no current upload is active.
+        // 4. Empty array. Never fall back to unrelated organization-wide claims.
+        if (currentUploadApplies) {
+          setClaims(currentUploadMatches);
+        } else if (serverMatches.length > 0) {
+          setClaims(serverMatches);
+        } else if (cachedMatches.length > 0) {
+          setClaims(cachedMatches);
+        } else {
+          setClaims([]);
+        }
       } else {
-        const cachedUpload = getCachedLastUploadReview();
-        setClaims(Array.isArray(cachedUpload?.claims) ? cachedUpload.claims : []);
+        const currentUpload = getCachedCurrentUpload();
+        const currentUploadClaims = Array.isArray(currentUpload?.claims)
+          ? currentUpload.claims
+          : [];
+        setClaims(currentUploadClaims.length > 0 ? currentUploadClaims : []);
       }
 
       const summaryUrl = hasPolicy
@@ -1144,6 +1196,7 @@ async function saveProfile() {
 
   try {
     clearCachedLastUploadReview();
+    clearCachedCurrentUpload();
     setMessage("Uploading and analyzing loss runs with V2 parser...");
 
     const uploadResults: any[] = [];
@@ -1183,14 +1236,29 @@ async function saveProfile() {
     }
 
     const primaryData = uploadResults[uploadResults.length - 1] || {};
+    const primaryProfile =
+      primaryData?.profile ||
+      primaryData?.account_profile ||
+      primaryData?.accountProfile ||
+      {};
     const uploadedFileNames = selectedFiles.map((file) => file.name).join(", ");
 
     const combinedClaims = uploadResults.flatMap((item) =>
-      item?.saved_claim_rows || item?.claims || item?.parsed_claims || []
+      firstNonEmptyArray(
+        item?.saved_claim_rows,
+        item?.claims,
+        item?.parsed_claims,
+        item?.claim_rows,
+        item?.normalized_claims
+      )
     );
 
     const combinedPolicies = uploadResults.flatMap((item) =>
-      item?.policies || item?.profile?.policies || item?.account_profile?.policies || []
+      firstNonEmptyArray(
+        item?.policies,
+        item?.profile?.policies,
+        item?.account_profile?.policies
+      )
     );
 
     const totalSavedClaims = uploadResults.reduce(
@@ -1206,11 +1274,13 @@ async function saveProfile() {
           uploaded_files: uploadResults.flatMap((item) => item?.uploaded_files || []).length
             ? uploadResults.flatMap((item) => item?.uploaded_files || [])
             : selectedFiles.map((file) => file.name),
-          profile: primaryData?.profile || {},
+          profile: primaryProfile || {},
           policies: combinedPolicies,
           claims: combinedClaims,
-          saved_claim_rows: uploadResults.flatMap((item) => item?.saved_claim_rows || []),
-          validation: primaryData?.validation || primaryData?.profile?.validation || {},
+          saved_claim_rows: uploadResults.flatMap((item) =>
+            firstNonEmptyArray(item?.saved_claim_rows, item?.claims, item?.parsed_claims)
+          ),
+          validation: primaryData?.validation || primaryProfile?.validation || {},
           saved_claims: totalSavedClaims,
           raw_response: uploadResults.length === 1 ? primaryData : uploadResults,
         })
@@ -1227,32 +1297,56 @@ async function saveProfile() {
       );
     }, 5000);
 
-    if (primaryData?.profile) {
+    if (primaryProfile && Object.keys(primaryProfile).length > 0) {
+      const claimPolicyNumbers = Array.from(
+        new Set(
+          combinedClaims
+            .map((claim: any) => claim?.policy_number || claim?.policyNumber || claim?.policy_no)
+            .map((item: any) => normalizePolicyNumber(item))
+            .filter(Boolean)
+        )
+      );
+
+      const fallbackPolicies = claimPolicyNumbers.map((policyNumber) => ({
+        policy_type: "Uploaded Loss Run",
+        policy_number: policyNumber,
+        carrier: primaryProfile?.carrier_name || primaryProfile?.writing_carrier || "",
+        effective_date: primaryProfile?.effective_date || "",
+        expiration_date: primaryProfile?.expiration_date || "",
+      }));
+
       const uploadedProfile = {
-        ...primaryData.profile,
+        ...primaryProfile,
 
         insured:
-          primaryData?.profile?.insured ||
-          primaryData?.profile?.business_name ||
-          primaryData?.profile?.named_insured ||
+          primaryProfile?.insured ||
+          primaryProfile?.business_name ||
+          primaryProfile?.named_insured ||
           primaryData?.business_name ||
           "",
 
         business_name:
-          primaryData?.profile?.business_name ||
-          primaryData?.profile?.insured ||
-          primaryData?.profile?.named_insured ||
+          primaryProfile?.business_name ||
+          primaryProfile?.insured ||
+          primaryProfile?.named_insured ||
           primaryData?.business_name ||
+          "",
+
+        policy_number:
+          primaryProfile?.policy_number ||
+          primaryProfile?.account_number ||
+          claimPolicyNumbers[0] ||
           "",
 
         policies: firstNonEmptyArray(
           primaryData?.policies,
-          primaryData?.profile?.policies,
+          primaryProfile?.policies,
           primaryData?.account_profile?.policies,
-          combinedPolicies
+          combinedPolicies,
+          fallbackPolicies
         ),
 
-        validation: primaryData?.validation || primaryData?.profile?.validation || {},
+        validation: primaryData?.validation || primaryProfile?.validation || {},
       };
 
       setProfile(uploadedProfile);
@@ -1264,11 +1358,40 @@ async function saveProfile() {
     setClaims(combinedClaims);
 
     const uploadedPolicyNumber =
-      primaryData?.profile?.policy_number ||
-      primaryData?.profile?.account_number ||
+      primaryProfile?.policy_number ||
+      primaryProfile?.account_number ||
+      primaryProfile?.customer_number ||
       primaryData?.account_profile?.policy_number ||
       primaryData?.policy_number ||
+      combinedClaims.find((claim: any) => claim?.policy_number || claim?.policyNumber || claim?.policy_no)?.policy_number ||
       "";
+
+    const uploadPolicySet = Array.from(
+      new Set(
+        [
+          uploadedPolicyNumber,
+          ...combinedPolicies.map((item: any) => item?.policy_number),
+          ...combinedClaims.map((claim: any) => claim?.policy_number || claim?.policyNumber || claim?.policy_no),
+        ]
+          .map((item: any) => normalizePolicyNumber(item))
+          .filter(Boolean)
+      )
+    );
+
+    const currentUploadSnapshot = {
+      uploaded_at: new Date().toISOString(),
+      policy_number: normalizePolicyNumber(uploadedPolicyNumber),
+      policy_numbers: uploadPolicySet,
+      profile: primaryProfile || {},
+      policies: combinedPolicies,
+      claims: combinedClaims,
+      saved_claim_rows: combinedClaims,
+      validation: primaryData?.validation || primaryProfile?.validation || {},
+    };
+
+    if (combinedClaims.length > 0) {
+      setCachedCurrentUpload(currentUploadSnapshot);
+    }
 
     if (uploadedPolicyNumber) {
       setCachedSelectedPolicy(uploadedPolicyNumber);
@@ -1277,8 +1400,8 @@ async function saveProfile() {
       await loadDashboard();
     }
 
-    // Re-apply upload response claims after dashboard reload so the Claims tab
-    // does not go blank if /claims/ returns a stale or limited list.
+    // Keep the current upload authoritative after dashboard reload.
+    // This prevents a stale /claims/ or old upload cache response from replacing the freshly parsed rows.
     if (combinedClaims.length > 0) {
       setClaims(combinedClaims);
     }
@@ -1360,16 +1483,53 @@ function buildReportQuery() {
 }
 
 function buildReportPayload() {
+  const currentUpload = getCachedCurrentUpload();
+  const cachedUpload = getCachedLastUploadReview();
+
+  const currentUploadClaims = Array.isArray(currentUpload?.claims) ? currentUpload.claims : [];
+  const cachedUploadClaims = Array.isArray(cachedUpload?.claims) ? cachedUpload.claims : [];
+
+  const currentUploadPolicies = new Set(
+    (Array.isArray(currentUpload?.policy_numbers) ? currentUpload.policy_numbers : [])
+      .map((item: any) => normalizePolicyNumber(item))
+      .filter(Boolean)
+  );
+
+  const currentUploadApplies =
+    currentUploadClaims.length > 0 &&
+    activePolicyNumbers.some((policyNumber) => currentUploadPolicies.has(policyNumber));
+
+  const reportClaims =
+    currentUploadApplies
+      ? currentUploadClaims
+      : visibleClaims.length > 0
+      ? visibleClaims
+      : claims.length > 0
+      ? claims
+      : cachedUploadClaims;
+
+  const claimPolicyNumbers = Array.from(
+    new Set(
+      reportClaims
+        .map((claim: any) => claim?.policy_number || claim?.policyNumber || claim?.policy_no)
+        .map((item: any) => normalizePolicyNumber(item))
+        .filter(Boolean)
+    )
+  );
+
+  const policyNumbersForReport =
+    activePolicyNumbers.length > 0 ? activePolicyNumbers : claimPolicyNumbers;
+
   return {
-    profile: displayProfile || profile || {},
-    claims: visibleClaims || claims || [],
+    profile: displayProfile || profile || currentUpload?.profile || cachedUpload?.profile || {},
+    claims: reportClaims,
     summary: effectiveSummary || summary || {},
     decision: effectiveDecision || decision || {},
     carrier_appetite: effectiveCarrierAppetite || carrierAppetite || {},
     carrier_match: carrierMatch || {},
     premium_forecast: premiumForecast || {},
     submission_readiness: effectiveSubmissionReadiness || submissionReadiness || {},
-    policy_numbers_used: activePolicyNumbers || [],
+    policy_numbers_used: policyNumbersForReport,
     profile_id: profile?.id || displayProfile?.id || null,
   };
 }
@@ -2017,7 +2177,7 @@ function buildPolicyScheduleLineData() {
   return objectToChartData(grouped);
 }
 
-const chartSourceReady = hasActiveAccount && visibleClaims.length > 0;
+const chartSourceReady = hasActiveAccount && (visibleClaims.length > 0 || claims.length > 0);
 const chartTimeline = chartSourceReady ? timeline : {};
 const chartBackendMetrics = chartSourceReady ? backendMetrics : {};
 
