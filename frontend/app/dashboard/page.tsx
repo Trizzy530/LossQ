@@ -1273,8 +1273,20 @@ async function saveProfile() {
   }
 }
 
-async function downloadPdf(url: string, filename: string) {
-  const res = await fetch(url, { headers: authHeaders() });
+async function downloadPdf(url: string, filename: string, init?: RequestInit) {
+  const baseHeaders: Record<string, string> = {
+    ...authHeaders(),
+  };
+
+  const initHeaders = (init?.headers || {}) as Record<string, string>;
+
+  const res = await fetch(url, {
+    ...init,
+    headers: {
+      ...baseHeaders,
+      ...initHeaders,
+    },
+  });
 
   if (res.status === 401 || res.status === 403) {
     clearSession();
@@ -1298,27 +1310,69 @@ async function downloadPdf(url: string, filename: string) {
   window.URL.revokeObjectURL(objectUrl);
 }
 
+function buildReportQuery() {
+  const params = new URLSearchParams();
+
+  if (profile?.id) {
+    params.set("profile_id", String(profile.id));
+  }
+
+  if (profile?.policy_number) {
+    params.set("policy_number", profile.policy_number);
+  }
+
+  if (profile?.account_number) {
+    params.set("account_number", profile.account_number);
+  }
+
+  if (profile?.customer_number) {
+    params.set("customer_number", profile.customer_number);
+  }
+
+  const query = params.toString();
+  return query ? `?${query}` : "";
+}
+
+function buildReportPayload() {
+  return {
+    profile: displayProfile || profile || {},
+    claims: visibleClaims || claims || [],
+    summary: effectiveSummary || summary || {},
+    decision: effectiveDecision || decision || {},
+    carrier_appetite: effectiveCarrierAppetite || carrierAppetite || {},
+    carrier_match: carrierMatch || {},
+    premium_forecast: premiumForecast || {},
+    submission_readiness: effectiveSubmissionReadiness || submissionReadiness || {},
+    policy_numbers_used: activePolicyNumbers || [],
+    profile_id: profile?.id || displayProfile?.id || null,
+  };
+}
+
+
 async function exportCarrierLossRun() {
-  const policy = profile?.policy_number
-    ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
-    : "";
+  const query = buildReportQuery();
 
   await downloadPdf(
-    `${API}/reports/loss-run-template-pdf${policy}`,
+    `${API}/reports/loss-run-template-pdf${query}`,
     "lossq_carrier_loss_run.pdf"
   );
 }
 
 async function exportExecutiveReport() {
-  const policy = profile?.policy_number
-    ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
-    : "";
+  const query = buildReportQuery();
 
   setMessage("Generating executive underwriting report...");
 
   await downloadPdf(
-    `${API}/reports/executive-report-pdf${policy}`,
-    "lossq_executive_underwriting_report.pdf"
+    `${API}/reports/executive-report-pdf${query}`,
+    "lossq_executive_underwriting_report.pdf",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(buildReportPayload()),
+    }
   );
 
   setMessage("Executive underwriting report generated.");
@@ -1367,15 +1421,20 @@ async function exportExecutiveReport() {
   }
 
  async function generateCarrierPacket() {
-  const policy = profile?.policy_number
-    ? `?policy_number=${encodeURIComponent(profile.policy_number)}`
-    : "";
+  const query = buildReportQuery();
 
   setMessage("Generating carrier submission packet...");
 
   await downloadPdf(
-    `${API}/reports/carrier-packet-pdf${policy}`,
-    "lossq_carrier_submission_packet.pdf"
+    `${API}/reports/carrier-packet-pdf${query}`,
+    "lossq_carrier_submission_packet.pdf",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      body: JSON.stringify(buildReportPayload()),
+    }
   );
 
   setMessage("Carrier submission packet generated.");

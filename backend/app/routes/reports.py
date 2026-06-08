@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query, Body
 from fastapi.responses import StreamingResponse
 from sqlalchemy.orm import Session
 from datetime import datetime
@@ -7,6 +7,7 @@ import html
 import os
 import base64
 import json
+from types import SimpleNamespace
 
 from reportlab.lib import colors
 from reportlab.lib.pagesizes import letter
@@ -7157,31 +7158,119 @@ def merge_report_claims(primary, fallback):
         seen.add(key)
         merged.append(claim)
     return merged
-def build_context(db: Session, current_user: dict, policy_number: str | None):
-    """
-    Report/export context must be account-aware.
 
-    The dashboard can show claims from the selected profile's child policy schedule, but PDF routes run
-    only on the backend. This context builder therefore expands the selected account into all related
-    policy numbers before calculating metrics, executive report values, and carrier packet values.
+def report_payload_dict(payload):
+    return payload if isinstance(payload, dict) else {}
+
+
+def report_body_profile(report_payload):
+    payload = report_payload_dict(report_payload)
+    profile = (
+        payload.get("profile")
+        or payload.get("account_profile")
+        or payload.get("display_profile")
+        or payload.get("selected_profile")
+        or {}
+    )
+    return profile_to_report_dict(profile)
+
+
+def report_body_claims(report_payload):
+    payload = report_payload_dict(report_payload)
+    raw_claims = (
+        payload.get("claims")
+        or payload.get("visible_claims")
+        or payload.get("selected_claims")
+        or payload.get("saved_claim_rows")
+        or []
+    )
+    if not isinstance(raw_claims, list):
+        return []
+
+    converted = []
+    for item in raw_claims:
+        if isinstance(item, dict):
+            converted.append(SimpleNamespace(**item))
+        else:
+            converted.append(item)
+    return converted
+
+
+def find_report_profile_by_id(db: Session, current_user: dict, profile_id):
+    try:
+        profile_id_int = int(profile_id)
+    except Exception:
+        return {}
+
+    query = db.query(AccountProfile).filter(AccountProfile.id == profile_id_int)
+    org_id = current_user.get("organization_id")
+    if org_id is not None:
+        query = query.filter(AccountProfile.organization_id == org_id)
+
+    return profile_to_report_dict(query.first())
+
+
+def build_context(
+    db: Session,
+    current_user: dict,
+    policy_number: str | None,
+    profile_id: int | None = None,
+    report_payload: dict | None = None,
+):
     """
+    Account-aware report/export context.
+
+    Priority order:
+    1. Posted dashboard profile and visible claims.
+    2. Exact saved AccountProfile row by profile_id.
+    3. Saved AccountProfile row found by policy schedule.
+    4. Existing account engine fallback.
+
+    This prevents PDFs from falling back to "Selected Account" when the dashboard
+    already has the correct profile and visible claim rows.
+    """
+    payload = report_payload_dict(report_payload)
+    posted_profile = report_body_profile(payload)
+    posted_claims = report_body_claims(payload)
+    posted_policy_numbers = report_policy_numbers_from_profile(posted_profile)
+    posted_claim_policy_numbers = [
+        normalize_report_policy(getattr(claim, "policy_number", ""))
+        for claim in posted_claims
+        if valid_report_policy(getattr(claim, "policy_number", ""))
+    ]
+
     base_claims, base_policy_numbers, base_profile = get_claims_for_account(db, current_user, policy_number)
 
-    profile = find_report_profile(db, current_user, policy_number, base_profile)
-    profile_policy_numbers = report_policy_numbers_from_profile(profile)
+    id_profile = find_report_profile_by_id(db, current_user, profile_id) if profile_id else {}
+    db_profile = find_report_profile(db, current_user, policy_number, base_profile)
 
+    if report_profile_has_real_account_data(posted_profile):
+        profile = posted_profile
+    elif report_profile_has_real_account_data(id_profile):
+        profile = id_profile
+    elif report_profile_has_real_account_data(db_profile):
+        profile = db_profile
+    else:
+        profile = posted_profile or id_profile or db_profile or profile_to_report_dict(base_profile)
+
+    profile_policy_numbers = report_policy_numbers_from_profile(profile)
     requested_policy = normalize_report_policy(policy_number)
+
     policy_numbers_used = []
-    for item in list(base_policy_numbers or []) + profile_policy_numbers + ([requested_policy] if requested_policy else []):
-        if valid_report_policy(item) and normalize_report_policy(item) not in policy_numbers_used:
-            policy_numbers_used.append(normalize_report_policy(item))
+    for item in (
+        list(base_policy_numbers or [])
+        + posted_policy_numbers
+        + posted_claim_policy_numbers
+        + profile_policy_numbers
+        + ([requested_policy] if requested_policy else [])
+    ):
+        normalized = normalize_report_policy(item)
+        if valid_report_policy(normalized) and normalized not in policy_numbers_used:
+            policy_numbers_used.append(normalized)
 
     account_claims = report_claims_for_policies(db, current_user, policy_numbers_used)
-    claims = merge_report_claims(base_claims, account_claims)
+    claims = merge_report_claims(posted_claims, merge_report_claims(base_claims, account_claims))
 
-    # If the old account engine returned a placeholder profile/policy with zero claims, make one more
-    # pass using only the saved account profile schedule. This is what makes BRD/SA/BMA child policies
-    # populate reports and packets instead of exporting Selected Account / Insufficient Data.
     if not claims and profile_policy_numbers:
         policy_numbers_used = profile_policy_numbers
         claims = report_claims_for_policies(db, current_user, policy_numbers_used)
@@ -7196,11 +7285,22 @@ def build_context(db: Session, current_user: dict, policy_number: str | None):
     forecast = build_premium_forecast_engine(claims, effective_policy_number)
     metrics = get_metrics(claims)
 
+    posted_summary = payload.get("summary") if isinstance(payload.get("summary"), dict) else {}
+    posted_decision = payload.get("decision") if isinstance(payload.get("decision"), dict) else {}
+    posted_appetite = payload.get("carrier_appetite") if isinstance(payload.get("carrier_appetite"), dict) else {}
+    posted_carrier_match = payload.get("carrier_match") if isinstance(payload.get("carrier_match"), dict) else {}
+    posted_forecast = payload.get("premium_forecast") if isinstance(payload.get("premium_forecast"), dict) else {}
+
+    summary = {**posted_summary, **summary}
+    decision = {**posted_decision, **decision}
+    appetite = {**posted_appetite, **appetite}
+    carrier_match = {**posted_carrier_match, **carrier_match}
+    forecast = {**posted_forecast, **forecast}
+
     summary_metrics = summary.get("renewal_metrics") or summary.get("metrics") or {}
     decision_metrics = decision.get("decision_metrics") or {}
     forecast_metrics = forecast.get("forecast_metrics") or {}
 
-    # Prefer engine metrics only when they do not erase real claim totals collected for the selected account.
     for source in [summary_metrics, decision_metrics, forecast_metrics]:
         for key in [
             "total_claims",
@@ -7219,7 +7319,6 @@ def build_context(db: Session, current_user: dict, policy_number: str | None):
                     continue
                 metrics[key] = value
 
-    # Attach context so PDF sections can show exactly which account policies drove the output.
     summary["policy_numbers_used"] = policy_numbers_used
     decision["policy_numbers_used"] = policy_numbers_used
     appetite["policy_numbers_used"] = policy_numbers_used
@@ -7227,7 +7326,6 @@ def build_context(db: Session, current_user: dict, policy_number: str | None):
     forecast["policy_numbers_used"] = policy_numbers_used
 
     if claims and (summary.get("renewal_score") is None or "insufficient" in clean(summary.get("renewal_risk_level")).lower()):
-        # Safety fallback if the intelligence engine refuses to score even though claims are present.
         open_claims = metrics.get("open_claims", 0)
         litigation = metrics.get("litigation_claims", 0)
         large_loss = 1 if money(metrics.get("largest_loss", 0)) >= 50000 else 0
@@ -7257,6 +7355,7 @@ def build_context(db: Session, current_user: dict, policy_number: str | None):
         "metrics": metrics,
         "creator": get_creator(current_user),
     }
+
 
 def make_doc(title: str):
     buffer = BytesIO()
@@ -7981,13 +8080,7 @@ def executive_first_page(story, styles, profile, policy_number, creator, summary
     )
 
 
-@router.get("/executive-report-pdf")
-def executive_report_pdf(
-    policy_number: str | None = Query(default=None),
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
-    ctx = build_context(db, current_user, policy_number)
+def build_executive_pdf_response(ctx, policy_number=None):
     profile = ctx["profile"]
     metrics = ctx["metrics"]
     summary = ctx["summary"]
@@ -8058,13 +8151,70 @@ def executive_report_pdf(
     return pdf_response(buffer, "lossq_executive_underwriting_report.pdf")
 
 
-@router.get("/carrier-packet-pdf")
-def carrier_packet_pdf(
+
+@router.post("/executive-report-pdf")
+def executive_report_pdf_post(
+    report_payload: dict | None = Body(default=None),
     policy_number: str | None = Query(default=None),
+    profile_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    ctx = build_context(db, current_user, policy_number)
+    payload = report_payload_dict(report_payload)
+    profile_payload = report_body_profile(payload)
+    effective_policy = (
+        policy_number
+        or clean(profile_payload.get("policy_number"))
+        or clean(profile_payload.get("account_number"))
+    )
+    ctx = build_context(
+        db,
+        current_user,
+        effective_policy,
+        profile_id=profile_id or payload.get("profile_id"),
+        report_payload=payload,
+    )
+    return build_executive_pdf_response(ctx, effective_policy)
+
+
+@router.post("/carrier-packet-pdf")
+def carrier_packet_pdf_post(
+    report_payload: dict | None = Body(default=None),
+    policy_number: str | None = Query(default=None),
+    profile_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    payload = report_payload_dict(report_payload)
+    profile_payload = report_body_profile(payload)
+    effective_policy = (
+        policy_number
+        or clean(profile_payload.get("policy_number"))
+        or clean(profile_payload.get("account_number"))
+    )
+    ctx = build_context(
+        db,
+        current_user,
+        effective_policy,
+        profile_id=profile_id or payload.get("profile_id"),
+        report_payload=payload,
+    )
+    return build_carrier_packet_pdf_response(ctx, effective_policy)
+
+
+@router.get("/executive-report-pdf")
+def executive_report_pdf(
+    policy_number: str | None = Query(default=None),
+    profile_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    ctx = build_context(db, current_user, policy_number, profile_id=profile_id)
+    return build_executive_pdf_response(ctx, policy_number)
+
+
+
+def build_carrier_packet_pdf_response(ctx, policy_number=None):
     profile = ctx["profile"]
     metrics = ctx["metrics"]
     summary = ctx["summary"]
@@ -8151,13 +8301,26 @@ def carrier_packet_pdf(
     return pdf_response(buffer, "lossq_carrier_submission_packet.pdf")
 
 
-@router.get("/loss-run-template-pdf")
-def loss_run_template_pdf(
+@router.get("/carrier-packet-pdf")
+def carrier_packet_pdf(
     policy_number: str | None = Query(default=None),
+    profile_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    ctx = build_context(db, current_user, policy_number)
+    ctx = build_context(db, current_user, policy_number, profile_id=profile_id)
+    return build_carrier_packet_pdf_response(ctx, policy_number)
+
+
+
+@router.get("/loss-run-template-pdf")
+def loss_run_template_pdf(
+    policy_number: str | None = Query(default=None),
+    profile_id: int | None = Query(default=None),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    ctx = build_context(db, current_user, policy_number, profile_id=profile_id)
     profile = ctx["profile"]
     claims = ctx["claims"]
     metrics = ctx["metrics"]
