@@ -1,4 +1,4 @@
-from __future__ import annotations
+﻿from __future__ import annotations
 
 import os
 import re
@@ -15,6 +15,7 @@ from app.models.upload_history import UploadHistory
 from app.role_utils import require_permission
 from app.services.audit import record_audit_event
 from app.services.lossq_loss_run_pipeline_v2 import parse_loss_run_upload
+from app.services.document_intelligence.parser_cleanup import cleanup_loss_run_extraction
 
 from app.routes.upload import (
     UPLOAD_DIR,
@@ -474,6 +475,7 @@ async def save_uploaded_files_v2(
             buffer.write(content)
 
         parsed = parse_loss_run_upload(file.filename or safe_filename, content)
+        parsed = cleanup_loss_run_extraction(parsed)
 
         parsed_claims = (
             parsed.get("claims")
@@ -774,3 +776,4 @@ async def save_uploaded_files_v2(
         "raw_parsed_claims": all_parsed_claims,
         "claim_count": len(all_repaired_claims),
     }
+
