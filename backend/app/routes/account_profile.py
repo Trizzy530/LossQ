@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect, func
@@ -16,17 +16,27 @@ router = APIRouter(prefix="/account-profile", tags=["Account Profile"])
 
 
 class AccountProfileUpdate(BaseModel):
+    # Stable row identity. Frontend can send this when editing an existing profile.
+    id: Optional[int] = None
+
     business_name: Optional[str] = ""
     carrier_name: Optional[str] = ""
     agency_name: Optional[str] = ""
+
+    # Stable account identifiers should be preferred over child policy number.
+    account_number: Optional[str] = ""
+    customer_number: Optional[str] = ""
+    producer_number: Optional[str] = ""
+
+    # This can be the parent account policy, primary policy, or selected child policy.
     policy_number: Optional[str] = ""
+
     effective_date: Optional[str] = ""
     expiration_date: Optional[str] = ""
     evaluation_date: Optional[str] = ""
     writing_carrier: Optional[str] = ""
-    account_number: Optional[str] = ""
-    customer_number: Optional[str] = ""
-    producer_number: Optional[str] = ""
+
+    # These DB columns are TEXT in the current model, so they are stored as JSON strings.
     policies: Optional[Any] = None
     validation: Optional[Any] = None
     raw_text_preview: Optional[str] = ""
@@ -46,29 +56,43 @@ def clean_value(value: Any) -> str:
     return value.strip(" :-|")
 
 
-def normalize_policy(value: Any) -> str:
+def normalize_key(value: Any) -> str:
     return clean_value(value).upper()
 
 
-def is_valid_policy(value: Any) -> bool:
-    policy = normalize_policy(value)
-    if not policy:
+def is_valid_identifier(value: Any) -> bool:
+    value = normalize_key(value)
+    if not value:
         return False
-    if policy in {
+
+    blocked = {
         "POLICY",
         "POLICYNUMBER",
+        "POLICY NUMBER",
         "POLICYTERM",
+        "POLICY TERM",
         "ACCOUNT",
         "ACCOUNTNUMBER",
+        "ACCOUNT NUMBER",
+        "CUSTOMER",
         "LOB",
         "UPLOAD",
-    }:
+        "NONE",
+        "NULL",
+        "-",
+    }
+
+    if value in blocked:
         return False
-    if policy.startswith("UPLOAD-"):
+
+    if value.startswith("UPLOAD-"):
         return False
-    if len(policy) < 4:
+
+    if len(value) < 3:
         return False
-    return bool(re.search(r"\d", policy))
+
+    # Most valid account/policy identifiers have at least one number.
+    return bool(re.search(r"\d", value))
 
 
 def safe_money(value: Any) -> float:
@@ -97,6 +121,10 @@ def parse_json_value(value: Any, fallback: Any):
 
 
 def serialize_json(value: Any, fallback: Any):
+    """
+    AccountProfile.policies and AccountProfile.validation are TEXT columns.
+    Keep JSON as strings at the DB layer.
+    """
     try:
         if value is None:
             return json.dumps(fallback)
@@ -136,46 +164,59 @@ def ensure_account_profile_columns(db: Session):
         print(f"Account profile column check failed: {e}")
 
 
-def safe_profile_policies(profile: AccountProfile):
+def normalize_policy_list(raw_policies: Any):
     """
-    Return ONLY the policies saved on this profile.
-    This does not merge all organization claims into every profile.
+    Only normalize policies already saved on the profile/upload payload.
+    Do not merge all organization claims here.
     """
-    raw_policies = parse_json_value(getattr(profile, "policies", None), [])
+    policies = parse_json_value(raw_policies, [])
+
+    if not isinstance(policies, list):
+        return []
+
     safe_policies = []
+    seen = set()
 
-    if isinstance(raw_policies, list):
-        for item in raw_policies:
-            if not isinstance(item, dict):
-                continue
+    for item in policies:
+        if not isinstance(item, dict):
+            continue
 
-            policy_number = normalize_policy(item.get("policy_number"))
-            if not is_valid_policy(policy_number):
-                continue
+        policy_number = normalize_key(
+            item.get("policy_number")
+            or item.get("policyNumber")
+            or item.get("policy_no")
+            or item.get("number")
+        )
 
-            safe_policies.append(
-                {
-                    "policy_number": policy_number,
-                    "policy_type": clean_value(
-                        item.get("policy_type")
-                        or item.get("line_of_business")
-                        or item.get("coverage")
-                        or "Unknown"
-                    ),
-                    "line_of_business": clean_value(
-                        item.get("line_of_business")
-                        or item.get("policy_type")
-                        or item.get("coverage")
-                        or "Unknown"
-                    ),
-                    "writing_carrier": clean_value(item.get("writing_carrier") or ""),
-                    "carrier": clean_value(item.get("carrier") or ""),
-                    "effective_date": clean_value(item.get("effective_date") or ""),
-                    "expiration_date": clean_value(item.get("expiration_date") or ""),
-                    "claim_count": int(float(item.get("claim_count") or item.get("claims") or 0)),
-                    "total_incurred": safe_money(item.get("total_incurred")),
-                }
-            )
+        if not is_valid_identifier(policy_number):
+            continue
+
+        if policy_number in seen:
+            continue
+
+        seen.add(policy_number)
+
+        line_of_business = clean_value(
+            item.get("line_of_business")
+            or item.get("policy_type")
+            or item.get("coverage")
+            or item.get("lob")
+            or "Unknown"
+        )
+
+        safe_policies.append(
+            {
+                "policy_number": policy_number,
+                "policy_type": clean_value(item.get("policy_type") or line_of_business or "Unknown"),
+                "line_of_business": line_of_business or "Unknown",
+                "writing_carrier": clean_value(item.get("writing_carrier") or item.get("carrier") or ""),
+                "carrier": clean_value(item.get("carrier") or item.get("writing_carrier") or ""),
+                "effective_date": clean_value(item.get("effective_date") or item.get("effective") or ""),
+                "expiration_date": clean_value(item.get("expiration_date") or item.get("expiration") or ""),
+                "claim_count": int(float(item.get("claim_count") or item.get("claims") or 0)),
+                "total_incurred": safe_money(item.get("total_incurred") or item.get("incurred")),
+            }
+        )
 
     return safe_policies
 
@@ -185,7 +226,9 @@ def profile_to_dict(profile: AccountProfile):
         "id": getattr(profile, "id", None),
         "business_name": clean_value(getattr(profile, "business_name", "")),
         "carrier_name": clean_value(getattr(profile, "carrier_name", "")),
-        "writing_carrier": clean_value(getattr(profile, "writing_carrier", "") or getattr(profile, "carrier_name", "")),
+        "writing_carrier": clean_value(
+            getattr(profile, "writing_carrier", "") or getattr(profile, "carrier_name", "")
+        ),
         "agency_name": clean_value(getattr(profile, "agency_name", "")),
         "account_number": clean_value(getattr(profile, "account_number", "")),
         "customer_number": clean_value(getattr(profile, "customer_number", "")),
@@ -194,35 +237,123 @@ def profile_to_dict(profile: AccountProfile):
         "effective_date": clean_value(getattr(profile, "effective_date", "")),
         "expiration_date": clean_value(getattr(profile, "expiration_date", "")),
         "evaluation_date": clean_value(getattr(profile, "evaluation_date", "")),
-        "policies": safe_profile_policies(profile),
+        "policies": normalize_policy_list(getattr(profile, "policies", None)),
         "validation": parse_json_value(getattr(profile, "validation", None), {}),
         "raw_text_preview": clean_value(getattr(profile, "raw_text_preview", "")),
         "profile_source": "account_profile",
     }
 
 
-def profile_matches_policy(profile: AccountProfile, policy_number: str) -> bool:
-    normalized = normalize_policy(policy_number)
+def profile_contains_policy(profile: AccountProfile, policy_number: str) -> bool:
+    target = normalize_key(policy_number)
     data = profile_to_dict(profile)
 
-    direct_values = [
-        data.get("policy_number"),
-        data.get("account_number"),
-        data.get("customer_number"),
-    ]
-
-    if normalized in [normalize_policy(value) for value in direct_values]:
-        return True
+    for value in [data.get("policy_number"), data.get("account_number"), data.get("customer_number")]:
+        if normalize_key(value) == target:
+            return True
 
     for item in data.get("policies") or []:
-        if normalize_policy(item.get("policy_number")) == normalized:
+        if normalize_key(item.get("policy_number")) == target:
             return True
 
     return False
 
 
+def find_profile_by_id(db: Session, current_user: dict, profile_id: Optional[int]):
+    if not profile_id:
+        return None
+
+    return (
+        db.query(AccountProfile)
+        .filter(
+            AccountProfile.id == profile_id,
+            AccountProfile.organization_id == current_user["organization_id"],
+        )
+        .first()
+    )
+
+
+def find_profile_for_save(db: Session, current_user: dict, payload: AccountProfileUpdate):
+    """
+    Save priority:
+    1. Exact profile row ID when provided.
+    2. Account number.
+    3. Customer number.
+    4. Primary policy number.
+    This avoids treating a child policy as the main account identity.
+    """
+    profile = find_profile_by_id(db, current_user, payload.id)
+    if profile:
+        return profile
+
+    account_number = normalize_key(payload.account_number)
+    customer_number = normalize_key(payload.customer_number)
+    policy_number = normalize_key(payload.policy_number)
+
+    lookup_candidates = []
+
+    if is_valid_identifier(account_number):
+        lookup_candidates.append(("account_number", account_number))
+
+    if is_valid_identifier(customer_number):
+        lookup_candidates.append(("customer_number", customer_number))
+
+    if is_valid_identifier(policy_number):
+        lookup_candidates.append(("policy_number", policy_number))
+
+    for column_name, value in lookup_candidates:
+        column = getattr(AccountProfile, column_name, None)
+        if column is None:
+            continue
+
+        profile = (
+            db.query(AccountProfile)
+            .filter(
+                AccountProfile.organization_id == current_user["organization_id"],
+                func.upper(func.trim(column)) == value,
+            )
+            .order_by(AccountProfile.id.desc())
+            .first()
+        )
+
+        if profile:
+            return profile
+
+    return None
+
+
 def find_profile_by_policy(db: Session, current_user: dict, policy_number: str):
-    normalized = normalize_policy(policy_number)
+    """
+    Read-only lookup.
+    It can find parent profiles that contain child policies, but it does not create anything.
+    """
+    normalized = normalize_key(policy_number)
+
+    direct_match = (
+        db.query(AccountProfile)
+        .filter(
+            AccountProfile.organization_id == current_user["organization_id"],
+            func.upper(func.trim(AccountProfile.policy_number)) == normalized,
+        )
+        .order_by(AccountProfile.id.desc())
+        .first()
+    )
+
+    if direct_match:
+        return direct_match
+
+    account_match = (
+        db.query(AccountProfile)
+        .filter(
+            AccountProfile.organization_id == current_user["organization_id"],
+            func.upper(func.trim(AccountProfile.account_number)) == normalized,
+        )
+        .order_by(AccountProfile.id.desc())
+        .first()
+    )
+
+    if account_match:
+        return account_match
 
     profiles = (
         db.query(AccountProfile)
@@ -232,7 +363,7 @@ def find_profile_by_policy(db: Session, current_user: dict, policy_number: str):
     )
 
     for profile in profiles:
-        if profile_matches_policy(profile, normalized):
+        if profile_contains_policy(profile, normalized):
             return profile
 
     return None
@@ -240,6 +371,7 @@ def find_profile_by_policy(db: Session, current_user: dict, policy_number: str):
 
 def blank_profile():
     return {
+        "id": None,
         "business_name": "",
         "carrier_name": "",
         "writing_carrier": "",
@@ -255,6 +387,22 @@ def blank_profile():
         "validation": {},
         "profile_source": "blank",
     }
+
+
+def related_policy_numbers_for_profile(profile: AccountProfile):
+    data = profile_to_dict(profile)
+    related = set()
+
+    for value in [data.get("policy_number"), data.get("account_number"), data.get("customer_number")]:
+        if is_valid_identifier(value):
+            related.add(normalize_key(value))
+
+    for item in data.get("policies") or []:
+        value = normalize_key(item.get("policy_number"))
+        if is_valid_identifier(value):
+            related.add(value)
+
+    return related
 
 
 @router.get("/")
@@ -290,7 +438,7 @@ def get_all_profiles(
     """
     Safe list route:
     - Does NOT create profiles.
-    - Does NOT rebuild deleted profiles from old claims.
+    - Does NOT recreate deleted profiles.
     - Does NOT merge all organization claims into every profile.
     """
     ensure_account_profile_columns(db)
@@ -305,6 +453,22 @@ def get_all_profiles(
     return [profile_to_dict(profile) for profile in profiles]
 
 
+@router.get("/id/{profile_id}")
+def get_profile_by_id(
+    profile_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    ensure_account_profile_columns(db)
+
+    profile = find_profile_by_id(db, current_user, profile_id)
+
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found")
+
+    return profile_to_dict(profile)
+
+
 @router.get("/policy/{policy_number}")
 def get_profile_by_policy(
     policy_number: str,
@@ -312,13 +476,12 @@ def get_profile_by_policy(
     current_user: dict = Depends(get_current_user),
 ):
     """
-    Safe policy lookup:
-    - Finds a parent profile or child policy inside that profile's saved schedule.
-    - Does NOT create a new profile on GET.
+    Read-only policy lookup.
+    This never creates/recreates a profile.
     """
     ensure_account_profile_columns(db)
 
-    normalized = normalize_policy(policy_number)
+    normalized = normalize_key(policy_number)
 
     if not normalized:
         raise HTTPException(status_code=400, detail="Policy number is required")
@@ -330,7 +493,7 @@ def get_profile_by_policy(
 
     data = profile_to_dict(profile)
 
-    if normalize_policy(data.get("policy_number")) != normalized:
+    if normalize_key(data.get("policy_number")) != normalized:
         data["selected_policy_number"] = normalized
         data["policy_number"] = normalized
 
@@ -343,48 +506,67 @@ def upsert_account_profile(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    """
+    Stable save route:
+    - Prefer exact profile ID.
+    - Then account_number.
+    - Then customer_number.
+    - Only then fallback to policy_number.
+    """
     ensure_account_profile_columns(db)
 
-    policy_number = normalize_policy(payload.policy_number)
+    account_number = normalize_key(payload.account_number)
+    customer_number = normalize_key(payload.customer_number)
+    policy_number = normalize_key(payload.policy_number)
 
-    if not is_valid_policy(policy_number):
-        raise HTTPException(status_code=400, detail="Valid policy number is required")
+    save_key = account_number or customer_number or policy_number
 
-    profile = find_profile_by_policy(db, current_user, policy_number)
+    if not is_valid_identifier(save_key):
+        raise HTTPException(
+            status_code=400,
+            detail="Valid account_number, customer_number, or policy_number is required",
+        )
+
+    profile = find_profile_for_save(db, current_user, payload)
 
     if not profile:
         profile = AccountProfile(organization_id=current_user["organization_id"])
         db.add(profile)
 
+    safe_policies = normalize_policy_list(payload.policies or [])
+
+    # If the upload payload did not include a policy schedule, keep existing policies
+    # when editing an existing profile. This prevents accidental wipes on manual saves.
+    if not safe_policies and getattr(profile, "id", None):
+        safe_policies = normalize_policy_list(getattr(profile, "policies", None))
+
+    primary_policy = policy_number
+    if not is_valid_identifier(primary_policy) and safe_policies:
+        primary_policy = normalize_key(safe_policies[0].get("policy_number"))
+
     profile.business_name = clean_value(payload.business_name) or "Business Name Not Set"
     profile.carrier_name = clean_value(payload.carrier_name) or "Carrier Not Set"
     profile.agency_name = clean_value(payload.agency_name) or "Agency Not Set"
-    profile.policy_number = policy_number
+
+    profile.account_number = account_number or customer_number or primary_policy or save_key
+    profile.customer_number = customer_number or account_number or primary_policy or save_key
+    profile.producer_number = clean_value(payload.producer_number)
+
+    profile.policy_number = primary_policy or profile.account_number
+
     profile.effective_date = clean_value(payload.effective_date) or "Not Set"
     profile.expiration_date = clean_value(payload.expiration_date) or "Not Set"
     profile.evaluation_date = clean_value(payload.evaluation_date) or datetime.now().date().isoformat()
 
-    if hasattr(profile, "writing_carrier"):
-        profile.writing_carrier = clean_value(payload.writing_carrier) or clean_value(payload.carrier_name) or "Carrier Not Set"
+    profile.writing_carrier = (
+        clean_value(payload.writing_carrier)
+        or clean_value(payload.carrier_name)
+        or "Carrier Not Set"
+    )
 
-    if hasattr(profile, "account_number"):
-        profile.account_number = clean_value(payload.account_number) or policy_number
-
-    if hasattr(profile, "customer_number"):
-        profile.customer_number = clean_value(payload.customer_number) or policy_number
-
-    if hasattr(profile, "producer_number"):
-        profile.producer_number = clean_value(payload.producer_number)
-
-    if hasattr(profile, "policies"):
-        # Only save policies from the uploaded/profile payload, never all org claims.
-        profile.policies = serialize_json(payload.policies or [], [])
-
-    if hasattr(profile, "validation"):
-        profile.validation = serialize_json(payload.validation or {}, {})
-
-    if hasattr(profile, "raw_text_preview"):
-        profile.raw_text_preview = clean_value(payload.raw_text_preview)
+    profile.policies = serialize_json(safe_policies, [])
+    profile.validation = serialize_json(payload.validation or {}, {})
+    profile.raw_text_preview = clean_value(payload.raw_text_preview)
 
     db.commit()
     db.refresh(profile)
@@ -394,48 +576,47 @@ def upsert_account_profile(
 
 @router.delete("/")
 def delete_account_profile_by_query(
-    policy_number: str,
+    profile_id: Optional[int] = Query(default=None),
+    policy_number: Optional[str] = Query(default=None),
+    delete_claims: bool = Query(default=True),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    if profile_id:
+        return delete_profile_by_id(profile_id, delete_claims, db, current_user)
+
+    if not policy_number:
+        raise HTTPException(status_code=400, detail="profile_id or policy_number is required")
+
+    return delete_profile_by_policy(policy_number, delete_claims, db, current_user)
+
+
+@router.delete("/id/{profile_id}")
+def delete_profile_by_id(
+    profile_id: int,
     delete_claims: bool = True,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    return delete_profile(policy_number, delete_claims, db, current_user)
-
-
-@router.delete("/{policy_number}")
-def delete_profile(
-    policy_number: str,
-    delete_claims: bool = True,
-    db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
-):
+    """
+    Safest delete route.
+    Deletes the exact profile row first, then claims tied to that profile's own saved schedule.
+    """
     ensure_account_profile_columns(db)
 
-    normalized = normalize_policy(policy_number)
+    profile = find_profile_by_id(db, current_user, profile_id)
 
-    if not normalized:
-        raise HTTPException(status_code=400, detail="Policy number is required")
+    if not profile:
+        return {
+            "deleted": False,
+            "profile_id": profile_id,
+            "profiles_deleted": 0,
+            "claims_deleted": 0,
+            "related_policy_numbers": [],
+            "message": "Profile not found.",
+        }
 
-    profile = find_profile_by_policy(db, current_user, normalized)
-
-    related_policy_numbers = {normalized}
-
-    if profile:
-        data = profile_to_dict(profile)
-
-        # Only include child policies from THIS saved profile schedule.
-        # This route no longer uses all organization claims to expand deletion.
-        for value in [data.get("policy_number"), data.get("account_number"), data.get("customer_number")]:
-            value = normalize_policy(value)
-            if is_valid_policy(value):
-                related_policy_numbers.add(value)
-
-        for item in data.get("policies") or []:
-            value = normalize_policy(item.get("policy_number"))
-            if is_valid_policy(value):
-                related_policy_numbers.add(value)
-
-    related_policy_numbers = {value for value in related_policy_numbers if is_valid_policy(value)}
+    related_policy_numbers = related_policy_numbers_for_profile(profile)
 
     claims_deleted = 0
     if delete_claims and related_policy_numbers:
@@ -446,20 +627,52 @@ def delete_profile(
             .delete(synchronize_session=False)
         )
 
-    profiles_deleted = 0
-    if profile:
-        db.delete(profile)
-        profiles_deleted = 1
-
+    db.delete(profile)
     db.commit()
 
     return {
-        "deleted": profiles_deleted > 0 or claims_deleted > 0,
-        "policy_number": normalized,
-        "profiles_deleted": profiles_deleted,
+        "deleted": True,
+        "profile_id": profile_id,
+        "profiles_deleted": 1,
         "claims_deleted": claims_deleted,
         "related_policy_numbers": sorted(list(related_policy_numbers)),
-        "message": "Profile and related claims deleted successfully."
-        if (profiles_deleted > 0 or claims_deleted > 0)
-        else "Profile not found.",
+        "message": "Exact profile and related claims deleted successfully.",
     }
+
+
+@router.delete("/{policy_number}")
+def delete_profile_by_policy(
+    policy_number: str,
+    delete_claims: bool = True,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Backward-compatible delete route.
+    Prefer /account-profile/id/{profile_id} from the frontend when possible.
+    """
+    ensure_account_profile_columns(db)
+
+    normalized = normalize_key(policy_number)
+
+    if not normalized:
+        raise HTTPException(status_code=400, detail="Policy number is required")
+
+    profile = find_profile_by_policy(db, current_user, normalized)
+
+    if not profile:
+        return {
+            "deleted": False,
+            "policy_number": normalized,
+            "profiles_deleted": 0,
+            "claims_deleted": 0,
+            "related_policy_numbers": [],
+            "message": "Profile not found.",
+        }
+
+    return delete_profile_by_id(
+        profile_id=profile.id,
+        delete_claims=delete_claims,
+        db=db,
+        current_user=current_user,
+    )
