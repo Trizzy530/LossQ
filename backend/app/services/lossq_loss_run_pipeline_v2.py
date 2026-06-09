@@ -211,7 +211,7 @@ def _find_policy_numbers(text: str) -> List[Tuple[int, str]]:
                 pos = 0
             found.append((pos, policy))
     standalone_re = re.compile(
-        r"^\s*([A-Z]{2,6}-(?:AL|GL|WC|CG|AUTO|CARGO|MT)-[A-Z0-9]+-\d{1,4})\s*$",
+        r"^\s*([A-Z]{2,6}-(?:AL|GL|WC|CG|CA|AUTO|CARGO|MT)-[A-Z0-9]+-\d{1,4})\s*$",
         re.IGNORECASE | re.MULTILINE,
     )
     for match in standalone_re.finditer(text):
@@ -511,4 +511,5 @@ def parse_loss_run_upload(filename: str, content: bytes) -> Dict[str, Any]:
         "parsed_claims": claims,
         "claim_count": len(claims),
     }
+
 
