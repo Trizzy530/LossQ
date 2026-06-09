@@ -1,7 +1,7 @@
 ﻿"use client";
 
 import { useRouter } from "next/navigation";
-import { useEffect, useState, type ReactNode } from "react";
+import { useEffect, useState, useRef, type ReactNode } from "react";
 import {
   BarChart,
   Bar,
@@ -4187,6 +4187,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
