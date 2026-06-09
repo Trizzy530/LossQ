@@ -327,7 +327,6 @@ export default function DashboardPage() {
   const [claims, setClaims] = useState<any[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const activeProfileRef = useRef<any>({});
-  const activeProfileRef = React.useRef<any>({});
   const [summary, setSummary] = useState<any>({});
   const [decision, setDecision] = useState<any>({});
   const [carrierAppetite, setCarrierAppetite] = useState<any>({});
@@ -4188,6 +4187,12 @@ function ChartCard({
     </div>
   );
 }
+
+
+
+
+
+
 
 
 
