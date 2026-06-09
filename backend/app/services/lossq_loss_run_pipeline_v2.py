@@ -313,7 +313,7 @@ def _extract_claim_sections(
         flags=re.IGNORECASE,
     )
     standalone_pattern = re.compile(
-        r"^\s*((?:AL|GL|WC|CG|MT|AU|CA)-[0-9]{4,10}-[0-9]{1,6})\s*$",
+        r"^\s*((?:AL|GL|WC|CG|MT|AU|CA)-\d{2}-\d{4,10}|(?:AL|GL|WC|CG|MT|AU|CA)-[0-9]{4,10}-[0-9]{1,6})\s*$",
         flags=re.IGNORECASE | re.MULTILINE,
     )
     all_matches = []
@@ -511,3 +511,4 @@ def parse_loss_run_upload(filename: str, content: bytes) -> Dict[str, Any]:
         "parsed_claims": claims,
         "claim_count": len(claims),
     }
+
