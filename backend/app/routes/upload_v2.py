@@ -1280,7 +1280,7 @@ async def save_uploaded_files_v2(
             and policy_number_item not in policies_replaced_this_upload
         ]
 
-        if policies_to_replace:
+        if policies_to_replace and len(repaired_claims) > 0:
             existing_claims_deleted = (
                 db.query(Claim)
                 .filter(
