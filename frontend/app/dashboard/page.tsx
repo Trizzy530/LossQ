@@ -2299,53 +2299,127 @@ const backendTopCarriersAreUsable =
     )
   );
 
+const realCarrierDatabaseAvailable = Boolean(
+  carrierMatch?.carrier_database_enabled ||
+    carrierMatch?.real_carrier_database_enabled ||
+    carrierMatch?.source === "carrier_database" ||
+    carrierMatch?.data_source === "carrier_database"
+);
+
+const lineBasedMarketCategories = [];
+
+if (appetiteHasAuto) {
+  lineBasedMarketCategories.push({
+    market_category: appetiteHasOpenReserveConcern
+      ? "Transportation selective market"
+      : "Transportation standard market",
+    match_score: Math.max(
+      35,
+      Math.min(92, (localCarrierAppetiteScore || 60) + (appetiteHasOpenReserveConcern ? -8 : 6))
+    ),
+    fit: appetiteHasOpenReserveConcern
+      ? "Conditional market category"
+      : "Strong market category",
+    reason: appetiteHasOpenReserveConcern
+      ? "Auto liability is present with open reserve pressure. Underwriters will need reserve notes, claim status, driver controls, and corrective actions."
+      : "Auto liability claims are present, but current visible reserve pressure appears manageable.",
+  });
+}
+
+if (appetiteHasGL) {
+  lineBasedMarketCategories.push({
+    market_category: appetiteHasLargeLoss
+      ? "Regional casualty selective market"
+      : "Regional general liability market",
+    match_score: Math.max(
+      35,
+      Math.min(90, (localCarrierAppetiteScore || 60) + (appetiteHasLargeLoss ? -5 : 4))
+    ),
+    fit: appetiteHasLargeLoss
+      ? "Moderate market category with narrative"
+      : "Moderate market category",
+    reason: appetiteHasLargeLoss
+      ? "General liability or casualty severity may require a detailed loss narrative before standard-market placement."
+      : "General liability exposure appears marketable through regional casualty channels based on visible claims.",
+  });
+}
+
+if (appetiteHasWC) {
+  lineBasedMarketCategories.push({
+    market_category:
+      appetiteOpenClaimsCount > 0
+        ? "Workers comp loss-sensitive market"
+        : "Workers comp standard market",
+    match_score: Math.max(
+      35,
+      Math.min(88, (localCarrierAppetiteScore || 60) - (appetiteOpenClaimsCount > 0 ? 6 : 0))
+    ),
+    fit: appetiteOpenClaimsCount > 0
+      ? "Conditional market category"
+      : "Standard market category",
+    reason: appetiteOpenClaimsCount > 0
+      ? "Open claim activity may require loss-sensitive underwriting review."
+      : "Workers comp exposure can be reviewed in standard channels if payroll/exposure data supports it.",
+  });
+}
+
+if (appetiteHasCargo) {
+  lineBasedMarketCategories.push({
+    market_category: "Motor truck cargo market",
+    match_score: Math.max(40, Math.min(90, (localCarrierAppetiteScore || 60) + 3)),
+    fit: "Line-specific market category",
+    reason: "Cargo exposure should be reviewed separately using cargo losses, limits, radius, commodities, and theft controls.",
+  });
+}
+
+if (lineBasedMarketCategories.length === 0) {
+  lineBasedMarketCategories.push({
+    market_category: "Needs coverage classification",
+    match_score: localCarrierAppetiteScore || 0,
+    fit: "Not enough line-of-business data",
+    reason: "LossQ needs validated policy line or coverage data before recommending a market category.",
+  });
+}
+
+const sortedMarketCategories = lineBasedMarketCategories.sort(
+  (a, b) => Number(b.match_score || 0) - Number(a.match_score || 0)
+);
+
 const effectiveCarrierMatch =
   validatedClaimsAvailable
     ? {
         ...(carrierMatch || {}),
         recommended_carrier:
-          !isInsufficientBackendMessage(carrierMatch?.recommended_carrier)
+          realCarrierDatabaseAvailable && !isInsufficientBackendMessage(carrierMatch?.recommended_carrier)
             ? carrierMatch.recommended_carrier
-            : displayProfile?.carrier_name ||
-              displayProfile?.writing_carrier ||
-              "Standard Commercial Market",
+            : "No named carrier selected — market category only",
+        recommended_market_category:
+          sortedMarketCategories[0]?.market_category || "Needs coverage classification",
         recommended_score:
-          carrierMatch?.recommended_score ?? Math.max(45, Math.min(90, localCarrierAppetiteScore || 60)),
+          carrierMatch?.recommended_score ??
+          sortedMarketCategories[0]?.match_score ??
+          Math.max(45, Math.min(90, localCarrierAppetiteScore || 60)),
         top_carriers:
-          backendTopCarriersAreUsable
+          realCarrierDatabaseAvailable && backendTopCarriersAreUsable
             ? carrierMatch.top_carriers
-            : [
-                {
-                  carrier:
-                    displayProfile?.carrier_name ||
-                    displayProfile?.writing_carrier ||
-                    "Current / Incumbent Carrier",
-                  match_score: Math.max(45, Math.min(90, localCarrierAppetiteScore || 60)),
-                  fit: localRenewalRiskLevel === "Low" ? "Preferred renewal candidate" : "Renewal review candidate",
-                  reason: "Current account data and validated claim rows are available for underwriting review.",
-                },
-                {
-                  carrier: "Regional Commercial Carrier",
-                  match_score: Math.max(40, Math.min(82, (localCarrierAppetiteScore || 60) - 6)),
-                  fit: "Backup market",
-                  reason: "Suitable backup market when claim narrative, reserves, and corrective actions are documented.",
-                },
-                {
-                  carrier: "Selective / E&S Backup Market",
-                  match_score: Math.max(35, Math.min(75, (localCarrierAppetiteScore || 60) - 12)),
-                  fit: "Contingency market",
-                  reason: "Useful if open claims, severity, or litigation concerns limit standard-market appetite.",
-                },
-              ],
+            : [],
+        market_categories: sortedMarketCategories,
         carrier_match_summary:
-          !isInsufficientBackendMessage(carrierMatch?.carrier_match_summary)
+          realCarrierDatabaseAvailable && !isInsufficientBackendMessage(carrierMatch?.carrier_match_summary)
             ? carrierMatch.carrier_match_summary
-            : `LossQ matched this account using ${intelligenceClaims.length} validated claim row(s), $${Number(localClaimTotal || 0).toLocaleString()} total incurred, ${localOpenClaimCount} open claim(s), and ${localLitigationCount} litigation/attorney indicator(s). Recommended market strategy should focus on the current carrier, standard commercial markets, and a backup market if claim severity or reserves require it.`,
+            : `LossQ did not use a real carrier database for this result. This is a claims-derived market category recommendation based on ${intelligenceClaims.length} validated claim row(s), $${Number(localClaimTotal || 0).toLocaleString()} total incurred, ${localOpenClaimCount} open claim(s), ${localLargeLossCount} large loss claim(s), and ${localLitigationCount} litigation/attorney indicator(s).`,
         claims_used: intelligenceClaims.length,
-        policy_numbers_used: activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
-        data_source: backendSaysInsufficient ? "local_visible_claims_fallback" : "local_visible_claims",
+        policy_numbers_used:
+          activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
+        data_source: backendSaysInsufficient
+          ? "local_visible_claims_fallback"
+          : "local_visible_claims",
+        result_type: realCarrierDatabaseAvailable
+          ? "named_carrier_match"
+          : "market_category_only",
       }
     : carrierMatch;
+
 
 const effectiveSubmissionReadiness =
   validatedClaimsAvailable
