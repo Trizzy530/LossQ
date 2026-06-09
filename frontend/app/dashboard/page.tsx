@@ -325,6 +325,7 @@ export default function DashboardPage() {
   }, []);
 
   const [claims, setClaims] = useState<any[]>([]);
+  const [isUploading, setIsUploading] = useState(false);
   const [summary, setSummary] = useState<any>({});
   const [decision, setDecision] = useState<any>({});
   const [carrierAppetite, setCarrierAppetite] = useState<any>({});
@@ -1187,19 +1188,19 @@ async function saveProfile() {
   }
 
   async function uploadFiles() {
+  if (isUploading) return;
   const selectedFiles = files ? Array.from(files) : [];
-
   if (selectedFiles.length === 0) {
     setMessage("Please select one or more PDF, Excel, or CSV files first.");
     return;
   }
-
   try {
+    setIsUploading(true);
     clearCachedLastUploadReview();
     clearCachedCurrentUpload();
     setMessage("Uploading and analyzing loss runs with V2 parser...");
-
-    const uploadResults: any[] = [];
+    
+     const uploadResults: any[] = [];
 
     /*
       IMPORTANT:
@@ -1419,6 +1420,8 @@ async function saveProfile() {
         error?.message || "Unknown error"
       }`
     );
+  } finally {
+    setIsUploading(false);
   }
 }
 
@@ -3103,7 +3106,7 @@ const trendNoteDisplay =
                   className="text-sm text-slate-300 file:mr-4 file:rounded-xl file:border-0 file:bg-blue-600 file:px-4 file:py-3 file:text-white file:font-semibold"
                 />
 
-                <button onClick={uploadFiles} className="btn-primary">Upload & Analyze</button>
+                <button onClick={uploadFiles} disabled={isUploading} className="btn-primary" style={{opacity: isUploading ? 0.5 : 1,       		cursor: is
                 <button onClick={exportCarrierLossRun} className="btn-success">Export Carrier Loss Run</button>
                 <button onClick={exportExecutiveReport} className="btn-success">Export Executive Report</button>
                 <button onClick={generateCarrierPacket} className="btn-purple">Generate Carrier Packet</button>
