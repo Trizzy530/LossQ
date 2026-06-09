@@ -733,6 +733,7 @@ if (activeProfile?.policy_number) {
           ? claimsData.claims
           : [];
 
+        const cachedUploadForPolicy = getCachedCurrentUpload();
         const policySet = new Set(
           [
             policyNumber,
@@ -742,6 +743,12 @@ if (activeProfile?.policy_number) {
             ...firstNonEmptyArray(activeProfile?.policies, profile?.policies).map(
               (item: any) => item?.policy_number
             ),
+            ...(Array.isArray(cachedUploadForPolicy?.policy_numbers)
+              ? cachedUploadForPolicy.policy_numbers
+              : []),
+            ...(Array.isArray(cachedUploadForPolicy?.policies)
+              ? cachedUploadForPolicy.policies.map((item: any) => item?.policy_number)
+              : []),
           ]
             .map((item: any) => normalizePolicyNumber(item))
             .filter(Boolean)
