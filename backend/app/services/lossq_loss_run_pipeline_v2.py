@@ -239,6 +239,23 @@ def _nearest_policy_before(
     return selected if _looks_like_policy(selected) else fallback
 
 
+def _policy_by_prefix(claim_number: str, policy_positions: List[Tuple[int, str]]) -> str:
+    """Use claim number prefix to find the best matching policy."""
+    claim = claim_number.upper()
+    candidates = [policy for _, policy in policy_positions]
+    for policy in candidates:
+        p = policy.upper()
+        if claim.startswith("AL") and ("-AL-" in p or "-CA-" in p):
+            return policy
+        if claim.startswith("GL") and "-GL-" in p:
+            return policy
+        if claim.startswith("WC") and "-WC-" in p:
+            return policy
+        if claim.startswith(("CG", "MT")) and "-CG-" in p:
+            return policy
+    return ""
+
+
 def _extract_profile(text: str) -> Dict[str, Any]:
     blocks = _extract_header_blocks(text)
     first_block = blocks[0] if blocks else {}
@@ -344,6 +361,10 @@ def _extract_claim_sections(
         )
         if not _looks_like_policy(policy_number):
             policy_number = fallback_policy
+        # Override with prefix-based match when available - more reliable than position
+        prefix_match = _policy_by_prefix(claim_number, policy_positions)
+        if prefix_match:
+            policy_number = prefix_match
         sections.append((claim_number, policy_number, section))
     return sections
 
@@ -511,5 +532,7 @@ def parse_loss_run_upload(filename: str, content: bytes) -> Dict[str, Any]:
         "parsed_claims": claims,
         "claim_count": len(claims),
     }
+
+
 
 
