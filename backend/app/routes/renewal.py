@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, Query
+﻿from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from datetime import datetime
 
@@ -101,7 +101,9 @@ def build_underwriter_decision_engine(claims, policy_number=None):
     if metrics["total_claims"] >= 10: probability -= 8
     elif metrics["total_claims"] >= 5: probability -= 4
     if metrics["trend"] == "Deteriorating": probability -= 8
-    probability = max(0, min(100, probability))
+    # Floor at 15 for accounts with real claims - 0% implies uninsurable which is rare
+    probability = max(15, min(100, probability)) if len(claims) > 0 else 0
+    probability = min(100, probability)
     marketability = probability - (min(metrics["flagged_claims"]*5, 15) if metrics["flagged_claims"] else 0)
     if metrics["total_reserve"] > 100000: marketability -= 8
     marketability = max(0, min(100, marketability))
