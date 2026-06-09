@@ -253,3 +253,20 @@ def get_claim_detail(
     if not claim:
         raise HTTPException(status_code=404, detail="Claim not found")
     return {"claim": claim_to_dict(claim), **build_claim_ai_analysis(claim)}
+
+@router.delete("/bulk")
+def bulk_delete_claims(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Deletes ALL claims for the current organization.
+    Used to wipe bad/orphaned claims before a clean re-upload.
+    """
+    deleted = (
+        db.query(Claim)
+        .filter(Claim.organization_id == current_user["organization_id"])
+        .delete(synchronize_session=False)
+    )
+    db.commit()
+    return {"deleted": True, "claims_deleted": deleted}
