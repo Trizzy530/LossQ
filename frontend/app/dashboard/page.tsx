@@ -765,9 +765,9 @@ if (activeProfile?.policy_number) {
             .filter(Boolean)
         );
 
-        const serverMatches = serverClaims.filter((claim: any) =>
-          claimMatchesPolicySet(claim, policySet)
-        );
+        const serverMatches = policySet.size > 0
+          ? serverClaims.filter((claim: any) => claimMatchesPolicySet(claim, policySet))
+          : serverClaims;
 
         const currentUpload = getCachedCurrentUpload();
         const currentUploadPolicies = new Set(
