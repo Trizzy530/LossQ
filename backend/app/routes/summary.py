@@ -53,10 +53,15 @@ def is_open_claim(claim):
 
 
 def has_litigation(claim):
-    value = getattr(claim, "litigation", False)
-    if isinstance(value, bool):
-        return value
-    return clean(value).lower() in ["true", "yes", "y", "1", "litigation", "litigated"]
+    value = getattr(claim, 'litigation', False)
+    if isinstance(value, bool) and value:
+        return True
+    if isinstance(value, str) and clean(value).lower() in ['true', 'yes', 'y', '1', 'litigation', 'litigated']:
+        return True
+    desc = clean(getattr(claim, 'description', '') or '').lower()
+    if any(word in desc for word in ['litigat', 'attorney', 'lawsuit', 'counsel', 'legal action', 'represented']):
+        return True
+    return False
 
 
 def is_flagged_claim(claim):
