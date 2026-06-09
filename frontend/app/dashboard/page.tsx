@@ -967,12 +967,15 @@ if (submissionBuilderRes.ok) {
     setSubmissionBuilder({});
     setTimeline({});
 
+    // Pre-load the full profile from cache so policySet includes all sibling policies
+    const cachedMatch = getCachedProfiles().find(
+      (p: any) => normalizePolicyNumber(p?.policy_number) === normalizePolicyNumber(policyNumber) ||
+        (p?.policies || []).some((pol: any) => normalizePolicyNumber(pol?.policy_number) === normalizePolicyNumber(policyNumber))
+    );
+    if (cachedMatch) {
+      setProfile(cachedMatch);
+    }
     await loadDashboard(policyNumber);
-
-    setMessage(`Loaded policy ${policyNumber}.`);
-  }
-
-  async function deleteProfile(profileToDelete: any) {
   const profileId = profileToDelete?.id;
   const policyNumber =
     profileToDelete?.policy_number ||
