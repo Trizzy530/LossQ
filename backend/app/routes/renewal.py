@@ -158,7 +158,7 @@ def build_carrier_match_engine(claims, policy_number=None):
             "carrier_match_summary": "No carrier match generated because claims were not parsed or validated.",
         }
 
-    metrics = claim_metrics(claims)
+    metrics = get_loss_metrics(claims)
 
     total_claims = int(metrics.get("total_claims") or 0)
     open_claims = int(metrics.get("open_claims") or 0)
