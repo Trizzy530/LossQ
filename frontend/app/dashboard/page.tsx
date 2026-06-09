@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useRouter } from "next/navigation";
 import { useEffect, useState, type ReactNode } from "react";
@@ -601,7 +601,7 @@ function normalizeProfileName(item: any) {
             (item) => normalizePolicyNumber(item?.policy_number) === requestedPolicyNumber
           );
 
-          aactiveProfile = {
+          activeProfile = {
             ...(cachedMatch || {}),
             ...fetchedProfile,
             policies:
@@ -2491,7 +2491,7 @@ const effectiveCarrierMatch =
         recommended_carrier:
           realCarrierDatabaseAvailable && !isInsufficientBackendMessage(carrierMatch?.recommended_carrier)
             ? carrierMatch.recommended_carrier
-            : "No named carrier selected — market category only",
+            : "No named carrier selected â€” market category only",
         recommended_market_category:
           sortedMarketCategories[0]?.market_category || "Needs coverage classification",
         recommended_score:
@@ -3060,7 +3060,7 @@ const trendNoteDisplay =
                         {profiles.map((item) => (
                           <option key={item.id || item.policy_number} value={item.policy_number}>
                             {(getAccountDisplayName(item) || "Unnamed Business") +
-                              " — " +
+                              " â€” " +
                               (item.policy_number || "No Policy Number")}
                           </option>
                         ))}
@@ -3227,7 +3227,7 @@ const trendNoteDisplay =
                     effectiveCarrierAppetite?.best_fit_carriers?.length
                       ? effectiveCarrierAppetite.best_fit_carriers.map(
                           (item: any) =>
-                            `${item.carrier_type} — ${item.match_score}/100 — ${item.fit}`
+                            `${item.carrier_type} â€” ${item.match_score}/100 â€” ${item.fit}`
                         )
                       : ["No best fit markets available."]
                   }
@@ -3339,7 +3339,7 @@ const trendNoteDisplay =
           effectiveCarrierMatch?.top_carriers?.length
             ? effectiveCarrierMatch.top_carriers.map(
                 (item: any) =>
-                  `${item.carrier || item.carrier_name || 'Carrier'} — ${item.match_score ?? item.recommended_score ?? item.score ?? '-'}/100 — ${item.fit || item.appetite || 'Market fit'}`
+                  `${item.carrier || item.carrier_name || 'Carrier'} â€” ${item.match_score ?? item.recommended_score ?? item.score ?? '-'}/100 â€” ${item.fit || item.appetite || 'Market fit'}`
               )
             : ["No carrier matches available yet."]
         }
@@ -3476,9 +3476,9 @@ const trendNoteDisplay =
           {profiles.map((item) => (
             <option key={item.id || item.policy_number} value={item.policy_number}>
               {(item.business_name || "Unnamed Business") +
-                " — " +
+                " â€” " +
                 (item.carrier_name || "No Carrier") +
-                " — " +
+                " â€” " +
                 (item.policy_number || "No Policy")}
             </option>
           ))}
@@ -3604,7 +3604,7 @@ const trendNoteDisplay =
           submissionBuilder?.loss_explanations?.length
             ? submissionBuilder.loss_explanations.map(
                 (item: any) =>
-                  `${item.claim_number} — ${item.explanation} Broker position: ${item.broker_position}`
+                  `${item.claim_number} â€” ${item.explanation} Broker position: ${item.broker_position}`
               )
             : ["No loss explanations available yet."]
         }
@@ -3903,7 +3903,7 @@ const trendNoteDisplay =
             </div>
 
             <button onClick={() => setCopilotOpen(false)} className="text-slate-400 hover:text-white">
-              ✕
+              âœ•
             </button>
           </div>
 
