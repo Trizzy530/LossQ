@@ -133,27 +133,345 @@ def build_carrier_appetite_engine(claims, policy_number=None):
 
 
 def build_carrier_match_engine(claims, policy_number=None):
-    if len(claims) == 0:
-        return {**insufficient_response(policy_number, "carrier-match"), "top_carriers": [], "recommended_carrier": "Insufficient Data", "recommended_score": None, "carrier_match_summary": "No carrier match generated because claims were not parsed or validated."}
-    appetite = build_carrier_appetite_engine(claims, policy_number)
-    appetite_score = appetite.get("carrier_appetite_score") or 0
-    metrics = get_loss_metrics(claims)
-    carriers = [
-        ("Travelers", 85), ("Liberty Mutual", 82), ("Nationwide", 80), ("CNA", 78),
-        ("The Hartford", 79), ("Progressive Commercial", 76), ("State Auto", 74),
-        ("Zurich", 73), ("Chubb", 72), ("AmTrust", 70), ("E&S / Specialty Market", 65)
+    """
+    Real named carrier matching engine.
+
+    This is not a quote engine and does not guarantee carrier eligibility.
+    It ranks named carrier options from a rules-based appetite directory using
+    actual validated claim data: coverage lines, open claims, reserves, severity,
+    total incurred, and litigation indicators.
+    """
+
+    if not claims:
+        return {
+            **insufficient_response(policy_number, "carrier-match"),
+            "carrier_database_enabled": True,
+            "real_carrier_database_enabled": True,
+            "result_type": "no_validated_claims",
+            "top_carriers": [],
+            "recommended_carrier": "Insufficient Data",
+            "recommended_score": None,
+            "carrier_match_summary": "No carrier match generated because claims were not parsed or validated.",
+        }
+
+    metrics = claim_metrics(claims)
+
+    total_claims = int(metrics.get("total_claims") or 0)
+    open_claims = int(metrics.get("open_claims") or 0)
+    litigation_claims = int(metrics.get("litigation_claims") or 0)
+    total_incurred = float(metrics.get("total_incurred") or 0)
+    total_reserve = float(metrics.get("total_reserve") or 0)
+
+    large_loss_count = 0
+    lines = set()
+
+    for claim in claims:
+        incurred = money(
+            getattr(claim, "total_incurred", None)
+            or getattr(claim, "incurred", None)
+            or getattr(claim, "total_amount", None)
+            or 0
+        )
+
+        if incurred >= 50000:
+            large_loss_count += 1
+
+        line_text = str(
+            getattr(claim, "line_of_business", "")
+            or getattr(claim, "claim_type", "")
+            or getattr(claim, "coverage", "")
+            or ""
+        ).lower()
+
+        policy_text = str(getattr(claim, "policy_number", "") or "").upper()
+
+        if "auto" in line_text or "-AL-" in policy_text:
+            lines.add("auto")
+        if "general" in line_text or "liability" in line_text or "-GL-" in policy_text:
+            lines.add("gl")
+        if "worker" in line_text or "comp" in line_text or "-WC-" in policy_text:
+            lines.add("wc")
+        if "cargo" in line_text or "-CG-" in policy_text:
+            lines.add("cargo")
+
+    # If line extraction is weak, infer from policy number patterns.
+    if not lines:
+        for claim in claims:
+            policy_text = str(getattr(claim, "policy_number", "") or "").upper()
+            if "-AL-" in policy_text:
+                lines.add("auto")
+            elif "-GL-" in policy_text:
+                lines.add("gl")
+            elif "-WC-" in policy_text:
+                lines.add("wc")
+            elif "-CG-" in policy_text:
+                lines.add("cargo")
+
+    has_auto = "auto" in lines
+    has_gl = "gl" in lines
+    has_wc = "wc" in lines
+    has_cargo = "cargo" in lines
+
+    open_claim_pressure = open_claims * 4
+    reserve_pressure = 8 if total_reserve >= 50000 else 4 if total_reserve >= 25000 else 0
+    severity_pressure = large_loss_count * 7
+    litigation_pressure = litigation_claims * 10
+    frequency_pressure = max(0, total_claims - 3) * 2
+
+    overall_pressure = min(
+        45,
+        open_claim_pressure
+        + reserve_pressure
+        + severity_pressure
+        + litigation_pressure
+        + frequency_pressure,
+    )
+
+    carrier_directory = [
+        {
+            "carrier": "Berkley Transportation",
+            "group": "W. R. Berkley / Berkley",
+            "lines": ["auto", "gl", "cargo"],
+            "market_category": "Transportation specialty",
+            "base_score": 82,
+            "open_claim_sensitivity": 0.75,
+            "severity_sensitivity": 0.75,
+            "litigation_sensitivity": 0.70,
+            "best_for": "Transportation, trucking, auto liability, cargo, and casualty accounts.",
+        },
+        {
+            "carrier": "National General",
+            "group": "National General",
+            "lines": ["auto"],
+            "market_category": "Commercial auto",
+            "base_score": 76,
+            "open_claim_sensitivity": 0.90,
+            "severity_sensitivity": 0.85,
+            "litigation_sensitivity": 0.90,
+            "best_for": "Commercial vehicle and auto-driven accounts.",
+        },
+        {
+            "carrier": "Progressive Commercial",
+            "group": "Progressive",
+            "lines": ["auto"],
+            "market_category": "Commercial auto / trucking",
+            "base_score": 78,
+            "open_claim_sensitivity": 0.85,
+            "severity_sensitivity": 0.80,
+            "litigation_sensitivity": 0.85,
+            "best_for": "Commercial auto and transportation accounts with documented controls.",
+        },
+        {
+            "carrier": "Great West Casualty",
+            "group": "Great West",
+            "lines": ["auto", "cargo"],
+            "market_category": "Trucking specialty",
+            "base_score": 80,
+            "open_claim_sensitivity": 0.80,
+            "severity_sensitivity": 0.75,
+            "litigation_sensitivity": 0.75,
+            "best_for": "Trucking-focused accounts with auto liability and cargo exposure.",
+        },
+        {
+            "carrier": "Travelers",
+            "group": "Travelers",
+            "lines": ["auto", "gl", "wc"],
+            "market_category": "Standard commercial / middle market",
+            "base_score": 74,
+            "open_claim_sensitivity": 1.00,
+            "severity_sensitivity": 0.95,
+            "litigation_sensitivity": 0.95,
+            "best_for": "Standard commercial accounts with controlled loss activity.",
+        },
+        {
+            "carrier": "The Hartford",
+            "group": "The Hartford",
+            "lines": ["auto", "gl", "wc"],
+            "market_category": "Small commercial / middle market",
+            "base_score": 72,
+            "open_claim_sensitivity": 1.00,
+            "severity_sensitivity": 0.95,
+            "litigation_sensitivity": 0.95,
+            "best_for": "Small commercial and middle-market accounts with complete submission data.",
+        },
+        {
+            "carrier": "Liberty Mutual / State Auto",
+            "group": "Liberty Mutual / State Auto",
+            "lines": ["auto", "gl", "wc"],
+            "market_category": "Regional / standard commercial",
+            "base_score": 70,
+            "open_claim_sensitivity": 1.00,
+            "severity_sensitivity": 1.00,
+            "litigation_sensitivity": 1.00,
+            "best_for": "Regional commercial accounts with standard underwriting characteristics.",
+        },
+        {
+            "carrier": "CNA",
+            "group": "CNA",
+            "lines": ["gl", "wc", "auto"],
+            "market_category": "Middle market casualty",
+            "base_score": 70,
+            "open_claim_sensitivity": 1.05,
+            "severity_sensitivity": 1.00,
+            "litigation_sensitivity": 1.00,
+            "best_for": "Middle-market casualty accounts with complete risk documentation.",
+        },
+        {
+            "carrier": "Zurich",
+            "group": "Zurich",
+            "lines": ["auto", "gl", "wc", "cargo"],
+            "market_category": "Middle market / large account",
+            "base_score": 68,
+            "open_claim_sensitivity": 1.05,
+            "severity_sensitivity": 1.00,
+            "litigation_sensitivity": 1.00,
+            "best_for": "Larger or more complex accounts with strong submission support.",
+        },
+        {
+            "carrier": "biBerk",
+            "group": "Berkshire Hathaway / biBerk",
+            "lines": ["gl", "wc"],
+            "market_category": "Small business direct",
+            "base_score": 66,
+            "open_claim_sensitivity": 1.10,
+            "severity_sensitivity": 1.10,
+            "litigation_sensitivity": 1.10,
+            "best_for": "Smaller business GL/WC risks. Less ideal for heavier transportation severity.",
+        },
     ]
+
+    account_lines = []
+    if has_auto:
+        account_lines.append("auto")
+    if has_gl:
+        account_lines.append("gl")
+    if has_wc:
+        account_lines.append("wc")
+    if has_cargo:
+        account_lines.append("cargo")
+
     matches = []
-    for carrier, base in carriers:
-        score = base + (appetite_score - 70) * 0.35
-        if metrics["litigation_claims"] and carrier in ["Chubb", "Travelers"]: score -= 8
-        if metrics["open_claims"] >= 3 and carrier not in ["E&S / Specialty Market", "AmTrust"]: score -= 5
-        if appetite_score < 50 and carrier == "E&S / Specialty Market": score += 18
-        score = int(max(0, min(100, score)))
-        fit = "Excellent" if score >= 85 else "Strong" if score >= 75 else "Moderate" if score >= 65 else "Limited"
-        matches.append({"carrier": carrier, "match_score": score, "fit": fit, "reason": "Fit adjusted by claim frequency, severity, open reserves, and litigation."})
-    matches.sort(key=lambda x: x["match_score"], reverse=True)
-    return {"policy_number": policy_number, "is_credible": True, "top_carriers": matches[:5], "recommended_carrier": matches[0]["carrier"], "recommended_score": matches[0]["match_score"], "carrier_match_summary": f"LossQ recommends {matches[0]['carrier']} with a {matches[0]['match_score']}/100 match based on validated account-specific claims."}
+
+    for carrier in carrier_directory:
+        carrier_lines = set(carrier["lines"])
+        matching_lines = [line for line in account_lines if line in carrier_lines]
+
+        if not matching_lines:
+            # Keep a low score if there is no line fit; do not recommend as top match.
+            line_fit_score = -18
+        else:
+            line_fit_score = len(matching_lines) * 8
+
+        missing_line_penalty = max(0, len(account_lines) - len(matching_lines)) * 5
+
+        adjusted_pressure = (
+            open_claim_pressure * carrier["open_claim_sensitivity"]
+            + severity_pressure * carrier["severity_sensitivity"]
+            + litigation_pressure * carrier["litigation_sensitivity"]
+            + reserve_pressure
+            + frequency_pressure
+        )
+
+        score = round(
+            carrier["base_score"]
+            + line_fit_score
+            - missing_line_penalty
+            - min(45, adjusted_pressure)
+        )
+
+        score = int(max(20, min(95, score)))
+
+        if score >= 75:
+            fit = "Strong rules-based fit"
+        elif score >= 60:
+            fit = "Moderate rules-based fit"
+        elif score >= 45:
+            fit = "Conditional fit"
+        else:
+            fit = "Poor fit"
+
+        reasons = []
+
+        if matching_lines:
+            reasons.append(
+                "Line fit: "
+                + ", ".join(
+                    {
+                        "auto": "Auto Liability",
+                        "gl": "General Liability",
+                        "wc": "Workers Comp",
+                        "cargo": "Motor Truck Cargo",
+                    }.get(line, line)
+                    for line in matching_lines
+                )
+            )
+        else:
+            reasons.append("Limited line-of-business fit for this account.")
+
+        if open_claims > 0:
+            reasons.append(f"{open_claims} open claim(s) reduce appetite.")
+        if large_loss_count > 0:
+            reasons.append(f"{large_loss_count} large loss claim(s) require underwriting narrative.")
+        if litigation_claims > 0:
+            reasons.append(f"{litigation_claims} litigation/attorney indicator(s) require review.")
+        if total_reserve > 0:
+            reasons.append(f"Outstanding reserve exposure: ${total_reserve:,.0f}.")
+        if total_incurred > 0:
+            reasons.append(f"Total incurred reviewed: ${total_incurred:,.2f}.")
+
+        matches.append(
+            {
+                "carrier": carrier["carrier"],
+                "carrier_group": carrier["group"],
+                "market_category": carrier["market_category"],
+                "match_score": score,
+                "fit": fit,
+                "line_fit": matching_lines,
+                "reason": " ".join(reasons),
+                "best_for": carrier["best_for"],
+                "verification_note": "Rules-based LossQ match only. Final appetite, eligibility, appointment access, and quote availability must be verified with the carrier or broker market.",
+            }
+        )
+
+    matches = sorted(matches, key=lambda item: item["match_score"], reverse=True)
+
+    recommended = matches[0] if matches else None
+
+    if not recommended:
+        return {
+            **insufficient_response(policy_number, "carrier-match"),
+            "carrier_database_enabled": True,
+            "real_carrier_database_enabled": True,
+            "result_type": "no_match",
+            "top_carriers": [],
+            "recommended_carrier": "No carrier match available",
+            "recommended_score": None,
+            "carrier_match_summary": "No carrier match could be generated from the available claims.",
+        }
+
+    return {
+        "policy_number": policy_number,
+        "is_credible": True,
+        "carrier_database_enabled": True,
+        "real_carrier_database_enabled": True,
+        "result_type": "rules_based_named_carrier_match",
+        "top_carriers": matches[:5],
+        "recommended_carrier": recommended["carrier"],
+        "recommended_score": recommended["match_score"],
+        "carrier_match_summary": (
+            f"LossQ recommends {recommended['carrier']} with a {recommended['match_score']}/100 "
+            f"rules-based match. The match used {total_claims} validated claim(s), "
+            f"${total_incurred:,.2f} total incurred, {open_claims} open claim(s), "
+            f"{large_loss_count} large loss claim(s), and {litigation_claims} litigation/attorney indicator(s). "
+            "This is not a guaranteed quote or carrier acceptance; final appetite must be verified."
+        ),
+        "carrier_match_metrics": {
+            **metrics,
+            "coverage_lines_detected": sorted(account_lines),
+            "large_loss_count": large_loss_count,
+            "overall_pressure": overall_pressure,
+        },
+    }
 
 
 def build_premium_forecast_engine(claims, policy_number=None):
