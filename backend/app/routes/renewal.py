@@ -5,6 +5,10 @@ from datetime import datetime
 from app.database import SessionLocal
 from app.auth_utils import get_current_user
 from app.routes.summary import build_underwriting_intelligence, get_claims_for_account, data_quality, money, is_open_claim, has_litigation, is_flagged_claim
+from app.models.claim import Claim
+from app.models.account_profile import AccountProfile
+import json
+import re
 
 router = APIRouter(prefix="/renewal", tags=["Renewal"])
 
@@ -510,11 +514,215 @@ def build_premium_forecast_engine(claims, policy_number=None):
     return {"policy_number": policy_number, "is_credible": True, "current_premium": modeled_current, "expected_renewal_premium": expected, "expected_increase_percent": increase, "best_case_percent": max(-5, increase-10), "likely_range_percent": f"{max(-5, increase-10)}% to {min(150, increase+25)}%", "worst_case_percent": min(150, increase+25), "confidence_score": confidence, "forecast_drivers": drivers, "forecast_metrics": metrics, "forecast_summary": f"LossQ projects ${expected:,.0f}, an estimated {increase}% change from modeled current premium of ${modeled_current:,.0f}. This is a modeled forecast, not a carrier quote, based on loss ratio, claim frequency, open claim load, litigation, reserves, and renewal score."}
 
 
+def _safe_policy_json(value):
+    if value is None:
+        return []
+
+    if isinstance(value, list):
+        return value
+
+    if isinstance(value, dict):
+        return [value]
+
+    try:
+        parsed = json.loads(value)
+        if isinstance(parsed, list):
+            return parsed
+        if isinstance(parsed, dict):
+            return [parsed]
+    except Exception:
+        return []
+
+    return []
+
+
+def _policy_family_prefix(policy_number):
+    text = str(policy_number or "").strip().upper()
+
+    # Example: GP-AL-240177-01 -> GP
+    match = re.match(r"^([A-Z0-9]+)-(?:AL|GL|WC|CG)-", text)
+    if match:
+        return match.group(1)
+
+    # Fallback: use first token before dash.
+    if "-" in text:
+        return text.split("-", 1)[0]
+
+    return ""
+
+
+def _claim_policy_number(claim):
+    return str(
+        getattr(claim, "policy_number", None)
+        or getattr(claim, "policy_no", None)
+        or getattr(claim, "policy", None)
+        or ""
+    ).strip().upper()
+
+
+def _resolve_related_claims_for_renewal(db, current_user, policy_number):
+    """
+    Recovery resolver for renewal engines.
+
+    The normal summary.get_claims_for_account() can return zero when the selected
+    account policy is only one child policy, such as GP-AL-240177-01, while saved
+    claims exist under sibling policies GP-GL, GP-WC, and GP-CG.
+
+    This resolver only uses real saved database claims. It does not create demo
+    claims or synthetic scoring data.
+    """
+
+    organization_id = current_user.get("organization_id") if isinstance(current_user, dict) else None
+    selected_policy = str(policy_number or "").strip().upper()
+
+    if not organization_id or not selected_policy:
+        return [], [], {}
+
+    related_policy_numbers = set()
+
+    # 1. Find saved account profiles whose primary policy/account/policy schedule
+    # references the selected policy. Then include the whole policy schedule.
+    try:
+        profiles = (
+            db.query(AccountProfile)
+            .filter(AccountProfile.organization_id == organization_id)
+            .all()
+        )
+
+        for profile in profiles:
+            profile_policy_values = {
+                str(getattr(profile, "policy_number", "") or "").strip().upper(),
+                str(getattr(profile, "account_number", "") or "").strip().upper(),
+                str(getattr(profile, "customer_number", "") or "").strip().upper(),
+            }
+
+            policies = _safe_policy_json(getattr(profile, "policies", None))
+            schedule_policy_values = set()
+
+            for item in policies:
+                if not isinstance(item, dict):
+                    continue
+
+                pnum = str(
+                    item.get("policy_number")
+                    or item.get("policyNumber")
+                    or item.get("policy")
+                    or ""
+                ).strip().upper()
+
+                if pnum:
+                    schedule_policy_values.add(pnum)
+
+            all_profile_values = profile_policy_values | schedule_policy_values
+
+            if selected_policy in all_profile_values:
+                related_policy_numbers.update(value for value in all_profile_values if value)
+
+                profile_data = {
+                    "id": getattr(profile, "id", None),
+                    "business_name": getattr(profile, "business_name", None),
+                    "insured": getattr(profile, "business_name", None),
+                    "carrier_name": getattr(profile, "carrier_name", None),
+                    "writing_carrier": getattr(profile, "writing_carrier", None),
+                    "policy_number": getattr(profile, "policy_number", None),
+                    "account_number": getattr(profile, "account_number", None),
+                    "customer_number": getattr(profile, "customer_number", None),
+                    "effective_date": getattr(profile, "effective_date", None),
+                    "expiration_date": getattr(profile, "expiration_date", None),
+                    "policies": policies,
+                }
+
+                break
+        else:
+            profile_data = {}
+    except Exception:
+        profile_data = {}
+
+    # 2. If no profile schedule was found, use policy family pattern.
+    # Example: GP-AL-240177-01 should include GP-GL, GP-WC, GP-CG sibling policies
+    # saved in the same organization.
+    if not related_policy_numbers:
+        family_prefix = _policy_family_prefix(selected_policy)
+
+        if family_prefix:
+            try:
+                family_claims = (
+                    db.query(Claim)
+                    .filter(Claim.organization_id == organization_id)
+                    .filter(Claim.policy_number.ilike(f"{family_prefix}-%"))
+                    .all()
+                )
+
+                for claim in family_claims:
+                    pnum = _claim_policy_number(claim)
+                    if pnum:
+                        related_policy_numbers.add(pnum)
+            except Exception:
+                pass
+
+    related_policy_numbers.add(selected_policy)
+
+    # 3. Pull real saved claims for the related policy set.
+    try:
+        claims = (
+            db.query(Claim)
+            .filter(Claim.organization_id == organization_id)
+            .filter(Claim.policy_number.in_(list(related_policy_numbers)))
+            .all()
+        )
+    except Exception:
+        claims = []
+
+    # 4. If strict related set still finds nothing, do one final family-prefix
+    # database lookup. This is still real saved claims only.
+    if not claims:
+        family_prefix = _policy_family_prefix(selected_policy)
+
+        if family_prefix:
+            try:
+                claims = (
+                    db.query(Claim)
+                    .filter(Claim.organization_id == organization_id)
+                    .filter(Claim.policy_number.ilike(f"{family_prefix}-%"))
+                    .all()
+                )
+
+                related_policy_numbers.update(
+                    _claim_policy_number(claim) for claim in claims if _claim_policy_number(claim)
+                )
+            except Exception:
+                claims = []
+
+    return claims, sorted(value for value in related_policy_numbers if value), profile_data
+
+
+
 def engine_response(builder, db, current_user, policy_number):
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
+
+    if not claims and policy_number:
+        recovered_claims, recovered_policy_numbers, recovered_profile = _resolve_related_claims_for_renewal(
+            db,
+            current_user,
+            policy_number,
+        )
+
+        if recovered_claims:
+            claims = recovered_claims
+            policy_numbers_used = recovered_policy_numbers
+            profile_data = recovered_profile or profile_data or {}
+
     quality = data_quality(claims, policy_numbers_used, profile_data)
     result = builder(claims, policy_number)
-    return {**result, "data_quality": quality, "is_credible": quality["is_credible"], "claims_used": len(claims), "policy_numbers_used": policy_numbers_used, "account_profile": profile_data}
+
+    return {
+        **result,
+        "data_quality": quality,
+        "is_credible": quality["is_credible"],
+        "claims_used": len(claims),
+        "policy_numbers_used": policy_numbers_used,
+        "account_profile": profile_data,
+    }
 
 
 @router.get("/decision")
