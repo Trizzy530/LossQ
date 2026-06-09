@@ -3106,7 +3106,7 @@ const trendNoteDisplay =
                   className="text-sm text-slate-300 file:mr-4 file:rounded-xl file:border-0 file:bg-blue-600 file:px-4 file:py-3 file:text-white file:font-semibold"
                 />
 
-                <button onClick={uploadFiles} disabled={isUploading} className="btn-primary" style={{opacity: isUploading ? 0.5 : 1,       		cursor: is
+                <button onClick={uploadFiles} disabled={isUploading} className="btn-primary" style={{opacity: isUploading ? 0.5 : 1, cursor: isUploading ? 'not-allowed' : 'pointer'}}>{isUploading ? "Uploading..." : "Upload & Analyze"}</button>
                 <button onClick={exportCarrierLossRun} className="btn-success">Export Carrier Loss Run</button>
                 <button onClick={exportExecutiveReport} className="btn-success">Export Executive Report</button>
                 <button onClick={generateCarrierPacket} className="btn-purple">Generate Carrier Packet</button>
