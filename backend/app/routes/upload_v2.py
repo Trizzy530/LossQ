@@ -1243,7 +1243,17 @@ async def save_uploaded_files_v2(
             if _valid_policy_number(policy_item_number):
                 detected_policy_numbers.add(policy_item_number)
 
-        parsed_profile["policy_number"] = _clean(file_policy_number).upper() if can_persist_policy else ""
+        # Use first policy from schedule as primary - more reliable than claim-based detection
+        primary_policy_number = ""
+        if parsed_policies:
+            for _p in parsed_policies:
+                _pn = _policy_item_number(_p)
+                if _valid_policy_number(_pn):
+                    primary_policy_number = _pn
+                    break
+        if not primary_policy_number:
+            primary_policy_number = _clean(file_policy_number).upper() if can_persist_policy else ""
+        parsed_profile["policy_number"] = primary_policy_number
         parsed_profile["account_number"] = (
             _first_real_value(parsed_profile.get("account_number"))
             or (_clean(file_policy_number).upper() if can_persist_policy else "")
@@ -1528,3 +1538,4 @@ async def save_uploaded_files_v2(
         "raw_parsed_claims": all_parsed_claims,
         "claim_count": len(all_repaired_claims),
     }
+
