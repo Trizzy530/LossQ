@@ -746,6 +746,14 @@ if (activeProfile?.policy_number) {
             ...firstNonEmptyArray(activeProfile?.policies, profile?.policies).map(
               (item: any) => item?.policy_number
             ),
+            // Also include all policies from cached profiles matching this account
+            ...getCachedProfiles()
+              .filter((p: any) =>
+                normalizePolicyNumber(p?.policy_number) === normalizePolicyNumber(policyNumber) ||
+                normalizePolicyNumber(p?.account_number) === normalizePolicyNumber(policyNumber) ||
+                (p?.policies || []).some((pol: any) => normalizePolicyNumber(pol?.policy_number) === normalizePolicyNumber(policyNumber))
+              )
+              .flatMap((p: any) => (p?.policies || []).map((pol: any) => pol?.policy_number)),
             ...(Array.isArray(cachedUploadForPolicy?.policy_numbers)
               ? cachedUploadForPolicy.policy_numbers
               : []),
