@@ -327,6 +327,7 @@ export default function DashboardPage() {
   const [claims, setClaims] = useState<any[]>([]);
   const [isUploading, setIsUploading] = useState(false);
   const activeProfileRef = useRef<any>({});
+  const dashboardLoadingRef = useRef(false);
   const [summary, setSummary] = useState<any>({});
   const [decision, setDecision] = useState<any>({});
   const [carrierAppetite, setCarrierAppetite] = useState<any>({});
@@ -573,6 +574,8 @@ function normalizeProfileName(item: any) {
       return;
     }
 
+    if (dashboardLoadingRef.current) return;
+    dashboardLoadingRef.current = true;
     setDashboardLoading(true);
     setDashboardError("");
 
@@ -962,6 +965,7 @@ if (submissionBuilderRes.ok) {
       setTimeline({});
     } finally {
       setDashboardLoading(false);
+      dashboardLoadingRef.current = false;
     }
   }
 
@@ -4187,6 +4191,13 @@ function ChartCard({
     </div>
   );
 }
+
+
+
+
+
+
+
 
 
 
