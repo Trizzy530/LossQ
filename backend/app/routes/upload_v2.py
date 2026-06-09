@@ -260,7 +260,7 @@ def _policy_by_claim_prefix(claim_number: Any, policies: List[Dict[str, Any]]) -
         policy_number = _policy_item_number(policy)
         policy_upper = policy_number.upper()
 
-        if claim.startswith("AL") and "-AL-" in policy_upper:
+if claim.startswith("AL") and ("-AL-" in policy_upper or "-CA-" in policy_upper):
             return policy_number
         if claim.startswith("GL") and "-GL-" in policy_upper:
             return policy_number
