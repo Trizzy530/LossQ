@@ -765,9 +765,13 @@ if (activeProfile?.policy_number) {
             .filter(Boolean)
         );
 
+        console.log("DEBUG policySet:", [...policySet]);
+        console.log("DEBUG serverClaims:", serverClaims.length);
+        console.log("DEBUG sample claim policy:", serverClaims[0]?.policy_number);
         const serverMatches = policySet.size > 0
           ? serverClaims.filter((claim: any) => claimMatchesPolicySet(claim, policySet))
           : serverClaims;
+        console.log("DEBUG serverMatches:", serverMatches.length);
 
         const currentUpload = getCachedCurrentUpload();
         const currentUploadPolicies = new Set(
