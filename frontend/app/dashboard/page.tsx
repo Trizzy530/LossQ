@@ -979,8 +979,11 @@ if (submissionBuilderRes.ok) {
       setProfile(cachedMatch);
     }
     await loadDashboard(policyNumber);
-  const profileId = profileToDelete?.id;
-  const policyNumber =
+    setMessage(`Loaded policy ${policyNumber}.`);
+  }
+  async function deleteProfile(profileToDelete: any) {
+    const profileId = profileToDelete?.id;
+    const policyNumber =
     profileToDelete?.policy_number ||
     profileToDelete?.account_number ||
     profileToDelete?.customer_number ||
