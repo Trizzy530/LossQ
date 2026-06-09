@@ -2237,8 +2237,21 @@ function isInsufficientBackendMessage(value: any) {
   );
 }
 
+const hasRealCurrentPremium =
+  Number(premiumForecast?.current_premium || 0) > 0 ||
+  Number(premiumForecast?.currentPremium || 0) > 0 ||
+  Number(profile?.current_premium || 0) > 0 ||
+  Number(displayProfile?.current_premium || 0) > 0;
+
+const realCurrentPremium =
+  Number(premiumForecast?.current_premium || 0) ||
+  Number(premiumForecast?.currentPremium || 0) ||
+  Number(profile?.current_premium || 0) ||
+  Number(displayProfile?.current_premium || 0) ||
+  0;
+
 const localPremiumIncreasePercent =
-  visibleClaims.length > 0
+  intelligenceClaims.length > 0
     ? localRenewalRiskLevel === "Low"
       ? 5
       : localRenewalRiskLevel === "Moderate"
@@ -2248,47 +2261,114 @@ const localPremiumIncreasePercent =
       : 40
     : null;
 
-const localPremiumConfidence = visibleClaims.length > 0 ? Math.min(85, 55 + Math.min(30, visibleClaims.length * 5)) : null;
+const localPremiumConfidence =
+  intelligenceClaims.length > 0
+    ? Math.min(85, 55 + Math.min(30, intelligenceClaims.length * 5))
+    : null;
+
+const localPremiumBestCase =
+  localPremiumIncreasePercent != null
+    ? Math.max(0, localPremiumIncreasePercent - 8)
+    : null;
+
+const localPremiumWorstCase =
+  localPremiumIncreasePercent != null
+    ? localPremiumIncreasePercent + 18
+    : null;
+
+const localExpectedRenewalPremium =
+  hasRealCurrentPremium && localPremiumIncreasePercent != null
+    ? Math.round(realCurrentPremium * (1 + localPremiumIncreasePercent / 100))
+    : null;
+
+const premiumBackendHasUsableForecast =
+  Number(premiumForecast?.current_premium || 0) > 0 &&
+  Number(premiumForecast?.expected_renewal_premium || 0) > 0 &&
+  !isInsufficientBackendMessage(premiumForecast?.forecast_summary);
+
+const localForecastDrivers =
+  intelligenceClaims.length > 0
+    ? [
+        `${intelligenceClaims.length} validated claim row(s) loaded for the selected account.`,
+        `${localOpenClaimCount} open claim(s) affecting renewal pressure.`,
+        `$${Number(localClaimTotal || 0).toLocaleString()} total incurred losses.`,
+        `${localLargeLossCount} large loss claim(s) at or above $50,000.`,
+        `${localLitigationCount} litigation/attorney indicator(s).`,
+        hasRealCurrentPremium
+          ? `Current premium of $${Number(realCurrentPremium || 0).toLocaleString()} was used to estimate renewal premium.`
+          : "Current premium/exposure data is missing, so LossQ is showing a claim-based pressure estimate instead of a renewal dollar projection.",
+      ]
+    : ["No validated claims were available."];
 
 const effectivePremiumForecast =
   validatedClaimsAvailable
     ? {
         ...(premiumForecast || {}),
-        current_premium: premiumForecast?.current_premium ?? 0,
-        expected_renewal_premium: premiumForecast?.expected_renewal_premium ?? 0,
+
+        forecast_type: hasRealCurrentPremium
+          ? "premium_projection"
+          : "claim_based_pressure_estimate",
+
+        current_premium: hasRealCurrentPremium ? realCurrentPremium : null,
+
+        expected_renewal_premium:
+          premiumBackendHasUsableForecast
+            ? premiumForecast.expected_renewal_premium
+            : localExpectedRenewalPremium,
+
         expected_increase_percent:
-          premiumForecast?.expected_increase_percent ?? localPremiumIncreasePercent,
-        confidence_score: premiumForecast?.confidence_score ?? localPremiumConfidence,
+          premiumBackendHasUsableForecast
+            ? premiumForecast.expected_increase_percent
+            : localPremiumIncreasePercent,
+
+        confidence_score:
+          premiumBackendHasUsableForecast
+            ? premiumForecast.confidence_score
+            : localPremiumConfidence,
+
         best_case_percent:
-          premiumForecast?.best_case_percent ??
-          (localPremiumIncreasePercent != null ? Math.max(0, localPremiumIncreasePercent - 8) : 0),
+          premiumBackendHasUsableForecast
+            ? premiumForecast.best_case_percent
+            : localPremiumBestCase,
+
         likely_range_percent:
-          premiumForecast?.likely_range_percent ||
-          (localPremiumIncreasePercent != null
-            ? `${Math.max(0, localPremiumIncreasePercent - 5)}% to ${localPremiumIncreasePercent + 10}%`
-            : "-"),
+          premiumBackendHasUsableForecast
+            ? premiumForecast.likely_range_percent
+            : localPremiumIncreasePercent != null
+            ? `${Math.max(0, localPremiumIncreasePercent - 5)}% to ${
+                localPremiumIncreasePercent + 10
+              }%`
+            : "-",
+
         worst_case_percent:
-          premiumForecast?.worst_case_percent ??
-          (localPremiumIncreasePercent != null ? localPremiumIncreasePercent + 18 : 0),
+          premiumBackendHasUsableForecast
+            ? premiumForecast.worst_case_percent
+            : localPremiumWorstCase,
+
         forecast_drivers:
-          premiumForecast?.forecast_drivers?.length
+          premiumBackendHasUsableForecast &&
+          Array.isArray(premiumForecast?.forecast_drivers) &&
+          premiumForecast.forecast_drivers.length > 0 &&
+          !premiumForecast.forecast_drivers.some((item: any) =>
+            isInsufficientBackendMessage(item)
+          )
             ? premiumForecast.forecast_drivers
-            : [
-                `${intelligenceClaims.length} validated claim row(s) loaded for the selected account.`,
-                `${localOpenClaimCount} open claim(s) affecting renewal pressure.`,
-                `$${Number(localClaimTotal || 0).toLocaleString()} total incurred losses.`,
-                `${localLargeLossCount} large loss claim(s) at or above $50,000.`,
-                `${localLitigationCount} litigation/attorney indicator(s).`,
-              ],
+            : localForecastDrivers,
+
         forecast_summary:
-          !isInsufficientBackendMessage(premiumForecast?.forecast_summary)
+          premiumBackendHasUsableForecast
             ? premiumForecast.forecast_summary
-            : `LossQ has validated claim rows for this account. Without current premium/exposure data, this is a claim-based renewal pressure estimate. The modeled premium movement is approximately ${localPremiumIncreasePercent ?? 0}% based on claim frequency, severity, open claims, litigation indicators, and total incurred losses.`,
+            : hasRealCurrentPremium
+            ? `LossQ generated a claim-based renewal premium projection using ${intelligenceClaims.length} validated claim row(s), $${Number(localClaimTotal || 0).toLocaleString()} total incurred, ${localOpenClaimCount} open claim(s), ${localLargeLossCount} large loss claim(s), and a current premium of $${Number(realCurrentPremium || 0).toLocaleString()}. Estimated pressure is approximately ${localPremiumIncreasePercent ?? 0}%.`
+            : `LossQ has validated claim rows for this account, but no current premium or exposure basis was provided. No renewal dollar amount is being projected. The displayed ${localPremiumIncreasePercent ?? 0}% is a claims-derived renewal pressure estimate based on claim frequency, severity, open claims, litigation indicators, and total incurred losses.`,
+
         claims_used: intelligenceClaims.length,
-        policy_numbers_used: activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
-        data_source: backendSaysInsufficient ? "local_visible_claims_fallback" : "local_visible_claims",
+        policy_numbers_used:
+          activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
+        data_source: "local_visible_claims",
       }
     : premiumForecast;
+
 
 const backendTopCarriersAreUsable =
   Array.isArray(carrierMatch?.top_carriers) &&
