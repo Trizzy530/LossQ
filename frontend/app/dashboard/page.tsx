@@ -601,10 +601,13 @@ function normalizeProfileName(item: any) {
             (item) => normalizePolicyNumber(item?.policy_number) === requestedPolicyNumber
           );
 
-          activeProfile = {
+          aactiveProfile = {
             ...(cachedMatch || {}),
             ...fetchedProfile,
             policies:
+              ((fetchedProfile?.policies?.length || 0) >= (cachedMatch?.policies?.length || 0)
+                ? fetchedProfile?.policies
+                : cachedMatch?.policies) ||
               fetchedProfile?.policies ||
               cachedMatch?.policies ||
               profile?.policies ||
