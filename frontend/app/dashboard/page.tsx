@@ -1655,11 +1655,54 @@ async function saveProfile() {
     }
 
     const primaryData = uploadResults[uploadResults.length - 1] || {};
-    const primaryProfile =
-      primaryData?.profile ||
-      primaryData?.account_profile ||
-      primaryData?.accountProfile ||
-      {};
+
+    const allUploadProfiles = uploadResults
+      .map((item) => item?.profile || item?.account_profile || item?.accountProfile || {})
+      .filter((item) => item && typeof item === "object");
+
+    const mergedUploadProfile = allUploadProfiles.reduce((acc: any, item: any) => {
+      Object.entries(item || {}).forEach(([key, value]) => {
+        if (
+          value !== "" &&
+          value !== null &&
+          value !== undefined &&
+          !(Array.isArray(value) && value.length === 0)
+        ) {
+          if (key === "policies") {
+            acc.policies = [
+              ...(Array.isArray(acc.policies) ? acc.policies : []),
+              ...(Array.isArray(value) ? value : []),
+            ];
+          } else if (!acc[key] || isBadPolicyNumberValue(acc[key])) {
+            acc[key] = value;
+          }
+        }
+      });
+
+      return acc;
+    }, {});
+
+    const mergedAccountKey = chooseSafePolicyNumber(
+      mergedUploadProfile?.account_number,
+      mergedUploadProfile?.customer_number,
+      primaryData?.account_number,
+      primaryData?.customer_number,
+      primaryData?.account_profile?.account_number,
+      primaryData?.account_profile?.customer_number,
+      primaryData?.profile?.account_number,
+      primaryData?.profile?.customer_number
+    );
+
+    const primaryProfile = {
+      ...mergedUploadProfile,
+      account_number: mergedUploadProfile?.account_number || mergedAccountKey || "",
+      customer_number:
+        mergedUploadProfile?.customer_number ||
+        mergedUploadProfile?.account_number ||
+        mergedAccountKey ||
+        "",
+      policy_number: mergedAccountKey || chooseSafePolicyNumber(mergedUploadProfile?.policy_number) || "",
+    };
     const uploadedFileNames = selectedFiles.map((file) => file.name).join(", ");
 
     const combinedClaims = uploadResults.flatMap((item) =>
@@ -1818,6 +1861,7 @@ async function saveProfile() {
     const uploadedPolicyNumber = chooseSafePolicyNumber(
       primaryProfile?.account_number,
       primaryProfile?.customer_number,
+      mergedAccountKey,
       primaryData?.account_number,
       primaryData?.customer_number,
       primaryData?.account_profile?.account_number,
