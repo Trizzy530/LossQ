@@ -63,6 +63,7 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const [organizationName, setOrganizationName] = useState("");
   const [fullName, setFullName] = useState("");
@@ -182,6 +183,11 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
 
       if (stepOneError || stepTwoError) {
         setMessage(stepOneError || stepTwoError);
+        return;
+      }
+
+      if (mode === "register" && step === 2 && !acceptedTerms) {
+        setMessage("You must accept the Terms, Privacy Policy, AI Disclaimer, and Insurance Disclaimer before creating an account.");
         return;
       }
 
@@ -399,6 +405,7 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
 
         {mode === "register" && step === 1 ? (
           <button
+            type="button"
             onClick={nextStep}
             disabled={loading}
             className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg py-3 font-bold"
@@ -406,17 +413,39 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
             Continue
           </button>
         ) : (
-          <button
-            onClick={submit}
-            disabled={loading}
-            className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 rounded-lg py-3 font-bold"
-          >
-            {loading ? "Please wait..." : mode === "login" ? "Login" : "Create Account"}
-          </button>
+          <>
+            {mode === "register" && step === 2 && (
+              <label className="mt-4 mb-4 flex items-start gap-3 rounded-xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm text-slate-200">
+                <input
+                  type="checkbox"
+                  checked={acceptedTerms}
+                  onChange={(e) => setAcceptedTerms(e.target.checked)}
+                  className="mt-1 h-4 w-4 accent-cyan-400"
+                />
+                <span>
+                  I agree to the{" "}
+                  <a href="/terms" className="text-cyan-300 hover:underline">Terms</a>,{" "}
+                  <a href="/privacy" className="text-cyan-300 hover:underline">Privacy Policy</a>,{" "}
+                  <a href="/ai-disclaimer" className="text-cyan-300 hover:underline">AI Disclaimer</a>, and{" "}
+                  <a href="/insurance-disclaimer" className="text-cyan-300 hover:underline">Insurance Disclaimer</a>.
+                </span>
+              </label>
+            )}
+
+            <button
+              type="button"
+              onClick={submit}
+              disabled={loading || (mode === "register" && step === 2 && !acceptedTerms)}
+              className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed rounded-lg py-3 font-bold"
+            >
+              {loading ? "Please wait..." : mode === "login" ? "Login" : "Create Account"}
+            </button>
+          </>
         )}
 
         {mode === "register" && step === 2 && (
           <button
+            type="button"
             onClick={() => setStep(1)}
             className="w-full mt-3 text-slate-300 hover:text-white text-sm"
           >
