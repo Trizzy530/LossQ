@@ -577,8 +577,6 @@ function normalizeProfileName(item: any) {
 
     if (dashboardLoadingRef.current) return;
     dashboardLoadingRef.current = true;
-    const myVersion = ++loadVersionRef.current;
-    console.log("LOAD START version=" + myVersion + " policy=" + policyNumberOverride, new Error().stack?.split("\n")[2]);
     setDashboardLoading(true);
     setDashboardError("");
 
@@ -742,8 +740,6 @@ if (activeProfile?.policy_number) {
       */
       const claimsRes = await fetch(`${API}/claims/`, { headers: authHeaders() });
 
-      console.log("CLAIMS RES STATUS:", claimsRes.status);
-      console.log("CLAIMS RES STATUS:", claimsRes.status);
       if (claimsRes.status === 401 || claimsRes.status === 403) {
         clearSession();
         router.replace("/login?expired=1");
@@ -787,13 +783,10 @@ if (activeProfile?.policy_number) {
             .filter(Boolean)
         );
 
-        console.log("DEBUG policySet:", [...policySet]);
-        console.log("DEBUG serverClaims:", serverClaims.length);
-        console.log("DEBUG sample claim policy:", serverClaims[0]?.policy_number);
+
         const serverMatches = policySet.size > 0
           ? serverClaims.filter((claim: any) => claimMatchesPolicySet(claim, policySet))
           : serverClaims;
-        console.log("DEBUG serverMatches:", serverMatches.length);
 
         const currentUpload = getCachedCurrentUpload();
         const currentUploadPolicies = new Set(
@@ -825,14 +818,13 @@ if (activeProfile?.policy_number) {
         // 3. Older cache only when no current upload is active.
         // 4. Empty array. Never fall back to unrelated organization-wide claims.
         if (currentUploadApplies) {
-        if (myVersion === loadVersionRef.current) setClaims(currentUploadMatches);
+        setClaims(currentUploadMatches);
         } else if (serverMatches.length > 0) {
-        console.log("VERSION CHECK myVersion=" + myVersion + " current=" + loadVersionRef.current);
-        if (myVersion === loadVersionRef.current) setClaims(serverMatches);
+        setClaims(serverMatches);
         } else if (cachedMatches.length > 0) {
-        if (myVersion === loadVersionRef.current) setClaims(cachedMatches);
+        setClaims(cachedMatches);
         } else {
-          if (myVersion === loadVersionRef.current) setClaims([]);
+          setClaims([]);
         }
       } else {
         const currentUpload = getCachedCurrentUpload();
@@ -1892,8 +1884,6 @@ const hasActiveAccount = Boolean(
     activePolicyNumbers.length > 0 ||
     summary?.claims_used != null
 );
-
-console.log("DEBUG refPolicies from ref:", (activeProfileRef.current?.policies || []).map((p: any) => p?.policy_number));
 const refPolicies = (activeProfileRef.current?.policies || []).map(function(p: any) { return (p && p.policy_number || "").trim().toUpperCase(); }).filter(Boolean);
 const effectivePolicyNumbers = refPolicies.length > 0 ? refPolicies : activePolicyNumbers;
 const filteredVisibleClaims = hasActiveAccount
