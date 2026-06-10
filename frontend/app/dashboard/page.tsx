@@ -736,7 +736,7 @@ if (activeProfile?.policy_number) {
         like SA-ACCT-580219 can count child-policy claims such as SA-AUTO,
         SA-GL, SA-CARGO, and SA-WC correctly.
       */
-      const claimsRes = await fetch(`${API}/claims/`, { headers: authHeaders() });
+      const claimsRes = await fetch(`${API}/claims/${(() => { const ps = [...new Set([(activeProfileRef.current?.policies || []).map((p: any) => (p?.policy_number || '').trim().toUpperCase()).filter(Boolean), getCachedProfiles().filter((p: any) => normalizePolicyNumber(p?.policy_number) === normalizePolicyNumber(requestedPolicyNumber) || (p?.policies || []).some((pol: any) => normalizePolicyNumber(pol?.policy_number) === normalizePolicyNumber(requestedPolicyNumber))).flatMap((p: any) => (p?.policies || []).map((pol: any) => (pol?.policy_number || '').trim().toUpperCase()))].flat().filter(Boolean))]; return ps.length > 0 ? '?policy_numbers=' + ps.join(',') : ''; })()}`, { headers: authHeaders() });
 
       if (claimsRes.status === 401 || claimsRes.status === 403) {
         clearSession();

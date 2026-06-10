@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, Query
+﻿from fastapi import APIRouter, Depends, HTTPException, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect, func
 from typing import Any
@@ -270,3 +270,4 @@ def bulk_delete_claims(
     )
     db.commit()
     return {"deleted": True, "claims_deleted": deleted}
+
