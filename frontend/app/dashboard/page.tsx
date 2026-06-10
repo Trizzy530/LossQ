@@ -3056,6 +3056,128 @@ const trendNoteDisplay =
                   </div>
                 )}
               </section>
+
+              {Array.isArray(profile?.policies) && profile.policies.length > 0 && (
+                <section className="glass-panel p-6 md:p-8 mt-6">
+                  <div className="flex flex-col gap-2 mb-5">
+                    <h2 className="text-2xl md:text-3xl font-bold">
+                      Policy Lines / Coverage Schedule
+                    </h2>
+                    <p className="text-sm text-slate-400">
+                      Multiple lines of business detected from this uploaded loss run.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-2 xl:grid-cols-3 gap-4">
+                    {profile.policies.map((pol: any, index: number) => {
+                      const policyNumber =
+                        pol?.policy_number ||
+                        pol?.policy_no ||
+                        pol?.policy ||
+                        pol?.account_number ||
+                        "";
+
+                      const lineOfBusiness =
+                        pol?.line_of_business ||
+                        pol?.lob ||
+                        pol?.coverage_line ||
+                        pol?.coverage ||
+                        pol?.policy_line ||
+                        pol?.line ||
+                        "Commercial Line";
+
+                      const carrierName =
+                        pol?.carrier_name ||
+                        pol?.writing_carrier ||
+                        profile?.carrier_name ||
+                        profile?.writing_carrier ||
+                        "Carrier Not Set";
+
+                      const effectiveDate =
+                        pol?.effective_date ||
+                        pol?.policy_effective_date ||
+                        profile?.effective_date ||
+                        "Not Set";
+
+                      const expirationDate =
+                        pol?.expiration_date ||
+                        pol?.policy_expiration_date ||
+                        pol?.expiry_date ||
+                        profile?.expiration_date ||
+                        "Not Set";
+
+                      const policyClaimCount = claims.filter((claim: any) => {
+                        const claimPolicy = normalizePolicyNumber(claim?.policy_number);
+                        const schedulePolicy = normalizePolicyNumber(policyNumber);
+                        const claimLob = String(
+                          claim?.line_of_business ||
+                          claim?.lob ||
+                          claim?.coverage_line ||
+                          ""
+                        ).toLowerCase();
+
+                        const scheduleLob = String(lineOfBusiness || "").toLowerCase();
+
+                        return (
+                          (schedulePolicy && claimPolicy === schedulePolicy) ||
+                          (scheduleLob && claimLob && claimLob.includes(scheduleLob))
+                        );
+                      }).length;
+
+                      return (
+                        <div
+                          key={`${policyNumber || lineOfBusiness}-${index}`}
+                          className="rounded-2xl border border-white/10 bg-white/5 p-5"
+                        >
+                          <p className="text-xs uppercase tracking-[0.25em] text-blue-300 mb-2">
+                            {lineOfBusiness}
+                          </p>
+
+                          <div className="space-y-2 text-sm">
+                            <div>
+                              <p className="text-slate-400">Policy Number</p>
+                              <p className="font-semibold text-white">
+                                {policyNumber || "Not Set"}
+                              </p>
+                            </div>
+
+                            <div>
+                              <p className="text-slate-400">Carrier</p>
+                              <p className="font-semibold text-white">
+                                {carrierName}
+                              </p>
+                            </div>
+
+                            <div className="grid grid-cols-2 gap-3">
+                              <div>
+                                <p className="text-slate-400">Effective</p>
+                                <p className="font-semibold text-white">
+                                  {effectiveDate}
+                                </p>
+                              </div>
+
+                              <div>
+                                <p className="text-slate-400">Expiration</p>
+                                <p className="font-semibold text-white">
+                                  {expirationDate}
+                                </p>
+                              </div>
+                            </div>
+
+                            <div>
+                              <p className="text-slate-400">Claims</p>
+                              <p className="font-semibold text-white">
+                                {policyClaimCount}
+                              </p>
+                            </div>
+                          </div>
+                        </div>
+                      );
+                    })}
+                  </div>
+                </section>
+              )}
+
             </>
           )}
           
