@@ -1420,3 +1420,262 @@ def _lossq_enrich_profile_with_exposure(raw_text="", profile=None, claims=None, 
 
     return profile
 
+
+
+# LOSSQ_VERTICAL_POLICY_WORKSHEET_V4
+# Parses messy vertical policy schedules and Field/Value premium worksheets.
+
+def _lossq_v4_clean(value):
+    return str(value or "").strip()
+
+
+def _lossq_v4_money(value):
+    return _lossq_clean_money(value)
+
+
+def _lossq_v4_good_policy(value):
+    pol = _lossq_normalize_policy(value)
+
+    if not pol:
+        return False
+
+    bad_values = {
+        "LINE-COVERAGE",
+        "LINECOVERAGE",
+        "POLICY",
+        "POLICY#",
+        "POLICYNUMBER",
+        "EXPOSUREBASIS",
+        "CURRENTTOTALPREMIUM",
+        "EXPIRINGPREMIUM",
+        "TARGETRENEWAL",
+    }
+
+    if pol in bad_values:
+        return False
+
+    prefixes = (
+        "GL-", "CGL-", "WC-", "WCP-", "CY-", "CYB-", "CP-", "CPP-", "BOP-",
+        "EO-", "E&O-", "IM-", "UMB-", "XS-", "DO-", "DNO-", "EP-", "EPLI-",
+        "AUTO-", "BAP-", "CA-", "MTC-", "CARGO-"
+    )
+
+    return pol.startswith(prefixes) and len(pol) >= 8
+
+
+def _lossq_v4_policy_type(policy_number, line_text=""):
+    pol = _lossq_normalize_policy(policy_number)
+    line = _lossq_v4_clean(line_text).lower()
+
+    if pol.startswith(("GL-", "CGL-")) or "general liability" in line:
+        return "General Liability"
+    if pol.startswith(("WC-", "WCP-")) or "workers comp" in line:
+        return "Workers Compensation"
+    if pol.startswith(("CY-", "CYB-")) or "cyber" in line:
+        return "Cyber Liability"
+    if pol.startswith(("CP-", "CPP-")) or "property" in line:
+        return "Commercial Property"
+    if pol.startswith("BOP-") or "bop" in line or "package" in line:
+        return "Businessowners Policy"
+    if pol.startswith(("EO-", "E&O-", "PROF-")) or "professional" in line or "e&o" in line:
+        return "Professional Liability"
+    if pol.startswith("IM-") or "inland marine" in line:
+        return "Inland Marine"
+    if pol.startswith(("UMB-", "XS-")) or "umbrella" in line or "excess" in line:
+        return "Umbrella / Excess"
+    if pol.startswith(("DO-", "DNO-")) or "d&o" in line:
+        return "Directors & Officers"
+    if pol.startswith(("EP-", "EPLI-")) or "epli" in line or "employment" in line:
+        return "Employment Practices Liability"
+    if pol.startswith(("AUTO-", "BAP-", "CA-")) or "auto" in line:
+        return "Commercial Auto"
+    if pol.startswith(("MTC-", "CARGO-")) or "cargo" in line:
+        return "Motor Truck Cargo"
+
+    return "Commercial Policy"
+
+
+def _lossq_v4_parse_vertical_policy_schedule(raw_text, profile=None):
+    profile = profile or {}
+    text = _lossq_text(raw_text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    carrier_fallback = _lossq_profile_carrier(profile, text)
+
+    policies = []
+
+    for i, line in enumerate(lines):
+        if not _lossq_v4_good_policy(line):
+            continue
+
+        policy_number = _lossq_normalize_policy(line)
+
+        line_coverage = lines[i + 1] if i + 1 < len(lines) else ""
+        carrier = lines[i + 2] if i + 2 < len(lines) else carrier_fallback
+        effective = lines[i + 3] if i + 3 < len(lines) else profile.get("effective_date", "")
+        expiration = lines[i + 4] if i + 4 < len(lines) else profile.get("expiration_date", "")
+        limits = lines[i + 5] if i + 5 < len(lines) else ""
+        deductible = lines[i + 6] if i + 6 < len(lines) else ""
+        exposure_basis = lines[i + 7] if i + 7 < len(lines) else ""
+
+        if _lossq_is_bad_value(carrier):
+            carrier = carrier_fallback
+
+        lob = _lossq_v4_policy_type(policy_number, line_coverage)
+
+        policies.append({
+            "policy_type": lob,
+            "line_of_business": lob,
+            "coverage": line_coverage or lob,
+            "policy_number": policy_number,
+            "writing_carrier": carrier or carrier_fallback,
+            "carrier": carrier or carrier_fallback,
+            "effective_date": effective,
+            "expiration_date": expiration,
+            "limits": limits,
+            "coverage_limit": limits,
+            "deductible": deductible,
+            "retention": deductible,
+            "exposure_basis": exposure_basis,
+        })
+
+    # De-duplicate while preserving order.
+    seen = set()
+    cleaned = []
+
+    for item in policies:
+        key = item.get("policy_number")
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        cleaned.append(item)
+
+    return cleaned
+
+
+def _lossq_v4_parse_field_value_worksheet(raw_text):
+    text = _lossq_text(raw_text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    lower_lines = [line.lower() for line in lines]
+
+    field_labels = {
+        "current_premium": ["current total premium", "current premium", "annual premium"],
+        "expiring_premium": ["expiring premium", "prior premium"],
+        "target_renewal_premium": ["target renewal", "target renewal premium", "target premium"],
+        "revenue": ["revenue / sales", "revenue", "gross sales", "sales"],
+        "sales": ["revenue / sales", "sales", "gross sales"],
+        "payroll": ["payroll", "annual payroll"],
+        "vehicle_count": ["vehicle count", "vehicles", "power units"],
+        "property_tiv": ["property tiv", "tiv", "total insured value"],
+        "tiv": ["property tiv", "tiv", "total insured value"],
+        "square_footage": ["square footage", "sq ft", "sq. ft."],
+        "cyber_revenue": ["cyber revenue"],
+        "professional_revenue": ["professional revenue"],
+        "experience_mod": ["experience mod", "e-mod", "mod"],
+        "mod": ["experience mod", "e-mod", "mod"],
+        "class_code": ["class codes", "class code"],
+        "class_codes": ["class codes", "class code"],
+        "employee_count": ["employee count", "employees"],
+    }
+
+    exposure = {}
+
+    for field, labels in field_labels.items():
+        for label in labels:
+            for i, lower in enumerate(lower_lines):
+                if lower == label or label in lower:
+                    # In the messy worksheet, value is usually the next line.
+                    value = ""
+                    if i + 1 < len(lines):
+                        value = lines[i + 1].strip()
+
+                    if not value:
+                        continue
+
+                    if field in {
+                        "current_premium",
+                        "expiring_premium",
+                        "target_renewal_premium",
+                        "revenue",
+                        "sales",
+                        "payroll",
+                        "property_tiv",
+                        "tiv",
+                        "cyber_revenue",
+                        "professional_revenue",
+                    }:
+                        value = _lossq_v4_money(value)
+
+                    if field in {"vehicle_count", "square_footage", "employee_count"}:
+                        number_match = _lossq_re.search(r"\d[\d,]*(?:\.\d+)?", value)
+                        value = number_match.group(0).replace(",", "") if number_match else value
+
+                    if value and not _lossq_is_bad_value(value):
+                        exposure[field] = value
+                        break
+
+            if exposure.get(field):
+                break
+
+    # Additional employee count fallback from comments like "includes 77 employees"
+    if not exposure.get("employee_count"):
+        match = _lossq_re.search(r"\bincludes\s+(\d+)\s+employees\b", text, flags=_lossq_re.IGNORECASE)
+        if match:
+            exposure["employee_count"] = match.group(1)
+
+    # Location fallback from "2 locations"
+    if not exposure.get("location_count"):
+        match = _lossq_re.search(r"\b(\d+)\s+locations?\b", text, flags=_lossq_re.IGNORECASE)
+        if match:
+            exposure["location_count"] = match.group(1)
+
+    if exposure.get("revenue"):
+        exposure.setdefault("receipts", exposure["revenue"])
+
+    return {k: v for k, v in exposure.items() if v not in ("", None)}
+
+
+_lossq_previous_enrich_profile_with_exposure_v4 = _lossq_enrich_profile_with_exposure
+
+def _lossq_enrich_profile_with_exposure(raw_text="", profile=None, claims=None, filename=None):
+    profile = _lossq_previous_enrich_profile_with_exposure_v4(
+        raw_text=raw_text,
+        profile=profile,
+        claims=claims,
+        filename=filename,
+    )
+
+    text = _lossq_text(raw_text)
+
+    worksheet = _lossq_v4_parse_field_value_worksheet(text)
+    for key, value in worksheet.items():
+        if value not in ("", None):
+            profile[key] = value
+
+    policies = _lossq_v4_parse_vertical_policy_schedule(text, profile=profile)
+
+    if policies:
+        profile["policies"] = policies
+
+        # Use account number as account/policy selector when available.
+        account_number = profile.get("account_number") or _lossq_find_labeled_value(
+            text,
+            ["Account Number", "Account No", "Customer Number", "Client Number"]
+        )
+
+        if account_number and not _lossq_is_bad_policy_number(account_number):
+            profile["account_number"] = account_number
+            profile["customer_number"] = profile.get("customer_number") or account_number
+
+        # Never let LINE-COVERAGE become the profile policy number.
+        current_policy = _lossq_normalize_policy(profile.get("policy_number"))
+        if _lossq_is_bad_policy_number(current_policy):
+            profile["policy_number"] = profile.get("account_number") or policies[0].get("policy_number", "")
+
+    carrier = _lossq_profile_carrier(profile, text)
+    if carrier:
+        profile["carrier_name"] = carrier
+        profile["writing_carrier"] = carrier
+
+    return profile
+
