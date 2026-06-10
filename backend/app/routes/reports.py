@@ -7508,21 +7508,63 @@ def draw_header_footer(canvas, doc, report_title: str, prepared_by: str):
     canvas.restoreState()
 
 def table(data, widths=None, header=True, font_size=8, header_color=NAVY):
-    tbl = Table(data, colWidths=widths, repeatRows=1 if header else 0)
+    """
+    ReportLab table helper with wrapped Paragraph cells.
+    Prevents long claim numbers, policy numbers, carrier names, and line names from overlapping.
+    """
+    wrap_style = ParagraphStyle(
+        name=f"LossQTableWrap{font_size}",
+        parent=getSampleStyleSheet()["BodyText"],
+        fontName="Helvetica",
+        fontSize=font_size,
+        leading=font_size + 1.6,
+        textColor=colors.HexColor("#111827"),
+        wordWrap="CJK",
+        splitLongWords=True,
+        spaceAfter=0,
+        spaceBefore=0,
+    )
+
+    header_style = ParagraphStyle(
+        name=f"LossQTableHeader{font_size}",
+        parent=getSampleStyleSheet()["BodyText"],
+        fontName="Helvetica-Bold",
+        fontSize=font_size,
+        leading=font_size + 1.6,
+        textColor=WHITE,
+        wordWrap="CJK",
+        splitLongWords=True,
+        spaceAfter=0,
+        spaceBefore=0,
+    )
+
+    wrapped_data = []
+    for row_index, row in enumerate(data or []):
+        wrapped_row = []
+        for cell in row:
+            if isinstance(cell, Paragraph):
+                wrapped_row.append(cell)
+            else:
+                cell_text = safe_text(cell)
+                wrapped_row.append(
+                    Paragraph(cell_text, header_style if header and row_index == 0 else wrap_style)
+                )
+        wrapped_data.append(wrapped_row)
+
+    tbl = Table(wrapped_data, colWidths=widths, repeatRows=1 if header else 0)
     style = [
         ("BACKGROUND", (0, 0), (-1, 0), header_color if header else WHITE),
         ("TEXTCOLOR", (0, 0), (-1, 0), WHITE if header else NAVY),
         ("FONTNAME", (0, 0), (-1, 0), "Helvetica-Bold"),
-        ("FONTSIZE", (0, 0), (-1, -1), font_size),
-        ("LEADING", (0, 0), (-1, -1), font_size + 2),
         ("GRID", (0, 0), (-1, -1), 0.25, BORDER),
         ("VALIGN", (0, 0), (-1, -1), "TOP"),
         ("ROWBACKGROUNDS", (0, 1), (-1, -1), [WHITE, SOFT]),
-        ("LEFTPADDING", (0, 0), (-1, -1), 2.5 if font_size <= 7 else 5),
-        ("RIGHTPADDING", (0, 0), (-1, -1), 2.5 if font_size <= 7 else 5),
-        ("TOPPADDING", (0, 0), (-1, -1), 3.5 if font_size <= 7 else 5),
-        ("BOTTOMPADDING", (0, 0), (-1, -1), 3.5 if font_size <= 7 else 5),
+        ("LEFTPADDING", (0, 0), (-1, -1), 2.2 if font_size <= 7 else 4),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 2.2 if font_size <= 7 else 4),
+        ("TOPPADDING", (0, 0), (-1, -1), 3),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 3),
     ]
+
     if not header:
         style.extend(
             [
@@ -7532,9 +7574,9 @@ def table(data, widths=None, header=True, font_size=8, header_color=NAVY):
                 ("ROWBACKGROUNDS", (0, 0), (-1, -1), [WHITE, SOFT]),
             ]
         )
+
     tbl.setStyle(TableStyle(style))
     return tbl
-
 
 def kpi_cards(cards, styles, columns=4):
     row = []
@@ -7603,13 +7645,26 @@ class ModernCorporateExecutivePage(Flowable):
         c.roundRect(x, y, w, h, 8, fill=False, stroke=True)
         c.setFillColor(accent)
         c.roundRect(x, y + h - 0.08 * inch, w, 0.08 * inch, 8, fill=True, stroke=False)
+
         c.setFillColor(MUTED)
         c.setFont("Helvetica-Bold", 6.8)
         c.drawString(x + 0.11 * inch, y + h - 0.25 * inch, str(label).upper())
-        c.setFillColor(NAVY)
-        c.setFont("Helvetica-Bold", 11)
-        c.drawString(x + 0.11 * inch, y + 0.13 * inch, str(value))
         c.restoreState()
+
+        value_text = str(value or "-")
+        font_size = 8.2 if len(value_text) > 22 else 9.2 if len(value_text) > 16 else 10.2
+        self._draw_paragraph(
+            c,
+            value_text,
+            x + 0.11 * inch,
+            y + 0.32 * inch,
+            w - 0.22 * inch,
+            font_size=font_size,
+            leading=font_size + 1.8,
+            color=NAVY,
+            bold=True,
+            max_height=h - 0.28 * inch,
+        )
 
     def _bullet_block(self, c, x, y, w, h, title_text, items, accent=BLUE):
         c.saveState()
@@ -8161,7 +8216,7 @@ def build_executive_pdf_response(ctx, policy_number=None):
 
     story.append(PageBreak())
     story.append(heading("Top Claims by Total Incurred", styles))
-    story.append(table(top_claim_rows(claims), widths=[0.86 * inch, 1.08 * inch, 0.58 * inch, 0.72 * inch, 0.82 * inch, 0.70 * inch, 1.38 * inch, 0.88 * inch], font_size=6.0, header_color=NAVY))
+    story.append(table(top_claim_rows(claims), widths=[0.98 * inch, 1.03 * inch, 0.50 * inch, 0.62 * inch, 0.72 * inch, 0.68 * inch, 1.05 * inch, 0.92 * inch], font_size=5.4, header_color=NAVY))
 
     story.append(heading("Broker Action Plan", styles))
     actions = summary.get("recommended_actions") or summary.get("renewal_drivers") or []
