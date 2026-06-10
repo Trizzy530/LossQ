@@ -443,7 +443,7 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
 </div>
 
         <a href="/" className="block text-center mt-6 text-blue-400 text-sm">
-          Back to landing
+          Back to home
         </a>
       </div>
     </main>
