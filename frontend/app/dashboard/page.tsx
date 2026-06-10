@@ -1818,10 +1818,15 @@ async function saveProfile() {
     const uploadedPolicyNumber = chooseSafePolicyNumber(
       primaryProfile?.account_number,
       primaryProfile?.customer_number,
+      primaryData?.account_number,
+      primaryData?.customer_number,
       primaryData?.account_profile?.account_number,
       primaryData?.account_profile?.customer_number,
-      primaryData?.account_profile?.policy_number,
+      primaryData?.profile?.account_number,
+      primaryData?.profile?.customer_number,
       primaryProfile?.policy_number,
+      primaryData?.account_profile?.policy_number,
+      primaryData?.profile?.policy_number,
       primaryData?.selected_policy_number,
       primaryData?.policy_number,
       combinedPolicies.find((item: any) => item?.policy_number)?.policy_number,
@@ -1841,32 +1846,10 @@ async function saveProfile() {
     );
 
 
-    // LOSSQ_SAFE_UPLOAD_POLICY_KEY_FINAL
-    const safeUploadPolicyKey = chooseSafePolicyNumber(
-      uploadedProfile?.account_number,
-      uploadedProfile?.customer_number,
-      primaryProfile?.account_number,
-      primaryProfile?.customer_number,
-      primaryData?.account_number,
-      primaryData?.customer_number,
-      primaryData?.account_profile?.account_number,
-      primaryData?.account_profile?.customer_number,
-      uploadedPolicyNumber,
-      uploadedProfile?.policy_number
-    );
-
-    if (safeUploadPolicyKey) {
-      uploadedProfile.policy_number = safeUploadPolicyKey;
-      uploadedProfile.account_number = uploadedProfile.account_number || safeUploadPolicyKey;
-      uploadedProfile.customer_number =
-        uploadedProfile.customer_number ||
-        uploadedProfile.account_number ||
-        safeUploadPolicyKey;
-    }
 
     const currentUploadSnapshot = {
       uploaded_at: new Date().toISOString(),
-      policy_number: normalizePolicyNumber(safeUploadPolicyKey || uploadedPolicyNumber),
+      policy_number: normalizePolicyNumber(uploadedPolicyNumber),
       policy_numbers: uploadPolicySet,
       profile: primaryProfile || {},
       policies: combinedPolicies,
