@@ -1876,7 +1876,7 @@ const hasActiveAccount = Boolean(
     summary?.claims_used != null
 );
 
-const refPolicies = (activeProfileRef.current?.policies || []).map(function(p) { return (p && p.policy_number || "").trim().toUpperCase(); }).filter(Boolean);
+const refPolicies = (activeProfileRef.current?.policies || []).map(function(p: any) { return (p && p.policy_number || "").trim().toUpperCase(); }).filter(Boolean);
 const effectivePolicyNumbers = refPolicies.length > 0 ? refPolicies : activePolicyNumbers;
 const filteredVisibleClaims = hasActiveAccount
   ? claims.filter((claim: any) => {
