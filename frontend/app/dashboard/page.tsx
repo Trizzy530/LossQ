@@ -568,7 +568,7 @@ function normalizeProfileName(item: any) {
     }
   }
 
-  async function loadDashboard(policyNumberOverride?: string) {
+  async function loadDashboard(policyNumberOverride?: string, skipProfileList = false) {
     if (!getToken()) {
       router.replace("/login?fresh=1");
       return;
@@ -583,7 +583,7 @@ function normalizeProfileName(item: any) {
     const requestedPolicyNumber = normalizePolicyNumber(policyNumberOverride || cachedPolicyNumber);
 
     try {
-      await loadProfileList();
+      if (!skipProfileList) await loadProfileList();
 
     // Pre-load ref from cache immediately so filteredVisibleClaims has correct policies on first render
     if (requestedPolicyNumber) {
@@ -1008,7 +1008,7 @@ if (submissionBuilderRes.ok) {
     if (cachedMatch) {
       setProfile(cachedMatch);
     }
-    await loadDashboard(policyNumber);
+    await loadDashboard(policyNumber, true);
     setMessage(`Loaded policy ${policyNumber}.`);
   }
   async function deleteProfile(profileToDelete: any) {
