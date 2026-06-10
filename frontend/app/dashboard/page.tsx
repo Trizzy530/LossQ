@@ -1260,7 +1260,7 @@ async function saveProfile() {
     /*
       IMPORTANT:
       Universal OCR + Document Intelligence V2 currently accepts one file at a time.
-      For multiple files, we upload each file through /upload/loss-run-v2 separately.
+      For multiple files, we upload each file through /upload/loss-run separately.
       Do not force the old selected policy number into a new upload.
       The parser should decide the account number, policy schedule, and claim policies.
     */
@@ -1269,7 +1269,7 @@ async function saveProfile() {
       const formData = new FormData();
       formData.append("file", file);
 
-      const res = await fetch(`${API}/upload/loss-run-v2`, {
+      const res = await fetch(`${API}/upload/loss-run`, {
         method: "POST",
         headers: authHeaders(),
         body: formData,
