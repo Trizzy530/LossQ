@@ -966,6 +966,7 @@ if (submissionBuilderRes.ok) {
         setTimeline({});
       }
     } catch {
+      console.log("CATCH BLOCK HIT:", arguments[0] || "unknown error");
       setDashboardError("Dashboard could not load. Confirm backend is running.");
       setClaims([]);
       setSummary({});
