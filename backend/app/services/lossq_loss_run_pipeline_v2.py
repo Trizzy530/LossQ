@@ -1,8 +1,10 @@
 ﻿from __future__ import annotations
 
+
 import io
 import re
 from typing import Any, Dict, List, Tuple
+from app.services.universal_lob import enrich_claims_with_universal_lob, enrich_claim_with_universal_lob
 
 
 BAD_LABELS = {
@@ -467,7 +469,7 @@ def _extract_claims(text: str, fallback_policy: str) -> List[Dict[str, Any]]:
             "total_incurred": total_incurred,
             "description": _extract_description(section),
         })
-    return claims
+    return enrich_claims_with_universal_lob(claims)
 
 
 def _policy_rollup(claims: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
