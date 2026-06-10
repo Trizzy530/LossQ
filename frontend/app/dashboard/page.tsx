@@ -575,8 +575,6 @@ function normalizeProfileName(item: any) {
       return;
     }
 
-    if (dashboardLoadingRef.current) return;
-    dashboardLoadingRef.current = true;
     setDashboardLoading(true);
     setDashboardError("");
 
@@ -977,7 +975,6 @@ if (submissionBuilderRes.ok) {
       setTimeline({});
     } finally {
       setDashboardLoading(false);
-      dashboardLoadingRef.current = false;
     }
   }
 
@@ -989,7 +986,6 @@ if (submissionBuilderRes.ok) {
     setMessage(`Loading policy ${policyNumber}...`);
     setCopilotAnswer("");
     setRenewalMemo("");
-    setClaims([]);
     setSummary({});
     setDecision({});
     setCarrierAppetite({});
