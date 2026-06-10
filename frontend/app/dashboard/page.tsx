@@ -2543,6 +2543,59 @@ const effectivePremiumForecast =
     : premiumForecast;
 
 
+
+const premiumAccuracyStatus = (() => {
+  const currentPremium = Number(effectivePremiumForecast?.current_premium || 0);
+  const expectedRenewal = Number(effectivePremiumForecast?.expected_renewal_premium || 0);
+  const hasExposureBasis = Boolean(
+    displayProfile?.payroll ||
+      displayProfile?.revenue ||
+      displayProfile?.vehicle_count ||
+      displayProfile?.driver_count ||
+      displayProfile?.property_tiv ||
+      displayProfile?.sales ||
+      displayProfile?.exposure_basis
+  );
+
+  if (!currentPremium || currentPremium <= 0) {
+    return {
+      level: "Premium Projection Unavailable",
+      confidence: "Insufficient",
+      message:
+        "Add current premium and exposure basis before relying on a renewal dollar projection. LossQ can still show claim-based renewal pressure.",
+      allowDollarProjection: false,
+    };
+  }
+
+  if (!hasExposureBasis) {
+    return {
+      level: "Limited Confidence Projection",
+      confidence: "Limited",
+      message:
+        "Current premium is available, but exposure data is missing. Add payroll, revenue, vehicle count, driver count, property values, or other exposure basis to improve pricing accuracy.",
+      allowDollarProjection: true,
+    };
+  }
+
+  if (validatedClaimsAvailable && expectedRenewal > 0) {
+    return {
+      level: "High Confidence Estimate",
+      confidence: "Strong",
+      message:
+        "LossQ has current premium, claim activity, and exposure basis. This is a defensible renewal premium range, not a guaranteed carrier quote.",
+      allowDollarProjection: true,
+    };
+  }
+
+  return {
+    level: "Moderate Confidence Estimate",
+    confidence: "Moderate",
+    message:
+      "LossQ has partial premium data. Confirm claim totals, exposure changes, limits, deductibles, and carrier appetite before final pricing.",
+    allowDollarProjection: true,
+  };
+})();
+
 const backendTopCarriersAreUsable =
   Array.isArray(carrierMatch?.top_carriers) &&
   carrierMatch.top_carriers.length > 0 &&
@@ -3656,6 +3709,31 @@ const trendNoteDisplay =
     <h2 className="text-2xl md:text-3xl font-bold mb-6">
       Renewal Premium Projection
     </h2>
+
+    <div className="mb-8 rounded-3xl border border-blue-400/30 bg-blue-500/10 p-5">
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-xs uppercase tracking-[0.25em] text-blue-300">
+            Premium Accuracy Guardrail
+          </p>
+          <h3 className="mt-2 text-xl font-bold text-white">
+            {premiumAccuracyStatus.level}
+          </h3>
+          <p className="mt-2 text-sm leading-6 text-slate-300">
+            {premiumAccuracyStatus.message}
+          </p>
+        </div>
+
+        <div className="rounded-2xl border border-white/10 bg-slate-950/70 px-5 py-4 text-center min-w-[170px]">
+          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+            Pricing Confidence
+          </p>
+          <p className="mt-2 text-2xl font-black text-blue-200">
+            {premiumAccuracyStatus.confidence}
+          </p>
+        </div>
+      </div>
+    </div>
 
     <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
       <MetricCard
