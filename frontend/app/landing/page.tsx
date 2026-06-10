@@ -293,6 +293,13 @@ export default function LandingPage() {
         <ul className="footer-links">
           <li><a href="#features">Features</a></li>
           <li><a href="#pricing">Pricing</a></li>
+          <li><a href="/legal">Legal</a></li>
+          <li><a href="/terms">Terms</a></li>
+          <li><a href="/privacy">Privacy</a></li>
+          <li><a href="/data-security">Data Security</a></li>
+          <li><a href="/refund-policy">Refund Policy</a></li>
+          <li><a href="/ai-disclaimer">AI Disclaimer</a></li>
+          <li><a href="/insurance-disclaimer">Insurance Disclaimer</a></li>
           <li><a href="mailto:hello@lossq.com">Contact</a></li>
         </ul>
 
