@@ -14,6 +14,7 @@ from app.models.account_profile import AccountProfile
 from app.role_utils import require_permission
 from app.services.audit import record_audit_event
 from app.services.loss_run_pipeline import parse_loss_run_file
+from app.services.universal_profile import extract_universal_profile_from_text
 
 try:
     from app.services.excel_parser_service import parse_claims_from_excel
@@ -46,9 +47,17 @@ def parse_file(file_path: str, filename: str):
         claims = result.get("claims") or []
         validation = result.get("validation") or {}
 
+        raw_text_preview = result.get("raw_text_preview", "")[:5000]
+        profile = extract_universal_profile_from_text(
+            raw_text=raw_text_preview,
+            existing_profile=profile,
+            claims=claims,
+            filename=filename,
+        )
+
         profile["policies"] = policies
         profile["validation"] = validation
-        profile["raw_text_preview"] = result.get("raw_text_preview", "")[:5000]
+        profile["raw_text_preview"] = raw_text_preview
 
         return claims, profile
 
