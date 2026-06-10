@@ -1869,7 +1869,60 @@ const displayProfile = {
   policies: recoveredPolicySchedule,
 };
 
-const policySchedule = recoveredPolicySchedule.length > 0 ? recoveredPolicySchedule : [];
+const claimBasedPolicySchedule = Object.values(
+  (claims || []).reduce((acc: any, claim: any) => {
+    const line =
+      claim?.line_of_business ||
+      claim?.lob ||
+      claim?.coverage_line ||
+      claim?.coverage ||
+      claim?.claim_type ||
+      "Other Commercial Line";
+
+    const key = String(line || "Other Commercial Line").trim();
+
+    if (!acc[key]) {
+      acc[key] = {
+        policy_type: key,
+        line_of_business: key,
+        coverage: key,
+        policy_number:
+          claim?.policy_number ||
+          displayProfile?.policy_number ||
+          displayProfile?.account_number ||
+          "",
+        writing_carrier:
+          claim?.writing_carrier ||
+          claim?.carrier_name ||
+          displayProfile?.writing_carrier ||
+          displayProfile?.carrier_name ||
+          "",
+        carrier:
+          claim?.carrier ||
+          claim?.carrier_name ||
+          displayProfile?.carrier_name ||
+          "",
+        effective_date: displayProfile?.effective_date || "",
+        expiration_date: displayProfile?.expiration_date || "",
+        claim_count: 0,
+        total_incurred: 0,
+      };
+    }
+
+    acc[key].claim_count += 1;
+    acc[key].total_incurred += Number(
+      claim?.total_incurred ||
+      claim?.incurred ||
+      claim?.total ||
+      0
+    );
+
+    return acc;
+  }, {})
+);
+
+const policySchedule =
+  recoveredPolicySchedule.length > 0 ? recoveredPolicySchedule : claimBasedPolicySchedule;
 
 const activeAccountPolicyNumber = normalizePolicyNumber(displayProfile?.policy_number);
 const activeAccountNumber = normalizePolicyNumber(displayProfile?.account_number);
