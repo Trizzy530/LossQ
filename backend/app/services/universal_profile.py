@@ -993,3 +993,430 @@ def _lossq_enrich_profile_with_exposure(raw_text="", profile=None, claims=None, 
 
     return profile
 
+
+
+# LOSSQ_POLICY_AND_PREMIUM_WORKSHEET_V3
+# Dedicated extractor for messy policy schedules and premium/exposure worksheets.
+
+def _lossq_policy_type_from_number(policy_number=""):
+    pol = _lossq_text(policy_number).upper()
+
+    if pol.startswith(("BOP", "BUS")):
+        return "Businessowners Policy"
+    if pol.startswith(("GL", "CGL")):
+        return "General Liability"
+    if pol.startswith(("WC", "WCP", "WCOMP")):
+        return "Workers Compensation"
+    if pol.startswith(("AUTO", "BAP", "CA", "AL")):
+        return "Commercial Auto"
+    if pol.startswith(("PROP", "CP", "CPP")):
+        return "Commercial Property"
+    if pol.startswith(("CYB", "CYBER")):
+        return "Cyber Liability"
+    if pol.startswith(("EPL", "EPLI")):
+        return "Employment Practices Liability"
+    if pol.startswith(("DNO", "DO", "D&O")):
+        return "Directors & Officers"
+    if pol.startswith(("EO", "E&O", "PROF", "PL")):
+        return "Professional Liability"
+    if pol.startswith(("IM", "INMAR")):
+        return "Inland Marine"
+    if pol.startswith(("CARGO", "MTC")):
+        return "Motor Truck Cargo"
+    if pol.startswith(("UMB", "XS", "EXC")):
+        return "Umbrella / Excess"
+
+    return ""
+
+
+def _lossq_is_bad_policy_number(value):
+    pol = _lossq_text(value).upper().replace(" ", "")
+
+    if not pol:
+        return True
+
+    bad = {
+        "LINE-COVERAGE",
+        "LINECOVERAGE",
+        "POLICYNUMBER",
+        "POLICY-NUMBER",
+        "ACCOUNTNUMBER",
+        "ACCOUNT-NUMBER",
+        "EXPOSUREBASIS",
+        "EXPOSURE-BASIS",
+        "CURRENT-PREMIUM",
+        "EXPIRING-PREMIUM",
+    }
+
+    if pol in bad:
+        return True
+
+    if "COVERAGE" in pol and "20" not in pol:
+        return True
+
+    if len(pol) < 6:
+        return True
+
+    return False
+
+
+def _lossq_find_all_policy_numbers_v3(raw_text):
+    text = _lossq_text(raw_text).upper()
+
+    patterns = [
+        r"\b(?:BOP|GL|CGL|WC|WCP|WCOMP|AUTO|BAP|CA|AL|PROP|CP|CPP|CYB|CYBER|EPL|EPLI|DNO|DO|EO|PROF|PL|IM|MTC|CARGO|UMB|XS|EXC)[-_ ]?\d{4}[-_ ]?\d{3,8}\b",
+        r"\b(?:BOP|GL|CGL|WC|WCP|WCOMP|AUTO|BAP|PROP|CP|CYB|EPLI|DNO|EO|IM|CARGO|UMB|XS)[-_ ][A-Z0-9]{4,12}\b",
+    ]
+
+    found = []
+
+    for pattern in patterns:
+        for match in _lossq_re.findall(pattern, text):
+            policy = _lossq_normalize_policy(match.replace("_", "-"))
+            if policy and not _lossq_is_bad_policy_number(policy):
+                found.append(policy)
+
+    unique = []
+    seen = set()
+
+    for policy in found:
+        if policy not in seen:
+            seen.add(policy)
+            unique.append(policy)
+
+    return unique
+
+
+def _lossq_find_dates_near_text(value):
+    text = _lossq_text(value)
+
+    return _lossq_re.findall(
+        r"\b(?:20\d{2}|19\d{2})[-/]\d{1,2}[-/]\d{1,2}\b|\b\d{1,2}[-/]\d{1,2}[-/](?:20\d{2}|19\d{2})\b",
+        text,
+    )
+
+
+def _lossq_find_policy_context(raw_text, policy_number):
+    text = _lossq_text(raw_text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+    normalized_target = _lossq_normalize_policy(policy_number)
+
+    for i, line in enumerate(lines):
+        normalized_line = _lossq_normalize_policy(line)
+        if normalized_target and normalized_target in normalized_line:
+            return " ".join(lines[max(0, i - 4): min(len(lines), i + 5)])
+
+    return ""
+
+
+def _lossq_profile_carrier(profile=None, raw_text=""):
+    profile = profile or {}
+
+    candidates = [
+        profile.get("writing_carrier"),
+        profile.get("carrier_name"),
+        profile.get("carrier"),
+        _lossq_clean_carrier_from_text(raw_text),
+    ]
+
+    for item in candidates:
+        cleaned = _lossq_text(item)
+        if cleaned and not _lossq_is_bad_value(cleaned):
+            return cleaned
+
+    return ""
+
+
+def _lossq_extract_policy_schedule_v3(raw_text, claims=None, profile=None):
+    text = _lossq_text(raw_text)
+    claims = claims or []
+    profile = profile or {}
+
+    carrier = _lossq_profile_carrier(profile, text)
+
+    policies = {}
+
+    for policy_number in _lossq_find_all_policy_numbers_v3(text):
+        context = _lossq_find_policy_context(text, policy_number)
+        lob = _lossq_policy_type_from_number(policy_number) or _lossq_detect_line_of_business(context) or "Commercial Policy"
+
+        dates = _lossq_find_dates_near_text(context)
+        effective = dates[0] if len(dates) >= 1 else profile.get("effective_date", "")
+        expiration = dates[1] if len(dates) >= 2 else profile.get("expiration_date", "")
+
+        policies[policy_number] = {
+            "policy_type": lob,
+            "line_of_business": lob,
+            "coverage": lob,
+            "policy_number": policy_number,
+            "writing_carrier": carrier,
+            "carrier": carrier,
+            "effective_date": effective,
+            "expiration_date": expiration,
+        }
+
+    for claim in claims:
+        policy_number = _lossq_normalize_policy(
+            claim.get("policy_number")
+            or claim.get("policyNumber")
+            or claim.get("policy_no")
+            or claim.get("policy")
+        )
+
+        if not policy_number or _lossq_is_bad_policy_number(policy_number):
+            continue
+
+        lob = (
+            claim.get("line_of_business")
+            or claim.get("lob")
+            or claim.get("coverage")
+            or claim.get("claim_type")
+            or _lossq_policy_type_from_number(policy_number)
+            or "Commercial Policy"
+        )
+
+        if policy_number not in policies:
+            policies[policy_number] = {
+                "policy_type": lob,
+                "line_of_business": lob,
+                "coverage": lob,
+                "policy_number": policy_number,
+                "writing_carrier": carrier,
+                "carrier": carrier,
+                "effective_date": profile.get("effective_date", ""),
+                "expiration_date": profile.get("expiration_date", ""),
+            }
+
+    return list(policies.values())
+
+
+def _lossq_extract_premium_worksheet_table_v3(raw_text):
+    text = _lossq_text(raw_text)
+
+    if not text:
+        return {}
+
+    exposure = {}
+
+    field_map = {
+        "current_premium": [
+            "current premium",
+            "annual premium",
+            "expiring premium",
+            "total current premium",
+        ],
+        "expiring_premium": [
+            "expiring premium",
+            "prior premium",
+            "current term premium",
+        ],
+        "target_renewal_premium": [
+            "target renewal premium",
+            "target premium",
+            "renewal target",
+        ],
+        "payroll": [
+            "payroll",
+            "estimated payroll",
+            "annual payroll",
+        ],
+        "revenue": [
+            "revenue",
+            "sales",
+            "gross sales",
+            "annual revenue",
+            "gross receipts",
+            "receipts",
+        ],
+        "property_tiv": [
+            "property tiv",
+            "total insured value",
+            "tiv",
+        ],
+        "building_value": [
+            "building value",
+            "building limit",
+        ],
+        "contents_value": [
+            "contents value",
+            "business personal property",
+            "bpp",
+        ],
+        "vehicle_count": [
+            "vehicle count",
+            "power units",
+            "scheduled autos",
+            "autos",
+        ],
+        "driver_count": [
+            "driver count",
+            "drivers",
+        ],
+        "employee_count": [
+            "employee count",
+            "employees",
+        ],
+        "location_count": [
+            "location count",
+            "locations",
+        ],
+        "square_footage": [
+            "square footage",
+            "sq ft",
+            "sq. ft.",
+        ],
+        "limits": [
+            "policy limits",
+            "coverage limit",
+            "limits",
+        ],
+        "deductible": [
+            "deductible",
+        ],
+        "retention": [
+            "retention",
+            "sir",
+            "self insured retention",
+        ],
+        "class_code": [
+            "class code",
+            "class codes",
+            "wc code",
+            "gl class",
+        ],
+        "experience_mod": [
+            "experience mod",
+            "experience modification",
+            "e-mod",
+            "mod",
+        ],
+        "cargo_limit": [
+            "cargo limit",
+            "motor truck cargo limit",
+        ],
+        "umbrella_limit": [
+            "umbrella limit",
+            "excess limit",
+        ],
+        "exposure_change_percent": [
+            "exposure change %",
+            "exposure change",
+            "projected change",
+        ],
+        "exposure_basis": [
+            "exposure basis",
+            "rating basis",
+            "premium basis",
+        ],
+    }
+
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    for key, labels in field_map.items():
+        if exposure.get(key):
+            continue
+
+        for label in labels:
+            label_lower = label.lower()
+
+            for i, line in enumerate(lines):
+                lower_line = line.lower()
+
+                if label_lower not in lower_line:
+                    continue
+
+                combined = " ".join(lines[i:i + 3])
+
+                if key in {
+                    "current_premium",
+                    "expiring_premium",
+                    "target_renewal_premium",
+                    "payroll",
+                    "revenue",
+                    "property_tiv",
+                    "building_value",
+                    "contents_value",
+                    "cargo_limit",
+                    "umbrella_limit",
+                }:
+                    value = _lossq_find_money_near_label(combined, [label])
+                    if not value:
+                        money_matches = _lossq_re.findall(r"\$?\s*\d{1,3}(?:,\d{3})+(?:\.\d{2})?|\$?\s*\d+(?:\.\d{2})?", combined)
+                        if money_matches:
+                            value = _lossq_clean_money(money_matches[-1])
+                elif key in {
+                    "vehicle_count",
+                    "driver_count",
+                    "employee_count",
+                    "location_count",
+                    "square_footage",
+                }:
+                    number_matches = _lossq_re.findall(r"\b\d+(?:,\d+)?(?:\.\d+)?\b", combined)
+                    value = number_matches[-1].replace(",", "") if number_matches else ""
+                else:
+                    value = ""
+
+                    if ":" in line:
+                        value = line.split(":", 1)[1].strip()
+                    elif "=" in line:
+                        value = line.split("=", 1)[1].strip()
+                    elif i + 1 < len(lines):
+                        value = lines[i + 1].strip()
+
+                    if _lossq_is_bad_value(value):
+                        value = ""
+
+                if value:
+                    exposure[key] = value
+                    break
+
+            if exposure.get(key):
+                break
+
+    if exposure.get("revenue"):
+        exposure.setdefault("sales", exposure["revenue"])
+
+    if exposure.get("property_tiv"):
+        exposure.setdefault("tiv", exposure["property_tiv"])
+
+    if exposure.get("experience_mod"):
+        exposure.setdefault("mod", exposure["experience_mod"])
+
+    if exposure.get("limits"):
+        exposure.setdefault("coverage_limit", exposure["limits"])
+
+    return {k: v for k, v in exposure.items() if v not in ("", None)}
+
+
+_lossq_previous_enrich_profile_with_exposure_v3 = _lossq_enrich_profile_with_exposure
+
+def _lossq_enrich_profile_with_exposure(raw_text="", profile=None, claims=None, filename=None):
+    profile = _lossq_previous_enrich_profile_with_exposure_v3(
+        raw_text=raw_text,
+        profile=profile,
+        claims=claims,
+        filename=filename,
+    )
+
+    worksheet = _lossq_extract_premium_worksheet_table_v3(raw_text)
+
+    for key, value in worksheet.items():
+        if value not in ("", None) and not profile.get(key):
+            profile[key] = value
+
+    carrier = _lossq_profile_carrier(profile, raw_text)
+
+    if carrier:
+        profile["carrier_name"] = carrier
+        profile["writing_carrier"] = carrier
+
+    policies_v3 = _lossq_extract_policy_schedule_v3(raw_text, claims=claims, profile=profile)
+
+    if policies_v3:
+        profile["policies"] = policies_v3
+
+    if profile.get("policies") and not profile.get("policy_number"):
+        profile["policy_number"] = profile["policies"][0].get("policy_number", "")
+
+    return profile
+
