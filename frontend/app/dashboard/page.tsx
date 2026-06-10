@@ -743,6 +743,7 @@ if (activeProfile?.policy_number) {
       const claimsRes = await fetch(`${API}/claims/`, { headers: authHeaders() });
 
       console.log("CLAIMS RES STATUS:", claimsRes.status);
+      console.log("CLAIMS RES STATUS:", claimsRes.status);
       if (claimsRes.status === 401 || claimsRes.status === 403) {
         clearSession();
         router.replace("/login?expired=1");
