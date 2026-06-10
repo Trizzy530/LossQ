@@ -576,6 +576,7 @@ function normalizeProfileName(item: any) {
     }
 
     setDashboardLoading(true);
+    const myVersion = ++loadVersionRef.current;
     setDashboardError("");
 
     const cachedPolicyNumber = getCachedSelectedPolicy();
@@ -816,20 +817,20 @@ if (activeProfile?.policy_number) {
         // 3. Older cache only when no current upload is active.
         // 4. Empty array. Never fall back to unrelated organization-wide claims.
         if (currentUploadApplies) {
-        setClaims(currentUploadMatches);
+        if (myVersion === loadVersionRef.current) setClaims(currentUploadMatches);
         } else if (serverMatches.length > 0) {
-        setClaims(serverMatches);
+        if (myVersion === loadVersionRef.current) setClaims(serverMatches);
         } else if (cachedMatches.length > 0) {
-        setClaims(cachedMatches);
+        if (myVersion === loadVersionRef.current) setClaims(cachedMatches);
         } else {
-          setClaims([]);
+          if (myVersion === loadVersionRef.current) setClaims([]);
         }
       } else {
         const currentUpload = getCachedCurrentUpload();
         const currentUploadClaims = Array.isArray(currentUpload?.claims)
           ? currentUpload.claims
           : [];
-        setClaims(currentUploadClaims.length > 0 ? currentUploadClaims : []);
+        if (myVersion === loadVersionRef.current) setClaims(currentUploadClaims.length > 0 ? currentUploadClaims : []);
       }
 
       const summaryUrl = hasPolicy
@@ -966,7 +967,7 @@ if (submissionBuilderRes.ok) {
     } catch {
       console.log("CATCH BLOCK HIT:", arguments[0] || "unknown error");
       setDashboardError("Dashboard could not load. Confirm backend is running.");
-      setClaims([]);
+      if (myVersion === loadVersionRef.current) setClaims([]);
       setSummary({});
       setDecision({});
       setCarrierAppetite({});
