@@ -3525,6 +3525,94 @@ const trendNoteDisplay =
             </>
           )}
 
+
+          {activeTool === "exposure-inputs" && (
+            <section className="glass-panel p-6 md:p-8">
+              <p className="text-sm uppercase tracking-[0.25em] text-green-300 mb-3">
+                Universal Forecast Inputs
+              </p>
+
+              <h2 className="text-2xl md:text-3xl font-bold mb-4">
+                Universal Premium & Exposure Inputs
+              </h2>
+
+              <p className="text-slate-400 mb-8 max-w-4xl">
+                Manually enter premium, exposure, limits, class, and underwriting data for any commercial line of business. These inputs improve LossQ's premium forecast confidence across Auto, General Liability, Workers Comp, Property, Cargo, Cyber, EPLI, D&O, E&O, Inland Marine, Umbrella, BOP, and other commercial policies.
+              </p>
+
+              <div className="rounded-3xl border border-blue-400/20 bg-blue-500/10 p-5 mb-8">
+                <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                  <ProfileDetail label="Account" value={displayProfile?.business_name || profile?.business_name || "-"} />
+                  <ProfileDetail label="Policy / Account" value={displayProfile?.policy_number || profile?.policy_number || displayProfile?.account_number || profile?.account_number || "-"} />
+                  <ProfileDetail label="Carrier" value={displayProfile?.carrier_name || profile?.carrier_name || "-"} />
+                  <ProfileDetail label="Detected Lines" value={policySchedule.length > 0 ? `${policySchedule.length} line(s)` : "Manual Input"} />
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                <Input label="Current Premium" value={profile?.current_premium || ""} onChange={(v) => setProfile({ ...profile, current_premium: v })} />
+                <Input label="Expiring Premium" value={profile?.expiring_premium || ""} onChange={(v) => setProfile({ ...profile, expiring_premium: v })} />
+                <Input label="Target Renewal Premium" value={profile?.target_renewal_premium || ""} onChange={(v) => setProfile({ ...profile, target_renewal_premium: v })} />
+
+                <Input label="Primary Line of Business" value={profile?.line_of_business || ""} onChange={(v) => setProfile({ ...profile, line_of_business: v })} />
+                <Input label="State" value={profile?.state || ""} onChange={(v) => setProfile({ ...profile, state: v })} />
+                <Input label="Class Code(s)" value={profile?.class_code || profile?.class_codes || ""} onChange={(v) => setProfile({ ...profile, class_code: v, class_codes: v })} />
+
+                <Input label="Policy Limits" value={profile?.limits || profile?.coverage_limit || ""} onChange={(v) => setProfile({ ...profile, limits: v, coverage_limit: v })} />
+                <Input label="Deductible" value={profile?.deductible || ""} onChange={(v) => setProfile({ ...profile, deductible: v })} />
+                <Input label="Retention / SIR" value={profile?.retention || ""} onChange={(v) => setProfile({ ...profile, retention: v })} />
+
+                <Input label="Payroll" value={profile?.payroll || ""} onChange={(v) => setProfile({ ...profile, payroll: v })} />
+                <Input label="Revenue / Sales" value={profile?.revenue || profile?.sales || ""} onChange={(v) => setProfile({ ...profile, revenue: v, sales: v })} />
+                <Input label="Receipts" value={profile?.receipts || ""} onChange={(v) => setProfile({ ...profile, receipts: v })} />
+
+                <Input label="Employee Count" value={profile?.employee_count || ""} onChange={(v) => setProfile({ ...profile, employee_count: v })} />
+                <Input label="Vehicle Count" value={profile?.vehicle_count || ""} onChange={(v) => setProfile({ ...profile, vehicle_count: v })} />
+                <Input label="Driver Count" value={profile?.driver_count || ""} onChange={(v) => setProfile({ ...profile, driver_count: v })} />
+
+                <Input label="Property TIV" value={profile?.property_tiv || profile?.tiv || ""} onChange={(v) => setProfile({ ...profile, property_tiv: v, tiv: v })} />
+                <Input label="Building Value" value={profile?.building_value || ""} onChange={(v) => setProfile({ ...profile, building_value: v })} />
+                <Input label="Contents Value" value={profile?.contents_value || ""} onChange={(v) => setProfile({ ...profile, contents_value: v })} />
+
+                <Input label="Square Footage" value={profile?.square_footage || ""} onChange={(v) => setProfile({ ...profile, square_footage: v })} />
+                <Input label="Location Count" value={profile?.location_count || ""} onChange={(v) => setProfile({ ...profile, location_count: v })} />
+                <Input label="Unit Count" value={profile?.unit_count || ""} onChange={(v) => setProfile({ ...profile, unit_count: v })} />
+
+                <Input label="Cargo Limit" value={profile?.cargo_limit || ""} onChange={(v) => setProfile({ ...profile, cargo_limit: v })} />
+                <Input label="Umbrella / Excess Limit" value={profile?.umbrella_limit || ""} onChange={(v) => setProfile({ ...profile, umbrella_limit: v })} />
+                <Input label="Experience Mod" value={profile?.experience_mod || profile?.mod || ""} onChange={(v) => setProfile({ ...profile, experience_mod: v, mod: v })} />
+
+                <Input label="Exposure Change %" value={profile?.exposure_change_percent || ""} onChange={(v) => setProfile({ ...profile, exposure_change_percent: v })} />
+                <Input label="Cyber Revenue" value={profile?.cyber_revenue || ""} onChange={(v) => setProfile({ ...profile, cyber_revenue: v })} />
+                <Input label="Professional Revenue" value={profile?.professional_revenue || ""} onChange={(v) => setProfile({ ...profile, professional_revenue: v })} />
+              </div>
+
+              <div className="mt-6">
+                <label className="block text-sm text-blue-200 mb-2">
+                  Notes / Underwriter Comments
+                </label>
+                <textarea
+                  value={profile?.underwriter_notes || ""}
+                  onChange={(e) => setProfile({ ...profile, underwriter_notes: e.target.value })}
+                  className="w-full min-h-[150px] rounded-2xl bg-slate-950/70 border border-white/10 px-4 py-4 text-white outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20"
+                  placeholder="Enter exposure assumptions, underwriting notes, class details, loss control updates, or renewal pricing assumptions..."
+                />
+              </div>
+
+              <div className="mt-8 flex flex-wrap gap-4">
+                <button onClick={saveExposureInputs} className="btn-success">
+                  Save Exposure Inputs
+                </button>
+                <button onClick={saveProfile} className="btn-secondary">
+                  Save Full Profile
+                </button>
+                <button onClick={() => setActiveTool("premium-forecast")} className="btn-purple">
+                  Open Premium Forecast
+                </button>
+              </div>
+            </section>
+          )}
+
           {activeTool === "upload" && (
             <section className="glass-panel p-6 md:p-8">
               <h2 className="text-2xl md:text-3xl font-bold mb-5">Upload & Report Center</h2>
