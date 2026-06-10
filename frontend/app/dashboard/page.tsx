@@ -328,6 +328,7 @@ export default function DashboardPage() {
   const [isUploading, setIsUploading] = useState(false);
   const activeProfileRef = useRef<any>({});
   const dashboardLoadingRef = useRef(false);
+  const loadVersionRef = useRef(0);
   const [summary, setSummary] = useState<any>({});
   const [decision, setDecision] = useState<any>({});
   const [carrierAppetite, setCarrierAppetite] = useState<any>({});
@@ -576,6 +577,7 @@ function normalizeProfileName(item: any) {
 
     if (dashboardLoadingRef.current) return;
     dashboardLoadingRef.current = true;
+    const myVersion = ++loadVersionRef.current;
     setDashboardLoading(true);
     setDashboardError("");
 
@@ -820,13 +822,13 @@ if (activeProfile?.policy_number) {
         // 3. Older cache only when no current upload is active.
         // 4. Empty array. Never fall back to unrelated organization-wide claims.
         if (currentUploadApplies) {
-          setClaims(currentUploadMatches);
+        if (myVersion === loadVersionRef.current) setClaims(currentUploadMatches);
         } else if (serverMatches.length > 0) {
-          setClaims(serverMatches);
+        if (myVersion === loadVersionRef.current) setClaims(serverMatches);
         } else if (cachedMatches.length > 0) {
-          setClaims(cachedMatches);
+        if (myVersion === loadVersionRef.current) setClaims(cachedMatches);
         } else {
-          setClaims([]);
+          if (myVersion === loadVersionRef.current) setClaims([]);
         }
       } else {
         const currentUpload = getCachedCurrentUpload();
