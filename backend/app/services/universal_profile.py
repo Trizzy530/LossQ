@@ -16,6 +16,15 @@ from typing import Any, Dict, List
 
 
 BAD_VALUES = {
+    "line-of-business",
+    "line of business",
+    "line-of-business business type dol",
+    "line of business business type dol",
+    "business-type",
+    "dol",
+    "line-of-business line",
+    "line of business line",
+
     "",
     "name",
     "line",
@@ -120,11 +129,28 @@ def is_good_value(value: Any, min_len: int = 2) -> bool:
         return False
 
     # Reject values that are only column/header words.
-    if re.fullmatch(r"(name|line|business|type|dol|policy|carrier|insured|account)(\s+(name|line|business|type|dol|policy|carrier|insured|account))*", lowered):
+    if re.fullmatch(
+        r"(name|line|business|type|dol|policy|carrier|insured|account)([\s\-]+(name|line|business|type|dol|policy|carrier|insured|account))*",
+        lowered,
+    ):
+        return False
+
+    # Reject table/header fragments being mistaken as real values.
+    bad_contains = [
+        "line-of-business",
+        "line of business",
+        "business type",
+        "business-type",
+        "claim number",
+        "date of loss",
+        "total incurred",
+        "policy line",
+    ]
+
+    if any(item in lowered for item in bad_contains):
         return False
 
     return True
-
 
 def first_good(*values: Any) -> str:
     for value in values:
