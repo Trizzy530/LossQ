@@ -585,6 +585,17 @@ function normalizeProfileName(item: any) {
     try {
       await loadProfileList();
 
+    // Pre-load ref from cache immediately so filteredVisibleClaims has correct policies on first render
+    if (requestedPolicyNumber) {
+      const earlyMatch = getCachedProfiles().find((p: any) =>
+        normalizePolicyNumber(p?.policy_number) === requestedPolicyNumber ||
+        (p?.policies || []).some((pol: any) => normalizePolicyNumber(pol?.policy_number) === requestedPolicyNumber)
+      );
+      if (earlyMatch && (earlyMatch.policies || []).length > 0) {
+        activeProfileRef.current = earlyMatch;
+      }
+    }
+
       let activeProfile = profile;
 
       if (requestedPolicyNumber) {
