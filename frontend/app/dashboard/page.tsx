@@ -61,6 +61,45 @@ function objectToChartData(data: Record<string, number>) {
 }
 
 
+
+function isBadPolicyNumberValue(value: any) {
+  const cleaned = normalizePolicyNumber(value);
+
+  if (!cleaned) return true;
+
+  const badValues = new Set([
+    "LINE-COVERAGE",
+    "LINECOVERAGE",
+    "POLICY",
+    "POLICYNUMBER",
+    "POLICY-NUMBER",
+    "ACCOUNTNUMBER",
+    "ACCOUNT-NUMBER",
+    "EXPOSUREBASIS",
+    "EXPOSURE-BASIS",
+    "CURRENT-PREMIUM",
+    "EXPIRING-PREMIUM",
+    "TARGET-RENEWAL",
+  ]);
+
+  if (badValues.has(cleaned)) return true;
+
+  if (cleaned.includes("COVERAGE") && !/\d/.test(cleaned)) return true;
+
+  return false;
+}
+
+function chooseSafePolicyNumber(...values: any[]) {
+  for (const value of values) {
+    const cleaned = normalizePolicyNumber(value);
+    if (cleaned && !isBadPolicyNumberValue(cleaned)) {
+      return cleaned;
+    }
+  }
+
+  return "";
+}
+
 function normalizePolicyNumber(value: any) {
   return String(value || "").trim().toUpperCase();
 }
@@ -1722,6 +1761,23 @@ async function saveProfile() {
         validation: primaryData?.validation || primaryProfile?.validation || {},
       };
 
+
+      const safeUploadedProfilePolicy = chooseSafePolicyNumber(
+        uploadedProfile?.account_number,
+        uploadedProfile?.customer_number,
+        uploadedProfile?.policy_number,
+        primaryData?.account_profile?.account_number,
+        primaryData?.account_profile?.customer_number,
+        primaryData?.selected_policy_number,
+        primaryData?.policy_number
+      );
+
+      if (safeUploadedProfilePolicy) {
+        uploadedProfile.policy_number = safeUploadedProfilePolicy;
+        uploadedProfile.account_number = uploadedProfile.account_number || safeUploadedProfilePolicy;
+        uploadedProfile.customer_number = uploadedProfile.customer_number || uploadedProfile.account_number || safeUploadedProfilePolicy;
+      }
+
       setProfile(uploadedProfile);
       updateProfileList([uploadedProfile]);
     }
@@ -1730,14 +1786,18 @@ async function saveProfile() {
     // /claims/, but /claims/ can be limited/stale, so we re-apply combinedClaims below.
     setClaims(combinedClaims);
 
-    const uploadedPolicyNumber =
-      primaryProfile?.policy_number ||
-      primaryProfile?.account_number ||
-      primaryProfile?.customer_number ||
-      primaryData?.account_profile?.policy_number ||
-      primaryData?.policy_number ||
-      combinedClaims.find((claim: any) => claim?.policy_number || claim?.policyNumber || claim?.policy_no)?.policy_number ||
-      "";
+    const uploadedPolicyNumber = chooseSafePolicyNumber(
+      primaryProfile?.account_number,
+      primaryProfile?.customer_number,
+      primaryData?.account_profile?.account_number,
+      primaryData?.account_profile?.customer_number,
+      primaryData?.account_profile?.policy_number,
+      primaryProfile?.policy_number,
+      primaryData?.selected_policy_number,
+      primaryData?.policy_number,
+      combinedPolicies.find((item: any) => item?.policy_number)?.policy_number,
+      combinedClaims.find((claim: any) => claim?.policy_number || claim?.policyNumber || claim?.policy_no)?.policy_number
+    );
 
     const uploadPolicySet = Array.from(
       new Set(
