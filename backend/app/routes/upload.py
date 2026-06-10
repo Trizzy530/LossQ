@@ -47,7 +47,7 @@ def parse_file(file_path: str, filename: str):
         claims = result.get("claims") or []
         validation = result.get("validation") or {}
 
-        raw_text_preview = result.get("raw_text_preview", "")[:5000]
+        raw_text_preview = result.get("raw_text_preview", "")[:50000]
         profile = extract_universal_profile_from_text(
             raw_text=raw_text_preview,
             existing_profile=profile,

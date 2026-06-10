@@ -844,3 +844,152 @@ try:
 except NameError:
     pass
 
+
+
+# LOSSQ_PREMIUM_WORKSHEET_EXTRACTION_V2
+# Strengthens extraction from messy premium/exposure worksheets.
+
+def _lossq_find_money_near_label(raw_text, labels):
+    text = _lossq_text(raw_text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    money_pattern = r"\$?\s*\d{1,3}(?:,\d{3})*(?:\.\d{2})?|\$?\s*\d+(?:\.\d{2})?"
+
+    for label in labels:
+        label_lower = label.lower()
+
+        for line in lines:
+            if label_lower in line.lower():
+                matches = _lossq_re.findall(money_pattern, line)
+                if matches:
+                    return _lossq_clean_money(matches[-1])
+
+        for i, line in enumerate(lines):
+            if label_lower in line.lower():
+                nearby = " ".join(lines[i:i + 4])
+                matches = _lossq_re.findall(money_pattern, nearby)
+                if matches:
+                    return _lossq_clean_money(matches[-1])
+
+    return ""
+
+
+def _lossq_find_number_near_label(raw_text, labels):
+    text = _lossq_text(raw_text)
+    lines = [line.strip() for line in text.splitlines() if line.strip()]
+
+    for label in labels:
+        label_lower = label.lower()
+
+        for i, line in enumerate(lines):
+            if label_lower in line.lower():
+                nearby = " ".join(lines[i:i + 3])
+                match = _lossq_re.search(r"\b\d+(?:,\d+)?(?:\.\d+)?\b", nearby)
+                if match:
+                    return match.group(0).replace(",", "")
+
+    return ""
+
+
+def _lossq_extract_exposure_inputs_v2(raw_text):
+    text = _lossq_text(raw_text)
+
+    if not text:
+        return {}
+
+    exposure = {}
+
+    exposure["current_premium"] = (
+        _lossq_find_money_near_label(text, ["Current Premium", "Expiring Premium", "Annual Premium"])
+        or _lossq_clean_money(_lossq_find_labeled_value(text, ["Current Premium", "Expiring Premium", "Annual Premium"]))
+    )
+
+    exposure["expiring_premium"] = (
+        _lossq_find_money_near_label(text, ["Expiring Premium", "Prior Premium", "Current Term Premium"])
+        or _lossq_clean_money(_lossq_find_labeled_value(text, ["Expiring Premium", "Prior Premium", "Current Term Premium"]))
+    )
+
+    exposure["target_renewal_premium"] = (
+        _lossq_find_money_near_label(text, ["Target Renewal Premium", "Target Premium", "Renewal Target"])
+        or _lossq_clean_money(_lossq_find_labeled_value(text, ["Target Renewal Premium", "Target Premium", "Renewal Target"]))
+    )
+
+    exposure["payroll"] = (
+        _lossq_find_money_near_label(text, ["Payroll", "Estimated Payroll", "Annual Payroll"])
+        or _lossq_clean_money(_lossq_find_labeled_value(text, ["Payroll", "Estimated Payroll", "Annual Payroll"]))
+    )
+
+    exposure["revenue"] = (
+        _lossq_find_money_near_label(text, ["Revenue", "Sales", "Gross Sales", "Annual Revenue", "Receipts"])
+        or _lossq_clean_money(_lossq_find_labeled_value(text, ["Revenue", "Sales", "Gross Sales", "Annual Revenue", "Receipts"]))
+    )
+
+    exposure["sales"] = exposure.get("revenue") or _lossq_clean_money(_lossq_find_labeled_value(text, ["Sales", "Gross Sales"]))
+    exposure["receipts"] = _lossq_clean_money(_lossq_find_labeled_value(text, ["Receipts", "Gross Receipts"]))
+
+    exposure["property_tiv"] = (
+        _lossq_find_money_near_label(text, ["Property TIV", "Total Insured Value", "TIV"])
+        or _lossq_clean_money(_lossq_find_labeled_value(text, ["Property TIV", "Total Insured Value", "TIV"]))
+    )
+
+    exposure["tiv"] = exposure.get("property_tiv") or _lossq_clean_money(_lossq_find_labeled_value(text, ["TIV"]))
+
+    exposure["building_value"] = (
+        _lossq_find_money_near_label(text, ["Building Value", "Building Limit"])
+        or _lossq_clean_money(_lossq_find_labeled_value(text, ["Building Value", "Building Limit"]))
+    )
+
+    exposure["contents_value"] = (
+        _lossq_find_money_near_label(text, ["Contents Value", "Business Personal Property", "BPP"])
+        or _lossq_clean_money(_lossq_find_labeled_value(text, ["Contents Value", "Business Personal Property", "BPP"]))
+    )
+
+    exposure["cargo_limit"] = (
+        _lossq_find_money_near_label(text, ["Cargo Limit", "Motor Truck Cargo Limit"])
+        or _lossq_find_labeled_value(text, ["Cargo Limit", "Motor Truck Cargo Limit"])
+    )
+
+    exposure["umbrella_limit"] = (
+        _lossq_find_money_near_label(text, ["Umbrella Limit", "Excess Limit", "Umbrella / Excess Limit"])
+        or _lossq_find_labeled_value(text, ["Umbrella Limit", "Excess Limit", "Umbrella / Excess Limit"])
+    )
+
+    exposure["employee_count"] = _lossq_find_number_near_label(text, ["Employee Count", "Employees", "Number of Employees"])
+    exposure["vehicle_count"] = _lossq_find_number_near_label(text, ["Vehicle Count", "Power Units", "Autos", "Scheduled Autos"])
+    exposure["driver_count"] = _lossq_find_number_near_label(text, ["Driver Count", "Drivers", "Number of Drivers"])
+    exposure["location_count"] = _lossq_find_number_near_label(text, ["Location Count", "Locations", "Number of Locations"])
+    exposure["unit_count"] = _lossq_find_number_near_label(text, ["Unit Count", "Units"])
+    exposure["square_footage"] = _lossq_find_number_near_label(text, ["Square Footage", "Sq Ft", "Sq. Ft."])
+
+    exposure["class_code"] = _lossq_find_labeled_value(text, ["Class Code", "Class Codes", "WC Code", "GL Class"])
+    exposure["class_codes"] = exposure.get("class_code") or _lossq_find_labeled_value(text, ["Class Codes"])
+    exposure["limits"] = _lossq_find_labeled_value(text, ["Policy Limits", "Limits", "Coverage Limit"])
+    exposure["coverage_limit"] = exposure.get("limits") or _lossq_find_labeled_value(text, ["Coverage Limit"])
+    exposure["deductible"] = _lossq_find_labeled_value(text, ["Deductible"])
+    exposure["retention"] = _lossq_find_labeled_value(text, ["Retention", "SIR", "Self Insured Retention"])
+    exposure["experience_mod"] = _lossq_find_labeled_value(text, ["Experience Mod", "Experience Modification", "E-Mod", "Mod"])
+    exposure["mod"] = exposure.get("experience_mod") or _lossq_find_labeled_value(text, ["Mod"])
+    exposure["exposure_change_percent"] = _lossq_find_labeled_value(text, ["Exposure Change %", "Exposure Change", "Projected Change"])
+    exposure["exposure_basis"] = _lossq_find_labeled_value(text, ["Exposure Basis", "Rating Basis", "Premium Basis"])
+
+    return {k: v for k, v in exposure.items() if v not in ("", None)}
+
+
+_lossq_previous_enrich_profile_with_exposure = _lossq_enrich_profile_with_exposure
+
+def _lossq_enrich_profile_with_exposure(raw_text="", profile=None, claims=None, filename=None):
+    profile = _lossq_previous_enrich_profile_with_exposure(
+        raw_text=raw_text,
+        profile=profile,
+        claims=claims,
+        filename=filename,
+    )
+
+    exposure_v2 = _lossq_extract_exposure_inputs_v2(raw_text)
+
+    for key, value in exposure_v2.items():
+        if value not in ("", None) and not profile.get(key):
+            profile[key] = value
+
+    return profile
+
