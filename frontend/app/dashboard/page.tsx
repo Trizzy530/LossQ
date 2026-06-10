@@ -768,23 +768,51 @@ function normalizeProfileName(item: any) {
   function updateProfileList(incomingProfiles: AnyObject[]) {
     const cleanedIncoming = (incomingProfiles || [])
       .filter(Boolean)
-      .map((item) => normalizeProfileName(item));
+      .map((item) => normalizeProfileName(item))
+      .map((item) => {
+        const safeKey = chooseSafePolicyNumber(
+          item?.account_number,
+          item?.customer_number,
+          item?.policy_number
+        );
+
+        return {
+          ...item,
+          policy_number: safeKey || "",
+          account_number: item?.account_number || safeKey || "",
+          customer_number: item?.customer_number || item?.account_number || safeKey || "",
+        };
+      });
 
     setProfiles((prev) => {
-      const merged = [...cleanedIncoming, ...prev.map((item) => normalizeProfileName(item))];
+      const merged = [
+        ...cleanedIncoming,
+        ...prev.map((item) => normalizeProfileName(item)),
+      ];
+
       const seen = new Set<string>();
 
       const next = merged.filter((item) => {
+        const safePolicy = chooseSafePolicyNumber(
+          item?.account_number,
+          item?.customer_number,
+          item?.policy_number
+        );
+
         const key =
-          item?.policy_number ||
-          item?.account_number ||
           item?.id ||
-          `${getAccountDisplayName(item)}-${item?.carrier_name || ""}`;
+          item?.account_number ||
+          item?.customer_number ||
+          safePolicy ||
+          `${getAccountDisplayName(item)}-${item?.carrier_name || item?.writing_carrier || ""}`;
 
-        if (!key) return true;
-        if (seen.has(String(key))) return false;
+        if (!key) return false;
 
-        seen.add(String(key));
+        const normalizedKey = String(key).trim().toUpperCase();
+
+        if (seen.has(normalizedKey)) return false;
+
+        seen.add(normalizedKey);
         return true;
       });
 
@@ -792,6 +820,7 @@ function normalizeProfileName(item: any) {
       return next;
     });
   }
+
 
   async function loadProfileList() {
     try {
@@ -1811,9 +1840,33 @@ async function saveProfile() {
       )
     );
 
+
+    // LOSSQ_SAFE_UPLOAD_POLICY_KEY_FINAL
+    const safeUploadPolicyKey = chooseSafePolicyNumber(
+      uploadedProfile?.account_number,
+      uploadedProfile?.customer_number,
+      primaryProfile?.account_number,
+      primaryProfile?.customer_number,
+      primaryData?.account_number,
+      primaryData?.customer_number,
+      primaryData?.account_profile?.account_number,
+      primaryData?.account_profile?.customer_number,
+      uploadedPolicyNumber,
+      uploadedProfile?.policy_number
+    );
+
+    if (safeUploadPolicyKey) {
+      uploadedProfile.policy_number = safeUploadPolicyKey;
+      uploadedProfile.account_number = uploadedProfile.account_number || safeUploadPolicyKey;
+      uploadedProfile.customer_number =
+        uploadedProfile.customer_number ||
+        uploadedProfile.account_number ||
+        safeUploadPolicyKey;
+    }
+
     const currentUploadSnapshot = {
       uploaded_at: new Date().toISOString(),
-      policy_number: normalizePolicyNumber(uploadedPolicyNumber),
+      policy_number: normalizePolicyNumber(safeUploadPolicyKey || uploadedPolicyNumber),
       policy_numbers: uploadPolicySet,
       profile: primaryProfile || {},
       policies: combinedPolicies,
@@ -2376,6 +2429,25 @@ const claimBasedPolicySchedule = Object.values(
 
 const policySchedule =
   recoveredPolicySchedule.length > 0 ? recoveredPolicySchedule : claimBasedPolicySchedule;
+
+
+// LOSSQ_FINAL_BAD_POLICY_DISPLAY_GUARDRAIL
+const safeDisplayAccountKey = chooseSafePolicyNumber(
+  displayProfile?.account_number,
+  displayProfile?.customer_number,
+  profile?.account_number,
+  profile?.customer_number,
+  displayProfile?.policy_number,
+  profile?.policy_number
+);
+
+if (isBadPolicyNumberValue(displayProfile?.policy_number) && safeDisplayAccountKey) {
+  displayProfile.policy_number = safeDisplayAccountKey;
+}
+
+if (isBadPolicyNumberValue(profile?.policy_number) && safeDisplayAccountKey) {
+  profile.policy_number = safeDisplayAccountKey;
+}
 
 const activeAccountPolicyNumber = normalizePolicyNumber(displayProfile?.policy_number);
 const activeAccountNumber = normalizePolicyNumber(displayProfile?.account_number);
