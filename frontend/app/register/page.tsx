@@ -13,6 +13,7 @@ export default function RegisterPage() {
   const [organizationName, setOrganizationName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  const [acceptedTerms, setAcceptedTerms] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(false);
 
@@ -31,6 +32,11 @@ export default function RegisterPage() {
     e.preventDefault();
     setError("");
     setLoading(true);
+
+    if (!acceptedTerms) {
+      setError("You must accept the Terms, Privacy Policy, AI Disclaimer, and Insurance Disclaimer before creating an account.");
+      return;
+    }
 
     try {
       const res = await fetch(`${API}/auth/register`, {
@@ -96,6 +102,22 @@ export default function RegisterPage() {
           className="w-full bg-slate-800 border border-slate-700 rounded-lg px-4 py-3 mb-6"
           required
         />
+
+        <label className="flex items-start gap-3 text-sm text-slate-300">
+          <input
+            type="checkbox"
+            checked={acceptedTerms}
+            onChange={(e) => setAcceptedTerms(e.target.checked)}
+            className="mt-1"
+          />
+          <span>
+            I agree to the{" "}
+            <a href="/terms" className="text-cyan-300 hover:underline">Terms</a>,{" "}
+            <a href="/privacy" className="text-cyan-300 hover:underline">Privacy Policy</a>,{" "}
+            <a href="/ai-disclaimer" className="text-cyan-300 hover:underline">AI Disclaimer</a>, and{" "}
+            <a href="/insurance-disclaimer" className="text-cyan-300 hover:underline">Insurance Disclaimer</a>.
+          </span>
+        </label>
 
         <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 rounded-lg px-5 py-3 font-semibold">
           {loading ? "Creating account..." : "Register"}
