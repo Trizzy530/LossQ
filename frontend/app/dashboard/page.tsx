@@ -825,6 +825,7 @@ if (activeProfile?.policy_number) {
         if (currentUploadApplies) {
         if (myVersion === loadVersionRef.current) setClaims(currentUploadMatches);
         } else if (serverMatches.length > 0) {
+        console.log("VERSION CHECK myVersion=" + myVersion + " current=" + loadVersionRef.current);
         if (myVersion === loadVersionRef.current) setClaims(serverMatches);
         } else if (cachedMatches.length > 0) {
         if (myVersion === loadVersionRef.current) setClaims(cachedMatches);
