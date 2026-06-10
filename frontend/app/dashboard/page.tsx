@@ -770,13 +770,7 @@ if (activeProfile?.policy_number) {
                 normalizePolicyNumber(p?.account_number) === normalizePolicyNumber(policyNumber) ||
                 (p?.policies || []).some((pol: any) => normalizePolicyNumber(pol?.policy_number) === normalizePolicyNumber(policyNumber))
               )
-              .flatMap((p: any) => (p?.policies || []).map((pol: any) => pol?.policy_number)),
-            ...(Array.isArray(cachedUploadForPolicy?.policy_numbers)
-              ? cachedUploadForPolicy.policy_numbers
-              : []),
-            ...(Array.isArray(cachedUploadForPolicy?.policies)
-              ? cachedUploadForPolicy.policies.map((item: any) => item?.policy_number)
-              : []),
+              .flatMap((p: any) => (p?.policies || []).map((pol: any) => pol?.policy_number))
           ]
             .map((item: any) => normalizePolicyNumber(item))
             .filter(Boolean)
@@ -982,9 +976,18 @@ if (submissionBuilderRes.ok) {
   async function selectAccount(policyNumber: string) {
     if (!policyNumber) return;
 
-    setCachedSelectedPolicy(policyNumber);
+    const normalizedPolicy = normalizePolicyNumber(policyNumber);
 
-    setMessage(`Loading policy ${policyNumber}...`);
+    setCachedSelectedPolicy(normalizedPolicy);
+
+    // Clear stale dashboard state immediately so the previous profile's claims
+    // cannot remain visible while the new account is loading.
+    setClaims([]);
+    setSelectedClaimDetail(null);
+    clearCachedSelectedClaim();
+    clearCachedCurrentUpload();
+
+    setMessage(`Loading policy ${normalizedPolicy}...`);
     setCopilotAnswer("");
     setRenewalMemo("");
     setSummary({});
@@ -996,16 +999,26 @@ if (submissionBuilderRes.ok) {
     setSubmissionBuilder({});
     setTimeline({});
 
-    // Pre-load the full profile from cache so policySet includes all sibling policies
+    // Pre-load the full profile from cache so policySet includes all sibling policies.
     const cachedMatch = getCachedProfiles().find(
-      (p: any) => normalizePolicyNumber(p?.policy_number) === normalizePolicyNumber(policyNumber) ||
-        (p?.policies || []).some((pol: any) => normalizePolicyNumber(pol?.policy_number) === normalizePolicyNumber(policyNumber))
+      (p: any) =>
+        normalizePolicyNumber(p?.policy_number) === normalizedPolicy ||
+        normalizePolicyNumber(p?.account_number) === normalizedPolicy ||
+        normalizePolicyNumber(p?.customer_number) === normalizedPolicy ||
+        (p?.policies || []).some(
+          (pol: any) => normalizePolicyNumber(pol?.policy_number) === normalizedPolicy
+        )
     );
+
     if (cachedMatch) {
+      activeProfileRef.current = cachedMatch;
       setProfile(cachedMatch);
+    } else {
+      activeProfileRef.current = {};
     }
-    await loadDashboard(policyNumber, true);
-    setMessage(`Loaded policy ${policyNumber}.`);
+
+    await loadDashboard(normalizedPolicy, true);
+    setMessage(`Loaded policy ${normalizedPolicy}.`);
   }
   async function deleteProfile(profileToDelete: any) {
     const profileId = profileToDelete?.id;
