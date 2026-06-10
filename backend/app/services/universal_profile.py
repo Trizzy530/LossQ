@@ -4,7 +4,7 @@ LossQ Universal Profile Extractor
 Purpose:
 - Extract insured/business name, carrier name, policy number, account number,
   effective date, and expiration date from raw loss run text.
-- Used as a safe fallback when the main parser saves claims but misses profile header fields.
+- Safely ignores bad label-only values like "Line", "Policy", "Carrier", etc.
 """
 
 import re
@@ -12,27 +12,144 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 
+BAD_PROFILE_VALUES = {
+    "",
+    "line",
+    "policy line",
+    "policy",
+    "account",
+    "account number",
+    "carrier",
+    "carrier name",
+    "writing carrier",
+    "insured",
+    "insured name",
+    "business name",
+    "named insured",
+    "agency",
+    "agency name",
+    "producer",
+    "not set",
+    "none",
+    "n/a",
+    "na",
+    "-",
+    "--",
+}
+
+
+LABEL_WORDS = [
+    "named insured",
+    "insured name",
+    "insured",
+    "business name",
+    "account name",
+    "carrier name",
+    "insurance carrier",
+    "writing carrier",
+    "carrier",
+    "insurer name",
+    "insurer",
+    "agency name",
+    "producing agency",
+    "producer name",
+    "broker name",
+    "agency",
+    "producer",
+    "broker",
+    "account number",
+    "account no",
+    "customer number",
+    "customer no",
+    "policy number",
+    "policy no",
+    "policy #",
+    "policy",
+    "effective date",
+    "policy effective date",
+    "eff date",
+    "expiration date",
+    "policy expiration date",
+    "expiry date",
+    "exp date",
+    "evaluation date",
+    "valuation date",
+    "report date",
+    "claim number",
+    "claim no",
+    "date of loss",
+    "loss date",
+    "status",
+    "paid",
+    "reserve",
+    "incurred",
+    "total incurred",
+]
+
+
 def clean_value(value: Any) -> str:
     if value is None:
         return ""
+
     text = str(value).strip()
+    text = text.replace("\x00", " ")
     text = re.sub(r"\s+", " ", text)
-    return text.strip(" :-|\t\r\n")
+    text = text.strip(" :-|\t\r\n")
+
+    # Remove trailing field labels accidentally captured from compact text.
+    for label in LABEL_WORDS:
+        pattern = r"\s+" + re.escape(label) + r"\s*$"
+        text = re.sub(pattern, "", text, flags=re.IGNORECASE).strip(" :-|\t\r\n")
+
+    return text
 
 
-def first_match(text: str, patterns: List[str]) -> str:
-    for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
-        if match:
-            value = clean_value(match.group(1))
-            if value:
-                return value
+def is_good_value(value: Any, min_len: int = 2) -> bool:
+    text = clean_value(value)
+    if not text:
+        return False
+
+    if text.lower() in BAD_PROFILE_VALUES:
+        return False
+
+    if len(text) < min_len:
+        return False
+
+    # Reject values that are only labels/headers.
+    lowered = text.lower().strip()
+    if lowered in LABEL_WORDS:
+        return False
+
+    # Reject table header fragments.
+    bad_fragments = {
+        "loss run",
+        "claim",
+        "claims",
+        "date",
+        "effective",
+        "expiration",
+        "total",
+        "open",
+        "closed",
+    }
+
+    if lowered in bad_fragments:
+        return False
+
+    return True
+
+
+def first_good(*values: Any) -> str:
+    for value in values:
+        cleaned = clean_value(value)
+        if is_good_value(cleaned):
+            return cleaned
     return ""
 
 
 def normalize_date(value: Any) -> str:
     raw = clean_value(value)
-    if not raw:
+    if not raw or raw.lower() in BAD_PROFILE_VALUES:
         return ""
 
     formats = [
@@ -49,7 +166,136 @@ def normalize_date(value: Any) -> str:
         except Exception:
             pass
 
-    return raw
+    # Accept existing ISO-looking values
+    if re.match(r"^\d{4}-\d{2}-\d{2}$", raw):
+        return raw
+
+    return ""
+
+
+def extract_value_by_label(raw_text: str, labels: List[str], max_len: int = 90) -> str:
+    """
+    Strong line-first extractor.
+    Works best for:
+      Insured: ABC Company
+      Carrier Name - Travelers
+      Policy Number UC-12345
+    """
+
+    if not raw_text:
+        return ""
+
+    lines = [clean_value(line) for line in raw_text.splitlines()]
+    lines = [line for line in lines if line]
+
+    label_pattern = "|".join(re.escape(label) for label in labels)
+
+    # 1. Label and value on the same line
+    for line in lines:
+        match = re.search(
+            rf"^(?:{label_pattern})\s*(?:[:#\-|])?\s+(.{{2,{max_len}}})$",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            value = clean_value(match.group(1))
+            if is_good_value(value):
+                return value
+
+        match = re.search(
+            rf"(?:{label_pattern})\s*(?:[:#\-|])\s*(.{{2,{max_len}}})",
+            line,
+            flags=re.IGNORECASE,
+        )
+        if match:
+            value = clean_value(match.group(1))
+            if is_good_value(value):
+                return value
+
+    # 2. Label on one line, value on next line
+    for idx, line in enumerate(lines):
+        lowered = line.lower().strip(" :-#|")
+        if lowered in [label.lower() for label in labels]:
+            for next_line in lines[idx + 1 : idx + 4]:
+                value = clean_value(next_line)
+                if is_good_value(value):
+                    return value
+
+    # 3. Compact-text fallback with stop at next known label
+    compact = re.sub(r"\s+", " ", raw_text)
+    stop_labels = "|".join(re.escape(label) for label in LABEL_WORDS)
+
+    for label in labels:
+        pattern = (
+            rf"{re.escape(label)}\s*(?:[:#\-|])?\s+"
+            rf"(.{{2,{max_len}}}?)(?=\s+(?:{stop_labels})\s*(?:[:#\-|])?|\s{{2,}}|$)"
+        )
+        match = re.search(pattern, compact, flags=re.IGNORECASE)
+        if match:
+            value = clean_value(match.group(1))
+            if is_good_value(value):
+                return value
+
+    return ""
+
+
+def extract_policy_like_value(raw_text: str, existing: Any = None, claims: List[Dict[str, Any]] | None = None) -> str:
+    existing_clean = clean_value(existing)
+    if is_good_value(existing_clean, min_len=3) and existing_clean.lower() != "line":
+        return existing_clean
+
+    claims = claims or []
+
+    for claim in claims:
+        value = first_good(
+            claim.get("policy_number"),
+            claim.get("policy_no"),
+            claim.get("policy"),
+        )
+        if value and value.lower() != "line":
+            return value
+
+    value = extract_value_by_label(
+        raw_text,
+        ["Policy Number", "Policy No.", "Policy No", "Policy #"],
+        max_len=45,
+    )
+
+    if value and value.lower() != "line":
+        return value
+
+    # Last resort: find obvious policy-like numbers.
+    patterns = [
+        r"\b([A-Z]{2,6}[-][A-Z0-9]{2,10}[-][A-Z0-9]{2,15}(?:[-][A-Z0-9]{1,10})?)\b",
+        r"\b([A-Z]{2,8}[-]\d{4,}[-]\d{1,})\b",
+        r"\b([A-Z]{2,8}\d{4,})\b",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, raw_text or "", flags=re.IGNORECASE)
+        if match:
+            found = clean_value(match.group(1)).upper()
+            if is_good_value(found, min_len=4) and found.lower() != "line":
+                return found
+
+    return ""
+
+
+def extract_account_like_value(raw_text: str, existing: Any = None, policy_number: str = "") -> str:
+    existing_clean = clean_value(existing)
+    if is_good_value(existing_clean, min_len=3) and existing_clean.lower() != "line":
+        return existing_clean
+
+    value = extract_value_by_label(
+        raw_text,
+        ["Account Number", "Account No.", "Account No", "Customer Number", "Customer No.", "Customer No"],
+        max_len=45,
+    )
+
+    if value and value.lower() != "line":
+        return value
+
+    return policy_number or ""
 
 
 def extract_universal_profile_from_text(
@@ -60,157 +306,120 @@ def extract_universal_profile_from_text(
 ) -> Dict[str, Any]:
     existing_profile = dict(existing_profile or {})
     claims = claims or []
+    raw_text = raw_text or ""
 
-    text = raw_text or ""
-    compact = re.sub(r"\s+", " ", text)
-
-    business_name = clean_value(
-        existing_profile.get("business_name")
-        or existing_profile.get("insured")
-        or existing_profile.get("named_insured")
-        or existing_profile.get("account_name")
+    business_name = first_good(
+        existing_profile.get("business_name"),
+        existing_profile.get("insured"),
+        existing_profile.get("named_insured"),
+        existing_profile.get("account_name"),
     )
 
-    carrier_name = clean_value(
-        existing_profile.get("carrier_name")
-        or existing_profile.get("writing_carrier")
-        or existing_profile.get("insurance_carrier")
-        or existing_profile.get("carrier")
+    carrier_name = first_good(
+        existing_profile.get("carrier_name"),
+        existing_profile.get("writing_carrier"),
+        existing_profile.get("insurance_carrier"),
+        existing_profile.get("carrier"),
     )
 
-    agency_name = clean_value(
-        existing_profile.get("agency_name")
-        or existing_profile.get("broker_name")
-        or existing_profile.get("producer_name")
-        or existing_profile.get("agency")
-    )
-
-    account_number = clean_value(
-        existing_profile.get("account_number")
-        or existing_profile.get("customer_number")
-        or existing_profile.get("account_no")
-    )
-
-    policy_number = clean_value(
-        existing_profile.get("policy_number")
-        or existing_profile.get("policy_no")
-        or existing_profile.get("policy")
+    agency_name = first_good(
+        existing_profile.get("agency_name"),
+        existing_profile.get("broker_name"),
+        existing_profile.get("producer_name"),
+        existing_profile.get("agency"),
     )
 
     effective_date = normalize_date(existing_profile.get("effective_date"))
     expiration_date = normalize_date(existing_profile.get("expiration_date"))
 
     if not business_name:
-        business_name = first_match(
-            compact,
-            [
-                r"(?:Named Insured|Insured Name|Insured|Business Name|Account Name)\s*[:#-]\s*([A-Za-z0-9&.,'()/\- ]{3,80})",
-                r"(?:Client|Customer)\s*[:#-]\s*([A-Za-z0-9&.,'()/\- ]{3,80})",
-            ],
+        business_name = extract_value_by_label(
+            raw_text,
+            ["Named Insured", "Insured Name", "Insured", "Business Name", "Account Name", "Client", "Customer"],
         )
 
     if not carrier_name:
-        carrier_name = first_match(
-            compact,
-            [
-                r"(?:Carrier Name|Insurance Carrier|Writing Carrier|Carrier|Insurer Name|Insurer)\s*[:#-]\s*([A-Za-z0-9&.,'()/\- ]{3,80})",
-                r"(?:Company)\s*[:#-]\s*([A-Za-z0-9&.,'()/\- ]{3,80})",
-            ],
+        carrier_name = extract_value_by_label(
+            raw_text,
+            ["Carrier Name", "Insurance Carrier", "Writing Carrier", "Carrier", "Insurer Name", "Insurer"],
         )
 
     if not agency_name:
-        agency_name = first_match(
-            compact,
-            [
-                r"(?:Agency Name|Producing Agency|Producer Name|Broker Name|Agency|Producer|Broker)\s*[:#-]\s*([A-Za-z0-9&.,'()/\- ]{3,80})",
-            ],
+        agency_name = extract_value_by_label(
+            raw_text,
+            ["Agency Name", "Producing Agency", "Producer Name", "Broker Name", "Agency", "Producer", "Broker"],
         )
 
-    if not account_number:
-        account_number = first_match(
-            compact,
-            [
-                r"(?:Account Number|Account No\.?|Customer Number|Customer No\.?)\s*[:#-]\s*([A-Za-z0-9\-]{3,40})",
-            ],
-        )
+    policy_number = extract_policy_like_value(
+        raw_text,
+        existing=existing_profile.get("policy_number")
+        or existing_profile.get("policy_no")
+        or existing_profile.get("policy"),
+        claims=claims,
+    )
 
-    if not policy_number:
-        policy_number = first_match(
-            compact,
-            [
-                r"(?:Policy Number|Policy No\.?|Policy #|Policy)\s*[:#-]\s*([A-Za-z0-9\-]{3,40})",
-            ],
-        )
+    account_number = extract_account_like_value(
+        raw_text,
+        existing=existing_profile.get("account_number")
+        or existing_profile.get("customer_number")
+        or existing_profile.get("account_no"),
+        policy_number=policy_number,
+    )
 
     if not effective_date:
         effective_date = normalize_date(
-            first_match(
-                compact,
-                [
-                    r"(?:Effective Date|Policy Effective Date|Eff Date)\s*[:#-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4}|[0-9]{4}-[0-9]{2}-[0-9]{2})",
-                ],
+            extract_value_by_label(
+                raw_text,
+                ["Effective Date", "Policy Effective Date", "Eff Date"],
+                max_len=25,
             )
         )
 
     if not expiration_date:
         expiration_date = normalize_date(
-            first_match(
-                compact,
-                [
-                    r"(?:Expiration Date|Policy Expiration Date|Expiry Date|Exp Date)\s*[:#-]\s*([0-9]{1,2}[/-][0-9]{1,2}[/-][0-9]{2,4}|[0-9]{4}-[0-9]{2}-[0-9]{2})",
-                ],
+            extract_value_by_label(
+                raw_text,
+                ["Expiration Date", "Policy Expiration Date", "Expiry Date", "Exp Date"],
+                max_len=25,
             )
         )
 
     for claim in claims:
         if not business_name:
-            business_name = clean_value(
-                claim.get("business_name")
-                or claim.get("insured_name")
-                or claim.get("named_insured")
-                or claim.get("account_name")
+            business_name = first_good(
+                claim.get("business_name"),
+                claim.get("insured_name"),
+                claim.get("named_insured"),
+                claim.get("account_name"),
             )
 
         if not carrier_name:
-            carrier_name = clean_value(
-                claim.get("carrier_name")
-                or claim.get("writing_carrier")
-                or claim.get("insurance_carrier")
-                or claim.get("carrier")
+            carrier_name = first_good(
+                claim.get("carrier_name"),
+                claim.get("writing_carrier"),
+                claim.get("insurance_carrier"),
+                claim.get("carrier"),
             )
 
         if not policy_number:
-            policy_number = clean_value(
-                claim.get("policy_number")
-                or claim.get("policy_no")
-                or claim.get("policy")
+            policy_number = first_good(
+                claim.get("policy_number"),
+                claim.get("policy_no"),
+                claim.get("policy"),
             )
 
         if business_name and carrier_name and policy_number:
             break
 
-    if not policy_number and account_number:
-        policy_number = account_number
-
     profile = dict(existing_profile)
-    profile["business_name"] = business_name or existing_profile.get("business_name") or ""
-    profile["carrier_name"] = carrier_name or existing_profile.get("carrier_name") or ""
-    profile["writing_carrier"] = (
-        existing_profile.get("writing_carrier")
-        or carrier_name
-        or existing_profile.get("carrier_name")
-        or ""
-    )
-    profile["agency_name"] = agency_name or existing_profile.get("agency_name") or ""
-    profile["account_number"] = account_number or existing_profile.get("account_number") or policy_number or ""
-    profile["customer_number"] = (
-        existing_profile.get("customer_number")
-        or account_number
-        or policy_number
-        or ""
-    )
-    profile["policy_number"] = policy_number or existing_profile.get("policy_number") or ""
-    profile["effective_date"] = effective_date or existing_profile.get("effective_date") or ""
-    profile["expiration_date"] = expiration_date or existing_profile.get("expiration_date") or ""
+    profile["business_name"] = business_name or ""
+    profile["carrier_name"] = carrier_name or ""
+    profile["writing_carrier"] = first_good(existing_profile.get("writing_carrier"), carrier_name)
+    profile["agency_name"] = agency_name or ""
+    profile["account_number"] = account_number or policy_number or ""
+    profile["customer_number"] = first_good(existing_profile.get("customer_number"), account_number, policy_number)
+    profile["policy_number"] = policy_number or account_number or ""
+    profile["effective_date"] = effective_date or ""
+    profile["expiration_date"] = expiration_date or ""
 
     return profile
