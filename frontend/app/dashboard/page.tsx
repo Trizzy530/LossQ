@@ -32,6 +32,7 @@ type ToolKey =
   | "overview"
   | "profiles"
   | "upload"
+  | "exposure-inputs"
   | "renewal-risk"
   | "decision"
   | "carrier-appetite"
@@ -306,6 +307,7 @@ export default function DashboardPage() {
       "overview",
       "profiles",
       "upload",
+      "exposure-inputs",
       "renewal-risk",
       "decision",
       "carrier-appetite",
@@ -1240,6 +1242,31 @@ async function saveProfile() {
 
       setMessage("Lookup failed.");
     }
+  }
+
+
+  function saveExposureInputs() {
+    const selectedPolicy =
+      profile?.policy_number ||
+      profile?.account_number ||
+      profile?.customer_number ||
+      getCachedSelectedPolicy();
+
+    const nextProfile = {
+      ...profile,
+      policy_number: profile?.policy_number || selectedPolicy || "",
+      account_number: profile?.account_number || selectedPolicy || "",
+      customer_number: profile?.customer_number || profile?.account_number || selectedPolicy || "",
+    };
+
+    setProfile(nextProfile);
+    updateProfileList([nextProfile]);
+
+    if (selectedPolicy) {
+      setCachedSelectedPolicy(selectedPolicy);
+    }
+
+    setMessage("Exposure inputs saved locally for the selected account. Use Save Profile to sync the full account profile.");
   }
 
   async function uploadFiles() {
@@ -3061,6 +3088,10 @@ const trendNoteDisplay =
     Upload Center
   </ToolButton>
 
+  <ToolButton active={activeTool === "exposure-inputs"} onClick={() => setActiveTool("exposure-inputs")}>
+    Exposure Inputs
+  </ToolButton>
+
   <ToolButton active={activeTool === "submission-builder"} onClick={() => setActiveTool("submission-builder")}>
     Submission Builder
   </ToolButton>
@@ -3156,6 +3187,7 @@ const trendNoteDisplay =
               <MobileToolButton active={activeTool === "overview"} onClick={() => setActiveTool("overview")}>Overview</MobileToolButton>
               <MobileToolButton active={activeTool === "profiles"} onClick={() => setActiveTool("profiles")}>Profiles</MobileToolButton>
               <MobileToolButton active={activeTool === "upload"} onClick={() => setActiveTool("upload")}>Upload</MobileToolButton>
+              <MobileToolButton active={activeTool === "exposure-inputs"} onClick={() => setActiveTool("exposure-inputs")}>Exposure Inputs</MobileToolButton>
               <MobileToolButton active={activeTool === "renewal-risk"} onClick={() => setActiveTool("renewal-risk")}>Renewal Risk</MobileToolButton>
               <MobileToolButton active={activeTool === "decision"} onClick={() => setActiveTool("decision")}>Decision</MobileToolButton>
               <MobileToolButton active={activeTool === "carrier-appetite"} onClick={() => setActiveTool("carrier-appetite")}>Carrier Appetite</MobileToolButton>
