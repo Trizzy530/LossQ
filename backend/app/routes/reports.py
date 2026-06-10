@@ -7836,7 +7836,7 @@ class ModernCorporateExecutivePage(Flowable):
             ("Total Paid", dollars(metrics.get("total_paid", 0)), BLUE),
             ("Litigation", metrics.get("litigation_claims", 0), risk_col),
             ("Largest Loss", dollars(metrics.get("largest_loss", 0)), BLUE),
-            ("Carrier", carrier[:18], PURPLE),
+            ("Carrier", carrier, PURPLE),
         ]
         for i, (label, value, accent) in enumerate(cards[:4]):
             self._pill(c, 0.48 * inch + i * (card_w + gap), card_y, card_w, 0.54 * inch, label, value, accent)
