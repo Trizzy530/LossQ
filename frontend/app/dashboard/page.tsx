@@ -100,6 +100,33 @@ function chooseSafePolicyNumber(...values: any[]) {
   return "";
 }
 
+
+function getEvaluationDateFromExpiration(expirationDate: any) {
+  const raw = String(expirationDate || "").trim();
+
+  if (!raw) return "";
+
+  const parsed = new Date(raw);
+
+  if (Number.isNaN(parsed.getTime())) return "";
+
+  parsed.setMonth(parsed.getMonth() - 3);
+
+  return parsed.toISOString().slice(0, 10);
+}
+
+function getBestEvaluationDate(profileLike: any) {
+  return (
+    profileLike?.evaluation_date ||
+    getEvaluationDateFromExpiration(
+      profileLike?.expiration_date ||
+        profileLike?.policy_expiration_date ||
+        profileLike?.expiry_date
+    ) ||
+    ""
+  );
+}
+
 function normalizePolicyNumber(value: any) {
   return String(value || "").trim().toUpperCase();
 }
@@ -1455,7 +1482,7 @@ async function saveProfile() {
     policy_number: profile?.policy_number || profile?.account_number || "",
     effective_date: profile?.effective_date || "",
     expiration_date: profile?.expiration_date || "",
-    evaluation_date: profile?.evaluation_date || "",
+    evaluation_date: profile?.evaluation_date || getEvaluationDateFromExpiration(profile?.expiration_date) || "",
     policies: Array.isArray(profile?.policies) ? profile.policies : [],
     validation: profile?.validation || {},
     raw_text_preview: profile?.raw_text_preview || "",
@@ -1849,6 +1876,33 @@ async function saveProfile() {
         uploadedProfile.account_number = uploadedProfile.account_number || safeUploadedProfilePolicy;
         uploadedProfile.customer_number = uploadedProfile.customer_number || uploadedProfile.account_number || safeUploadedProfilePolicy;
       }
+
+
+      // LOSSQ_UPLOAD_PROFILE_FINAL_NORMALIZATION
+      const safeMainAccountKey = chooseSafePolicyNumber(
+        uploadedProfile?.account_number,
+        uploadedProfile?.customer_number,
+        primaryProfile?.account_number,
+        primaryProfile?.customer_number,
+        primaryData?.account_number,
+        primaryData?.customer_number,
+        primaryData?.account_profile?.account_number,
+        primaryData?.account_profile?.customer_number,
+        uploadedProfile?.policy_number
+      );
+
+      if (safeMainAccountKey) {
+        uploadedProfile.account_number = uploadedProfile.account_number || safeMainAccountKey;
+        uploadedProfile.customer_number =
+          uploadedProfile.customer_number ||
+          uploadedProfile.account_number ||
+          safeMainAccountKey;
+
+        uploadedProfile.policy_number = safeMainAccountKey;
+      }
+
+      uploadedProfile.evaluation_date = getBestEvaluationDate(uploadedProfile);
+
 
       setProfile(uploadedProfile);
       updateProfileList([uploadedProfile]);
@@ -3968,7 +4022,7 @@ const trendNoteDisplay =
                   <Input label="Policy Number" value={profile?.policy_number || ""} onChange={(v) => setProfile({ ...profile, policy_number: v })} />
                   <Input label="Effective Date" value={profile?.effective_date || ""} onChange={(v) => setProfile({ ...profile, effective_date: v })} />
                   <Input label="Expiration Date" value={profile?.expiration_date || ""} onChange={(v) => setProfile({ ...profile, expiration_date: v })} />
-                  <Input label="Evaluation Date" value={profile?.evaluation_date || ""} onChange={(v) => setProfile({ ...profile, evaluation_date: v })} />
+                  <Input label="Evaluation Date" value={profile?.evaluation_date || getEvaluationDateFromExpiration(profile?.expiration_date) || ""} onChange={(v) => setProfile({ ...profile, evaluation_date: v })} />
                 </div>
               </section>
             </>
