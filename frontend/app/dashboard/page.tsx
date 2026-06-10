@@ -578,6 +578,7 @@ function normalizeProfileName(item: any) {
     if (dashboardLoadingRef.current) return;
     dashboardLoadingRef.current = true;
     const myVersion = ++loadVersionRef.current;
+    console.log("LOAD START version=" + myVersion + " policy=" + policyNumberOverride, new Error().stack?.split("\n")[2]);
     setDashboardLoading(true);
     setDashboardError("");
 
