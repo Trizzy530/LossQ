@@ -7545,9 +7545,11 @@ def table(data, widths=None, header=True, font_size=8, header_color=NAVY):
             if isinstance(cell, Paragraph):
                 wrapped_row.append(cell)
             else:
-                cell_text = safe_text(cell)
                 wrapped_row.append(
-                    Paragraph(cell_text, header_style if header and row_index == 0 else wrap_style)
+                    Paragraph(
+                        safe_text(cell),
+                        header_style if header and row_index == 0 else wrap_style,
+                    )
                 )
         wrapped_data.append(wrapped_row)
 
