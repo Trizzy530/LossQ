@@ -2547,32 +2547,87 @@ const effectivePremiumForecast =
 const premiumAccuracyStatus = (() => {
   const currentPremium = Number(effectivePremiumForecast?.current_premium || 0);
   const expectedRenewal = Number(effectivePremiumForecast?.expected_renewal_premium || 0);
-  const hasExposureBasis = Boolean(
+
+  const hasUniversalExposureBasis = Boolean(
     displayProfile?.payroll ||
       displayProfile?.revenue ||
-      displayProfile?.vehicle_count ||
-      displayProfile?.driver_count ||
-      displayProfile?.property_tiv ||
       displayProfile?.sales ||
+      displayProfile?.receipts ||
+      displayProfile?.employee_count ||
+      displayProfile?.employeeCount ||
+      displayProfile?.vehicle_count ||
+      displayProfile?.vehicleCount ||
+      displayProfile?.driver_count ||
+      displayProfile?.driverCount ||
+      displayProfile?.property_tiv ||
+      displayProfile?.tiv ||
+      displayProfile?.building_value ||
+      displayProfile?.contents_value ||
+      displayProfile?.square_footage ||
+      displayProfile?.location_count ||
+      displayProfile?.unit_count ||
+      displayProfile?.class_code ||
+      displayProfile?.class_codes ||
+      displayProfile?.limits ||
+      displayProfile?.deductible ||
+      displayProfile?.retention ||
+      displayProfile?.experience_mod ||
+      displayProfile?.mod ||
+      displayProfile?.coverage_limit ||
+      displayProfile?.cyber_revenue ||
+      displayProfile?.professional_revenue ||
+      displayProfile?.cargo_limit ||
+      displayProfile?.umbrella_limit ||
       displayProfile?.exposure_basis
   );
+
+  const detectedLines = Array.from(
+    new Set(
+      [
+        ...policySchedule.map((item: any) =>
+          String(
+            item?.policy_type ||
+              item?.line_coverage ||
+              item?.line_of_business ||
+              item?.coverage ||
+              ""
+          ).trim()
+        ),
+        ...intelligenceClaims.map((claim: any) =>
+          String(
+            claim?.line_of_business ||
+              claim?.lob ||
+              claim?.coverage_line ||
+              claim?.coverage ||
+              claim?.claim_type ||
+              ""
+          ).trim()
+        ),
+      ].filter(Boolean)
+    )
+  );
+
+  const lineText =
+    detectedLines.length > 0
+      ? detectedLines.slice(0, 6).join(", ")
+      : "commercial lines of business";
 
   if (!currentPremium || currentPremium <= 0) {
     return {
       level: "Premium Projection Unavailable",
       confidence: "Insufficient",
       message:
-        "Add current premium and exposure basis before relying on a renewal dollar projection. LossQ can still show claim-based renewal pressure.",
+        `Add current premium and exposure basis before relying on a renewal dollar projection. LossQ can still show claim-based renewal pressure across ${lineText}.`,
       allowDollarProjection: false,
     };
   }
 
-  if (!hasExposureBasis) {
+  if (!hasUniversalExposureBasis) {
     return {
       level: "Limited Confidence Projection",
       confidence: "Limited",
       message:
-        "Current premium is available, but exposure data is missing. Add payroll, revenue, vehicle count, driver count, property values, or other exposure basis to improve pricing accuracy.",
+        "Current premium is available, but exposure data is missing. Add the exposure basis for the applicable line of business, such as payroll, revenue, sales, class codes, property values, TIV, limits, deductibles, retention, vehicle/unit counts, employee count, or location data.",
       allowDollarProjection: true,
     };
   }
@@ -2582,7 +2637,7 @@ const premiumAccuracyStatus = (() => {
       level: "High Confidence Estimate",
       confidence: "Strong",
       message:
-        "LossQ has current premium, claim activity, and exposure basis. This is a defensible renewal premium range, not a guaranteed carrier quote.",
+        `LossQ has current premium, claim activity, and exposure basis for ${lineText}. This is a defensible renewal premium range, not a guaranteed carrier quote.`,
       allowDollarProjection: true,
     };
   }
@@ -2591,7 +2646,7 @@ const premiumAccuracyStatus = (() => {
     level: "Moderate Confidence Estimate",
     confidence: "Moderate",
     message:
-      "LossQ has partial premium data. Confirm claim totals, exposure changes, limits, deductibles, and carrier appetite before final pricing.",
+      "LossQ has partial premium and exposure data. Confirm claim totals, exposure changes, limits, deductibles, retention, class codes, coverage terms, and carrier appetite before final pricing.",
     allowDollarProjection: true,
   };
 })();
