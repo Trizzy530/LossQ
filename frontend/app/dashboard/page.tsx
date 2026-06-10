@@ -1625,16 +1625,76 @@ async function exportExecutiveReport() {
 
 
   async function generateRenewalMemo() {
-    if (!profile?.policy_number) {
-      setRenewalMemo("Select a policy/account first.");
+    const selectedPolicy =
+      displayProfile?.policy_number ||
+      profile?.policy_number ||
+      displayProfile?.account_number ||
+      profile?.account_number ||
+      displayProfile?.customer_number ||
+      profile?.customer_number ||
+      getCachedSelectedPolicy();
+
+    const selectedName =
+      displayProfile?.business_name ||
+      displayProfile?.insured ||
+      profile?.business_name ||
+      profile?.insured ||
+      "Selected Account";
+
+    if (!selectedPolicy && visibleClaims.length === 0) {
+      setRenewalMemo("Select a policy/account or upload claims first.");
       return;
     }
 
     setMemoLoading(true);
-    setRenewalMemo(`Generating renewal memo for ${profile.policy_number}...`);
+    setRenewalMemo(`Generating renewal memo for ${selectedPolicy || selectedName}...`);
+
+    const buildLocalMemo = () => {
+      const claimsUsed = visibleClaims.length || claims.length || 0;
+      const openCount = openClaims || 0;
+      const incurred = Number(totalIncurred || 0).toLocaleString();
+      const reserve = Number(totalReserve || 0).toLocaleString();
+      const riskLevel = effectiveSummary?.renewal_risk_level || localRenewalRiskLevel || "Needs Review";
+      const score = effectiveSummary?.renewal_score ?? localRenewalScore ?? "Not Rated";
+      const drivers = Array.isArray(effectiveSummary?.renewal_drivers)
+        ? effectiveSummary.renewal_drivers
+        : localRenewalDrivers || [];
+      const concerns = Array.isArray(effectiveSummary?.carrier_concerns)
+        ? effectiveSummary.carrier_concerns
+        : [];
+
+      return [
+        `LOSSQ AI RENEWAL MEMO`,
+        ``,
+        `Account: ${selectedName}`,
+        `Policy / Account Number: ${selectedPolicy || "Not Set"}`,
+        `Renewal Score: ${score}`,
+        `Renewal Risk Level: ${riskLevel}`,
+        `Claims Reviewed: ${claimsUsed}`,
+        `Open Claims: ${openCount}`,
+        `Total Incurred: $${incurred}`,
+        `Total Reserve: $${reserve}`,
+        ``,
+        `Executive Summary`,
+        effectiveSummary?.renewal_summary ||
+          `LossQ reviewed the loaded claim activity for ${selectedName}. The account currently reflects ${claimsUsed} claim(s), ${openCount} open claim(s), and $${incurred} in total incurred losses. Renewal risk is ${riskLevel}.`,
+        ``,
+        `Renewal Drivers`,
+        ...(drivers.length ? drivers.map((item: any) => `- ${item}`) : [`- Claims loaded for underwriting review.`]),
+        ``,
+        `Carrier Concerns`,
+        ...(concerns.length ? concerns.map((item: any) => `- ${item}`) : [`- Confirm open claim status, reserve adequacy, and corrective-action documentation before carrier submission.`]),
+        ``,
+        `Broker Recommendation`,
+        effectiveSummary?.broker_recommendation ||
+          `Prepare updated loss runs, explain open claims, confirm reserves, document corrective actions, and include a clear broker narrative before approaching renewal markets.`,
+      ].join("\n");
+    };
 
     try {
-      const policy = `?policy_number=${encodeURIComponent(profile.policy_number)}`;
+      const policy = selectedPolicy
+        ? `?policy_number=${encodeURIComponent(selectedPolicy)}`
+        : "";
 
       const res = await fetch(`${API}/renewal/memo${policy}`, {
         headers: authHeaders(),
@@ -1649,41 +1709,57 @@ async function exportExecutiveReport() {
       }
 
       if (!res.ok) {
-        setRenewalMemo(JSON.stringify(data));
+        setRenewalMemo(buildLocalMemo());
+        setMessage(`Backend memo route returned ${res.status}. LossQ generated a local renewal memo from visible claims.`);
+        return;
+      }
+
+      const backendMemo =
+        data?.memo ||
+        data?.renewal_memo ||
+        data?.content ||
+        data?.summary ||
+        "";
+
+      if (!backendMemo || String(backendMemo).toLowerCase().includes("insufficient")) {
+        setRenewalMemo(buildLocalMemo());
+        setMessage("Backend memo did not return enough account detail. LossQ generated a local renewal memo from visible claims.");
         return;
       }
 
       setRenewalMemo(
-        `Policy analyzed: ${data?.policy_number || profile.policy_number}\nClaims used: ${
+        `Policy analyzed: ${data?.policy_number || selectedPolicy || "Selected Account"}\nClaims used: ${
           data?.claims_used ?? visibleClaims.length
-        }\n\n${data?.memo || "No memo generated."}`
+        }\n\n${backendMemo}`
       );
-    } catch {
-      setRenewalMemo("Memo failed.");
+    } catch (error: any) {
+      setRenewalMemo(buildLocalMemo());
+      setMessage(`Backend memo failed. LossQ generated a local renewal memo from visible claims.`);
     } finally {
       setMemoLoading(false);
     }
   }
 
- async function generateCarrierPacket() {
-  const query = buildReportQuery();
 
-  setMessage("Generating carrier submission packet...");
+  async function generateCarrierPacket() {
+    const query = buildReportQuery();
 
-  await downloadPdf(
-    `${API}/reports/carrier-packet-pdf${query}`,
-    "lossq_carrier_submission_packet.pdf",
-    {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
-      body: JSON.stringify(buildReportPayload()),
-    }
-  );
+    setMessage("Generating carrier submission packet...");
 
-  setMessage("Carrier submission packet generated.");
-}
+    await downloadPdf(
+      `${API}/reports/carrier-packet-pdf${query}`,
+      "lossq_carrier_submission_packet.pdf",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(buildReportPayload()),
+      }
+    );
+
+    setMessage("Carrier submission packet generated.");
+  }
 
   function copyRenewalMemo() {
     navigator.clipboard.writeText(renewalMemo || "");
