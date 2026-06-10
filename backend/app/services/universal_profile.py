@@ -1,10 +1,13 @@
 """
 LossQ Universal Profile Extractor
 
-Purpose:
-- Extract insured/business name, carrier name, policy number, account number,
-  effective date, and expiration date from raw loss run text.
-- Safely ignores bad label-only values like "Line", "Policy", "Carrier", etc.
+Strict fallback extractor for account/profile fields.
+Prevents bad values like:
+- Name
+- Line
+- Policy Line
+- Carrier Name
+- Line of Business Business Type DOL
 """
 
 import re
@@ -12,11 +15,16 @@ from datetime import datetime
 from typing import Any, Dict, List
 
 
-BAD_PROFILE_VALUES = {
+BAD_VALUES = {
     "",
+    "name",
     "line",
-    "policy line",
     "policy",
+    "policy line",
+    "line of business",
+    "business type",
+    "business type dol",
+    "line of business business type dol",
     "account",
     "account number",
     "carrier",
@@ -38,25 +46,21 @@ BAD_PROFILE_VALUES = {
 }
 
 
-LABEL_WORDS = [
+FIELD_LABELS = [
     "named insured",
     "insured name",
-    "insured",
     "business name",
     "account name",
+    "client name",
+    "customer name",
     "carrier name",
     "insurance carrier",
     "writing carrier",
-    "carrier",
     "insurer name",
-    "insurer",
     "agency name",
     "producing agency",
     "producer name",
     "broker name",
-    "agency",
-    "producer",
-    "broker",
     "account number",
     "account no",
     "customer number",
@@ -64,7 +68,6 @@ LABEL_WORDS = [
     "policy number",
     "policy no",
     "policy #",
-    "policy",
     "effective date",
     "policy effective date",
     "eff date",
@@ -84,6 +87,8 @@ LABEL_WORDS = [
     "reserve",
     "incurred",
     "total incurred",
+    "line of business",
+    "business type",
 ]
 
 
@@ -91,49 +96,31 @@ def clean_value(value: Any) -> str:
     if value is None:
         return ""
 
-    text = str(value).strip()
-    text = text.replace("\x00", " ")
+    text = str(value).replace("\x00", " ").strip()
     text = re.sub(r"\s+", " ", text)
-    text = text.strip(" :-|\t\r\n")
-
-    # Remove trailing field labels accidentally captured from compact text.
-    for label in LABEL_WORDS:
-        pattern = r"\s+" + re.escape(label) + r"\s*$"
-        text = re.sub(pattern, "", text, flags=re.IGNORECASE).strip(" :-|\t\r\n")
+    text = text.strip(" :-#|\t\r\n")
 
     return text
 
 
 def is_good_value(value: Any, min_len: int = 2) -> bool:
     text = clean_value(value)
+    lowered = text.lower()
+
     if not text:
         return False
 
-    if text.lower() in BAD_PROFILE_VALUES:
+    if lowered in BAD_VALUES:
+        return False
+
+    if lowered in FIELD_LABELS:
         return False
 
     if len(text) < min_len:
         return False
 
-    # Reject values that are only labels/headers.
-    lowered = text.lower().strip()
-    if lowered in LABEL_WORDS:
-        return False
-
-    # Reject table header fragments.
-    bad_fragments = {
-        "loss run",
-        "claim",
-        "claims",
-        "date",
-        "effective",
-        "expiration",
-        "total",
-        "open",
-        "closed",
-    }
-
-    if lowered in bad_fragments:
+    # Reject values that are only column/header words.
+    if re.fullmatch(r"(name|line|business|type|dol|policy|carrier|insured|account)(\s+(name|line|business|type|dol|policy|carrier|insured|account))*", lowered):
         return False
 
     return True
@@ -149,7 +136,8 @@ def first_good(*values: Any) -> str:
 
 def normalize_date(value: Any) -> str:
     raw = clean_value(value)
-    if not raw or raw.lower() in BAD_PROFILE_VALUES:
+
+    if not raw or raw.lower() in BAD_VALUES:
         return ""
 
     formats = [
@@ -166,20 +154,29 @@ def normalize_date(value: Any) -> str:
         except Exception:
             pass
 
-    # Accept existing ISO-looking values
     if re.match(r"^\d{4}-\d{2}-\d{2}$", raw):
         return raw
 
     return ""
 
 
-def extract_value_by_label(raw_text: str, labels: List[str], max_len: int = 90) -> str:
+def extract_labeled_value(raw_text: str, labels: List[str], max_len: int = 80) -> str:
     """
-    Strong line-first extractor.
-    Works best for:
-      Insured: ABC Company
+    Strict label extractor.
+
+    Accepts:
+      Insured Name: ABC Company
       Carrier Name - Travelers
-      Policy Number UC-12345
+      Policy Number: GL-12345
+
+    Also accepts:
+      Insured Name
+      ABC Company
+
+    Rejects:
+      Insured Name
+      Carrier Name
+      Policy Line
     """
 
     if not raw_text:
@@ -188,61 +185,44 @@ def extract_value_by_label(raw_text: str, labels: List[str], max_len: int = 90) 
     lines = [clean_value(line) for line in raw_text.splitlines()]
     lines = [line for line in lines if line]
 
-    label_pattern = "|".join(re.escape(label) for label in labels)
+    # Sort longest labels first so "Insured Name" wins before "Name".
+    labels_sorted = sorted(labels, key=len, reverse=True)
 
-    # 1. Label and value on the same line
+    # 1. Same-line label with required separator.
     for line in lines:
-        match = re.search(
-            rf"^(?:{label_pattern})\s*(?:[:#\-|])?\s+(.{{2,{max_len}}})$",
-            line,
-            flags=re.IGNORECASE,
-        )
-        if match:
-            value = clean_value(match.group(1))
-            if is_good_value(value):
-                return value
-
-        match = re.search(
-            rf"(?:{label_pattern})\s*(?:[:#\-|])\s*(.{{2,{max_len}}})",
-            line,
-            flags=re.IGNORECASE,
-        )
-        if match:
-            value = clean_value(match.group(1))
-            if is_good_value(value):
-                return value
-
-    # 2. Label on one line, value on next line
-    for idx, line in enumerate(lines):
-        lowered = line.lower().strip(" :-#|")
-        if lowered in [label.lower() for label in labels]:
-            for next_line in lines[idx + 1 : idx + 4]:
-                value = clean_value(next_line)
+        for label in labels_sorted:
+            pattern = rf"^{re.escape(label)}\s*[:#\-|]\s*(.{{2,{max_len}}})$"
+            match = re.search(pattern, line, flags=re.IGNORECASE)
+            if match:
+                value = clean_value(match.group(1))
                 if is_good_value(value):
                     return value
 
-    # 3. Compact-text fallback with stop at next known label
-    compact = re.sub(r"\s+", " ", raw_text)
-    stop_labels = "|".join(re.escape(label) for label in LABEL_WORDS)
+    # 2. Label on one line, value on following line.
+    normalized_labels = {label.lower().strip() for label in labels_sorted}
 
-    for label in labels:
-        pattern = (
-            rf"{re.escape(label)}\s*(?:[:#\-|])?\s+"
-            rf"(.{{2,{max_len}}}?)(?=\s+(?:{stop_labels})\s*(?:[:#\-|])?|\s{{2,}}|$)"
-        )
-        match = re.search(pattern, compact, flags=re.IGNORECASE)
-        if match:
-            value = clean_value(match.group(1))
-            if is_good_value(value):
-                return value
+    for idx, line in enumerate(lines):
+        lowered = line.lower().strip(" :-#|")
+
+        if lowered in normalized_labels:
+            for next_line in lines[idx + 1 : idx + 4]:
+                value = clean_value(next_line)
+
+                # Do not accept another field label as the value.
+                if value.lower() in FIELD_LABELS or value.lower() in BAD_VALUES:
+                    continue
+
+                if is_good_value(value):
+                    return value
 
     return ""
 
 
-def extract_policy_like_value(raw_text: str, existing: Any = None, claims: List[Dict[str, Any]] | None = None) -> str:
-    existing_clean = clean_value(existing)
-    if is_good_value(existing_clean, min_len=3) and existing_clean.lower() != "line":
-        return existing_clean
+def extract_policy_number(raw_text: str, existing: Any = None, claims: List[Dict[str, Any]] | None = None) -> str:
+    existing_value = clean_value(existing)
+
+    if is_good_value(existing_value, min_len=4):
+        return existing_value
 
     claims = claims or []
 
@@ -252,22 +232,21 @@ def extract_policy_like_value(raw_text: str, existing: Any = None, claims: List[
             claim.get("policy_no"),
             claim.get("policy"),
         )
-        if value and value.lower() != "line":
+        if value and is_good_value(value, min_len=4):
             return value
 
-    value = extract_value_by_label(
+    value = extract_labeled_value(
         raw_text,
         ["Policy Number", "Policy No.", "Policy No", "Policy #"],
-        max_len=45,
+        max_len=50,
     )
 
-    if value and value.lower() != "line":
+    if value and is_good_value(value, min_len=4):
         return value
 
-    # Last resort: find obvious policy-like numbers.
+    # Last resort: policy-like pattern.
     patterns = [
-        r"\b([A-Z]{2,6}[-][A-Z0-9]{2,10}[-][A-Z0-9]{2,15}(?:[-][A-Z0-9]{1,10})?)\b",
-        r"\b([A-Z]{2,8}[-]\d{4,}[-]\d{1,})\b",
+        r"\b([A-Z]{2,8}-[A-Z0-9]{2,12}-[A-Z0-9]{2,12}(?:-[A-Z0-9]{1,12})?)\b",
         r"\b([A-Z]{2,8}\d{4,})\b",
     ]
 
@@ -275,27 +254,10 @@ def extract_policy_like_value(raw_text: str, existing: Any = None, claims: List[
         match = re.search(pattern, raw_text or "", flags=re.IGNORECASE)
         if match:
             found = clean_value(match.group(1)).upper()
-            if is_good_value(found, min_len=4) and found.lower() != "line":
+            if is_good_value(found, min_len=4):
                 return found
 
     return ""
-
-
-def extract_account_like_value(raw_text: str, existing: Any = None, policy_number: str = "") -> str:
-    existing_clean = clean_value(existing)
-    if is_good_value(existing_clean, min_len=3) and existing_clean.lower() != "line":
-        return existing_clean
-
-    value = extract_value_by_label(
-        raw_text,
-        ["Account Number", "Account No.", "Account No", "Customer Number", "Customer No.", "Customer No"],
-        max_len=45,
-    )
-
-    if value and value.lower() != "line":
-        return value
-
-    return policy_number or ""
 
 
 def extract_universal_profile_from_text(
@@ -319,38 +281,50 @@ def extract_universal_profile_from_text(
         existing_profile.get("carrier_name"),
         existing_profile.get("writing_carrier"),
         existing_profile.get("insurance_carrier"),
-        existing_profile.get("carrier"),
     )
 
     agency_name = first_good(
         existing_profile.get("agency_name"),
         existing_profile.get("broker_name"),
         existing_profile.get("producer_name"),
-        existing_profile.get("agency"),
     )
 
-    effective_date = normalize_date(existing_profile.get("effective_date"))
-    expiration_date = normalize_date(existing_profile.get("expiration_date"))
-
     if not business_name:
-        business_name = extract_value_by_label(
+        business_name = extract_labeled_value(
             raw_text,
-            ["Named Insured", "Insured Name", "Insured", "Business Name", "Account Name", "Client", "Customer"],
+            [
+                "Named Insured",
+                "Insured Name",
+                "Business Name",
+                "Account Name",
+                "Client Name",
+                "Customer Name",
+            ],
         )
 
     if not carrier_name:
-        carrier_name = extract_value_by_label(
+        carrier_name = extract_labeled_value(
             raw_text,
-            ["Carrier Name", "Insurance Carrier", "Writing Carrier", "Carrier", "Insurer Name", "Insurer"],
+            [
+                "Carrier Name",
+                "Insurance Carrier",
+                "Writing Carrier",
+                "Insurer Name",
+            ],
         )
 
     if not agency_name:
-        agency_name = extract_value_by_label(
+        agency_name = extract_labeled_value(
             raw_text,
-            ["Agency Name", "Producing Agency", "Producer Name", "Broker Name", "Agency", "Producer", "Broker"],
+            [
+                "Agency Name",
+                "Producing Agency",
+                "Producer Name",
+                "Broker Name",
+            ],
         )
 
-    policy_number = extract_policy_like_value(
+    policy_number = extract_policy_number(
         raw_text,
         existing=existing_profile.get("policy_number")
         or existing_profile.get("policy_no")
@@ -358,31 +332,41 @@ def extract_universal_profile_from_text(
         claims=claims,
     )
 
-    account_number = extract_account_like_value(
-        raw_text,
-        existing=existing_profile.get("account_number")
-        or existing_profile.get("customer_number")
-        or existing_profile.get("account_no"),
-        policy_number=policy_number,
+    account_number = first_good(
+        existing_profile.get("account_number"),
+        existing_profile.get("customer_number"),
+        extract_labeled_value(
+            raw_text,
+            [
+                "Account Number",
+                "Account No.",
+                "Account No",
+                "Customer Number",
+                "Customer No.",
+                "Customer No",
+            ],
+            max_len=50,
+        ),
+        policy_number,
     )
 
-    if not effective_date:
-        effective_date = normalize_date(
-            extract_value_by_label(
-                raw_text,
-                ["Effective Date", "Policy Effective Date", "Eff Date"],
-                max_len=25,
-            )
+    effective_date = normalize_date(
+        existing_profile.get("effective_date")
+        or extract_labeled_value(
+            raw_text,
+            ["Effective Date", "Policy Effective Date", "Eff Date"],
+            max_len=25,
         )
+    )
 
-    if not expiration_date:
-        expiration_date = normalize_date(
-            extract_value_by_label(
-                raw_text,
-                ["Expiration Date", "Policy Expiration Date", "Expiry Date", "Exp Date"],
-                max_len=25,
-            )
+    expiration_date = normalize_date(
+        existing_profile.get("expiration_date")
+        or extract_labeled_value(
+            raw_text,
+            ["Expiration Date", "Policy Expiration Date", "Expiry Date", "Exp Date"],
+            max_len=25,
         )
+    )
 
     for claim in claims:
         if not business_name:
@@ -398,7 +382,6 @@ def extract_universal_profile_from_text(
                 claim.get("carrier_name"),
                 claim.get("writing_carrier"),
                 claim.get("insurance_carrier"),
-                claim.get("carrier"),
             )
 
         if not policy_number:
@@ -412,13 +395,14 @@ def extract_universal_profile_from_text(
             break
 
     profile = dict(existing_profile)
+
     profile["business_name"] = business_name or ""
     profile["carrier_name"] = carrier_name or ""
     profile["writing_carrier"] = first_good(existing_profile.get("writing_carrier"), carrier_name)
     profile["agency_name"] = agency_name or ""
+    profile["policy_number"] = policy_number or account_number or ""
     profile["account_number"] = account_number or policy_number or ""
     profile["customer_number"] = first_good(existing_profile.get("customer_number"), account_number, policy_number)
-    profile["policy_number"] = policy_number or account_number or ""
     profile["effective_date"] = effective_date or ""
     profile["expiration_date"] = expiration_date or ""
 
