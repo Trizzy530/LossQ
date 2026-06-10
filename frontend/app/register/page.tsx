@@ -31,12 +31,13 @@ export default function RegisterPage() {
   async function handleRegister(e: React.FormEvent) {
     e.preventDefault();
     setError("");
-    setLoading(true);
 
     if (!acceptedTerms) {
       setError("You must accept the Terms, Privacy Policy, AI Disclaimer, and Insurance Disclaimer before creating an account.");
       return;
     }
+
+    setLoading(true);
 
     try {
       const res = await fetch(`${API}/auth/register`, {
@@ -103,12 +104,12 @@ export default function RegisterPage() {
           required
         />
 
-        <label className="flex items-start gap-3 text-sm text-slate-300">
+        <label className="mb-5 flex items-start gap-3 rounded-xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm text-slate-200">
           <input
             type="checkbox"
             checked={acceptedTerms}
             onChange={(e) => setAcceptedTerms(e.target.checked)}
-            className="mt-1"
+            className="mt-1 h-4 w-4 accent-cyan-400"
           />
           <span>
             I agree to the{" "}
@@ -119,7 +120,7 @@ export default function RegisterPage() {
           </span>
         </label>
 
-        <button type="submit" disabled={loading} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 rounded-lg px-5 py-3 font-semibold">
+        <button type="submit" disabled={loading || !acceptedTerms} className="w-full bg-blue-600 hover:bg-blue-700 disabled:opacity-60 disabled:cursor-not-allowed rounded-lg px-5 py-3 font-semibold">
           {loading ? "Creating account..." : "Register"}
         </button>
 
