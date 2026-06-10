@@ -671,14 +671,32 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
     db.commit()
 
+    account_profile_id = None
+    if profile is not None:
+        try:
+            db.refresh(profile)
+            account_profile_id = getattr(profile, "id", None)
+        except Exception:
+            account_profile_id = getattr(profile, "id", None)
+
+    profile_response = dict(profile_data or {})
+    profile_response["id"] = account_profile_id
+    profile_response["account_profile_id"] = account_profile_id
+    profile_response["selected_profile_id"] = account_profile_id
+    profile_response["selected_policy_number"] = profile_data.get("policy_number")
+
     return {
         "message": "Loss run file(s) uploaded successfully",
         "saved_claims": total_saved,
         "duplicates_skipped": total_duplicates_skipped,
         "policy_number": profile_data.get("policy_number"),
         "account_number": profile_data.get("account_number"),
+        "account_profile_id": account_profile_id,
+        "selected_profile_id": account_profile_id,
+        "selected_policy_number": profile_data.get("policy_number"),
         "profile_auto_populated": bool(profile),
-        "profile": profile_data,
+        "profile": profile_response,
+        "account_profile": profile_response,
         "policies": profile_data.get("policies") or [],
         "validation": profile_data.get("validation") or {},
         "uploaded_files": uploaded_files,
