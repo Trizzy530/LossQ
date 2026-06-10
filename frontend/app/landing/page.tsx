@@ -293,7 +293,6 @@ export default function LandingPage() {
         <ul className="footer-links">
           <li><a href="#features">Features</a></li>
           <li><a href="#pricing">Pricing</a></li>
-          <li><a href="/legal">Legal</a></li>
           <li><a href="/terms">Terms</a></li>
           <li><a href="/privacy">Privacy</a></li>
           <li><a href="/data-security">Data Security</a></li>
