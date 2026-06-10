@@ -273,6 +273,273 @@ function sameClaimRecord(a: any, b: any) {
   );
 }
 
+
+function cleanMoneyInput(value: any) {
+  return String(value || "")
+    .replace(/[^0-9.\-]/g, "")
+    .trim();
+}
+
+function findTextValue(rawText: string, labels: string[]) {
+  const text = String(rawText || "");
+  const lines = text
+    .split(/\r?\n/)
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  for (const label of labels) {
+    const safe = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const inline = new RegExp(`${safe}\\s*[:=\\-]?\\s*([^\\n\\r|]+)`, "i");
+    const inlineMatch = text.match(inline);
+    if (inlineMatch?.[1]) {
+      const value = inlineMatch[1].trim();
+      if (value && value.length < 120) return value;
+    }
+
+    const lineIndex = lines.findIndex((line) =>
+      line.toLowerCase().includes(label.toLowerCase())
+    );
+
+    if (lineIndex >= 0 && lines[lineIndex + 1]) {
+      const value = lines[lineIndex + 1].trim();
+      if (value && value.length < 120) return value;
+    }
+  }
+
+  return "";
+}
+
+function extractExposureInputsFromUploadText(rawText: string) {
+  const text = String(rawText || "");
+
+  if (!text.trim()) return {};
+
+  const exposure: AnyObject = {
+    current_premium: cleanMoneyInput(
+      findTextValue(text, [
+        "Current Premium",
+        "Expiring Premium",
+        "Annual Premium",
+        "Premium",
+      ])
+    ),
+    expiring_premium: cleanMoneyInput(
+      findTextValue(text, [
+        "Expiring Premium",
+        "Prior Premium",
+        "Current Term Premium",
+      ])
+    ),
+    target_renewal_premium: cleanMoneyInput(
+      findTextValue(text, [
+        "Target Renewal Premium",
+        "Target Premium",
+        "Renewal Target",
+      ])
+    ),
+    exposure_basis:
+      findTextValue(text, [
+        "Exposure Basis",
+        "Rating Basis",
+        "Premium Basis",
+      ]) || "",
+    payroll: cleanMoneyInput(
+      findTextValue(text, [
+        "Payroll",
+        "Estimated Payroll",
+        "Annual Payroll",
+      ])
+    ),
+    revenue: cleanMoneyInput(
+      findTextValue(text, [
+        "Revenue",
+        "Sales",
+        "Gross Sales",
+        "Annual Revenue",
+        "Receipts",
+      ])
+    ),
+    sales: cleanMoneyInput(
+      findTextValue(text, [
+        "Sales",
+        "Gross Sales",
+      ])
+    ),
+    receipts: cleanMoneyInput(
+      findTextValue(text, [
+        "Receipts",
+        "Gross Receipts",
+      ])
+    ),
+    employee_count:
+      findTextValue(text, [
+        "Employee Count",
+        "Employees",
+        "Number of Employees",
+      ]) || "",
+    vehicle_count:
+      findTextValue(text, [
+        "Vehicle Count",
+        "Power Units",
+        "Autos",
+        "Scheduled Autos",
+      ]) || "",
+    driver_count:
+      findTextValue(text, [
+        "Driver Count",
+        "Drivers",
+        "Number of Drivers",
+      ]) || "",
+    property_tiv: cleanMoneyInput(
+      findTextValue(text, [
+        "Property TIV",
+        "TIV",
+        "Total Insured Value",
+      ])
+    ),
+    tiv: cleanMoneyInput(
+      findTextValue(text, [
+        "TIV",
+        "Total Insured Value",
+      ])
+    ),
+    building_value: cleanMoneyInput(
+      findTextValue(text, [
+        "Building Value",
+        "Building Limit",
+      ])
+    ),
+    contents_value: cleanMoneyInput(
+      findTextValue(text, [
+        "Contents Value",
+        "Business Personal Property",
+        "BPP",
+      ])
+    ),
+    square_footage:
+      findTextValue(text, [
+        "Square Footage",
+        "Sq Ft",
+        "Sq. Ft.",
+      ]) || "",
+    location_count:
+      findTextValue(text, [
+        "Location Count",
+        "Locations",
+        "Number of Locations",
+      ]) || "",
+    unit_count:
+      findTextValue(text, [
+        "Unit Count",
+        "Units",
+      ]) || "",
+    class_code:
+      findTextValue(text, [
+        "Class Code",
+        "Class Codes",
+        "WC Code",
+        "GL Class",
+      ]) || "",
+    class_codes:
+      findTextValue(text, [
+        "Class Codes",
+        "Class Code",
+        "WC Code",
+        "GL Class",
+      ]) || "",
+    limits:
+      findTextValue(text, [
+        "Policy Limits",
+        "Limits",
+        "Coverage Limit",
+      ]) || "",
+    coverage_limit:
+      findTextValue(text, [
+        "Coverage Limit",
+        "Policy Limits",
+        "Limits",
+      ]) || "",
+    deductible:
+      findTextValue(text, [
+        "Deductible",
+      ]) || "",
+    retention:
+      findTextValue(text, [
+        "Retention",
+        "SIR",
+        "Self Insured Retention",
+      ]) || "",
+    cargo_limit:
+      findTextValue(text, [
+        "Cargo Limit",
+        "Motor Truck Cargo Limit",
+      ]) || "",
+    umbrella_limit:
+      findTextValue(text, [
+        "Umbrella Limit",
+        "Excess Limit",
+        "Umbrella / Excess Limit",
+      ]) || "",
+    experience_mod:
+      findTextValue(text, [
+        "Experience Mod",
+        "Experience Modification",
+        "E-Mod",
+        "Mod",
+      ]) || "",
+    mod:
+      findTextValue(text, [
+        "Experience Mod",
+        "E-Mod",
+        "Mod",
+      ]) || "",
+    exposure_change_percent:
+      findTextValue(text, [
+        "Exposure Change %",
+        "Exposure Change",
+        "Projected Change",
+      ]) || "",
+  };
+
+  Object.keys(exposure).forEach((key) => {
+    if (exposure[key] === "" || exposure[key] === null || exposure[key] === undefined) {
+      delete exposure[key];
+    }
+  });
+
+  return exposure;
+}
+
+function isBadCarrierValue(value: any) {
+  const text = String(value || "").trim().toLowerCase();
+
+  if (!text) return true;
+
+  return [
+    "exposure basis",
+    "premium worksheet",
+    "rating basis",
+    "current premium",
+    "expiring premium",
+    "line coverage",
+    "line-of-business",
+    "line of business",
+    "policy schedule",
+    "coverage schedule",
+    "carrier",
+    "writing carrier",
+  ].includes(text);
+}
+
+function chooseCleanCarrier(...values: any[]) {
+  for (const value of values) {
+    const cleaned = String(value || "").trim();
+    if (cleaned && !isBadCarrierValue(cleaned)) return cleaned;
+  }
+
+  return "";
+}
+
 function mergeProfiles(existing: AnyObject[], incoming: AnyObject[]) {
   const map = new Map<string, AnyObject>();
 
@@ -1398,8 +1665,30 @@ async function saveProfile() {
         expiration_date: primaryProfile?.expiration_date || "",
       }));
 
-      const uploadedProfile = {
+      const uploadRawText =
+      primaryData?.raw_text_preview ||
+      primaryData?.raw_text ||
+      primaryData?.text ||
+      primaryProfile?.raw_text_preview ||
+      primaryProfile?.raw_text ||
+      "";
+
+    const extractedExposureInputs = extractExposureInputsFromUploadText(uploadRawText);
+
+    const cleanCarrierName = chooseCleanCarrier(
+      primaryProfile?.carrier_name,
+      primaryProfile?.writing_carrier,
+      primaryData?.carrier_name,
+      primaryData?.writing_carrier,
+      primaryData?.account_profile?.carrier_name,
+      primaryData?.account_profile?.writing_carrier
+    );
+
+    const uploadedProfile = {
         ...primaryProfile,
+        ...extractedExposureInputs,
+        carrier_name: cleanCarrierName || primaryProfile?.carrier_name || "",
+        writing_carrier: cleanCarrierName || primaryProfile?.writing_carrier || primaryProfile?.carrier_name || "",
 
         insured:
           primaryProfile?.insured ||
