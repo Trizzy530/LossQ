@@ -200,6 +200,7 @@ def build_claim_ai_analysis(claim):
 @router.get("/")
 def get_claims(
     policy_number: str | None = Query(default=None),
+    policy_numbers: str | None = Query(default=None),
     claim_number: str | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
@@ -207,7 +208,11 @@ def get_claims(
     ensure_claim_timeline_columns(db)
     query = db.query(Claim).filter(Claim.organization_id == current_user["organization_id"])
 
-    if policy_number:
+    if policy_numbers:
+        pn_list = [p.strip().upper() for p in policy_numbers.split(",") if p.strip()]
+        if pn_list:
+            query = query.filter(func.upper(func.trim(Claim.policy_number)).in_(pn_list))
+    elif policy_number:
         normalized_policy = normalize_policy_number(policy_number)
         query = query.filter(func.upper(func.trim(Claim.policy_number)) == normalized_policy)
 
@@ -270,4 +275,6 @@ def bulk_delete_claims(
     )
     db.commit()
     return {"deleted": True, "claims_deleted": deleted}
+
+
 
