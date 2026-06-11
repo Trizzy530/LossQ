@@ -1757,6 +1757,12 @@ async function saveProfile() {
     return;
   }
   try {
+    // LOSSQ_UPLOAD_PROFILE_ISOLATION_V1
+    // Prevent old profile/policy rows from bleeding into a newly uploaded account.
+    clearCachedCurrentUpload();
+    clearCachedSelectedClaim();
+    localStorage.removeItem("lossq_last_upload_review");
+
     setIsUploading(true);
     clearCachedLastUploadReview();
     clearCachedCurrentUpload();
@@ -2025,6 +2031,31 @@ async function saveProfile() {
 
 
       setProfile(uploadedProfile);
+      // Uploaded profile becomes the active authority for this account.
+      // This keeps old GP/Harbor/previous policy rows from appearing inside a new upload's schedule.
+      setCachedProfiles([
+        uploadedProfile,
+        ...getCachedProfiles().filter((item: any) => {
+          const uploadedKeys = [
+            uploadedProfile?.policy_number,
+            uploadedProfile?.account_number,
+            uploadedProfile?.customer_number,
+          ]
+            .map((key: any) => normalizePolicyNumber(key))
+            .filter(Boolean);
+
+          const itemKeys = [
+            item?.policy_number,
+            item?.account_number,
+            item?.customer_number,
+          ]
+            .map((key: any) => normalizePolicyNumber(key))
+            .filter(Boolean);
+
+          return !itemKeys.some((key: string) => uploadedKeys.includes(key));
+        }),
+      ]);
+
       updateProfileList([uploadedProfile]);
     }
 
