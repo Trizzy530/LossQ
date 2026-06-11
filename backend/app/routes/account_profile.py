@@ -1,3 +1,4 @@
+import os
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -10,6 +11,7 @@ from datetime import datetime
 from app.database import SessionLocal
 from app.auth_utils import get_current_user
 from app.models.account_profile import AccountProfile
+from app.models.upload_history import UploadHistory
 from app.models.claim import Claim
 
 router = APIRouter(prefix="/account-profile", tags=["Account Profile"])
@@ -574,6 +576,113 @@ def upsert_account_profile(
     return profile_to_dict(profile)
 
 
+
+def hard_delete_profile_traces(db, current_user: dict, profile, delete_claims: bool = True):
+    # LOSSQ_HARD_DELETE_PROFILE_TRACES_V1
+    # Hard delete every backend trace tied to a deleted profile/account.
+    import json
+
+    org_id = current_user["organization_id"]
+    deleted_claims = 0
+    deleted_upload_history = 0
+    deleted_files = 0
+
+    profile_keys = []
+    profile_text_parts = []
+
+    def add_key(value):
+        cleaned = str(value or "").strip()
+        if cleaned and cleaned not in profile_keys:
+            profile_keys.append(cleaned)
+
+    if profile is not None:
+        add_key(getattr(profile, "policy_number", None))
+        add_key(getattr(profile, "account_number", None))
+        add_key(getattr(profile, "customer_number", None))
+
+        profile_text_parts.extend([
+            str(getattr(profile, "business_name", "") or ""),
+            str(getattr(profile, "carrier_name", "") or ""),
+            str(getattr(profile, "writing_carrier", "") or ""),
+            str(getattr(profile, "policy_number", "") or ""),
+            str(getattr(profile, "account_number", "") or ""),
+            str(getattr(profile, "customer_number", "") or ""),
+        ])
+
+        try:
+            policies_value = getattr(profile, "policies", None)
+            policies = json.loads(policies_value) if isinstance(policies_value, str) else policies_value
+            if isinstance(policies, list):
+                for item in policies:
+                    if isinstance(item, dict):
+                        add_key(item.get("policy_number"))
+                        add_key(item.get("policy"))
+                        add_key(item.get("number"))
+                        profile_text_parts.append(json.dumps(item))
+        except Exception:
+            pass
+
+    profile_text = " ".join(profile_text_parts).lower()
+
+    # Add profile-name based hints for test/demo files and real customer names.
+    name_tokens = []
+    for raw_name in [
+        getattr(profile, "business_name", "") if profile is not None else "",
+        getattr(profile, "account_name", "") if profile is not None and hasattr(profile, "account_name") else "",
+    ]:
+        cleaned_name = str(raw_name or "").strip().lower()
+        if cleaned_name:
+            name_tokens.append(cleaned_name)
+
+    if delete_claims and profile_keys:
+        claim_query = db.query(Claim).filter(Claim.organization_id == org_id)
+        claim_query = claim_query.filter(Claim.policy_number.in_(profile_keys))
+        deleted_claims = claim_query.delete(synchronize_session=False)
+
+    # Delete UploadHistory rows that likely belong to the deleted account/profile.
+    upload_query = db.query(UploadHistory).filter(UploadHistory.organization_id == org_id)
+    uploads = upload_query.all()
+
+    for upload in uploads:
+        upload_text = " ".join([
+            str(getattr(upload, "filename", "") or ""),
+            str(getattr(upload, "stored_path", "") or ""),
+            str(getattr(upload, "content_type", "") or ""),
+        ]).lower()
+
+        should_delete_upload = False
+
+        for key in profile_keys:
+            if str(key).lower() and str(key).lower() in upload_text:
+                should_delete_upload = True
+
+        for token in name_tokens:
+            first_word = token.split(" ")[0] if token else ""
+            if first_word and first_word in upload_text:
+                should_delete_upload = True
+
+        # If filename does not include account name/key, do not over-delete unrelated uploads.
+        if should_delete_upload:
+            stored_path = getattr(upload, "stored_path", None)
+            if stored_path and os.path.exists(stored_path):
+                try:
+                    os.remove(stored_path)
+                    deleted_files += 1
+                except Exception:
+                    pass
+
+            db.delete(upload)
+            deleted_upload_history += 1
+
+    return {
+        "profile_keys": profile_keys,
+        "deleted_claims": deleted_claims,
+        "deleted_upload_history": deleted_upload_history,
+        "deleted_files": deleted_files,
+    }
+
+
+
 @router.delete("/")
 def delete_account_profile_by_query(
     profile_id: Optional[int] = Query(default=None),
@@ -627,11 +736,18 @@ def delete_profile_by_id(
             .delete(synchronize_session=False)
         )
 
+    # LOSSQ_HARD_DELETE_CALL_V1
+
+
+    hard_delete_result = hard_delete_profile_traces(db, current_user, profile, delete_claims=delete_claims)
+
+
     db.delete(profile)
     db.commit()
 
     return {
         "deleted": True,
+        "hard_delete": hard_delete_result,
         "profile_id": profile_id,
         "profiles_deleted": 1,
         "claims_deleted": claims_deleted,
