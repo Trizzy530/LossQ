@@ -1101,7 +1101,52 @@ if (activeProfile?.policy_number) {
         like SA-ACCT-580219 can count child-policy claims such as SA-AUTO,
         SA-GL, SA-CARGO, and SA-WC correctly.
       */
-      const claimsRes = await fetch(`${API}/claims/${(() => { const refPols = (activeProfileRef.current?.policies || []).map((p: any) => (p?.policy_number || '').trim().toUpperCase()).filter(Boolean); const cachedPols = getCachedProfiles().filter((p: any) => normalizePolicyNumber(p?.policy_number) === normalizePolicyNumber(requestedPolicyNumber) || (p?.policies || []).some((pol: any) => normalizePolicyNumber(pol?.policy_number) === normalizePolicyNumber(requestedPolicyNumber))).flatMap((p: any) => (p?.policies || []).map((pol: any) => (pol?.policy_number || '').trim().toUpperCase())); const ps = [...new Set([requestedPolicyNumber, ...refPols, ...cachedPols].filter(Boolean))]; return ps.length > 0 ? '?policy_numbers=' + ps.join(',') : ''; })()}`, { headers: authHeaders() });
+      // LOSSQ_ACCOUNT_AWARE_CLAIMS_RELOAD_V1
+      // Include account/customer keys in the server request.
+      // Without this, upload can show 19 claims from cache, but refresh/login only reloads child policy claims.
+      const claimReloadKeys = [
+        policyNumber,
+        requestedPolicyNumber,
+        activeProfile?.policy_number,
+        activeProfile?.account_number,
+        activeProfile?.customer_number,
+        profile?.policy_number,
+        profile?.account_number,
+        profile?.customer_number,
+        ...(activeProfileRef.current?.policies || []).map((p: any) => p?.policy_number),
+        ...(activeProfile?.policies || []).map((p: any) => p?.policy_number),
+        ...(profile?.policies || []).map((p: any) => p?.policy_number),
+        ...getCachedProfiles()
+          .filter((p: any) =>
+            normalizePolicyNumber(p?.policy_number) === normalizePolicyNumber(policyNumber) ||
+            normalizePolicyNumber(p?.account_number) === normalizePolicyNumber(policyNumber) ||
+            normalizePolicyNumber(p?.customer_number) === normalizePolicyNumber(policyNumber) ||
+            normalizePolicyNumber(p?.policy_number) === normalizePolicyNumber(requestedPolicyNumber) ||
+            normalizePolicyNumber(p?.account_number) === normalizePolicyNumber(requestedPolicyNumber) ||
+            normalizePolicyNumber(p?.customer_number) === normalizePolicyNumber(requestedPolicyNumber) ||
+            (p?.policies || []).some((pol: any) =>
+              normalizePolicyNumber(pol?.policy_number) === normalizePolicyNumber(policyNumber) ||
+              normalizePolicyNumber(pol?.policy_number) === normalizePolicyNumber(requestedPolicyNumber)
+            )
+          )
+          .flatMap((p: any) => [
+            p?.policy_number,
+            p?.account_number,
+            p?.customer_number,
+            ...(p?.policies || []).map((pol: any) => pol?.policy_number),
+          ]),
+      ]
+        .map((item: any) => normalizePolicyNumber(item))
+        .filter(Boolean);
+
+      const uniqueClaimReloadKeys = [...new Set(claimReloadKeys)];
+      const claimsQuery = uniqueClaimReloadKeys.length
+        ? `?policy_numbers=${uniqueClaimReloadKeys.map((item) => encodeURIComponent(item)).join(",")}`
+        : "";
+
+      const claimsRes = await fetch(`${API}/claims/${claimsQuery}`, {
+        headers: authHeaders(),
+      });
 
       if (claimsRes.status === 401 || claimsRes.status === 403) {
         clearSession();
