@@ -287,6 +287,19 @@ def require_admin_or_owner(user: User = Depends(get_current_user)):
     return user
 
 
+
+def public_registration_role(requested_role=None):
+    # LOSSQ_BLOCK_PUBLIC_OWNER_ROLE_V1
+    # Public registration must never trust a browser-selected owner role.
+    # The backend may still assign owner internally for the first user of a new organization.
+    clean_role = str(requested_role or "user").strip().lower()
+
+    if clean_role in {"admin", "user"}:
+        return clean_role
+
+    return "user"
+
+
 @router.post("/register")
 def register_user(data: RegisterRequest, db: Session = Depends(get_db)):
     clean_email = data.email.strip().lower()
@@ -439,7 +452,7 @@ def verify_password(data: VerifyPasswordRequest, current_user: User = Depends(ge
 @router.post("/invite")
 def invite_user(data: InviteUserRequest, current_user: User = Depends(require_admin_or_owner), db: Session = Depends(get_db)):
     clean_email = data.email.strip().lower()
-    invite_role = (data.role or "user").strip().lower()
+    invite_role=public_registration_role(getattr(data, "role", None)).strip().lower()
 
     if invite_role not in ["admin", "user"]:
         raise HTTPException(status_code=400, detail="Invite role must be admin or user")
