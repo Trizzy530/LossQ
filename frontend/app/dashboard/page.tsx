@@ -3652,15 +3652,25 @@ const localForecastDrivers =
       ]
     : ["No validated claims were available."];
 
+// LOSSQ_PREMIUM_FORECAST_USE_EXPOSURE_DERIVED_FILE_DATA_V1
+const profileDerivedExposure = deriveExposureInputsFromPolicyRows(profile);
+const displayDerivedExposure = deriveExposureInputsFromPolicyRows(displayProfile);
 const fileExposureCurrentPremium =
   parsePremiumInput(profile?.current_premium) ||
   parsePremiumInput(displayProfile?.current_premium) ||
+  parsePremiumInput(profileDerivedExposure?.current_premium) ||
+  parsePremiumInput(displayDerivedExposure?.current_premium) ||
   parsePremiumInput(profile?.expiring_premium) ||
-  parsePremiumInput(displayProfile?.expiring_premium);
+  parsePremiumInput(displayProfile?.expiring_premium) ||
+  parsePremiumInput(profileDerivedExposure?.expiring_premium) ||
+  parsePremiumInput(displayDerivedExposure?.expiring_premium);
 
 const fileExposureTargetRenewalPremium =
   parsePremiumInput(profile?.target_renewal_premium) ||
-  parsePremiumInput(displayProfile?.target_renewal_premium);
+  parsePremiumInput(displayProfile?.target_renewal_premium) ||
+  parsePremiumInput(profileDerivedExposure?.target_renewal_premium) ||
+  parsePremiumInput(displayDerivedExposure?.target_renewal_premium) ||
+  parsePremiumInput(displayDerivedExposure?.target_renewal_premium);
 
 const fileExposureHasPremiumData = fileExposureCurrentPremium > 0;
 
@@ -3683,11 +3693,10 @@ const fileExposureExpectedRenewalPremium =
 const effectivePremiumForecast =
   fileExposureHasPremiumData
     ? {
-        ...(premiumForecast || {}),
         forecast_type: "premium_projection",
         data_source: "saved_file_exposure_inputs",
         current_premium: fileExposureCurrentPremium,
-        expected_renewal_premium: fileExposureExpectedRenewalPremium,
+        expected_renewal_premium: fileExposureExpectedRenewalPremium || 0,
         expected_increase_percent: fileExposureIncreasePercent,
         confidence_score: localPremiumConfidence || 80,
         best_case_percent:
@@ -3705,7 +3714,7 @@ const effectivePremiumForecast =
             ? fileExposureIncreasePercent + 10
             : null,
         forecast_drivers: [
-          "Premium Forecast is using saved Exposure Inputs extracted from the account file.",
+          "Premium Forecast is using actual Exposure Inputs from the uploaded account file, not stale modeled backend premium.",
           `Current premium from Exposure Inputs: $${Number(
             fileExposureCurrentPremium || 0
           ).toLocaleString()}.`,
