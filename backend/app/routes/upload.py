@@ -527,6 +527,9 @@ def ensure_account_profile_columns(db: Session):
 
         db.commit()
     except Exception as e:
+        print("LOSSQ UPLOAD ERROR TRACEBACK START")
+        traceback.print_exc()
+        print("LOSSQ UPLOAD ERROR TRACEBACK END")
         db.rollback()
         print(f"Account profile column check failed: {e}")
 
