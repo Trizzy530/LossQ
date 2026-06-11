@@ -3530,6 +3530,23 @@ const effectiveCarrierAppetite =
     : carrierAppetite;
 
 
+// LOSSQ_EXPOSURE_PREMIUM_FORECAST_LINK_V1
+function parsePremiumInput(value: any): number {
+  if (value === null || value === undefined) return 0;
+
+  if (typeof value === "number") {
+    return Number.isFinite(value) ? value : 0;
+  }
+
+  const cleaned = String(value)
+    .replace(/[$,]/g, "")
+    .replace(/[^0-9.-]/g, "")
+    .trim();
+
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
 function isInsufficientBackendMessage(value: any) {
   const text = String(value || "").toLowerCase();
 
@@ -3547,17 +3564,25 @@ function isInsufficientBackendMessage(value: any) {
   );
 }
 
+const profileCurrentPremium =
+  parsePremiumInput(profile?.current_premium) ||
+  parsePremiumInput(displayProfile?.current_premium) ||
+  parsePremiumInput(profile?.expiring_premium) ||
+  parsePremiumInput(displayProfile?.expiring_premium);
+
+const manualTargetRenewalPremium =
+  parsePremiumInput(profile?.target_renewal_premium) ||
+  parsePremiumInput(displayProfile?.target_renewal_premium);
+
 const hasRealCurrentPremium =
-  Number(premiumForecast?.current_premium || 0) > 0 ||
-  Number(premiumForecast?.currentPremium || 0) > 0 ||
-  Number(profile?.current_premium || 0) > 0 ||
-  Number(displayProfile?.current_premium || 0) > 0;
+  parsePremiumInput(premiumForecast?.current_premium) > 0 ||
+  parsePremiumInput(premiumForecast?.currentPremium) > 0 ||
+  profileCurrentPremium > 0;
 
 const realCurrentPremium =
-  Number(premiumForecast?.current_premium || 0) ||
-  Number(premiumForecast?.currentPremium || 0) ||
-  Number(profile?.current_premium || 0) ||
-  Number(displayProfile?.current_premium || 0) ||
+  parsePremiumInput(premiumForecast?.current_premium) ||
+  parsePremiumInput(premiumForecast?.currentPremium) ||
+  profileCurrentPremium ||
   0;
 
 const localPremiumIncreasePercent =
@@ -3587,13 +3612,15 @@ const localPremiumWorstCase =
     : null;
 
 const localExpectedRenewalPremium =
-  hasRealCurrentPremium && localPremiumIncreasePercent != null
+  manualTargetRenewalPremium > 0
+    ? manualTargetRenewalPremium
+    : hasRealCurrentPremium && localPremiumIncreasePercent != null
     ? Math.round(realCurrentPremium * (1 + localPremiumIncreasePercent / 100))
     : null;
 
 const premiumBackendHasUsableForecast =
-  Number(premiumForecast?.current_premium || 0) > 0 &&
-  Number(premiumForecast?.expected_renewal_premium || 0) > 0 &&
+  parsePremiumInput(premiumForecast?.current_premium) > 0 &&
+  parsePremiumInput(premiumForecast?.expected_renewal_premium) > 0 &&
   !isInsufficientBackendMessage(premiumForecast?.forecast_summary);
 
 const localForecastDrivers =
@@ -3604,7 +3631,9 @@ const localForecastDrivers =
         `$${Number(localClaimTotal || 0).toLocaleString()} total incurred losses.`,
         `${localLargeLossCount} large loss claim(s) at or above $50,000.`,
         `${localLitigationCount} litigation/attorney indicator(s).`,
-        hasRealCurrentPremium
+        manualTargetRenewalPremium > 0
+          ? `Manual target renewal premium of $${Number(manualTargetRenewalPremium || 0).toLocaleString()} was used as the renewal premium override.`
+          : hasRealCurrentPremium
           ? `Current premium of $${Number(realCurrentPremium || 0).toLocaleString()} was used to estimate renewal premium.`
           : "Current premium/exposure data is missing, so LossQ is showing a claim-based pressure estimate instead of a renewal dollar projection.",
       ]
