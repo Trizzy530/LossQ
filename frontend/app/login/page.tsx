@@ -1,5 +1,7 @@
 "use client";
 
+// LOSSQ_HIDE_OWNER_FROM_PUBLIC_REGISTER_V1
+
 import { useEffect, useState } from "react";
 
 const API =
