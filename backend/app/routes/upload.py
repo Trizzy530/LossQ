@@ -687,7 +687,41 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             existing_claim = duplicate_query.first()
 
             if existing_claim:
-                print(f"Skipping duplicate claim: {claim_number} / {policy_value}")
+                # LOSSQ_REHOME_DUPLICATE_CLAIMS_TO_ACCOUNT_KEY
+                # If the claim already exists from an earlier upload, re-home it to the corrected
+                # account/profile key so it survives logout/login and appears under the right profile.
+                corrected_policy_key = (
+                    profile_data.get("policy_number")
+                    or profile_data.get("account_number")
+                    or profile_data.get("customer_number")
+                    or policy_number
+                    or policy_value
+                )
+
+                if corrected_policy_key and not is_bad_policy_key_for_upload(corrected_policy_key):
+                    existing_claim.policy_number = corrected_policy_key
+
+                if normalized.get("line_of_business"):
+                    existing_claim.line_of_business = normalized.get("line_of_business")
+
+                if normalized.get("claim_type"):
+                    existing_claim.claim_type = normalized.get("claim_type")
+
+                if normalized.get("cause_of_loss"):
+                    existing_claim.cause_of_loss = normalized.get("cause_of_loss")
+
+                if normalized.get("status"):
+                    existing_claim.status = normalized.get("status")
+
+                if normalized.get("paid_amount") is not None:
+                    existing_claim.paid_amount = normalized.get("paid_amount")
+
+                if normalized.get("reserve_amount") is not None:
+                    existing_claim.reserve_amount = normalized.get("reserve_amount")
+
+                if normalized.get("total_incurred") is not None:
+                    existing_claim.total_incurred = normalized.get("total_incurred")
+
                 file_duplicates += 1
                 total_duplicates_skipped += 1
                 continue
