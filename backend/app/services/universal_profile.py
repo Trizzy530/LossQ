@@ -1679,3 +1679,109 @@ def _lossq_enrich_profile_with_exposure(raw_text="", profile=None, claims=None, 
 
     return profile
 
+
+
+# LOSSQ_FINAL_PROFILE_POLICY_SANITIZER_V5
+# Final guardrail: never allow table headers such as LINE-COVERAGE to become the profile policy/account key.
+
+def _lossq_final_bad_profile_policy(value):
+    clean = _lossq_normalize_policy(value)
+
+    if not clean:
+        return True
+
+    bad_values = {
+        "LINE-COVERAGE",
+        "LINECOVERAGE",
+        "POLICY",
+        "POLICYNUMBER",
+        "POLICY-NUMBER",
+        "ACCOUNTNUMBER",
+        "ACCOUNT-NUMBER",
+        "EXPOSUREBASIS",
+        "EXPOSURE-BASIS",
+        "CURRENT-PREMIUM",
+        "EXPIRING-PREMIUM",
+        "TARGET-RENEWAL",
+        "TARGETRENEWAL",
+    }
+
+    if clean in bad_values:
+        return True
+
+    if "COVERAGE" in clean and not any(ch.isdigit() for ch in clean):
+        return True
+
+    return False
+
+
+def _lossq_final_first_real_policy(profile):
+    profile = profile or {}
+
+    policies = profile.get("policies") if isinstance(profile.get("policies"), list) else []
+
+    for item in policies:
+        if not isinstance(item, dict):
+            continue
+
+        candidate = item.get("policy_number") or item.get("policy") or item.get("number")
+
+        if candidate and not _lossq_final_bad_profile_policy(candidate):
+            return _lossq_normalize_policy(candidate)
+
+    return ""
+
+
+def _lossq_final_account_key(profile):
+    profile = profile or {}
+
+    candidates = [
+        profile.get("account_number"),
+        profile.get("customer_number"),
+        profile.get("client_number"),
+        profile.get("account_id"),
+        profile.get("policy_number"),
+        _lossq_final_first_real_policy(profile),
+    ]
+
+    for candidate in candidates:
+        clean = _lossq_normalize_policy(candidate)
+
+        if clean and not _lossq_final_bad_profile_policy(clean):
+            return clean
+
+    return ""
+
+
+def _lossq_final_sanitize_profile(profile):
+    profile = dict(profile or {})
+
+    account_key = _lossq_final_account_key(profile)
+    first_policy = _lossq_final_first_real_policy(profile)
+
+    if account_key:
+        profile["account_number"] = profile.get("account_number") or account_key
+        profile["customer_number"] = profile.get("customer_number") or profile.get("account_number") or account_key
+
+    # Main saved profile key should be the stable account key.
+    # Real individual policies remain inside profile["policies"].
+    if _lossq_final_bad_profile_policy(profile.get("policy_number")):
+        profile["policy_number"] = account_key or first_policy or ""
+
+    return profile
+
+
+_lossq_previous_extract_universal_profile_from_text_v5 = extract_universal_profile_from_text
+
+def extract_universal_profile_from_text(raw_text="", existing_profile=None, claims=None, filename=None, *args, **kwargs):
+    profile = _lossq_previous_extract_universal_profile_from_text_v5(
+        raw_text=raw_text,
+        existing_profile=existing_profile,
+        claims=claims,
+        filename=filename,
+        *args,
+        **kwargs,
+    )
+
+    return _lossq_final_sanitize_profile(profile)
+
