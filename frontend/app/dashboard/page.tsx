@@ -116,15 +116,15 @@ function getEvaluationDateFromExpiration(expirationDate: any) {
 }
 
 function getBestEvaluationDate(profileLike: any) {
-  return (
-    profileLike?.evaluation_date ||
-    getEvaluationDateFromExpiration(
-      profileLike?.expiration_date ||
-        profileLike?.policy_expiration_date ||
-        profileLike?.expiry_date
-    ) ||
-    ""
+  const derivedDate = getEvaluationDateFromExpiration(
+    profileLike?.expiration_date ||
+      profileLike?.policy_expiration_date ||
+      profileLike?.expiry_date
   );
+
+  // Renewal evaluation date should default to 3 months before expiration.
+  // This intentionally overrides stale upload/save dates like today's date.
+  return derivedDate || profileLike?.evaluation_date || "";
 }
 
 function normalizePolicyNumber(value: any) {
@@ -1482,7 +1482,7 @@ async function saveProfile() {
     policy_number: profile?.policy_number || profile?.account_number || "",
     effective_date: profile?.effective_date || "",
     expiration_date: profile?.expiration_date || "",
-    evaluation_date: profile?.evaluation_date || getEvaluationDateFromExpiration(profile?.expiration_date) || "",
+    evaluation_date: getBestEvaluationDate(profile) || "",
     policies: Array.isArray(profile?.policies) ? profile.policies : [],
     validation: profile?.validation || {},
     raw_text_preview: profile?.raw_text_preview || "",
@@ -2529,6 +2529,14 @@ if (isBadPolicyNumberValue(displayProfile?.policy_number) && safeDisplayAccountK
 if (isBadPolicyNumberValue(profile?.policy_number) && safeDisplayAccountKey) {
   profile.policy_number = safeDisplayAccountKey;
 }
+
+
+const mainPolicyNumber = chooseSafePolicyNumber(
+  ...(policySchedule || []).map((item: any) => item?.policy_number),
+  ...(Array.isArray(displayProfile?.policies) ? displayProfile.policies.map((item: any) => item?.policy_number) : []),
+  ...(Array.isArray(profile?.policies) ? profile.policies.map((item: any) => item?.policy_number) : []),
+  ...(claims || []).map((claim: any) => claim?.policy_number || claim?.policyNumber || claim?.policy_no)
+);
 
 const activeAccountPolicyNumber = normalizePolicyNumber(displayProfile?.policy_number);
 const activeAccountNumber = normalizePolicyNumber(displayProfile?.account_number);
@@ -3746,7 +3754,7 @@ const trendNoteDisplay =
                     value={displayProfile?.account_number || displayProfile?.customer_number || "-"}
                   />
                   <ProfileDetail label="Producing Agency" value={displayProfile?.agency_name || "-"} />
-                  <ProfileDetail label="Account / Policy" value={displayProfile?.policy_number || "-"} />
+                  <ProfileDetail label="Main Policy" value={mainPolicyNumber || "-"} />
                   <ProfileDetail label="Effective Date" value={displayProfile?.effective_date || "-"} />
                   <ProfileDetail label="Expiration Date" value={displayProfile?.expiration_date || "-"} />
                 </div>
@@ -4022,7 +4030,7 @@ const trendNoteDisplay =
                   <Input label="Policy Number" value={profile?.policy_number || ""} onChange={(v) => setProfile({ ...profile, policy_number: v })} />
                   <Input label="Effective Date" value={profile?.effective_date || ""} onChange={(v) => setProfile({ ...profile, effective_date: v })} />
                   <Input label="Expiration Date" value={profile?.expiration_date || ""} onChange={(v) => setProfile({ ...profile, expiration_date: v })} />
-                  <Input label="Evaluation Date" value={profile?.evaluation_date || getEvaluationDateFromExpiration(profile?.expiration_date) || ""} onChange={(v) => setProfile({ ...profile, evaluation_date: v })} />
+                  <Input label="Evaluation Date" value={getBestEvaluationDate(profile) || ""} onChange={(v) => setProfile({ ...profile, evaluation_date: v })} />
                 </div>
               </section>
             </>
