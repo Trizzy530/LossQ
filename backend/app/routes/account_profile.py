@@ -43,6 +43,42 @@ class AccountProfileUpdate(BaseModel):
     validation: Optional[Any] = None
     raw_text_preview: Optional[str] = ""
 
+    # LOSSQ_ACCOUNT_PROFILE_UPDATE_EXPOSURE_FIELDS_V1
+    current_premium: Optional[str] = ""
+    expiring_premium: Optional[str] = ""
+    target_renewal_premium: Optional[str] = ""
+    line_of_business: Optional[str] = ""
+    state: Optional[str] = ""
+    class_code: Optional[str] = ""
+    class_codes: Optional[str] = ""
+    limits: Optional[str] = ""
+    coverage_limit: Optional[str] = ""
+    deductible: Optional[str] = ""
+    retention: Optional[str] = ""
+    payroll: Optional[str] = ""
+    revenue: Optional[str] = ""
+    sales: Optional[str] = ""
+    receipts: Optional[str] = ""
+    employee_count: Optional[str] = ""
+    vehicle_count: Optional[str] = ""
+    driver_count: Optional[str] = ""
+    property_tiv: Optional[str] = ""
+    tiv: Optional[str] = ""
+    building_value: Optional[str] = ""
+    contents_value: Optional[str] = ""
+    square_footage: Optional[str] = ""
+    location_count: Optional[str] = ""
+    unit_count: Optional[str] = ""
+    cargo_limit: Optional[str] = ""
+    umbrella_limit: Optional[str] = ""
+    experience_mod: Optional[str] = ""
+    mod: Optional[str] = ""
+    exposure_change_percent: Optional[str] = ""
+    cyber_revenue: Optional[str] = ""
+    professional_revenue: Optional[str] = ""
+    exposure_basis: Optional[str] = ""
+    underwriter_notes: Optional[str] = ""
+
 
 def get_db():
     db = SessionLocal()
