@@ -12,11 +12,10 @@ from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
 import re
-import tracebackquire_permission
+import traceback
 from app.services.audit import record_audit_event
 from app.services.loss_run_pipeline import parse_loss_run_file
 from app.services.universal_profile import extract_universal_profile_from_text
-import re
 
 try:
     from app.services.excel_parser_service import parse_claims_from_excel
@@ -172,7 +171,6 @@ def get_db():
 def extract_exposure_inputs_from_raw_text(raw_text: str):
     # LOSSQ_RAW_TEXT_EXPOSURE_INPUT_EXTRACTOR_V1
     # Fallback extractor for clean commercial loss runs with labeled exposure/premium fields.
-    import re
 
     text_value = str(raw_text or "")
     profile = {}
@@ -536,7 +534,6 @@ def ensure_account_profile_columns(db: Session):
 def clean_cause_of_loss(value: Any):
     # LOSSQ_CLEAN_CAUSE_OF_LOSS_V1
     # Prevent parser/table headers from leaking into the Cause of Loss field.
-    import re
 
     text_value = clean_profile_value(value)
 
@@ -797,7 +794,6 @@ def derive_exposure_inputs_from_policy_schedule(profile_data: dict):
     # LOSSQ_POLICY_SCHEDULE_TO_EXPOSURE_INPUTS_V1
     # Copies exposure/premium values that were detected inside policy schedule rows
     # into top-level Exposure Inputs fields.
-    import re
 
     profile_data = profile_data or {}
     policies = profile_data.get("policies") or []
