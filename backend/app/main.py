@@ -24,6 +24,7 @@ from app.routes import (
     submission_builder,
     audit_logs,
     billing,
+    platform_admin,
 )
 
 from app.models.user import User
@@ -92,6 +93,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(platform_admin.router)
 app.include_router(upload.router)
 app.include_router(upload_v2.router)
 app.include_router(claims.router)
