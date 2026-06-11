@@ -804,6 +804,11 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         "profile": profile_response,
         "account_profile": profile_response,
         "policies": profile_data.get("policies") or [],
+        "claims": all_parsed_claims,
+        "parsed_claims": all_parsed_claims,
+        "saved_claim_rows": all_parsed_claims,
+        "parsed_claim_count": len(all_parsed_claims),
+        "saved_claim_count": total_saved,
         "validation": profile_data.get("validation") or {},
         "uploaded_files": uploaded_files,
     }
