@@ -907,9 +907,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     if is_bad_policy_key_for_upload(profile_data.get("policy_number")):
         profile_data["policy_number"] = profile_account_key or primary_claim_policy_number or f"UPLOAD-{upload_session_id}"
 
-    # LOSSQ_FINAL_REHOME_ALL_PARSED_CLAIMS_TO_PROFILE
-    # Make every parsed claim from this upload persist under the corrected account/profile key.
-    # This prevents the dashboard from showing 19 claims before logout and only 2 after login.
+    # LOSSQ_FINAL_SAVE_OR_UPDATE_ALL_PARSED_CLAIMS_TO_PROFILE_V2
+    # Every parsed claim from the upload must persist under the corrected account/profile key.
+    # This fixes the issue where upload shows 19 claims, but refresh/login shows only 2.
     corrected_account_key = choose_upload_account_key(profile_data, direct_profile)
 
     if corrected_account_key and not is_bad_policy_key_for_upload(corrected_account_key):
@@ -921,26 +921,44 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             or corrected_account_key
         )
 
-        parsed_claim_numbers = []
         for parsed_item in all_parsed_claims:
+            normalized_item = normalize_claim_data(
+                raw=parsed_item,
+                fallback_policy_number=corrected_account_key,
+                current_user=current_user,
+            )
+
             parsed_claim_number = clean_profile_value(
-                parsed_item.get("claim_number")
+                normalized_item.get("claim_number")
+                or parsed_item.get("claim_number")
                 or parsed_item.get("claim_no")
                 or parsed_item.get("claim_id")
             ).upper()
 
-            if parsed_claim_number and parsed_claim_number not in parsed_claim_numbers:
-                parsed_claim_numbers.append(parsed_claim_number)
+            if not parsed_claim_number or parsed_claim_number == "UNKNOWN":
+                continue
 
-        if parsed_claim_numbers:
-            db.query(Claim).filter(
-                Claim.organization_id == current_user["organization_id"],
-                Claim.claim_number.in_(parsed_claim_numbers),
-            ).update(
-                {Claim.policy_number: corrected_account_key},
-                synchronize_session=False,
+            normalized_item["claim_number"] = parsed_claim_number
+            normalized_item["policy_number"] = corrected_account_key
+
+            existing_claim = (
+                db.query(Claim)
+                .filter(Claim.organization_id == current_user["organization_id"])
+                .filter(Claim.claim_number == parsed_claim_number)
+                .first()
             )
-            db.commit()
+
+            if existing_claim:
+                for field, value in normalized_item.items():
+                    if field in ("id",):
+                        continue
+                    if hasattr(existing_claim, field) and value is not None:
+                        setattr(existing_claim, field, value)
+            else:
+                db.add(Claim(**normalized_item))
+                total_saved += 1
+
+        db.commit()
 
     profile = upsert_account_profile(db, profile_data, current_user)
 
