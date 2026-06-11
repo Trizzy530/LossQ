@@ -15,6 +15,7 @@ from app.role_utils import require_permission
 from app.services.audit import record_audit_event
 from app.services.loss_run_pipeline import parse_loss_run_file
 from app.services.universal_profile import extract_universal_profile_from_text
+import re
 
 try:
     from app.services.excel_parser_service import parse_claims_from_excel
