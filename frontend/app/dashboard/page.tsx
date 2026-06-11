@@ -736,6 +736,9 @@ export default function DashboardPage() {
   const [premiumForecast, setPremiumForecast] = useState<any>({});
   const [submissionBuilder, setSubmissionBuilder] = useState<any>({});
   const [timeline, setTimeline] = useState<any>({});
+  // LOSSQ_TRUE_LAZY_LOADING_V1
+  const [lazyLoadedTools, setLazyLoadedTools] = useState<Record<string, boolean>>({});
+  const [lazyToolLoading, setLazyToolLoading] = useState<Record<string, boolean>>({});
   const [profile, setProfile] = useState<any>({});
   const [profiles, setProfiles] = useState<any[]>([]);
 function getAccountDisplayName(item: any) {
@@ -983,6 +986,8 @@ function normalizeProfileName(item: any) {
     setPremiumForecast({});
     setSubmissionBuilder({});
     setTimeline({});
+    setLazyLoadedTools({});
+    setLazyToolLoading({});
     setRenewalMemo("");
     setCopilotAnswer("");
     setSelectedClaimDetail(null);
@@ -1300,144 +1305,11 @@ if (activeProfile?.policy_number) {
         if (myVersion === loadVersionRef.current) setClaims(currentUploadClaims.length > 0 ? currentUploadClaims : []);
       }
 
-      const summaryUrl = hasPolicy
-        ? `${API}/summary/underwriting?policy_number=${encodeURIComponent(policyNumber)}`
-        : `${API}/summary/underwriting`;
+      // LOSSQ_TRUE_LAZY_LOADING_V1
+      // Heavy underwriting/renewal/submission/timeline tools are now lazy-loaded
+      // only when their tab is opened. Initial dashboard load stays limited to
+      // profile + claims + overview.
 
-      // LOSSQ_FAST_DASHBOARD_READY_AFTER_CLAIMS_V1
-      // Make the dashboard usable after the account profile and claims have loaded.
-      // Heavy underwriting/renewal tools can keep loading without holding the full-page spinner.
-      if (myVersion === loadVersionRef.current) {
-        setDashboardLoading(false);
-      }
-
-      const summaryRes = await fetch(summaryUrl, { headers: authHeaders() });
-
-      if (summaryRes.status === 401 || summaryRes.status === 403) {
-        clearSession();
-        router.replace("/login?expired=1");
-        return;
-      }
-
-      if (summaryRes.ok) {
-        setSummary((await safeJson(summaryRes)) || {});
-      } else {
-        setSummary({});
-      }
-
-      const decisionUrl = hasPolicy
-        ? `${API}/renewal/decision?policy_number=${encodeURIComponent(policyNumber)}`
-        : `${API}/renewal/decision`;
-
-      const decisionRes = await fetch(decisionUrl, { headers: authHeaders() });
-
-      if (decisionRes.status === 401 || decisionRes.status === 403) {
-        clearSession();
-        router.replace("/login?expired=1");
-        return;
-      }
-
-      if (decisionRes.ok) {
-        setDecision((await safeJson(decisionRes)) || {});
-      } else {
-        setDecision({});
-      }
-
-      const appetiteUrl = hasPolicy
-        ? `${API}/renewal/carrier-appetite?policy_number=${encodeURIComponent(policyNumber)}`
-        : `${API}/renewal/carrier-appetite`;
-
-      const appetiteRes = await fetch(appetiteUrl, { headers: authHeaders() });
-
-      if (appetiteRes.status === 401 || appetiteRes.status === 403) {
-        clearSession();
-        router.replace("/login?expired=1");
-        return;
-      }
-
-      if (appetiteRes.ok) {
-        setCarrierAppetite((await safeJson(appetiteRes)) || {});
-      } else {
-        setCarrierAppetite({});
-      }
-
-      const readinessUrl = hasPolicy
-        ? `${API}/renewal/submission-readiness?policy_number=${encodeURIComponent(policyNumber)}`
-        : `${API}/renewal/submission-readiness`;
-
-      const readinessRes = await fetch(readinessUrl, { headers: authHeaders() });
-
-      if (readinessRes.status === 401 || readinessRes.status === 403) {
-        clearSession();
-        router.replace("/login?expired=1");
-        return;
-      }
-
-      if (readinessRes.ok) {
-        setSubmissionReadiness((await safeJson(readinessRes)) || {});
-      } else {
-        setSubmissionReadiness({});
-      }
-const carrierMatchUrl = hasPolicy
-  ? `${API}/renewal/carrier-match?policy_number=${encodeURIComponent(policyNumber)}`
-  : `${API}/renewal/carrier-match`;
-
-const carrierMatchRes = await fetch(carrierMatchUrl, {
-  headers: authHeaders(),
-});
-
-if (carrierMatchRes.ok) {
-  setCarrierMatch((await safeJson(carrierMatchRes)) || {});
-} else {
-  setCarrierMatch({});
-}
-
-const premiumForecastUrl = hasPolicy
-  ? `${API}/renewal/premium-forecast?policy_number=${encodeURIComponent(policyNumber)}`
-  : `${API}/renewal/premium-forecast`;
-
-const premiumForecastRes = await fetch(premiumForecastUrl, {
-  headers: authHeaders(),
-});
-
-if (premiumForecastRes.ok) {
-  setPremiumForecast((await safeJson(premiumForecastRes)) || {});
-} else {
-  setPremiumForecast({});
-}
-
-const submissionBuilderUrl = hasPolicy
-  ? `${API}/submission-builder/?policy_number=${encodeURIComponent(policyNumber)}`
-  : `${API}/submission-builder/`;
-
-const submissionBuilderRes = await fetch(submissionBuilderUrl, {
-  headers: authHeaders(),
-});
-
-if (submissionBuilderRes.ok) {
-  setSubmissionBuilder((await safeJson(submissionBuilderRes)) || {});
-} else {
-  setSubmissionBuilder({});
-} 
-     const timelineUrl = hasPolicy
-        ? `${API}/timeline/analytics?policy_number=${encodeURIComponent(policyNumber)}`
-        : `${API}/timeline/analytics`;
-
-      const timelineRes = await fetch(timelineUrl, { headers: authHeaders() });
-
-      if (timelineRes.status === 401 || timelineRes.status === 403) {
-        clearSession();
-        router.replace("/login?expired=1");
-        return;
-      }
-
-
-
-      if (timelineRes.ok) {
-        setTimeline((await safeJson(timelineRes)) || {});
-      } else {
-        setTimeline({});
-      }
     } catch {
       console.log("CATCH BLOCK HIT:", arguments[0] || "unknown error");
       setDashboardError("Dashboard could not load. Confirm backend is running.");
@@ -1452,6 +1324,134 @@ if (submissionBuilderRes.ok) {
       setDashboardLoading(false);
     }
   }
+
+  async function loadLazyToolData(toolKey: ToolKey) {
+    const heavyTools: ToolKey[] = [
+      "summary",
+      "memo",
+      "renewal-risk",
+      "decision",
+      "carrier-appetite",
+      "submission-readiness",
+      "carrier-match",
+      "premium-forecast",
+      "submission-builder",
+      "charts",
+    ];
+
+    if (!heavyTools.includes(toolKey)) return;
+    if (lazyLoadedTools[toolKey] || lazyToolLoading[toolKey]) return;
+
+    const selectedPolicy =
+      normalizePolicyNumber(
+        getCachedSelectedPolicy() ||
+          profile?.policy_number ||
+          activeProfileRef.current?.policy_number ||
+          profile?.account_number ||
+          activeProfileRef.current?.account_number ||
+          ""
+      );
+
+    const hasPolicy = selectedPolicy && selectedPolicy !== "POLICY NOT SET";
+
+    const withPolicy = (base: string) =>
+      hasPolicy ? `${base}?policy_number=${encodeURIComponent(selectedPolicy)}` : base;
+
+    let url = "";
+
+    if (toolKey === "summary" || toolKey === "memo" || toolKey === "renewal-risk") {
+      url = withPolicy(`${API}/summary/underwriting`);
+    }
+
+    if (toolKey === "decision") {
+      url = withPolicy(`${API}/renewal/decision`);
+    }
+
+    if (toolKey === "carrier-appetite") {
+      url = withPolicy(`${API}/renewal/carrier-appetite`);
+    }
+
+    if (toolKey === "submission-readiness") {
+      url = withPolicy(`${API}/renewal/submission-readiness`);
+    }
+
+    if (toolKey === "carrier-match") {
+      url = withPolicy(`${API}/renewal/carrier-match`);
+    }
+
+    if (toolKey === "premium-forecast") {
+      url = withPolicy(`${API}/renewal/premium-forecast`);
+    }
+
+    if (toolKey === "submission-builder") {
+      url = hasPolicy
+        ? `${API}/submission-builder/?policy_number=${encodeURIComponent(selectedPolicy)}`
+        : `${API}/submission-builder/`;
+    }
+
+    if (toolKey === "charts") {
+      url = withPolicy(`${API}/timeline/analytics`);
+    }
+
+    if (!url) return;
+
+    setLazyToolLoading((prev) => ({ ...prev, [toolKey]: true }));
+
+    try {
+      const res = await fetch(url, { headers: authHeaders() });
+
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      const data = res.ok ? ((await safeJson(res)) || {}) : {};
+
+      if (toolKey === "summary" || toolKey === "memo" || toolKey === "renewal-risk") {
+        setSummary(data);
+      }
+
+      if (toolKey === "decision") {
+        setDecision(data);
+      }
+
+      if (toolKey === "carrier-appetite") {
+        setCarrierAppetite(data);
+      }
+
+      if (toolKey === "submission-readiness") {
+        setSubmissionReadiness(data);
+      }
+
+      if (toolKey === "carrier-match") {
+        setCarrierMatch(data);
+      }
+
+      if (toolKey === "premium-forecast") {
+        setPremiumForecast(data);
+      }
+
+      if (toolKey === "submission-builder") {
+        setSubmissionBuilder(data);
+      }
+
+      if (toolKey === "charts") {
+        setTimeline(data);
+      }
+
+      setLazyLoadedTools((prev) => ({ ...prev, [toolKey]: true }));
+    } catch {
+      // Keep the dashboard usable even if a lazy tool fails.
+    } finally {
+      setLazyToolLoading((prev) => ({ ...prev, [toolKey]: false }));
+    }
+  }
+
+  useEffect(() => {
+    loadLazyToolData(activeTool);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeTool, profile?.policy_number, profile?.account_number]);
 
   async function selectAccount(policyNumber: string) {
     if (!policyNumber) return;
@@ -1478,6 +1478,8 @@ if (submissionBuilderRes.ok) {
     setPremiumForecast({});
     setSubmissionBuilder({});
     setTimeline({});
+    setLazyLoadedTools({});
+    setLazyToolLoading({});
 
     // Pre-load the full profile from cache so policySet includes all sibling policies.
     const cachedMatch = getCachedProfiles().find(
