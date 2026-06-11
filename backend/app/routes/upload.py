@@ -257,6 +257,42 @@ def ensure_account_profile_columns(db: Session):
         "policies": "TEXT",
         "validation": "TEXT",
         "raw_text_preview": "TEXT",
+
+        # LOSSQ_EXPOSURE_INPUT_FIELDS_V1
+        "current_premium": "VARCHAR",
+        "expiring_premium": "VARCHAR",
+        "target_renewal_premium": "VARCHAR",
+        "line_of_business": "VARCHAR",
+        "state": "VARCHAR",
+        "class_code": "VARCHAR",
+        "class_codes": "VARCHAR",
+        "limits": "VARCHAR",
+        "coverage_limit": "VARCHAR",
+        "deductible": "VARCHAR",
+        "retention": "VARCHAR",
+        "payroll": "VARCHAR",
+        "revenue": "VARCHAR",
+        "sales": "VARCHAR",
+        "receipts": "VARCHAR",
+        "employee_count": "VARCHAR",
+        "vehicle_count": "VARCHAR",
+        "driver_count": "VARCHAR",
+        "property_tiv": "VARCHAR",
+        "tiv": "VARCHAR",
+        "building_value": "VARCHAR",
+        "contents_value": "VARCHAR",
+        "square_footage": "VARCHAR",
+        "location_count": "VARCHAR",
+        "unit_count": "VARCHAR",
+        "cargo_limit": "VARCHAR",
+        "umbrella_limit": "VARCHAR",
+        "experience_mod": "VARCHAR",
+        "mod": "VARCHAR",
+        "exposure_change_percent": "VARCHAR",
+        "cyber_revenue": "VARCHAR",
+        "professional_revenue": "VARCHAR",
+        "exposure_basis": "VARCHAR",
+        "underwriter_notes": "TEXT",
     }
 
     try:
@@ -369,6 +405,50 @@ def extract_profile_data(
         "validation": direct_profile.get("validation") or {},
         "raw_text_preview": direct_profile.get("raw_text_preview") or "",
     }
+
+
+    exposure_input_fields = [
+        "current_premium",
+        "expiring_premium",
+        "target_renewal_premium",
+        "line_of_business",
+        "state",
+        "class_code",
+        "class_codes",
+        "limits",
+        "coverage_limit",
+        "deductible",
+        "retention",
+        "payroll",
+        "revenue",
+        "sales",
+        "receipts",
+        "employee_count",
+        "vehicle_count",
+        "driver_count",
+        "property_tiv",
+        "tiv",
+        "building_value",
+        "contents_value",
+        "square_footage",
+        "location_count",
+        "unit_count",
+        "cargo_limit",
+        "umbrella_limit",
+        "experience_mod",
+        "mod",
+        "exposure_change_percent",
+        "cyber_revenue",
+        "professional_revenue",
+        "exposure_basis",
+        "underwriter_notes",
+    ]
+
+    for field in exposure_input_fields:
+        value = direct_profile.get(field)
+        if value not in ("", None, [], {}):
+            profile[field] = value
+
 
     for item in parsed_claims:
         if not profile["business_name"]:
