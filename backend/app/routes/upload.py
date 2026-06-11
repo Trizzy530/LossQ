@@ -1116,6 +1116,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     clean_input_policy = str(policy_number or "").strip()
 
     for file in files:
+        # LOSSQ_SAFE_UPLOAD_FILENAME_IN_SAVE_LOOP_V1
+        safe_upload_filename = await validate_upload_file_security(file)
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
         safe_filename = (safe_upload_filename or "loss_run.pdf").replace(" ", "_")
         file_path = os.path.join(UPLOAD_DIR, f"{timestamp}_{safe_filename}")
