@@ -610,6 +610,142 @@ def serialize_json(value, fallback):
         return json.dumps(fallback)
 
 
+
+def derive_exposure_inputs_from_policy_schedule(profile_data: dict):
+    # LOSSQ_POLICY_SCHEDULE_TO_EXPOSURE_INPUTS_V1
+    # Copies exposure/premium values that were detected inside policy schedule rows
+    # into top-level Exposure Inputs fields.
+    import re
+
+    profile_data = profile_data or {}
+    policies = profile_data.get("policies") or []
+
+    if not isinstance(policies, list):
+        return profile_data
+
+    money_values_for_premium = []
+
+    def first_money(value):
+        match = re.search(r"\$?\s*[0-9][0-9,]*(?:\.\d{2})?", str(value or ""))
+        return match.group(0).replace(" ", "") if match else ""
+
+    def first_number(value):
+        match = re.search(r"\b[0-9][0-9,]*\b", str(value or ""))
+        return match.group(0) if match else ""
+
+    def set_if_blank(field, value):
+        value = str(value or "").strip()
+        if value and not profile_data.get(field):
+            profile_data[field] = value
+
+    def scan_text(value):
+        text_value = str(value or "")
+        lower = text_value.lower()
+
+        if "payroll" in lower:
+            set_if_blank("payroll", first_money(text_value))
+
+        if "revenue" in lower or "sales" in lower:
+            money = first_money(text_value)
+            set_if_blank("revenue", money)
+            set_if_blank("sales", money)
+
+        if "receipt" in lower:
+            set_if_blank("receipts", first_money(text_value))
+
+        if "vehicle" in lower:
+            vehicle_match = re.search(r"vehicles?\s*[:\-]?\s*([0-9,]+)", text_value, re.I)
+            set_if_blank("vehicle_count", vehicle_match.group(1) if vehicle_match else first_number(text_value))
+
+        if "driver" in lower:
+            driver_match = re.search(r"drivers?\s*[:\-]?\s*([0-9,]+)", text_value, re.I)
+            set_if_blank("driver_count", driver_match.group(1) if driver_match else first_number(text_value))
+
+        if "employee" in lower:
+            employee_match = re.search(r"employees?\s*[:\-]?\s*([0-9,]+)", text_value, re.I)
+            set_if_blank("employee_count", employee_match.group(1) if employee_match else first_number(text_value))
+
+        if "tiv" in lower or "total insured value" in lower:
+            money = first_money(text_value)
+            set_if_blank("property_tiv", money)
+            set_if_blank("tiv", money)
+
+        if "limit" in lower:
+            money = first_money(text_value)
+            set_if_blank("coverage_limit", money)
+            set_if_blank("limits", text_value.strip())
+
+        if "deductible" in lower:
+            set_if_blank("deductible", first_money(text_value))
+
+        if "retention" in lower or "sir" in lower:
+            set_if_blank("retention", first_money(text_value))
+
+        if "class" in lower and "code" in lower:
+            class_match = re.search(r"class(?:ification)?\s*codes?\s*[:\-]?\s*([A-Za-z0-9,\- ]+)", text_value, re.I)
+            if class_match:
+                set_if_blank("class_codes", class_match.group(1).strip())
+                set_if_blank("class_code", class_match.group(1).strip())
+
+    for policy in policies:
+        if not isinstance(policy, dict):
+            continue
+
+        line = (
+            policy.get("line_of_business")
+            or policy.get("policy_type")
+            or policy.get("coverage")
+            or policy.get("line")
+            or ""
+        )
+
+        if line and not profile_data.get("line_of_business"):
+            profile_data["line_of_business"] = str(line).strip()
+
+        for field_name, value in policy.items():
+            value_text = str(value or "").strip()
+            if not value_text:
+                continue
+
+            scan_text(value_text)
+
+            field_lower = str(field_name or "").lower()
+
+            if "premium" in field_lower:
+                money = first_money(value_text)
+                if money:
+                    money_values_for_premium.append(money)
+
+            # Some clean policy tables put exposure basis in one column and premium in the next.
+            # If a row has exposure text and another field is only a money value, treat that money as premium.
+            if re.fullmatch(r"\$?\s*[0-9][0-9,]*(?:\.\d{2})?", value_text):
+                row_text = " ".join(str(v or "") for v in policy.values()).lower()
+                if any(word in row_text for word in ["payroll", "vehicles", "drivers", "revenue", "limit", "tiv"]):
+                    money_values_for_premium.append(value_text.replace(" ", ""))
+
+    if money_values_for_premium and not profile_data.get("current_premium"):
+        total = 0.0
+        for item in money_values_for_premium:
+            try:
+                total += float(str(item).replace("$", "").replace(",", "").strip())
+            except Exception:
+                pass
+
+        if total > 0:
+            profile_data["current_premium"] = f"${total:,.0f}"
+
+    if not profile_data.get("exposure_basis"):
+        basis_parts = []
+        for field in ["payroll", "revenue", "vehicle_count", "driver_count", "property_tiv", "coverage_limit"]:
+            if profile_data.get(field):
+                basis_parts.append(f"{field.replace('_', ' ').title()}: {profile_data.get(field)}")
+        if basis_parts:
+            profile_data["exposure_basis"] = "; ".join(basis_parts)
+
+    return profile_data
+
+
+
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
     policy_number = clean_profile_value(
         profile_data.get("policy_number") or profile_data.get("account_number")
@@ -994,6 +1130,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     # Real policy numbers stay in profile_data["policies"].
     if is_bad_policy_key_for_upload(profile_data.get("policy_number")):
         profile_data["policy_number"] = profile_account_key or primary_claim_policy_number or f"UPLOAD-{upload_session_id}"
+
+    profile_data = derive_exposure_inputs_from_policy_schedule(profile_data)
 
     profile = upsert_account_profile(db, profile_data, current_user)
 
