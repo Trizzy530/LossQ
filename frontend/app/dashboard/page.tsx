@@ -141,6 +141,53 @@ function getClaimPolicyNumber(claim: any) {
   );
 }
 
+// LOSSQ_DEDUPE_VISIBLE_CLAIMS_V1
+function getClaimDedupeKey(claim: any) {
+  const claimNumber = normalizePolicyNumber(
+    claim?.claim_number ||
+      claim?.claimNumber ||
+      claim?.claim_no ||
+      claim?.claim_id ||
+      claim?.id
+  );
+
+  const policyNumber = getClaimPolicyNumber(claim);
+
+  const lossDate = String(
+    claim?.date_of_loss ||
+      claim?.loss_date ||
+      claim?.dateOfLoss ||
+      ""
+  ).trim();
+
+  const incurred = String(
+    claim?.total_incurred ||
+      claim?.incurred ||
+      claim?.total ||
+      ""
+  ).trim();
+
+  if (claimNumber && claimNumber !== "UNKNOWN") {
+    return `${claimNumber}|${policyNumber || "NO-POLICY"}`;
+  }
+
+  return `${policyNumber}|${lossDate}|${incurred}`;
+}
+
+function dedupeClaims(claims: any[]) {
+  const seen = new Set<string>();
+  const next: any[] = [];
+
+  (claims || []).forEach((claim) => {
+    const key = getClaimDedupeKey(claim);
+    if (!key || seen.has(key)) return;
+    seen.add(key);
+    next.push(claim);
+  });
+
+  return next;
+}
+
 
 function isOpenClaimStatus(claim: any) {
   const status = String(claim?.status || "").trim().toLowerCase();
@@ -1220,11 +1267,11 @@ if (activeProfile?.policy_number) {
         // 3. Older cache only when no current upload is active.
         // 4. Empty array. Never fall back to unrelated organization-wide claims.
         if (currentUploadApplies) {
-        if (myVersion === loadVersionRef.current) setClaims(currentUploadMatches);
+        if (myVersion === loadVersionRef.current) setClaims(dedupeClaims(currentUploadMatches));
         } else if (serverMatches.length > 0) {
-        if (myVersion === loadVersionRef.current) setClaims(serverMatches);
+        if (myVersion === loadVersionRef.current) setClaims(dedupeClaims(serverMatches));
         } else if (cachedMatches.length > 0) {
-        if (myVersion === loadVersionRef.current) setClaims(cachedMatches);
+        if (myVersion === loadVersionRef.current) setClaims(dedupeClaims(cachedMatches));
         } else {
           if (myVersion === loadVersionRef.current) setClaims([]);
         }
@@ -1954,7 +2001,7 @@ async function saveProfile() {
 
     // Show the freshly parsed claim rows immediately. loadDashboard may fetch
     // /claims/, but /claims/ can be limited/stale, so we re-apply combinedClaims below.
-    setClaims(combinedClaims);
+    setClaims(dedupeClaims(combinedClaims));
 
     const uploadedPolicyNumber = chooseSafePolicyNumber(
       primaryProfile?.account_number,
@@ -2014,7 +2061,7 @@ async function saveProfile() {
     // Keep the current upload authoritative after dashboard reload.
     // This prevents a stale /claims/ or old upload cache response from replacing the freshly parsed rows.
     if (combinedClaims.length > 0) {
-      setClaims(combinedClaims);
+      setClaims(dedupeClaims(combinedClaims));
     }
 
     setActiveTool("overview");
