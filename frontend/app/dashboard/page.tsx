@@ -861,17 +861,17 @@ function normalizeProfileName(item: any) {
       .filter(Boolean)
       .map((item) => normalizeProfileName(item))
       .map((item) => {
-        const safeKey = chooseSafePolicyNumber(
+        const safePolicyNumber = chooseSafePolicyNumber(
+          item?.policy_number,
           item?.account_number,
-          item?.customer_number,
-          item?.policy_number
+          item?.customer_number
         );
 
         return {
           ...item,
-          policy_number: safeKey || "",
-          account_number: item?.account_number || safeKey || "",
-          customer_number: item?.customer_number || item?.account_number || safeKey || "",
+          policy_number: safePolicyNumber || "",
+          account_number: item?.account_number || item?.customer_number || "",
+          customer_number: item?.customer_number || item?.account_number || "",
         };
       });
 
