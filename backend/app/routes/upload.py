@@ -1352,6 +1352,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             db.refresh(profile)
             account_profile_id = getattr(profile, "id", None)
         except Exception:
+            print("LOSSQ UPLOAD ERROR TRACEBACK START")
+            traceback.print_exc()
+            print("LOSSQ UPLOAD ERROR TRACEBACK END")
             account_profile_id = getattr(profile, "id", None)
 
     profile_response = dict(profile_data or {})
