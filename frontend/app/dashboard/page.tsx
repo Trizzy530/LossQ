@@ -793,6 +793,79 @@ function mergeProfiles(existing: AnyObject[], incoming: AnyObject[]) {
   return Array.from(map.values());
 }
 
+
+function clearDeletedProfileBrowserTraces(profileToDelete: any) {
+  // LOSSQ_HARD_DELETE_BROWSER_TRACES_V1
+  // When a profile/file is deleted, remove every browser-side trace that can rehydrate it.
+  if (typeof window === "undefined") return;
+
+  const deleteKeys = [
+    normalizePolicyNumber(profileToDelete?.policy_number),
+    normalizePolicyNumber(profileToDelete?.account_number),
+    normalizePolicyNumber(profileToDelete?.customer_number),
+    ...(Array.isArray(profileToDelete?.policies)
+      ? profileToDelete.policies.map((p: any) => normalizePolicyNumber(p?.policy_number))
+      : []),
+  ].filter(Boolean);
+
+  const profileText = JSON.stringify(profileToDelete || "").toLowerCase();
+
+  const shouldRemoveObject = (item: any) => {
+    const itemKeys = [
+      normalizePolicyNumber(item?.policy_number),
+      normalizePolicyNumber(item?.account_number),
+      normalizePolicyNumber(item?.customer_number),
+      ...(Array.isArray(item?.policies)
+        ? item.policies.map((p: any) => normalizePolicyNumber(p?.policy_number))
+        : []),
+    ].filter(Boolean);
+
+    const itemText = JSON.stringify(item || "").toLowerCase();
+
+    const keyMatch = itemKeys.some((key: string) => deleteKeys.includes(key));
+    const nameMatch =
+      profileText &&
+      itemText &&
+      (
+        (profileText.includes("summit ridge") && itemText.includes("summit ridge")) ||
+        (profileText.includes("cedar creek") && itemText.includes("cedar creek")) ||
+        (profileText.includes("blue ridge") && itemText.includes("blue ridge")) ||
+        (profileText.includes("harbor") && itemText.includes("harbor")) ||
+        (profileText.includes("granite") && itemText.includes("granite"))
+      );
+
+    return keyMatch || nameMatch;
+  };
+
+  try {
+    const cachedProfiles = JSON.parse(localStorage.getItem(PROFILE_CACHE_KEY) || "[]");
+    if (Array.isArray(cachedProfiles)) {
+      const nextProfiles = cachedProfiles.filter((item: any) => !shouldRemoveObject(item));
+      localStorage.setItem(PROFILE_CACHE_KEY, JSON.stringify(nextProfiles));
+    }
+  } catch {
+    localStorage.removeItem(PROFILE_CACHE_KEY);
+  }
+
+  try {
+    const selectedPolicy = normalizePolicyNumber(localStorage.getItem(SELECTED_POLICY_CACHE_KEY));
+    if (selectedPolicy && deleteKeys.includes(selectedPolicy)) {
+      localStorage.removeItem(SELECTED_POLICY_CACHE_KEY);
+    }
+  } catch {
+    localStorage.removeItem(SELECTED_POLICY_CACHE_KEY);
+  }
+
+  // Upload snapshots are intentionally cleared fully.
+  // They are temporary parsing state and should never survive a delete.
+  localStorage.removeItem(CURRENT_UPLOAD_CACHE_KEY);
+  localStorage.removeItem(SELECTED_CLAIM_CACHE_KEY);
+  localStorage.removeItem("lossq_last_upload_review");
+
+  sessionStorage.clear();
+}
+
+
 export default function DashboardPage() {
   const router = useRouter();
 
@@ -1652,6 +1725,10 @@ if (activeProfile?.policy_number) {
   };
 
   // Clear the UI immediately so charts and Recharts data arrays reset right away.
+  clearDeletedProfileBrowserTraces(profileToDelete);
+  clearCachedCurrentUpload();
+  clearCachedSelectedClaim();
+  clearCachedLastUploadReview();
   removeProfileLocally();
   setMessage(`Deleting ${profileLabel}...`);
 
@@ -1682,7 +1759,10 @@ if (activeProfile?.policy_number) {
       return;
     }
 
-    setMessage(`Deleted ${profileLabel}.`);
+    clearDeletedProfileBrowserTraces(profileToDelete);
+    resetActiveWorkspace();
+    setActiveTool("profiles");
+    setMessage(`Deleted ${profileLabel}. All local upload traces were cleared.`);
   } catch {
     setMessage(`Deleted local profile ${profileLabel}. Backend delete unavailable.`);
   }
