@@ -4260,12 +4260,12 @@ const trendNoteDisplay =
                     </div>
 
                     <div className="overflow-x-auto">
-                      <table className="w-full min-w-[950px] text-sm">
+                      <table className="w-full min-w-[840px] text-sm">
                         <thead>
                           <tr className="border-b border-white/10 text-left text-slate-300">
                             <th className="py-3 pr-4">Policy Type / Coverage</th>
                             <th className="py-3 pr-4">Policy Number</th>
-                            <th className="py-3 pr-4">Writing Carrier</th>
+                            {/* LOSSQ_REMOVE_DUPLICATE_WRITING_CARRIER_COLUMN_V1 */}
                             <th className="py-3 pr-4">Carrier</th>
                             <th className="py-3 pr-4">Effective</th>
                             <th className="py-3 pr-4">Expiration</th>
@@ -4283,11 +4283,6 @@ const trendNoteDisplay =
                             const rowCarrier = cleanScheduleCarrier(
                               policy?.carrier || policy?.carrier_name,
                               displayProfile?.carrier_name || displayProfile?.writing_carrier
-                            );
-
-                            const rowWritingCarrier = cleanScheduleCarrier(
-                              policy?.writing_carrier || policy?.writingCarrier,
-                              displayProfile?.writing_carrier || rowCarrier
                             );
 
                             const rowEffectiveDate = cleanScheduleDate(
@@ -4318,7 +4313,6 @@ const trendNoteDisplay =
                                 <td className="py-3 pr-4 font-semibold text-blue-200">
                                   {policy?.policy_number || "-"}
                                 </td>
-                                <td className="py-3 pr-4">{rowWritingCarrier}</td>
                                 <td className="py-3 pr-4">{rowCarrier}</td>
                                 <td className="py-3 pr-4">{rowEffectiveDate}</td>
                                 <td className="py-3 pr-4">{rowExpirationDate}</td>
