@@ -1,4 +1,4 @@
-from fastapi import APIRouter, UploadFile, File, Depends, Form
+from fastapi import HTTPException, APIRouter, UploadFile, File, Depends, Form
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect
 import shutil
@@ -20,6 +20,136 @@ try:
     from app.services.excel_parser_service import parse_claims_from_excel
 except Exception:
     parse_claims_from_excel = None
+
+
+
+# LOSSQ_UPLOAD_SECURITY_PHASE_2_V1
+MAX_UPLOAD_SIZE_MB = int(os.getenv("MAX_UPLOAD_SIZE_MB", "25"))
+MAX_UPLOAD_SIZE_BYTES = MAX_UPLOAD_SIZE_MB * 1024 * 1024
+
+ALLOWED_UPLOAD_EXTENSIONS = {
+    ".pdf",
+    ".csv",
+    ".xlsx",
+    ".xls",
+    ".png",
+    ".jpg",
+    ".jpeg",
+    ".txt",
+}
+
+ALLOWED_UPLOAD_CONTENT_TYPES = {
+    "application/pdf",
+    "text/csv",
+    "text/plain",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/vnd.ms-excel",
+    "image/png",
+    "image/jpeg",
+    "application/octet-stream",  # Some browsers send this for CSV/XLSX/PDF.
+}
+
+BLOCKED_UPLOAD_EXTENSIONS = {
+    ".exe",
+    ".bat",
+    ".cmd",
+    ".com",
+    ".scr",
+    ".js",
+    ".vbs",
+    ".ps1",
+    ".sh",
+    ".php",
+    ".py",
+    ".jar",
+    ".msi",
+    ".dll",
+    ".html",
+    ".htm",
+    ".svg",
+}
+
+
+def sanitize_upload_filename(filename: str):
+    filename = str(filename or "upload").strip()
+    filename = filename.replace("\\", "_").replace("/", "_")
+    filename = re.sub(r"[^A-Za-z0-9._ -]", "_", filename)
+    filename = re.sub(r"\s+", "_", filename)
+    filename = filename.strip("._- ")
+
+    if not filename:
+        filename = "upload"
+
+    if len(filename) > 140:
+        stem, ext = os.path.splitext(filename)
+        filename = f"{stem[:120]}{ext}"
+
+    return filename
+
+
+async def validate_upload_file_security(file):
+    filename = sanitize_upload_filename(getattr(file, "filename", "") or "")
+    content_type = str(getattr(file, "content_type", "") or "").lower().strip()
+    _, ext = os.path.splitext(filename.lower())
+
+    if not ext:
+        raise HTTPException(
+            status_code=400,
+            detail="Upload blocked. File must include a valid extension.",
+        )
+
+    if ext in BLOCKED_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Upload blocked. This file type is not allowed.",
+        )
+
+    if ext not in ALLOWED_UPLOAD_EXTENSIONS:
+        raise HTTPException(
+            status_code=400,
+            detail="Upload blocked. Allowed file types are PDF, CSV, XLSX, XLS, PNG, JPG, JPEG, and TXT.",
+        )
+
+    if content_type and content_type not in ALLOWED_UPLOAD_CONTENT_TYPES:
+        # Do not over-block octet-stream cases, but block clearly dangerous browser-reported types.
+        if not content_type.startswith("application/octet-stream"):
+            raise HTTPException(
+                status_code=400,
+                detail="Upload blocked. The uploaded file content type is not allowed.",
+            )
+
+    # Check file size without permanently consuming the stream.
+    try:
+        await file.seek(0)
+        content = await file.read()
+        size = len(content or b"")
+
+        if size <= 0:
+            raise HTTPException(
+                status_code=400,
+                detail="Upload blocked. The file appears to be empty.",
+            )
+
+        if size > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"Upload blocked. File size must be {MAX_UPLOAD_SIZE_MB}MB or less.",
+            )
+
+        await file.seek(0)
+    except HTTPException:
+        raise
+    except Exception:
+        try:
+            await file.seek(0)
+        except Exception:
+            pass
+        raise HTTPException(
+            status_code=400,
+            detail="Upload blocked. The file could not be validated safely.",
+        )
+
+    return filename
 
 
 router = APIRouter(prefix="/upload", tags=["Upload"])
@@ -911,6 +1041,8 @@ async def upload_loss_run(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("upload")),
 ):
+    # LOSSQ_UPLOAD_LOSS_RUN_VALIDATE_SINGLE_V1
+    await validate_upload_file_security(file)
     return await save_uploaded_files(
         files=[file],
         policy_number=policy_number,
@@ -926,6 +1058,9 @@ async def upload_multiple_loss_runs(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("upload")),
 ):
+    # LOSSQ_UPLOAD_LOSS_RUN_VALIDATE_MULTIPLE_V1
+    for upload_file in files:
+        await validate_upload_file_security(upload_file)
     return await save_uploaded_files(
         files=files,
         policy_number=policy_number,
@@ -939,8 +1074,10 @@ async def debug_loss_run_parser(
     file: UploadFile = File(...),
     current_user: dict = Depends(require_permission("upload")),
 ):
+    # LOSSQ_UPLOAD_DEBUG_VALIDATE_FILE_V1
+    safe_upload_filename = await validate_upload_file_security(file)
     timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-    safe_filename = (file.filename or "debug_loss_run.pdf").replace(" ", "_")
+    safe_filename = (safe_upload_filename or "debug_loss_run.pdf").replace(" ", "_")
     file_path = os.path.join(UPLOAD_DIR, f"DEBUG-{timestamp}_{safe_filename}")
 
     with open(file_path, "wb") as buffer:
@@ -979,13 +1116,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
     for file in files:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        safe_filename = (file.filename or "loss_run.pdf").replace(" ", "_")
+        safe_filename = (safe_upload_filename or "loss_run.pdf").replace(" ", "_")
         file_path = os.path.join(UPLOAD_DIR, f"{timestamp}_{safe_filename}")
 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        parsed_claims, parsed_profile = parse_file(file_path, file.filename or safe_filename)
+        parsed_claims, parsed_profile = parse_file(file_path, safe_upload_filename or safe_filename)
 
         file_policy_number = clean_input_policy
         file_account_key_for_claims = ""
@@ -1119,7 +1256,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             total_saved += 1
 
         upload_record = UploadHistory(
-            filename=file.filename,
+            filename=safe_upload_filename,
             stored_path=file_path,
             content_type=file.content_type,
             claims_saved=file_saved,
@@ -1132,7 +1269,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         uploaded_files.append(
             {
-                "filename": file.filename,
+                "filename": safe_upload_filename,
                 "claims_saved": file_saved,
                 "duplicates_skipped": file_duplicates,
                 "policy_number": file_policy_number,
