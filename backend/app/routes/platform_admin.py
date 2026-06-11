@@ -123,6 +123,12 @@ def platform_users(
         "role",
         "organization_id",
         "company_name",
+        "phone",
+        "phone_number",
+        "mobile_phone",
+        "office_phone",
+        "support_phone",
+        "billing_phone",
         "is_active",
         "status",
         "account_status",
@@ -197,6 +203,11 @@ def platform_organizations(
         "name",
         "company_name",
         "organization_name",
+        "phone",
+        "phone_number",
+        "office_phone",
+        "support_phone",
+        "billing_phone",
         "owner_user_id",
         "plan",
         "subscription_status",
@@ -223,3 +234,117 @@ def platform_organizations(
     organizations = [row_to_dict(row) for row in rows]
 
     return {"organizations": organizations, "count": len(organizations)}
+
+@router.get("/support-lookup")
+def platform_support_lookup(
+    q: str = "",
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    # LOSSQ_SUPPORT_LOOKUP_V1
+    require_platform_admin(current_user)
+
+    import re
+
+    query_value = str(q or "").strip().lower()
+    phone_digits = re.sub(r"\D", "", query_value)
+
+    if not query_value:
+        return {
+            "query": q,
+            "users": [],
+            "organizations": [],
+            "message": "Enter a phone number, email, company name, contact name, or organization ID.",
+        }
+
+    def normalize_phone(value):
+        return re.sub(r"\D", "", str(value or ""))
+
+    def matches(record):
+        record_text = " ".join(str(value or "") for value in record.values()).lower()
+        record_digits = normalize_phone(record_text)
+
+        if query_value in record_text:
+            return True
+
+        if phone_digits and len(phone_digits) >= 4 and phone_digits in record_digits:
+            return True
+
+        return False
+
+    users = []
+    organizations = []
+
+    if table_exists(db, "users"):
+        user_columns = get_columns(db, "users")
+        selected_user_columns = safe_select_columns(
+            user_columns,
+            [
+                "id",
+                "email",
+                "full_name",
+                "name",
+                "first_name",
+                "last_name",
+                "role",
+                "organization_id",
+                "company_name",
+                "phone",
+                "phone_number",
+                "mobile_phone",
+                "office_phone",
+                "support_phone",
+                "billing_phone",
+                "is_active",
+                "status",
+                "account_status",
+                "subscription_status",
+                "plan",
+                "created_at",
+                "last_login",
+                "last_login_at",
+            ],
+        )
+
+        if selected_user_columns:
+            rows = db.execute(text(f"SELECT {', '.join(selected_user_columns)} FROM users")).fetchall()
+            users = [row_to_dict(row) for row in rows]
+            users = [user for user in users if matches(user)]
+
+    if table_exists(db, "organizations"):
+        org_columns = get_columns(db, "organizations")
+        selected_org_columns = safe_select_columns(
+            org_columns,
+            [
+                "id",
+                "name",
+                "company_name",
+                "organization_name",
+                "phone",
+                "phone_number",
+                "office_phone",
+                "support_phone",
+                "billing_phone",
+                "owner_user_id",
+                "plan",
+                "subscription_status",
+                "stripe_customer_id",
+                "stripe_subscription_id",
+                "created_at",
+                "updated_at",
+            ],
+        )
+
+        if selected_org_columns:
+            rows = db.execute(text(f"SELECT {', '.join(selected_org_columns)} FROM organizations")).fetchall()
+            organizations = [row_to_dict(row) for row in rows]
+            organizations = [org for org in organizations if matches(org)]
+
+    return {
+        "query": q,
+        "users": users,
+        "organizations": organizations,
+        "user_count": len(users),
+        "organization_count": len(organizations),
+    }
+
