@@ -5103,105 +5103,209 @@ const trendNoteDisplay =
   </section>
 )}
 
-{activeTool === "premium-forecast" && (
-  <section className="glass-panel p-6 md:p-8">
-    <p className="text-sm uppercase tracking-[0.25em] text-green-300 mb-3">
-      Premium Forecast Engine
-    </p>
+{activeTool === "premium-forecast" &&
+  (() => {
+    // LOSSQ_SAFE_PREMIUM_FORECAST_REBUILD_V2
+    const moneyToNumber = (value: any): number => {
+      if (value === null || value === undefined) return 0;
+      if (typeof value === "number") return Number.isFinite(value) ? value : 0;
 
-    <h2 className="text-2xl md:text-3xl font-bold mb-6">
-      Renewal Premium Projection
-    </h2>
+      const cleaned = String(value)
+        .replace(/[$,]/g, "")
+        .replace(/[^0-9.-]/g, "")
+        .trim();
 
-    <div className="mb-8 rounded-3xl border border-blue-400/30 bg-blue-500/10 p-5">
-      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
-        <div>
-          <p className="text-xs uppercase tracking-[0.25em] text-blue-300">
-            Premium Accuracy Guardrail
-          </p>
-          <h3 className="mt-2 text-xl font-bold text-white">
-            {premiumAccuracyStatus.level}
-          </h3>
-          <p className="mt-2 text-sm leading-6 text-slate-300">
-            {premiumAccuracyStatus.message}
-          </p>
+      const parsed = Number(cleaned);
+      return Number.isFinite(parsed) ? parsed : 0;
+    };
+
+    const formatMoney = (value: any) =>
+      `$${Number(moneyToNumber(value) || 0).toLocaleString()}`;
+
+    const sourceProfile: any = {
+      ...(profile || {}),
+      ...(displayProfile || {}),
+    };
+
+    const derivedExposure: any = deriveExposureInputsFromPolicyRows(sourceProfile);
+
+    const currentPremium =
+      moneyToNumber(sourceProfile?.current_premium) ||
+      moneyToNumber(derivedExposure?.current_premium) ||
+      moneyToNumber(sourceProfile?.expiring_premium) ||
+      moneyToNumber(derivedExposure?.expiring_premium);
+
+    const expiringPremium =
+      moneyToNumber(sourceProfile?.expiring_premium) ||
+      moneyToNumber(derivedExposure?.expiring_premium);
+
+    const targetRenewalPremium =
+      moneyToNumber(sourceProfile?.target_renewal_premium) ||
+      moneyToNumber(derivedExposure?.target_renewal_premium);
+
+    const claimRows = Array.isArray(intelligenceClaims)
+      ? intelligenceClaims
+      : Array.isArray(visibleClaims)
+      ? visibleClaims
+      : [];
+
+    const totalIncurred = claimRows.reduce((sum: number, claim: any) => {
+      return sum + getClaimIncurred(claim);
+    }, 0);
+
+    const openClaimCount = claimRows.filter((claim: any) => isOpenClaimStatus(claim)).length;
+    const largeLossCount = claimRows.filter((claim: any) => getClaimIncurred(claim) >= 50000).length;
+    const litigationCount = claimRows.filter((claim: any) => {
+      const text = `${claim?.litigation || ""} ${claim?.litigation_status || ""} ${claim?.description || ""} ${claim?.flag || ""}`.toLowerCase();
+      return text.includes("litigation") || text.includes("attorney") || text.includes("suit");
+    }).length;
+
+    const hasPremiumData = currentPremium > 0;
+
+    const claimPressurePercent =
+      hasPremiumData && claimRows.length > 0
+        ? Math.min(
+            45,
+            Math.max(
+              0,
+              5 +
+                openClaimCount * 3 +
+                largeLossCount * 5 +
+                litigationCount * 7 +
+                Math.round((totalIncurred / Math.max(currentPremium, 1)) * 10)
+            )
+          )
+        : 0;
+
+    const expectedRenewalPremium =
+      targetRenewalPremium > 0
+        ? targetRenewalPremium
+        : hasPremiumData
+        ? Math.round(currentPremium * (1 + claimPressurePercent / 100))
+        : 0;
+
+    const expectedIncrease =
+      hasPremiumData && expectedRenewalPremium > 0
+        ? Math.round(((expectedRenewalPremium - currentPremium) / currentPremium) * 100)
+        : 0;
+
+    const bestCase = hasPremiumData ? Math.max(0, expectedIncrease - 5) : 0;
+    const worstCase = hasPremiumData ? expectedIncrease + 10 : 0;
+
+    const confidenceScore =
+      currentPremium > 0 && targetRenewalPremium > 0
+        ? 92
+        : currentPremium > 0 && claimRows.length > 0
+        ? 84
+        : currentPremium > 0
+        ? 72
+        : 45;
+
+    const confidenceLabel =
+      confidenceScore >= 85
+        ? "Strong"
+        : confidenceScore >= 70
+        ? "Good"
+        : "Needs Premium Data";
+
+    const lineText =
+      Array.isArray(sourceProfile?.policies) && sourceProfile.policies.length > 0
+        ? sourceProfile.policies
+            .map((item: any) => item?.policy_type || item?.line_of_business || item?.coverage)
+            .filter(Boolean)
+            .slice(0, 6)
+            .join(", ")
+        : sourceProfile?.line_of_business || derivedExposure?.line_of_business || "uploaded account";
+
+    return (
+      <section className="glass-panel p-6 md:p-8">
+        <p className="text-sm uppercase tracking-[0.25em] text-green-300 mb-3">
+          Premium Forecast Engine
+        </p>
+
+        <h2 className="text-2xl md:text-3xl font-bold mb-6">
+          Renewal Premium Projection
+        </h2>
+
+        <div className="mb-8 rounded-3xl border border-blue-400/30 bg-blue-500/10 p-5">
+          <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+            <div>
+              <p className="text-xs uppercase tracking-[0.25em] text-blue-300">
+                Premium Accuracy Guardrail
+              </p>
+              <h3 className="mt-2 text-xl font-bold text-white">
+                {hasPremiumData ? "File-Based Estimate" : "Premium Data Needed"}
+              </h3>
+              <p className="mt-2 text-sm leading-6 text-slate-300">
+                {hasPremiumData
+                  ? `LossQ is using actual uploaded file Exposure Inputs for ${lineText}. This forecast does not use stale modeled backend premium values.`
+                  : "Current premium was not found in the uploaded file or Exposure Inputs. Add current premium to generate a renewal dollar projection."}
+              </p>
+            </div>
+
+            <div className="rounded-2xl border border-white/10 bg-slate-950/70 px-5 py-4 text-center min-w-[170px]">
+              <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
+                Pricing Confidence
+              </p>
+              <p className="mt-2 text-2xl font-black text-blue-200">
+                {confidenceLabel}
+              </p>
+            </div>
+          </div>
         </div>
 
-        <div className="rounded-2xl border border-white/10 bg-slate-950/70 px-5 py-4 text-center min-w-[170px]">
-          <p className="text-xs uppercase tracking-[0.2em] text-slate-400">
-            Pricing Confidence
-          </p>
-          <p className="mt-2 text-2xl font-black text-blue-200">
-            {premiumAccuracyStatus.confidence}
-          </p>
+        <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+          <MetricCard title="Current Premium" value={hasPremiumData ? formatMoney(currentPremium) : "-"} />
+          <MetricCard title="Expected Renewal" value={expectedRenewalPremium > 0 ? formatMoney(expectedRenewalPremium) : "-"} />
+          <MetricCard title="Expected Increase" value={hasPremiumData ? `${expectedIncrease}%` : "-"} />
+          <MetricCard title="Confidence" value={`${confidenceScore}%`} />
         </div>
-      </div>
-    </div>
 
-    <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-      <MetricCard
-        title="Current Premium"
-        value={`$${Number(
-          effectivePremiumForecast?.current_premium || 0
-        ).toLocaleString()}`}
-      />
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
+          <MetricCard title="Best Case" value={hasPremiumData ? `${bestCase}%` : "-"} />
+          <MetricCard title="Likely Range" value={hasPremiumData ? `${bestCase}% to ${worstCase}%` : "-"} />
+          <MetricCard title="Worst Case" value={hasPremiumData ? `${worstCase}%` : "-"} />
+        </div>
 
-      <MetricCard
-        title="Expected Renewal"
-        value={`$${Number(
-          effectivePremiumForecast?.expected_renewal_premium || 0
-        ).toLocaleString()}`}
-      />
+        <ListCard
+          title="Forecast Drivers"
+          color="blue"
+          items={[
+            "Data source: actual uploaded file Exposure Inputs.",
+            `Current premium: ${hasPremiumData ? formatMoney(currentPremium) : "not provided"}.`,
+            `Expiring premium: ${expiringPremium > 0 ? formatMoney(expiringPremium) : "not provided"}.`,
+            `Target renewal premium: ${targetRenewalPremium > 0 ? formatMoney(targetRenewalPremium) : "not provided"}.`,
+            `${claimRows.length} account-specific claim row(s) reviewed.`,
+            `${openClaimCount} open claim(s).`,
+            `${largeLossCount} large loss claim(s).`,
+            `${litigationCount} litigation/attorney indicator(s).`,
+            `Total incurred: ${formatMoney(totalIncurred)}.`,
+          ]}
+        />
 
-      <MetricCard
-        title="Expected Increase"
-        value={`${effectivePremiumForecast?.expected_increase_percent || 0}%`}
-      />
-
-      <MetricCard
-        title="Confidence"
-        value={`${effectivePremiumForecast?.confidence_score || 0}%`}
-      />
-    </div>
-
-    <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-      <MetricCard
-        title="Best Case"
-        value={`${effectivePremiumForecast?.best_case_percent || 0}%`}
-      />
-
-      <MetricCard
-        title="Likely Range"
-        value={effectivePremiumForecast?.likely_range_percent || "-"}
-      />
-
-      <MetricCard
-        title="Worst Case"
-        value={`${effectivePremiumForecast?.worst_case_percent || 0}%`}
-      />
-    </div>
-
-    <ListCard
-      title="Forecast Drivers"
-      items={
-        effectivePremiumForecast?.forecast_drivers || [
-          "No forecast drivers available."
-        ]
-      }
-      color="blue"
-    />
-
-    <div className="mt-6">
-      <TextCard
-        title="Forecast Summary"
-        text={
-          effectivePremiumForecast?.forecast_summary ||
-          "No forecast summary available."
-        }
-      />
-    </div>
-  </section>
-)}
+        <div className="mt-6">
+          <TextCard
+            title="Forecast Summary"
+            text={
+              hasPremiumData
+                ? targetRenewalPremium > 0
+                  ? `LossQ used the uploaded file Exposure Inputs. Current premium is ${formatMoney(
+                      currentPremium
+                    )} and target renewal premium is ${formatMoney(
+                      targetRenewalPremium
+                    )}, producing an estimated ${expectedIncrease}% renewal change.`
+                  : `LossQ used the uploaded file Exposure Inputs. Current premium is ${formatMoney(
+                      currentPremium
+                    )}. Expected renewal is ${formatMoney(
+                      expectedRenewalPremium
+                    )} based on account-specific claim pressure and exposure inputs.`
+                : "LossQ cannot generate a renewal dollar projection until current premium is provided in the uploaded file or Exposure Inputs."
+            }
+          />
+        </div>
+      </section>
+    );
+  })()}
 
 {activeTool === "submission-builder" && (
   <section className="glass-panel p-6 md:p-8">
