@@ -55,7 +55,10 @@ def parse_file(file_path: str, filename: str):
             filename=filename,
         )
 
-        profile["policies"] = policies
+        profile["policies"] = merge_policy_lists_for_upload(
+            profile.get("policies"),
+            policies,
+        )
         profile["validation"] = validation
         profile["raw_text_preview"] = raw_text_preview
 
@@ -127,6 +130,101 @@ def clean_profile_value(value):
         return ""
 
     return cleaned
+
+
+
+def is_bad_policy_key_for_upload(value: Any):
+    cleaned = clean_profile_value(value).upper().replace(" ", "").strip()
+
+    if not cleaned:
+        return True
+
+    bad_values = {
+        "LINE-COVERAGE",
+        "LINECOVERAGE",
+        "POLICY",
+        "POLICYNUMBER",
+        "POLICY-NUMBER",
+        "ACCOUNTNUMBER",
+        "ACCOUNT-NUMBER",
+        "EXPOSUREBASIS",
+        "EXPOSURE-BASIS",
+        "CURRENT-PREMIUM",
+        "EXPIRING-PREMIUM",
+        "TARGET-RENEWAL",
+        "TARGETRENEWAL",
+    }
+
+    if cleaned in bad_values:
+        return True
+
+    if "COVERAGE" in cleaned and not any(ch.isdigit() for ch in cleaned):
+        return True
+
+    return False
+
+
+def choose_upload_account_key(profile_data: dict, direct_profile: dict | None = None):
+    direct_profile = direct_profile or {}
+    candidates = [
+        profile_data.get("account_number"),
+        profile_data.get("customer_number"),
+        direct_profile.get("account_number"),
+        direct_profile.get("customer_number"),
+        profile_data.get("policy_number"),
+        direct_profile.get("policy_number"),
+    ]
+
+    for candidate in candidates:
+        cleaned = clean_profile_value(candidate)
+        if cleaned and not is_bad_policy_key_for_upload(cleaned):
+            return cleaned
+
+    policies = profile_data.get("policies") if isinstance(profile_data.get("policies"), list) else []
+    for item in policies:
+        if not isinstance(item, dict):
+            continue
+        cleaned = clean_profile_value(item.get("policy_number"))
+        if cleaned and not is_bad_policy_key_for_upload(cleaned):
+            return cleaned
+
+    return ""
+
+
+def merge_policy_lists_for_upload(*policy_lists):
+    merged = {}
+
+    for policy_list in policy_lists:
+        if not isinstance(policy_list, list):
+            continue
+
+        for item in policy_list:
+            if not isinstance(item, dict):
+                continue
+
+            key = clean_profile_value(
+                item.get("policy_number") or item.get("policy") or item.get("number")
+            ).upper()
+
+            if not key or is_bad_policy_key_for_upload(key):
+                key = clean_profile_value(
+                    item.get("line_of_business") or item.get("coverage") or item.get("policy_type")
+                ).upper()
+
+            if not key:
+                continue
+
+            existing = merged.get(key, {})
+            combined = dict(existing)
+
+            for field, value in item.items():
+                if value not in ("", None) and not combined.get(field):
+                    combined[field] = value
+
+            merged[key] = combined
+
+    return list(merged.values())
+
 
 
 def ensure_claim_timeline_columns(db: Session):
@@ -266,8 +364,7 @@ def extract_profile_data(
         ),
         "effective_date": parse_date(direct_profile.get("effective_date")) or "",
         "expiration_date": parse_date(direct_profile.get("expiration_date")) or "",
-        "evaluation_date": parse_date(direct_profile.get("evaluation_date"))
-        or datetime.now().date().isoformat(),
+        "evaluation_date": parse_date(direct_profile.get("evaluation_date")) or "",
         "policies": direct_profile.get("policies") or [],
         "validation": direct_profile.get("validation") or {},
         "raw_text_preview": direct_profile.get("raw_text_preview") or "",
@@ -639,24 +736,24 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     primary_claim_policy_number = ""
     for claim_data in all_parsed_claims:
         claim_policy_number = clean_profile_value(claim_data.get("policy_number"))
-        if claim_policy_number:
+        if claim_policy_number and not is_bad_policy_key_for_upload(claim_policy_number):
             primary_claim_policy_number = claim_policy_number
             break
 
-    profile_policy_number = clean_profile_value(profile_data.get("policy_number"))
-    profile_account_number = clean_profile_value(
-        profile_data.get("account_number") or profile_data.get("customer_number")
-    )
+    profile_account_key = choose_upload_account_key(profile_data, direct_profile)
 
-    # Important:
-    # For scanned/OCR loss runs, the profile may only detect the customer/account number.
-    # If claim rows contain a real policy number, use that as the profile policy key.
-    if primary_claim_policy_number and (
-        not profile_policy_number
-        or profile_policy_number == profile_account_number
-        or profile_policy_number.isdigit()
-    ):
-        profile_data["policy_number"] = primary_claim_policy_number
+    if profile_account_key:
+        profile_data["account_number"] = profile_data.get("account_number") or profile_account_key
+        profile_data["customer_number"] = (
+            profile_data.get("customer_number")
+            or profile_data.get("account_number")
+            or profile_account_key
+        )
+
+    # Main saved profile key should be the stable account key.
+    # Real policy numbers stay in profile_data["policies"].
+    if is_bad_policy_key_for_upload(profile_data.get("policy_number")):
+        profile_data["policy_number"] = profile_account_key or primary_claim_policy_number or f"UPLOAD-{upload_session_id}"
 
     profile = upsert_account_profile(db, profile_data, current_user)
 
