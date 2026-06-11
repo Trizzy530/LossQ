@@ -36,6 +36,82 @@ def get_db():
         db.close()
 
 
+
+def extract_exposure_inputs_from_raw_text(raw_text: str):
+    # LOSSQ_RAW_TEXT_EXPOSURE_INPUT_EXTRACTOR_V1
+    # Fallback extractor for clean commercial loss runs with labeled exposure/premium fields.
+    import re
+
+    text_value = str(raw_text or "")
+    profile = {}
+
+    def clean_value(value):
+        value = str(value or "").strip()
+        value = re.sub(r"\s+", " ", value)
+        value = value.strip(" :|-")
+        return value
+
+    def find_value(labels, money=False, percent=False):
+        for label in labels:
+            if money:
+                pattern = rf"{label}\s*[:\-]?\s*(\$?\s*[0-9][0-9,]*(?:\.\d{{2}})?)"
+            elif percent:
+                pattern = rf"{label}\s*[:\-]?\s*([0-9]+(?:\.\d+)?\s*%?)"
+            else:
+                pattern = rf"{label}\s*[:\-]?\s*([A-Za-z0-9$%,./#&()\- ]{{1,80}})"
+
+            match = re.search(pattern, text_value, re.IGNORECASE)
+            if match:
+                value = clean_value(match.group(1))
+                if value:
+                    return value
+
+        return ""
+
+    mappings = {
+        "current_premium": (["Current Premium", "Current Term Premium", "Total Current Premium", "Premium Current"], True, False),
+        "expiring_premium": (["Expiring Premium", "Prior Premium", "Prior Term Premium", "Expiring Term Premium"], True, False),
+        "target_renewal_premium": (["Target Renewal Premium", "Renewal Target Premium", "Projected Renewal Premium"], True, False),
+        "payroll": (["Payroll", "Annual Payroll", "Estimated Payroll"], True, False),
+        "revenue": (["Revenue", "Annual Revenue", "Gross Revenue", "Estimated Revenue"], True, False),
+        "sales": (["Sales", "Annual Sales", "Gross Sales"], True, False),
+        "receipts": (["Receipts", "Gross Receipts", "Annual Receipts"], True, False),
+        "property_tiv": (["Property TIV", "Total Insured Value", "TIV"], True, False),
+        "tiv": (["TIV", "Total Insured Value"], True, False),
+        "building_value": (["Building Value", "Building Limit"], True, False),
+        "contents_value": (["Contents Value", "Business Personal Property", "BPP"], True, False),
+        "vehicle_count": (["Vehicle Count", "Number of Vehicles", "Vehicles"], False, False),
+        "driver_count": (["Driver Count", "Number of Drivers", "Drivers"], False, False),
+        "employee_count": (["Employee Count", "Number of Employees", "Employees"], False, False),
+        "location_count": (["Location Count", "Number of Locations", "Locations"], False, False),
+        "unit_count": (["Unit Count", "Units"], False, False),
+        "square_footage": (["Square Footage", "Sq Ft", "Building Square Footage"], False, False),
+        "coverage_limit": (["Coverage Limit", "Policy Limit", "Limit"], True, False),
+        "limits": (["Limits", "Liability Limits"], False, False),
+        "deductible": (["Deductible", "Property Deductible", "Collision Deductible"], True, False),
+        "retention": (["Retention", "SIR", "Self Insured Retention"], True, False),
+        "cargo_limit": (["Cargo Limit", "Motor Truck Cargo Limit"], True, False),
+        "umbrella_limit": (["Umbrella Limit", "Excess Limit"], True, False),
+        "experience_mod": (["Experience Mod", "Experience Modification", "EMR", "MOD"], False, False),
+        "mod": (["MOD", "Experience Mod", "EMR"], False, False),
+        "exposure_change_percent": (["Exposure Change", "Exposure Change Percent", "Exposure Change %"], False, True),
+        "class_code": (["Class Code", "Primary Class Code"], False, False),
+        "class_codes": (["Class Codes", "Classification Codes"], False, False),
+        "line_of_business": (["Line of Business", "Coverage Line", "LOB"], False, False),
+        "state": (["State", "Primary State", "Governing State"], False, False),
+        "exposure_basis": (["Exposure Basis", "Rating Basis"], False, False),
+    }
+
+    for field, config in mappings.items():
+        labels, money, percent = config
+        value = find_value(labels, money=money, percent=percent)
+        if value:
+            profile[field] = value
+
+    return profile
+
+
+
 def parse_file(file_path: str, filename: str):
     lower_name = str(filename or "").lower()
 
@@ -54,6 +130,11 @@ def parse_file(file_path: str, filename: str):
             claims=claims,
             filename=filename,
         )
+
+        raw_exposure_inputs = extract_exposure_inputs_from_raw_text(raw_text_preview)
+        for exposure_field, exposure_value in raw_exposure_inputs.items():
+            if exposure_value not in ("", None, [], {}):
+                profile[exposure_field] = profile.get(exposure_field) or exposure_value
 
         profile["policies"] = merge_policy_lists_for_upload(
             profile.get("policies"),
