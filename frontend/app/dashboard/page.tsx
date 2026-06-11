@@ -2035,20 +2035,36 @@ async function saveProfile() {
     }
   }
 
-
-  function saveExposureInputs() {
+  async function saveExposureInputs() {
+    // LOSSQ_EXPOSURE_INPUTS_BACKEND_SAVE_V1
     const selectedPolicy =
       profile?.policy_number ||
       profile?.account_number ||
       profile?.customer_number ||
       getCachedSelectedPolicy();
 
+    const extractedExposure = deriveExposureInputsFromPolicyRows(profile);
+
     const nextProfile = {
       ...profile,
+      ...extractedExposure,
       policy_number: profile?.policy_number || selectedPolicy || "",
       account_number: profile?.account_number || selectedPolicy || "",
-      customer_number: profile?.customer_number || profile?.account_number || selectedPolicy || "",
+      customer_number:
+        profile?.customer_number ||
+        profile?.account_number ||
+        selectedPolicy ||
+        "",
     };
+
+    if (
+      !nextProfile.policy_number &&
+      !nextProfile.account_number &&
+      !nextProfile.customer_number
+    ) {
+      setMessage("Select or upload an account before saving exposure inputs.");
+      return;
+    }
 
     setProfile(nextProfile);
     updateProfileList([nextProfile]);
@@ -2057,7 +2073,59 @@ async function saveProfile() {
       setCachedSelectedPolicy(selectedPolicy);
     }
 
-    setMessage("Exposure inputs saved locally for the selected account. Use Save Profile to sync the full account profile.");
+    try {
+      setMessage("Saving automatic exposure extraction and manual overrides...");
+
+      const res = await fetch(`${API}/account-profile/`, {
+        method: "PUT",
+        headers: {
+          ...authHeaders(),
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify(nextProfile),
+      });
+
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (!res.ok) {
+        const errorData = await safeJson(res);
+        throw new Error(errorData?.detail || "Backend exposure save failed.");
+      }
+
+      const savedData = await safeJson(res);
+      const savedProfile =
+        savedData && typeof savedData === "object"
+          ? {
+              ...nextProfile,
+              ...savedData,
+            }
+          : nextProfile;
+
+      setProfile(savedProfile);
+      updateProfileList([savedProfile]);
+
+      const savedPolicy =
+        savedProfile?.policy_number ||
+        savedProfile?.account_number ||
+        savedProfile?.customer_number ||
+        selectedPolicy;
+
+      if (savedPolicy) {
+        setCachedSelectedPolicy(savedPolicy);
+      }
+
+      setMessage("Exposure inputs saved to this account profile. They will remain after refresh and login.");
+    } catch (error: any) {
+      updateProfileList([nextProfile]);
+      setMessage(
+        error?.message ||
+          "Exposure inputs saved locally, but backend save failed."
+      );
+    }
   }
 
   async function uploadFiles() {
@@ -4555,11 +4623,11 @@ const trendNoteDisplay =
               </p>
 
               <h2 className="text-2xl md:text-3xl font-bold mb-4">
-                Universal Premium & Exposure Inputs
+                Automatic Exposure Inputs + Manual Overrides
               </h2>
 
               <p className="text-slate-400 mb-8 max-w-4xl">
-                Manually enter premium, exposure, limits, class, and underwriting data for any commercial line of business. These inputs improve LossQ's premium forecast confidence across Auto, General Liability, Workers Comp, Property, Cargo, Cyber, EPLI, D&O, E&O, Inland Marine, Umbrella, BOP, and other commercial policies.
+                LossQ automatically extracts premium, exposure, limits, class, and underwriting data from the uploaded loss run when available. You can manually override or complete missing values, then save them permanently to the account profile.
               </p>
 
               <div className="rounded-3xl border border-blue-400/20 bg-blue-500/10 p-5 mb-8">
