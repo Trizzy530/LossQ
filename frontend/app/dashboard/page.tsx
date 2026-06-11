@@ -240,6 +240,97 @@ function normalizeProfiles(data: any): AnyObject[] {
   return [];
 }
 
+
+// LOSSQ_PROFILE_SWITCH_CLEAN_RESET_V1
+function looksLikeDateOnly(value: any) {
+  const text = String(value || "").trim();
+  return /^\d{4}-\d{2}-\d{2}$/.test(text) || /^\d{1,2}\/\d{1,2}\/\d{4}$/.test(text);
+}
+
+function looksLikeExposureText(value: any) {
+  const text = String(value || "").toLowerCase();
+  return /payroll|revenue|vehicles?|drivers?|employees?|limit|deductible|tiv|premium|expiration date|effective date|primary state/.test(text);
+}
+
+function looksLikeCarrierName(value: any) {
+  const text = String(value || "").trim();
+  if (!text || looksLikeDateOnly(text) || looksLikeExposureText(text)) return false;
+  return /insurance|mutual|specialty|casualty|indemnity|underwriters|carrier|risk|group|national|state|commercial|berkley|zurich|travelers|hartford|liberty|carolina/i.test(text);
+}
+
+function cleanScheduleDate(value: any) {
+  const text = String(value || "").trim();
+  return looksLikeDateOnly(text) ? text : "-";
+}
+
+function cleanScheduleCarrier(value: any, fallback?: any) {
+  const primary = String(value || "").trim();
+  const secondary = String(fallback || "").trim();
+
+  if (looksLikeCarrierName(primary)) return primary;
+  if (looksLikeCarrierName(secondary)) return secondary;
+
+  return "-";
+}
+
+function cleanScheduleText(value: any) {
+  const text = String(value || "").trim();
+  if (!text) return "-";
+  if (/expiration date|effective date|primary state/i.test(text)) return "-";
+  return text;
+}
+
+function getUniversalIndustryLabel(profileLike: any, claimsLike: any[] = []) {
+  const rawText = [
+    profileLike?.business_name,
+    profileLike?.line_of_business,
+    profileLike?.industry,
+    profileLike?.business_description,
+    profileLike?.operations,
+    profileLike?.class_code,
+    profileLike?.class_codes,
+    ...(Array.isArray(profileLike?.policies)
+      ? profileLike.policies.map((p: any) => `${p?.line_of_business || ""} ${p?.policy_type || ""} ${p?.coverage || ""}`)
+      : []),
+    ...claimsLike.map((claim: any) => `${claim?.line_of_business || ""} ${claim?.claim_type || ""} ${claim?.description || ""} ${claim?.cause_of_loss || ""}`),
+  ]
+    .join(" ")
+    .toLowerCase();
+
+  if (/clean|janitor|facility|property maintenance|maintenance|repair|premises|building/.test(rawText)) {
+    return "property maintenance, facility services, premises liability, and light repair operations";
+  }
+
+  if (/restaurant|food|hospitality/.test(rawText)) {
+    return "hospitality and premises operations";
+  }
+
+  if (/contractor|construction|trade/.test(rawText)) {
+    return "contractor and construction operations";
+  }
+
+  if (/truck|transport|fleet|auto|driver|vehicle/.test(rawText)) {
+    return "commercial auto and fleet operations";
+  }
+
+  return "the account's actual business operations and coverage lines";
+}
+
+function resetProfileAnalyticsState(setters: any) {
+  setters.setSummary?.({});
+  setters.setDecision?.({});
+  setters.setCarrierAppetite?.({});
+  setters.setSubmissionReadiness?.({});
+  setters.setCarrierMatch?.({});
+  setters.setPremiumForecast?.({});
+  setters.setSubmissionBuilder?.({});
+  setters.setTimeline?.({});
+  setters.setSelectedClaim?.(null);
+  setters.setLazyLoadedTools?.({});
+  setters.setLazyToolLoading?.({});
+  clearCachedSelectedClaim();
+}
+
 function firstNonEmptyArray(...values: any[]) {
   for (const value of values) {
     if (Array.isArray(value) && value.length > 0) return value;
@@ -1629,6 +1720,19 @@ if (activeProfile?.policy_number) {
   }, [activeTool, profile?.policy_number, profile?.account_number]);
 
   async function selectAccount(policyNumber: string) {
+    resetProfileAnalyticsState({
+      setSummary,
+      setDecision,
+      setCarrierAppetite,
+      setSubmissionReadiness,
+      setCarrierMatch,
+      setPremiumForecast,
+      setSubmissionBuilder,
+      setTimeline,
+setLazyLoadedTools,
+      setLazyToolLoading,
+    });
+
     if (!policyNumber) return;
 
     const normalizedPolicy = normalizePolicyNumber(policyNumber);
@@ -2212,6 +2316,18 @@ async function saveProfile() {
       uploadedProfile.evaluation_date = getBestEvaluationDate(uploadedProfile);
 
 
+      resetProfileAnalyticsState({
+        setSummary,
+        setDecision,
+        setCarrierAppetite,
+        setSubmissionReadiness,
+        setCarrierMatch,
+        setPremiumForecast,
+        setSubmissionBuilder,
+        setTimeline,
+setLazyLoadedTools,
+        setLazyToolLoading,
+      });
       setProfile(uploadedProfile);
       // Uploaded profile becomes the active authority for this account.
       // This keeps old GP/Harbor/previous policy rows from appearing inside a new upload's schedule.
@@ -3247,11 +3363,11 @@ const effectiveCarrierAppetite =
             ? "Large-loss activity may limit preferred-market appetite until the account story is explained."
             : "No severe large-loss concentration is currently driving the appetite result.",
           appetiteHasAuto
-            ? "Transportation and commercial auto markets should be prioritized because auto liability claims are present."
+            ? `Carrier selection should follow ${getUniversalIndustryLabel(displayProfile, intelligenceClaims)} and the actual coverage lines shown in the claim data.`
             : "Market selection should follow the dominant coverage lines shown in the claim data.",
         ],
         market_strategy: appetiteHasOpenReserveConcern
-          ? "Market this account through transportation-focused and selective casualty channels first. Include a clear loss narrative, open-claim status, reserve explanation, corrective actions, driver/safety controls, and claim closure plan."
+          ? `Market this account through carriers that fit ${getUniversalIndustryLabel(displayProfile, intelligenceClaims)}. Include a clear loss narrative, open-claim status, reserve explanation, corrective actions, safety controls, and claim closure plan.`
           : "Market this account to standard commercial markets first, with regional and selective markets as backup. Include loss narrative, corrective actions, and current claim status notes.",
         placement_summary:
           localCarrierAppetiteScore != null && localCarrierAppetiteScore >= 65
