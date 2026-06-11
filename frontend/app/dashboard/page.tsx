@@ -258,14 +258,29 @@ function looksLikeCarrierName(value: any) {
   return /insurance|mutual|specialty|casualty|indemnity|underwriters|carrier|risk|group|national|state|commercial|berkley|zurich|travelers|hartford|liberty|carolina/i.test(text);
 }
 
-function cleanScheduleDate(value: any) {
+function cleanScheduleDate(value: any, fallback?: any) {
+  // LOSSQ_POLICY_SCHEDULE_SMART_FALLBACK_V1
   const text = String(value || "").trim();
-  return looksLikeDateOnly(text) ? text : "-";
+  const fallbackText = String(fallback || "").trim();
+
+  if (looksLikeDateOnly(text)) return text;
+  if (looksLikeDateOnly(fallbackText)) return fallbackText;
+
+  return "-";
 }
 
 function cleanScheduleCarrier(value: any, fallback?: any) {
   const primary = String(value || "").trim();
   const secondary = String(fallback || "").trim();
+
+  const primaryIsPartial =
+    /^(specialty|commercial|mutual|insurance|carrier)$/i.test(primary) ||
+    primary.length < 10;
+
+  // Prefer the full account carrier if the row only has a partial word like "Specialty".
+  if (looksLikeCarrierName(secondary) && (!looksLikeCarrierName(primary) || primaryIsPartial)) {
+    return secondary;
+  }
 
   if (looksLikeCarrierName(primary)) return primary;
   if (looksLikeCarrierName(secondary)) return secondary;
@@ -4276,11 +4291,13 @@ const trendNoteDisplay =
                             );
 
                             const rowEffectiveDate = cleanScheduleDate(
-                              policy?.effective_date || policy?.effectiveDate || policy?.effective
+                              policy?.effective_date || policy?.effectiveDate || policy?.effective,
+                              displayProfile?.effective_date
                             );
 
                             const rowExpirationDate = cleanScheduleDate(
-                              policy?.expiration_date || policy?.expirationDate || policy?.expiration
+                              policy?.expiration_date || policy?.expirationDate || policy?.expiration,
+                              displayProfile?.expiration_date
                             );
 
                             return (
