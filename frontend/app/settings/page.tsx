@@ -295,6 +295,16 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
+        <div className="text-center">
+          <div className="text-4xl font-black mb-3">Loss<span className="text-blue-400">Q</span></div>
+          <p className="text-slate-400">Loading account security...</p>
+        </div>
+      </main>
+    );
+  }
+
+  return (
+    <main className="min-h-screen bg-[#020617] text-white px-5 py-8">
 
       <section className="mb-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
@@ -318,16 +328,6 @@ export default function SettingsPage() {
       </section>
 
 
-        <div className="text-center">
-          <div className="text-4xl font-black mb-3">Loss<span className="text-blue-400">Q</span></div>
-          <p className="text-slate-400">Loading account security...</p>
-        </div>
-      </main>
-    );
-  }
-
-  return (
-    <main className="min-h-screen bg-[#020617] text-white px-5 py-8">
       <div className="fixed inset-0 bg-[radial-gradient(circle_at_top_left,#1d4ed855,transparent_30%),radial-gradient(circle_at_bottom_right,#7c3aed33,transparent_32%)] pointer-events-none" />
       <div className="fixed inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:72px_72px] opacity-20 pointer-events-none" />
 
