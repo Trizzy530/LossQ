@@ -1304,6 +1304,13 @@ if (activeProfile?.policy_number) {
         ? `${API}/summary/underwriting?policy_number=${encodeURIComponent(policyNumber)}`
         : `${API}/summary/underwriting`;
 
+      // LOSSQ_FAST_DASHBOARD_READY_AFTER_CLAIMS_V1
+      // Make the dashboard usable after the account profile and claims have loaded.
+      // Heavy underwriting/renewal tools can keep loading without holding the full-page spinner.
+      if (myVersion === loadVersionRef.current) {
+        setDashboardLoading(false);
+      }
+
       const summaryRes = await fetch(summaryUrl, { headers: authHeaders() });
 
       if (summaryRes.status === 401 || summaryRes.status === 403) {
