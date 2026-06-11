@@ -4260,49 +4260,60 @@ const trendNoteDisplay =
                         </thead>
 
                         <tbody>
-                          {policySchedule.map((policy: any, index: number) => (
-                            <tr
-                              key={policy.policy_number || index}
-                              className="border-b border-white/10"
-                            >
-                              <td className="py-3 pr-4 text-white">
-                                {policy.policy_type ||
-                                  policy.line_coverage ||
-                                  policy.line_of_business ||
-                                  policy.coverage ||
-                                  policy.lob ||
-                                  "Needs Review"}
-                              </td>
-                              <td className="py-3 pr-4 font-semibold text-blue-200">
-                                {policy.policy_number || "-"}
-                              </td>
-                              <td className="py-3 pr-4">
-                                {policy.writing_carrier ||
-                                  displayProfile?.writing_carrier ||
-                                  displayProfile?.carrier_name ||
-                                  "-"}
-                              </td>
-                              <td className="py-3 pr-4">
-                                {policy.carrier || displayProfile?.carrier_name || "-"}
-                              </td>
-                              <td className="py-3 pr-4">{policy.effective_date || "-"}</td>
-                              <td className="py-3 pr-4">{policy.expiration_date || "-"}</td>
-                              <td className="py-3 pr-4">
-                                {scheduleClaimStats[normalizePolicyNumber(policy.policy_number)]
-                                  ?.count ??
-                                  policy.claim_count ??
-                                  0}
-                              </td>
-                              <td className="py-3 pr-4">
-                                ${Number(
-                                  scheduleClaimStats[normalizePolicyNumber(policy.policy_number)]
-                                    ?.totalIncurred ??
-                                    policy.total_incurred ??
-                                    0
-                                ).toLocaleString()}
-                              </td>
-                            </tr>
-                          ))}
+                          {policySchedule.map((policy: any, index: number) => {
+                            // LOSSQ_POLICY_SCHEDULE_TABLE_CLEAN_RENDER_V1
+                            const policyNumber = normalizePolicyNumber(policy?.policy_number);
+                            const stats = scheduleClaimStats[policyNumber];
+
+                            const rowCarrier = cleanScheduleCarrier(
+                              policy?.carrier || policy?.carrier_name,
+                              displayProfile?.carrier_name || displayProfile?.writing_carrier
+                            );
+
+                            const rowWritingCarrier = cleanScheduleCarrier(
+                              policy?.writing_carrier || policy?.writingCarrier,
+                              displayProfile?.writing_carrier || rowCarrier
+                            );
+
+                            const rowEffectiveDate = cleanScheduleDate(
+                              policy?.effective_date || policy?.effectiveDate || policy?.effective
+                            );
+
+                            const rowExpirationDate = cleanScheduleDate(
+                              policy?.expiration_date || policy?.expirationDate || policy?.expiration
+                            );
+
+                            return (
+                              <tr
+                                key={policy?.policy_number || index}
+                                className="border-b border-white/10"
+                              >
+                                <td className="py-3 pr-4 text-white">
+                                  {cleanScheduleText(
+                                    policy?.policy_type ||
+                                      policy?.line_coverage ||
+                                      policy?.line_of_business ||
+                                      policy?.coverage ||
+                                      policy?.lob ||
+                                      "Needs Review"
+                                  )}
+                                </td>
+                                <td className="py-3 pr-4 font-semibold text-blue-200">
+                                  {policy?.policy_number || "-"}
+                                </td>
+                                <td className="py-3 pr-4">{rowWritingCarrier}</td>
+                                <td className="py-3 pr-4">{rowCarrier}</td>
+                                <td className="py-3 pr-4">{rowEffectiveDate}</td>
+                                <td className="py-3 pr-4">{rowExpirationDate}</td>
+                                <td className="py-3 pr-4">
+                                  {stats?.count ?? policy?.claim_count ?? 0}
+                                </td>
+                                <td className="py-3 pr-4">
+                                  ${Number(stats?.totalIncurred ?? policy?.total_incurred ?? 0).toLocaleString()}
+                                </td>
+                              </tr>
+                            );
+                          })}
                         </tbody>
                       </table>
                     </div>
