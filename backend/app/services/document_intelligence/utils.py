@@ -73,10 +73,30 @@ def money_values(line: str) -> list[float]:
     return values
 
 
-def parse_date(value: Any) -> str | None:
+def parse_date(value):
+    # LOSSQ_FIX_PARSE_DATE_RECURSION_V2
+    # Never recursively call parse_date() on the same regex/date value.
+    if value is None:
+        return ""
+
+    if hasattr(value, "group"):
+        try:
+            value = value.group(0)
+        except Exception:
+            value = str(value)
+
     raw = clean_text(value)
+
     if not raw:
-        return None
+        return ""
+
+    date_match = re.search(
+        r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b",
+        raw,
+    )
+
+    if date_match:
+        raw = date_match.group(0)
 
     formats = [
         "%m/%d/%Y",
@@ -85,10 +105,6 @@ def parse_date(value: Any) -> str | None:
         "%m-%d-%y",
         "%Y-%m-%d",
         "%Y/%m/%d",
-        "%m.%d.%Y",
-        "%m.%d.%y",
-        "%B %d, %Y",
-        "%b %d, %Y",
     ]
 
     for fmt in formats:
@@ -97,12 +113,7 @@ def parse_date(value: Any) -> str | None:
         except Exception:
             pass
 
-    match = DATE_RE.search(raw)
-    if match:
-        return parse_date(match.group(0))
-
-    return None
-
+    return raw
 
 def date_values(line: str) -> list[str]:
     dates = []
