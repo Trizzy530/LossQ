@@ -396,6 +396,52 @@ def ensure_account_profile_columns(db: Session):
         print(f"Account profile column check failed: {e}")
 
 
+
+def clean_cause_of_loss(value: Any):
+    # LOSSQ_CLEAN_CAUSE_OF_LOSS_V1
+    # Prevent parser/table headers from leaking into the Cause of Loss field.
+    import re
+
+    text_value = clean_profile_value(value)
+
+    if not text_value:
+        return ""
+
+    stop_phrases = [
+        "Total Claims",
+        "Claims Total",
+        "Claim Count",
+        "Total Paid",
+        "Paid Total",
+        "Total Reserve",
+        "Reserve Total",
+        "Total Incurred",
+        "Incurred Total",
+        "Loss Summary",
+        "Policy Schedule",
+        "Claim #",
+        "Claim Number",
+        "Date of Loss",
+        "Loss Date",
+        "Reported Date",
+        "Status Paid",
+        "Status Reserve",
+    ]
+
+    for phrase in stop_phrases:
+        index = text_value.lower().find(phrase.lower())
+        if index > 0:
+            text_value = text_value[:index].strip()
+
+    text_value = re.sub(r"\s+", " ", text_value).strip(" .,-;:")
+
+    # Keep it readable for claim detail cards.
+    if len(text_value) > 140:
+        text_value = text_value[:140].rsplit(" ", 1)[0].strip(" .,-;:")
+
+    return text_value
+
+
 def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: dict):
     extracted_policy_number = clean_profile_value(
         pick(raw, ["policy_number", "policy_no", "policy"], "")
@@ -426,7 +472,7 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
         "policy_number": final_policy_number,
         "line_of_business": pick(raw, ["line_of_business", "lob", "coverage_line"]),
         "claim_type": pick(raw, ["claim_type", "type"]),
-        "cause_of_loss": pick(raw, ["cause_of_loss", "cause"]),
+        "cause_of_loss": clean_cause_of_loss(pick(raw, ["cause_of_loss", "cause"])),
         "claimant_type": pick(raw, ["claimant_type"]),
         "date_of_loss": date_of_loss,
         "date_reported": date_reported,
