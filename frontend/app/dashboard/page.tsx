@@ -360,7 +360,24 @@ function clearCachedCurrentUpload() {
 
 function claimMatchesPolicySet(claim: any, policySet: Set<string>) {
   if (!policySet || policySet.size === 0) return false;
-  return policySet.has(getClaimPolicyNumber(claim));
+
+  // LOSSQ_ACCOUNT_LEVEL_CLAIM_MATCH_V1
+  // Match both child policy claims and account-level claims.
+  // Some uploaded loss runs normalize duplicate/worksheet rows to the account key,
+  // while other rows retain the child policy number.
+  const possibleClaimKeys = [
+    getClaimPolicyNumber(claim),
+    claim?.account_number,
+    claim?.accountNumber,
+    claim?.customer_number,
+    claim?.customerNumber,
+    claim?.profile_policy_number,
+    claim?.selected_policy_number,
+  ]
+    .map((item: any) => normalizePolicyNumber(item))
+    .filter(Boolean);
+
+  return possibleClaimKeys.some((key) => policySet.has(key));
 }
 
 function mergeClaimsByNumber(existing: any[], incoming: any[]) {
