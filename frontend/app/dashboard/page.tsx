@@ -1871,7 +1871,10 @@ async function saveProfile() {
           uploaded_files: uploadResults.flatMap((item) => item?.uploaded_files || []).length
             ? uploadResults.flatMap((item) => item?.uploaded_files || [])
             : selectedFiles.map((file) => file.name),
-          profile: primaryProfile || {},
+          profile: {
+            ...(primaryProfile || {}),
+            ...((allUploadProfiles || []).reduce((acc: any, item: any) => ({ ...acc, ...(item || {}) }), {})),
+          },
           policies: combinedPolicies,
           claims: combinedClaims,
           saved_claim_rows: uploadResults.flatMap((item) =>
@@ -2057,7 +2060,10 @@ async function saveProfile() {
       uploaded_at: new Date().toISOString(),
       policy_number: normalizePolicyNumber(uploadedPolicyNumber),
       policy_numbers: uploadPolicySet,
-      profile: primaryProfile || {},
+      profile: {
+        ...(primaryProfile || {}),
+        ...((allUploadProfiles || []).reduce((acc: any, item: any) => ({ ...acc, ...(item || {}) }), {})),
+      },
       policies: combinedPolicies,
       claims: combinedClaims,
       saved_claim_rows: combinedClaims,
@@ -4131,7 +4137,23 @@ const trendNoteDisplay =
                   </div>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
+                {/* LOSSQ_EXPOSURE_INPUT_DISPLAY_MERGE_V1 */}
+              {(() => {
+                const exposureProfile: any = {
+                  ...(profile || {}),
+                  ...(displayProfile || {}),
+                };
+
+                const exposureValue = (field: string) =>
+                  exposureProfile?.[field] ||
+                  profile?.[field] ||
+                  displayProfile?.[field] ||
+                  "";
+
+                return null;
+              })()}
+
+              <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
                   <Input label="Insured" value={profile?.business_name || ""} onChange={(v) => setProfile({ ...profile, business_name: v })} />
                   <Input label="Writing Carrier" value={profile?.carrier_name || ""} onChange={(v) => setProfile({ ...profile, carrier_name: v })} />
                   <Input label="Producing Agency" value={profile?.agency_name || ""} onChange={(v) => setProfile({ ...profile, agency_name: v })} />
@@ -4169,41 +4191,41 @@ const trendNoteDisplay =
               </div>
 
               <div className="grid grid-cols-1 md:grid-cols-3 gap-5">
-                <Input label="Current Premium" value={profile?.current_premium || ""} onChange={(v) => setProfile({ ...profile, current_premium: v })} />
-                <Input label="Expiring Premium" value={profile?.expiring_premium || ""} onChange={(v) => setProfile({ ...profile, expiring_premium: v })} />
-                <Input label="Target Renewal Premium" value={profile?.target_renewal_premium || ""} onChange={(v) => setProfile({ ...profile, target_renewal_premium: v })} />
+                <Input label="Current Premium" value={displayProfile?.current_premium || profile?.current_premium || ""} onChange={(v) => setProfile({ ...profile, current_premium: v })} />
+                <Input label="Expiring Premium" value={displayProfile?.expiring_premium || profile?.expiring_premium || ""} onChange={(v) => setProfile({ ...profile, expiring_premium: v })} />
+                <Input label="Target Renewal Premium" value={displayProfile?.target_renewal_premium || profile?.target_renewal_premium || ""} onChange={(v) => setProfile({ ...profile, target_renewal_premium: v })} />
 
-                <Input label="Primary Line of Business" value={profile?.line_of_business || ""} onChange={(v) => setProfile({ ...profile, line_of_business: v })} />
-                <Input label="State" value={profile?.state || ""} onChange={(v) => setProfile({ ...profile, state: v })} />
+                <Input label="Primary Line of Business" value={displayProfile?.line_of_business || profile?.line_of_business || ""} onChange={(v) => setProfile({ ...profile, line_of_business: v })} />
+                <Input label="State" value={displayProfile?.state || profile?.state || ""} onChange={(v) => setProfile({ ...profile, state: v })} />
                 <Input label="Class Code(s)" value={profile?.class_code || profile?.class_codes || ""} onChange={(v) => setProfile({ ...profile, class_code: v, class_codes: v })} />
 
                 <Input label="Policy Limits" value={profile?.limits || profile?.coverage_limit || ""} onChange={(v) => setProfile({ ...profile, limits: v, coverage_limit: v })} />
-                <Input label="Deductible" value={profile?.deductible || ""} onChange={(v) => setProfile({ ...profile, deductible: v })} />
-                <Input label="Retention / SIR" value={profile?.retention || ""} onChange={(v) => setProfile({ ...profile, retention: v })} />
+                <Input label="Deductible" value={displayProfile?.deductible || profile?.deductible || ""} onChange={(v) => setProfile({ ...profile, deductible: v })} />
+                <Input label="Retention / SIR" value={displayProfile?.retention || profile?.retention || ""} onChange={(v) => setProfile({ ...profile, retention: v })} />
 
-                <Input label="Payroll" value={profile?.payroll || ""} onChange={(v) => setProfile({ ...profile, payroll: v })} />
+                <Input label="Payroll" value={displayProfile?.payroll || profile?.payroll || ""} onChange={(v) => setProfile({ ...profile, payroll: v })} />
                 <Input label="Revenue / Sales" value={profile?.revenue || profile?.sales || ""} onChange={(v) => setProfile({ ...profile, revenue: v, sales: v })} />
-                <Input label="Receipts" value={profile?.receipts || ""} onChange={(v) => setProfile({ ...profile, receipts: v })} />
+                <Input label="Receipts" value={displayProfile?.receipts || profile?.receipts || ""} onChange={(v) => setProfile({ ...profile, receipts: v })} />
 
-                <Input label="Employee Count" value={profile?.employee_count || ""} onChange={(v) => setProfile({ ...profile, employee_count: v })} />
-                <Input label="Vehicle Count" value={profile?.vehicle_count || ""} onChange={(v) => setProfile({ ...profile, vehicle_count: v })} />
-                <Input label="Driver Count" value={profile?.driver_count || ""} onChange={(v) => setProfile({ ...profile, driver_count: v })} />
+                <Input label="Employee Count" value={displayProfile?.employee_count || profile?.employee_count || ""} onChange={(v) => setProfile({ ...profile, employee_count: v })} />
+                <Input label="Vehicle Count" value={displayProfile?.vehicle_count || profile?.vehicle_count || ""} onChange={(v) => setProfile({ ...profile, vehicle_count: v })} />
+                <Input label="Driver Count" value={displayProfile?.driver_count || profile?.driver_count || ""} onChange={(v) => setProfile({ ...profile, driver_count: v })} />
 
                 <Input label="Property TIV" value={profile?.property_tiv || profile?.tiv || ""} onChange={(v) => setProfile({ ...profile, property_tiv: v, tiv: v })} />
-                <Input label="Building Value" value={profile?.building_value || ""} onChange={(v) => setProfile({ ...profile, building_value: v })} />
-                <Input label="Contents Value" value={profile?.contents_value || ""} onChange={(v) => setProfile({ ...profile, contents_value: v })} />
+                <Input label="Building Value" value={displayProfile?.building_value || profile?.building_value || ""} onChange={(v) => setProfile({ ...profile, building_value: v })} />
+                <Input label="Contents Value" value={displayProfile?.contents_value || profile?.contents_value || ""} onChange={(v) => setProfile({ ...profile, contents_value: v })} />
 
-                <Input label="Square Footage" value={profile?.square_footage || ""} onChange={(v) => setProfile({ ...profile, square_footage: v })} />
-                <Input label="Location Count" value={profile?.location_count || ""} onChange={(v) => setProfile({ ...profile, location_count: v })} />
-                <Input label="Unit Count" value={profile?.unit_count || ""} onChange={(v) => setProfile({ ...profile, unit_count: v })} />
+                <Input label="Square Footage" value={displayProfile?.square_footage || profile?.square_footage || ""} onChange={(v) => setProfile({ ...profile, square_footage: v })} />
+                <Input label="Location Count" value={displayProfile?.location_count || profile?.location_count || ""} onChange={(v) => setProfile({ ...profile, location_count: v })} />
+                <Input label="Unit Count" value={displayProfile?.unit_count || profile?.unit_count || ""} onChange={(v) => setProfile({ ...profile, unit_count: v })} />
 
-                <Input label="Cargo Limit" value={profile?.cargo_limit || ""} onChange={(v) => setProfile({ ...profile, cargo_limit: v })} />
-                <Input label="Umbrella / Excess Limit" value={profile?.umbrella_limit || ""} onChange={(v) => setProfile({ ...profile, umbrella_limit: v })} />
+                <Input label="Cargo Limit" value={displayProfile?.cargo_limit || profile?.cargo_limit || ""} onChange={(v) => setProfile({ ...profile, cargo_limit: v })} />
+                <Input label="Umbrella / Excess Limit" value={displayProfile?.umbrella_limit || profile?.umbrella_limit || ""} onChange={(v) => setProfile({ ...profile, umbrella_limit: v })} />
                 <Input label="Experience Mod" value={profile?.experience_mod || profile?.mod || ""} onChange={(v) => setProfile({ ...profile, experience_mod: v, mod: v })} />
 
-                <Input label="Exposure Change %" value={profile?.exposure_change_percent || ""} onChange={(v) => setProfile({ ...profile, exposure_change_percent: v })} />
-                <Input label="Cyber Revenue" value={profile?.cyber_revenue || ""} onChange={(v) => setProfile({ ...profile, cyber_revenue: v })} />
-                <Input label="Professional Revenue" value={profile?.professional_revenue || ""} onChange={(v) => setProfile({ ...profile, professional_revenue: v })} />
+                <Input label="Exposure Change %" value={displayProfile?.exposure_change_percent || profile?.exposure_change_percent || ""} onChange={(v) => setProfile({ ...profile, exposure_change_percent: v })} />
+                <Input label="Cyber Revenue" value={displayProfile?.cyber_revenue || profile?.cyber_revenue || ""} onChange={(v) => setProfile({ ...profile, cyber_revenue: v })} />
+                <Input label="Professional Revenue" value={displayProfile?.professional_revenue || profile?.professional_revenue || ""} onChange={(v) => setProfile({ ...profile, professional_revenue: v })} />
               </div>
 
               <div className="mt-6">
