@@ -725,6 +725,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         parsed_claims, parsed_profile = parse_file(file_path, file.filename or safe_filename)
 
         file_policy_number = clean_input_policy
+        file_account_key_for_claims = ""
 
         claim_policy_number = ""
         for claim_data in parsed_claims:
@@ -738,6 +739,11 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             parsed_account = clean_profile_value(
                 parsed_profile.get("account_number") or parsed_profile.get("customer_number")
             )
+
+            # LOSSQ_DUPLICATE_REHOME_TO_PARSED_ACCOUNT_KEY_V1
+            # Use the extracted account/customer key to re-home duplicate claims during upload.
+            if parsed_account and not is_bad_policy_key_for_upload(parsed_account):
+                file_account_key_for_claims = parsed_account
 
             # Important:
             # Prefer the actual policy number found on claim rows.
@@ -809,9 +815,10 @@ async def save_uploaded_files(files, policy_number, db, current_user):
                 safe_profile_data = locals().get("profile_data", {}) or {}
 
                 corrected_policy_key = (
-                    safe_profile_data.get("policy_number")
+                    file_account_key_for_claims
                     or safe_profile_data.get("account_number")
                     or safe_profile_data.get("customer_number")
+                    or safe_profile_data.get("policy_number")
                     or policy_number
                     or policy_value
                 )
