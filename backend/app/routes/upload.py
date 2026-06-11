@@ -1047,14 +1047,28 @@ async def upload_loss_run(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("upload")),
 ):
-    # LOSSQ_UPLOAD_LOSS_RUN_VALIDATE_SINGLE_V1
-    await validate_upload_file_security(file)
-    return await save_uploaded_files(
-        files=[file],
-        policy_number=policy_number,
-        db=db,
-        current_user=current_user,
-    )
+    # LOSSQ_UPLOAD_ROUTE_REAL_TRACEBACK_V1
+    try:
+        await validate_upload_file_security(file)
+        return await save_uploaded_files(
+            files=[file],
+            policy_number=policy_number,
+            db=db,
+            current_user=current_user,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("LOSSQ UPLOAD ERROR TRACEBACK START")
+        traceback.print_exc()
+        print("LOSSQ UPLOAD ERROR TRACEBACK END")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Internal server error",
+                "error": str(e),
+            },
+        )
 
 
 @router.post("/loss-runs")
@@ -1064,15 +1078,29 @@ async def upload_multiple_loss_runs(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("upload")),
 ):
-    # LOSSQ_UPLOAD_LOSS_RUN_VALIDATE_MULTIPLE_V1
-    for upload_file in files:
-        await validate_upload_file_security(upload_file)
-    return await save_uploaded_files(
-        files=files,
-        policy_number=policy_number,
-        db=db,
-        current_user=current_user,
-    )
+    try:
+        # LOSSQ_UPLOAD_LOSS_RUN_VALIDATE_MULTIPLE_V1
+        for upload_file in files:
+            await validate_upload_file_security(upload_file)
+        return await save_uploaded_files(
+            files=files,
+            policy_number=policy_number,
+            db=db,
+            current_user=current_user,
+        )
+    except HTTPException:
+        raise
+    except Exception as e:
+        print("LOSSQ UPLOAD ERROR TRACEBACK START")
+        traceback.print_exc()
+        print("LOSSQ UPLOAD ERROR TRACEBACK END")
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Internal server error",
+                "error": str(e),
+            },
+        )
 
 
 @router.post("/debug-loss-run")
