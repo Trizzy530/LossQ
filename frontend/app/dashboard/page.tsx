@@ -2077,7 +2077,187 @@ async function saveProfile() {
     }
   }
 
-  async function saveExposureInputs() {
+  
+// LOSSQ_AUTO_FILL_EXPOSURE_INPUTS_AFTER_UPLOAD_V1
+function buildExposureInputsFromUploadedAccount(): AnyObject {
+  const sourceProfile: AnyObject = {
+    ...(profile || {}),
+    ...(displayProfile || {}),
+  };
+
+  const derivedFromProfile = deriveExposureInputsFromPolicyRows(sourceProfile);
+  const derivedFromPolicySchedule = deriveExposureInputsFromPolicyRows({
+    ...(sourceProfile || {}),
+    policies: policySchedule || sourceProfile?.policies || [],
+  });
+
+  const merged: AnyObject = {
+    ...derivedFromProfile,
+    ...derivedFromPolicySchedule,
+    current_premium:
+      sourceProfile?.current_premium ||
+      derivedFromProfile?.current_premium ||
+      derivedFromPolicySchedule?.current_premium ||
+      sourceProfile?.expiring_premium ||
+      derivedFromProfile?.expiring_premium ||
+      derivedFromPolicySchedule?.expiring_premium ||
+      "",
+    expiring_premium:
+      sourceProfile?.expiring_premium ||
+      derivedFromProfile?.expiring_premium ||
+      derivedFromPolicySchedule?.expiring_premium ||
+      "",
+    target_renewal_premium:
+      sourceProfile?.target_renewal_premium ||
+      derivedFromProfile?.target_renewal_premium ||
+      derivedFromPolicySchedule?.target_renewal_premium ||
+      "",
+    line_of_business:
+      sourceProfile?.line_of_business ||
+      sourceProfile?.primary_line_of_business ||
+      derivedFromProfile?.line_of_business ||
+      derivedFromPolicySchedule?.line_of_business ||
+      "",
+    state:
+      sourceProfile?.state ||
+      derivedFromProfile?.state ||
+      derivedFromPolicySchedule?.state ||
+      "",
+    class_code:
+      sourceProfile?.class_code ||
+      sourceProfile?.class_codes ||
+      derivedFromProfile?.class_code ||
+      derivedFromProfile?.class_codes ||
+      derivedFromPolicySchedule?.class_code ||
+      derivedFromPolicySchedule?.class_codes ||
+      "",
+    limits:
+      sourceProfile?.limits ||
+      sourceProfile?.coverage_limit ||
+      derivedFromProfile?.limits ||
+      derivedFromProfile?.coverage_limit ||
+      derivedFromPolicySchedule?.limits ||
+      derivedFromPolicySchedule?.coverage_limit ||
+      "",
+    deductible:
+      sourceProfile?.deductible ||
+      derivedFromProfile?.deductible ||
+      derivedFromPolicySchedule?.deductible ||
+      "",
+    retention:
+      sourceProfile?.retention ||
+      sourceProfile?.sir ||
+      derivedFromProfile?.retention ||
+      derivedFromPolicySchedule?.retention ||
+      "",
+    payroll:
+      sourceProfile?.payroll ||
+      derivedFromProfile?.payroll ||
+      derivedFromPolicySchedule?.payroll ||
+      "",
+    revenue:
+      sourceProfile?.revenue ||
+      sourceProfile?.sales ||
+      sourceProfile?.receipts ||
+      derivedFromProfile?.revenue ||
+      derivedFromPolicySchedule?.revenue ||
+      "",
+    sales:
+      sourceProfile?.sales ||
+      sourceProfile?.revenue ||
+      derivedFromProfile?.sales ||
+      derivedFromPolicySchedule?.sales ||
+      "",
+    receipts:
+      sourceProfile?.receipts ||
+      sourceProfile?.sales ||
+      sourceProfile?.revenue ||
+      derivedFromProfile?.receipts ||
+      derivedFromPolicySchedule?.receipts ||
+      "",
+    employee_count:
+      sourceProfile?.employee_count ||
+      sourceProfile?.employeeCount ||
+      derivedFromProfile?.employee_count ||
+      derivedFromPolicySchedule?.employee_count ||
+      "",
+    vehicle_count:
+      sourceProfile?.vehicle_count ||
+      sourceProfile?.vehicleCount ||
+      derivedFromProfile?.vehicle_count ||
+      derivedFromPolicySchedule?.vehicle_count ||
+      "",
+    driver_count:
+      sourceProfile?.driver_count ||
+      sourceProfile?.driverCount ||
+      derivedFromProfile?.driver_count ||
+      derivedFromPolicySchedule?.driver_count ||
+      "",
+    property_tiv:
+      sourceProfile?.property_tiv ||
+      sourceProfile?.tiv ||
+      derivedFromProfile?.property_tiv ||
+      derivedFromPolicySchedule?.property_tiv ||
+      "",
+    building_value:
+      sourceProfile?.building_value ||
+      derivedFromProfile?.building_value ||
+      derivedFromPolicySchedule?.building_value ||
+      "",
+    contents_value:
+      sourceProfile?.contents_value ||
+      derivedFromProfile?.contents_value ||
+      derivedFromPolicySchedule?.contents_value ||
+      "",
+    square_footage:
+      sourceProfile?.square_footage ||
+      derivedFromProfile?.square_footage ||
+      derivedFromPolicySchedule?.square_footage ||
+      "",
+    location_count:
+      sourceProfile?.location_count ||
+      derivedFromProfile?.location_count ||
+      derivedFromPolicySchedule?.location_count ||
+      "",
+    unit_count:
+      sourceProfile?.unit_count ||
+      derivedFromProfile?.unit_count ||
+      derivedFromPolicySchedule?.unit_count ||
+      "",
+    exposure_basis:
+      sourceProfile?.exposure_basis ||
+      derivedFromProfile?.exposure_basis ||
+      derivedFromPolicySchedule?.exposure_basis ||
+      "",
+  };
+
+  return Object.fromEntries(
+    Object.entries(merged).filter(([, value]) => String(value || "").trim() !== "")
+  );
+}
+
+function autoFillExposureInputsFromUpload() {
+  const extracted = buildExposureInputsFromUploadedAccount();
+
+  if (Object.keys(extracted).length === 0) return;
+
+  setProfile((prev: AnyObject) => {
+    const next: AnyObject = { ...(prev || {}) };
+    let changed = false;
+
+    Object.entries(extracted).forEach(([key, value]) => {
+      if (!String(next[key] || "").trim() && String(value || "").trim()) {
+        next[key] = value;
+        changed = true;
+      }
+    });
+
+    return changed ? next : prev;
+  });
+}
+
+
+async function saveExposureInputs() {
     // LOSSQ_EXPOSURE_INPUTS_BACKEND_SAVE_V1
     const selectedPolicy =
       profile?.policy_number ||
@@ -2640,6 +2820,9 @@ function buildReportQuery() {
   return query ? `?${query}` : "";
 }
 
+
+
+
 function buildReportPayload() {
   const currentUpload = getCachedCurrentUpload();
   const cachedUpload = getCachedLastUploadReview();
@@ -3103,6 +3286,34 @@ const policySchedule =
     : recoveredPolicySchedule.length > 0
     ? recoveredPolicySchedule
     : claimBasedPolicySchedule;
+
+// LOSSQ_AUTO_FILL_EXPOSURE_INPUTS_EFFECT_AFTER_PROFILE_READY_V1
+useEffect(() => {
+  if (blankWorkspaceMode) return;
+
+  const hasAccount =
+    Boolean(displayProfile?.business_name) ||
+    Boolean(displayProfile?.insured) ||
+    Boolean(displayProfile?.policy_number) ||
+    Boolean(displayProfile?.account_number) ||
+    (Array.isArray(policySchedule) && policySchedule.length > 0);
+
+  if (!hasAccount) return;
+
+  autoFillExposureInputsFromUpload();
+}, [
+  blankWorkspaceMode,
+  displayProfile?.business_name,
+  displayProfile?.insured,
+  displayProfile?.policy_number,
+  displayProfile?.account_number,
+  displayProfile?.current_premium,
+  displayProfile?.expiring_premium,
+  displayProfile?.target_renewal_premium,
+  Array.isArray(policySchedule) ? policySchedule.length : 0,
+]);
+
+
 
 
 // LOSSQ_FINAL_BAD_POLICY_DISPLAY_GUARDRAIL
