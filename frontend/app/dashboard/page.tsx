@@ -3564,6 +3564,7 @@ function isInsufficientBackendMessage(value: any) {
   );
 }
 
+// LOSSQ_EXPOSURE_FORECAST_OVERRIDE_PRIORITY_V1
 const profileCurrentPremium =
   parsePremiumInput(profile?.current_premium) ||
   parsePremiumInput(displayProfile?.current_premium) ||
@@ -3574,19 +3575,29 @@ const manualTargetRenewalPremium =
   parsePremiumInput(profile?.target_renewal_premium) ||
   parsePremiumInput(displayProfile?.target_renewal_premium);
 
+const exposureInputsHavePremiumOverride =
+  profileCurrentPremium > 0 || manualTargetRenewalPremium > 0;
+
 const hasRealCurrentPremium =
+  profileCurrentPremium > 0 ||
   parsePremiumInput(premiumForecast?.current_premium) > 0 ||
-  parsePremiumInput(premiumForecast?.currentPremium) > 0 ||
-  profileCurrentPremium > 0;
+  parsePremiumInput(premiumForecast?.currentPremium) > 0;
 
 const realCurrentPremium =
+  profileCurrentPremium ||
   parsePremiumInput(premiumForecast?.current_premium) ||
   parsePremiumInput(premiumForecast?.currentPremium) ||
-  profileCurrentPremium ||
   0;
 
+const manualTargetIncreasePercent =
+  manualTargetRenewalPremium > 0 && realCurrentPremium > 0
+    ? Math.round(((manualTargetRenewalPremium - realCurrentPremium) / realCurrentPremium) * 100)
+    : null;
+
 const localPremiumIncreasePercent =
-  intelligenceClaims.length > 0
+  manualTargetIncreasePercent != null
+    ? manualTargetIncreasePercent
+    : intelligenceClaims.length > 0
     ? localRenewalRiskLevel === "Low"
       ? 5
       : localRenewalRiskLevel === "Moderate"
@@ -3619,6 +3630,7 @@ const localExpectedRenewalPremium =
     : null;
 
 const premiumBackendHasUsableForecast =
+  !exposureInputsHavePremiumOverride &&
   parsePremiumInput(premiumForecast?.current_premium) > 0 &&
   parsePremiumInput(premiumForecast?.expected_renewal_premium) > 0 &&
   !isInsufficientBackendMessage(premiumForecast?.forecast_summary);
@@ -3651,12 +3663,16 @@ const effectivePremiumForecast =
         current_premium: hasRealCurrentPremium ? realCurrentPremium : null,
 
         expected_renewal_premium:
-          premiumBackendHasUsableForecast
+          manualTargetRenewalPremium > 0
+            ? manualTargetRenewalPremium
+            : premiumBackendHasUsableForecast
             ? premiumForecast.expected_renewal_premium
             : localExpectedRenewalPremium,
 
         expected_increase_percent:
-          premiumBackendHasUsableForecast
+          manualTargetIncreasePercent != null
+            ? manualTargetIncreasePercent
+            : premiumBackendHasUsableForecast
             ? premiumForecast.expected_increase_percent
             : localPremiumIncreasePercent,
 
@@ -3695,10 +3711,12 @@ const effectivePremiumForecast =
             : localForecastDrivers,
 
         forecast_summary:
-          premiumBackendHasUsableForecast
+          manualTargetRenewalPremium > 0
+            ? `LossQ used the saved Exposure Inputs override. Current premium is $${Number(realCurrentPremium || 0).toLocaleString()} and target renewal premium is $${Number(manualTargetRenewalPremium || 0).toLocaleString()}, creating an estimated ${manualTargetIncreasePercent ?? 0}% renewal change.`
+            : premiumBackendHasUsableForecast
             ? premiumForecast.forecast_summary
             : hasRealCurrentPremium
-            ? `LossQ generated a claim-based renewal premium projection using ${intelligenceClaims.length} validated claim row(s), $${Number(localClaimTotal || 0).toLocaleString()} total incurred, ${localOpenClaimCount} open claim(s), ${localLargeLossCount} large loss claim(s), and a current premium of $${Number(realCurrentPremium || 0).toLocaleString()}. Estimated pressure is approximately ${localPremiumIncreasePercent ?? 0}%.`
+            ? `LossQ generated a renewal premium projection using saved Exposure Inputs, ${intelligenceClaims.length} validated claim row(s), $${Number(localClaimTotal || 0).toLocaleString()} total incurred, ${localOpenClaimCount} open claim(s), and a current premium of $${Number(realCurrentPremium || 0).toLocaleString()}. Estimated pressure is approximately ${localPremiumIncreasePercent ?? 0}%.`
             : `LossQ has validated claim rows for this account, but no current premium or exposure basis was provided. No renewal dollar amount is being projected. The displayed ${localPremiumIncreasePercent ?? 0}% is a claims-derived renewal pressure estimate based on claim frequency, severity, open claims, litigation indicators, and total incurred losses.`,
 
         claims_used: intelligenceClaims.length,
