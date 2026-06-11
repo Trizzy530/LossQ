@@ -1125,6 +1125,36 @@ function normalizeProfileName(item: any) {
     validateSession();
   }, []);
 
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const validTools = [
+      "overview",
+      "profiles",
+      "upload",
+      "exposure-inputs",
+      "submission-builder",
+      "renewal-risk",
+      "premium-forecast",
+      "decision",
+      "appetite",
+      "readiness",
+      "carrier-match",
+      "summary",
+      "memo",
+      "charts",
+      "claims",
+    ];
+
+    const toolFromUrl = new URLSearchParams(window.location.search).get("tool");
+    const toolFromStorage = localStorage.getItem("lossq_active_tool");
+    const nextTool = toolFromUrl || toolFromStorage;
+
+    if (nextTool && validTools.includes(nextTool)) {
+      setActiveTool(nextTool as ToolKey);
+    }
+  }, []);
+
   function clearSession() {
     localStorage.removeItem("lossq_token");
     localStorage.removeItem("lossq_user");
@@ -1140,6 +1170,18 @@ function normalizeProfileName(item: any) {
   function authHeaders(): Record<string, string> {
     const token = getToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+  // LOSSQ_PERSIST_ACTIVE_TOOL_V1
+  function changeActiveTool(tool: ToolKey) {
+    setActiveTool(tool);
+
+    if (typeof window !== "undefined") {
+      localStorage.setItem("lossq_active_tool", tool);
+      const url = new URL(window.location.href);
+      url.searchParams.set("tool", tool);
+      window.history.replaceState({}, "", url.toString());
+    }
   }
 
   function updateProfileList(incomingProfiles: AnyObject[]) {
@@ -2118,6 +2160,7 @@ async function saveProfile() {
         setCachedSelectedPolicy(savedPolicy);
       }
 
+      changeActiveTool("exposure-inputs");
       setMessage("Exposure inputs saved to this account profile. They will remain after refresh and login.");
     } catch (error: any) {
       updateProfileList([nextProfile]);
@@ -4143,35 +4186,35 @@ const trendNoteDisplay =
     </div>
   </div>
 
-  <ToolButton active={activeTool === "overview"} onClick={() => setActiveTool("overview")}>
+  <ToolButton active={activeTool === "overview"} onClick={() => changeActiveTool("overview")}>
     Overview
   </ToolButton>
 
-  <ToolButton active={activeTool === "profiles"} onClick={() => setActiveTool("profiles")}>
+  <ToolButton active={activeTool === "profiles"} onClick={() => changeActiveTool("profiles")}>
     Carrier Profiles
   </ToolButton>
 
-  <ToolButton active={activeTool === "upload"} onClick={() => setActiveTool("upload")}>
+  <ToolButton active={activeTool === "upload"} onClick={() => changeActiveTool("upload")}>
     Upload Center
   </ToolButton>
 
-  <ToolButton active={activeTool === "exposure-inputs"} onClick={() => setActiveTool("exposure-inputs")}>
+  <ToolButton active={activeTool === "exposure-inputs"} onClick={() => changeActiveTool("exposure-inputs")}>
     Exposure Inputs
   </ToolButton>
 
-  <ToolButton active={activeTool === "submission-builder"} onClick={() => setActiveTool("submission-builder")}>
+  <ToolButton active={activeTool === "submission-builder"} onClick={() => changeActiveTool("submission-builder")}>
     Submission Builder
   </ToolButton>
 
-  <ToolButton active={activeTool === "renewal-risk"} onClick={() => setActiveTool("renewal-risk")}>
+  <ToolButton active={activeTool === "renewal-risk"} onClick={() => changeActiveTool("renewal-risk")}>
     Renewal Risk
   </ToolButton>
 
-  <ToolButton active={activeTool === "premium-forecast"} onClick={() => setActiveTool("premium-forecast")}>
+  <ToolButton active={activeTool === "premium-forecast"} onClick={() => changeActiveTool("premium-forecast")}>
     Premium Forecast
   </ToolButton>
 
-  <ToolButton active={activeTool === "decision"} onClick={() => setActiveTool("decision")}>
+  <ToolButton active={activeTool === "decision"} onClick={() => changeActiveTool("decision")}>
     Underwriter Decision
   </ToolButton>
 
@@ -4183,23 +4226,23 @@ const trendNoteDisplay =
     Submission Readiness
   </ToolButton>
 
-  <ToolButton active={activeTool === "carrier-match"} onClick={() => setActiveTool("carrier-match")}>
+  <ToolButton active={activeTool === "carrier-match"} onClick={() => changeActiveTool("carrier-match")}>
     Carrier Match
   </ToolButton>
 
-  <ToolButton active={activeTool === "summary"} onClick={() => setActiveTool("summary")}>
+  <ToolButton active={activeTool === "summary"} onClick={() => changeActiveTool("summary")}>
     AI Summary
   </ToolButton>
 
-  <ToolButton active={activeTool === "memo"} onClick={() => setActiveTool("memo")}>
+  <ToolButton active={activeTool === "memo"} onClick={() => changeActiveTool("memo")}>
     Renewal Memo
   </ToolButton>
 
-  <ToolButton active={activeTool === "charts"} onClick={() => setActiveTool("charts")}>
+  <ToolButton active={activeTool === "charts"} onClick={() => changeActiveTool("charts")}>
     Charts
   </ToolButton>
 
-  <ToolButton active={activeTool === "claims"} onClick={() => setActiveTool("claims")}>
+  <ToolButton active={activeTool === "claims"} onClick={() => changeActiveTool("claims")}>
     Claims
   </ToolButton>
 
@@ -4251,25 +4294,25 @@ const trendNoteDisplay =
 
           <div className="lg:hidden glass-panel p-4 mb-6 overflow-x-auto">
             <div className="flex gap-3 min-w-max">
-              <MobileToolButton active={activeTool === "overview"} onClick={() => setActiveTool("overview")}>Overview</MobileToolButton>
-              <MobileToolButton active={activeTool === "profiles"} onClick={() => setActiveTool("profiles")}>Profiles</MobileToolButton>
-              <MobileToolButton active={activeTool === "upload"} onClick={() => setActiveTool("upload")}>Upload</MobileToolButton>
-              <MobileToolButton active={activeTool === "exposure-inputs"} onClick={() => setActiveTool("exposure-inputs")}>Exposure Inputs</MobileToolButton>
-              <MobileToolButton active={activeTool === "renewal-risk"} onClick={() => setActiveTool("renewal-risk")}>Renewal Risk</MobileToolButton>
-              <MobileToolButton active={activeTool === "decision"} onClick={() => setActiveTool("decision")}>Decision</MobileToolButton>
+              <MobileToolButton active={activeTool === "overview"} onClick={() => changeActiveTool("overview")}>Overview</MobileToolButton>
+              <MobileToolButton active={activeTool === "profiles"} onClick={() => changeActiveTool("profiles")}>Profiles</MobileToolButton>
+              <MobileToolButton active={activeTool === "upload"} onClick={() => changeActiveTool("upload")}>Upload</MobileToolButton>
+              <MobileToolButton active={activeTool === "exposure-inputs"} onClick={() => changeActiveTool("exposure-inputs")}>Exposure Inputs</MobileToolButton>
+              <MobileToolButton active={activeTool === "renewal-risk"} onClick={() => changeActiveTool("renewal-risk")}>Renewal Risk</MobileToolButton>
+              <MobileToolButton active={activeTool === "decision"} onClick={() => changeActiveTool("decision")}>Decision</MobileToolButton>
               <MobileToolButton active={activeTool === "carrier-appetite"} onClick={() => setActiveTool("carrier-appetite")}>Carrier Appetite</MobileToolButton>
               <MobileToolButton active={activeTool === "submission-readiness"} onClick={() => setActiveTool("submission-readiness")}>Submission Readiness</MobileToolButton>
-              <MobileToolButton active={activeTool === "carrier-match"} onClick={() => setActiveTool("carrier-match")}>Carrier Match</MobileToolButton>
-<MobileToolButton active={activeTool === "premium-forecast"} onClick={() => setActiveTool("premium-forecast")}>
+              <MobileToolButton active={activeTool === "carrier-match"} onClick={() => changeActiveTool("carrier-match")}>Carrier Match</MobileToolButton>
+<MobileToolButton active={activeTool === "premium-forecast"} onClick={() => changeActiveTool("premium-forecast")}>
   Premium Forecast
 </MobileToolButton>
-<MobileToolButton active={activeTool === "submission-builder"} onClick={() => setActiveTool("submission-builder")}>
+<MobileToolButton active={activeTool === "submission-builder"} onClick={() => changeActiveTool("submission-builder")}>
   Submission Builder
 </MobileToolButton>
-              <MobileToolButton active={activeTool === "summary"} onClick={() => setActiveTool("summary")}>Summary</MobileToolButton>
-              <MobileToolButton active={activeTool === "memo"} onClick={() => setActiveTool("memo")}>Memo</MobileToolButton>
-              <MobileToolButton active={activeTool === "charts"} onClick={() => setActiveTool("charts")}>Charts</MobileToolButton>
-              <MobileToolButton active={activeTool === "claims"} onClick={() => setActiveTool("claims")}>Claims</MobileToolButton>
+              <MobileToolButton active={activeTool === "summary"} onClick={() => changeActiveTool("summary")}>Summary</MobileToolButton>
+              <MobileToolButton active={activeTool === "memo"} onClick={() => changeActiveTool("memo")}>Memo</MobileToolButton>
+              <MobileToolButton active={activeTool === "charts"} onClick={() => changeActiveTool("charts")}>Charts</MobileToolButton>
+              <MobileToolButton active={activeTool === "claims"} onClick={() => changeActiveTool("claims")}>Claims</MobileToolButton>
             </div>
           </div>
 
@@ -4696,7 +4739,7 @@ const trendNoteDisplay =
                 <button onClick={saveProfile} className="btn-secondary">
                   Save Full Profile
                 </button>
-                <button onClick={() => setActiveTool("premium-forecast")} className="btn-purple">
+                <button onClick={() => changeActiveTool("premium-forecast")} className="btn-purple">
                   Open Premium Forecast
                 </button>
               </div>
@@ -5240,7 +5283,7 @@ const trendNoteDisplay =
         Generate Carrier Packet
       </button>
 
-      <button onClick={() => setActiveTool("memo")} className="btn-secondary">
+      <button onClick={() => changeActiveTool("memo")} className="btn-secondary">
         Open Renewal Memo
       </button>
     </div>
