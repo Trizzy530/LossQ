@@ -526,8 +526,14 @@ def accept_invite(data: AcceptInviteRequest, db: Session = Depends(get_db)):
 @router.get("/users")
 def list_org_users(current_user: User = Depends(require_admin_or_owner), db: Session = Depends(get_db)):
     organization = db.query(Organization).filter(Organization.id == current_user.organization_id).first()
-    users = db.query(User).filter(User.organization_id == current_user.organization_id).order_by(User.role.asc(), User.email.asc()).all()
-    active_users = [user for user in users if bool(user.is_active)]
+    # Only return active users in User Management.
+    users = (
+        db.query(User)
+        .filter(User.organization_id == current_user.organization_id, User.is_active != False)
+        .order_by(User.role.asc(), User.email.asc())
+        .all()
+    )
+    active_users = users
     limit = int((organization.user_limit if organization else 0) or 0)
     return {
         "organization": {"id": organization.id if organization else None, "name": organization.name if organization else "", "user_limit": limit, "active_user_count": len(active_users), "remaining_users": max(limit - len(active_users), 0)},
@@ -551,10 +557,12 @@ def remove_org_user(user_id: int, current_user: User = Depends(require_admin_or_
     if current_role == "admin" and target_role != "user":
         raise HTTPException(status_code=403, detail="Admins can only remove normal users")
 
-    target_user.is_active = False
-    target_user.updated_at = datetime.utcnow()
+    # LOSSQ_HARD_DELETE_ORG_USER_V1
+    # Fully delete the user so they no longer appear in User Management.
+    removed_email = target_user.email
+    db.delete(target_user)
     db.commit()
-    return {"message": f"{target_user.email} was removed from the account.", "removed_user": public_user(target_user)}
+    return {"message": f"{removed_email} was deleted from the account.", "deleted_user_id": user_id}
 
 
 @router.post("/forgot-password")
