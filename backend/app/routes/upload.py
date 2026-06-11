@@ -557,6 +557,42 @@ def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
         "expiration_date",
         "evaluation_date",
         "raw_text_preview",
+
+        # LOSSQ_SAVE_EXPOSURE_FIELDS_TO_PROFILE_V1
+        "current_premium",
+        "expiring_premium",
+        "target_renewal_premium",
+        "line_of_business",
+        "state",
+        "class_code",
+        "class_codes",
+        "limits",
+        "coverage_limit",
+        "deductible",
+        "retention",
+        "payroll",
+        "revenue",
+        "sales",
+        "receipts",
+        "employee_count",
+        "vehicle_count",
+        "driver_count",
+        "property_tiv",
+        "tiv",
+        "building_value",
+        "contents_value",
+        "square_footage",
+        "location_count",
+        "unit_count",
+        "cargo_limit",
+        "umbrella_limit",
+        "experience_mod",
+        "mod",
+        "exposure_change_percent",
+        "cyber_revenue",
+        "professional_revenue",
+        "exposure_basis",
+        "underwriter_notes",
     ]
 
     policies_json = serialize_json(profile_data.get("policies") or [], [])
@@ -870,6 +906,41 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     # Real policy numbers stay in profile_data["policies"].
     if is_bad_policy_key_for_upload(profile_data.get("policy_number")):
         profile_data["policy_number"] = profile_account_key or primary_claim_policy_number or f"UPLOAD-{upload_session_id}"
+
+    # LOSSQ_FINAL_REHOME_ALL_PARSED_CLAIMS_TO_PROFILE
+    # Make every parsed claim from this upload persist under the corrected account/profile key.
+    # This prevents the dashboard from showing 19 claims before logout and only 2 after login.
+    corrected_account_key = choose_upload_account_key(profile_data, direct_profile)
+
+    if corrected_account_key and not is_bad_policy_key_for_upload(corrected_account_key):
+        profile_data["policy_number"] = corrected_account_key
+        profile_data["account_number"] = profile_data.get("account_number") or corrected_account_key
+        profile_data["customer_number"] = (
+            profile_data.get("customer_number")
+            or profile_data.get("account_number")
+            or corrected_account_key
+        )
+
+        parsed_claim_numbers = []
+        for parsed_item in all_parsed_claims:
+            parsed_claim_number = clean_profile_value(
+                parsed_item.get("claim_number")
+                or parsed_item.get("claim_no")
+                or parsed_item.get("claim_id")
+            ).upper()
+
+            if parsed_claim_number and parsed_claim_number not in parsed_claim_numbers:
+                parsed_claim_numbers.append(parsed_claim_number)
+
+        if parsed_claim_numbers:
+            db.query(Claim).filter(
+                Claim.organization_id == current_user["organization_id"],
+                Claim.claim_number.in_(parsed_claim_numbers),
+            ).update(
+                {Claim.policy_number: corrected_account_key},
+                synchronize_session=False,
+            )
+            db.commit()
 
     profile = upsert_account_profile(db, profile_data, current_user)
 
