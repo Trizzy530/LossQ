@@ -1677,7 +1677,6 @@ async function saveProfile() {
         return;
       }
 
-      console.log("LOSSQ_UPLOAD_DEBUG", data);
       uploadResults.push(data);
     }
 
