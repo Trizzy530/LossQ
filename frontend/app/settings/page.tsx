@@ -295,6 +295,29 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
+
+      <section className="mb-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
+        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+          <div>
+            <p className="text-xs uppercase tracking-[0.25em] text-cyan-300">
+              Platform Admin
+            </p>
+            <h2 className="mt-1 text-xl font-black text-white">Support Lookup</h2>
+            <p className="mt-1 text-sm text-slate-300">
+              Search companies and users by phone number, email, company name, contact name, or organization ID.
+            </p>
+          </div>
+
+          <button
+            onClick={() => router.push("/settings/support-lookup")}
+            className="rounded-xl bg-cyan-500 px-5 py-3 text-sm font-black text-slate-950 hover:bg-cyan-400"
+          >
+            Open Support Lookup
+          </button>
+        </div>
+      </section>
+
+
         <div className="text-center">
           <div className="text-4xl font-black mb-3">Loss<span className="text-blue-400">Q</span></div>
           <p className="text-slate-400">Loading account security...</p>
