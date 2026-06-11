@@ -1007,6 +1007,8 @@ export default function DashboardPage() {
   const [lazyToolLoading, setLazyToolLoading] = useState<Record<string, boolean>>({});
   const [profile, setProfile] = useState<any>({});
   const [profiles, setProfiles] = useState<any[]>([]);
+  // LOSSQ_BLANK_WORKSPACE_MODE_V1
+  const [blankWorkspaceMode, setBlankWorkspaceMode] = useState(false);
 function getAccountDisplayName(item: any) {
   return (
     item?.business_name ||
@@ -1226,6 +1228,10 @@ function normalizeProfileName(item: any) {
   }
 
   function resetActiveWorkspace(messageText?: string) {
+    // Blank workspace must not inherit any old file/profile/policy/claim context.
+    setBlankWorkspaceMode(true);
+    activeProfileRef.current = {};
+
     setProfile({
       business_name: "",
       carrier_name: "",
@@ -1333,6 +1339,7 @@ function normalizeProfileName(item: any) {
               {},
           };
 
+          setBlankWorkspaceMode(false);
           activeProfileRef.current = activeProfile || {};
           setProfile(activeProfile || {});
           if (activeProfile?.policy_number) {
@@ -1345,6 +1352,7 @@ function normalizeProfileName(item: any) {
 
           if (cachedMatch) {
   activeProfile = normalizeProfileName(cachedMatch);
+  setBlankWorkspaceMode(false);
   setProfile(activeProfile);
 }
         }
@@ -1403,6 +1411,7 @@ function normalizeProfileName(item: any) {
     {},
 });
 
+          setBlankWorkspaceMode(false);
           setProfile(activeProfile || {});
           activeProfileRef.current = activeProfile || {};
 if (activeProfile?.policy_number) {
@@ -1413,6 +1422,7 @@ if (activeProfile?.policy_number) {
           const cachedProfiles = getCachedProfiles();
           if (cachedProfiles.length > 0 && !activeProfile?.policy_number) {
             activeProfile = cachedProfiles[0];
+            setBlankWorkspaceMode(false);
             setProfile(cachedProfiles[0]);
           }
         }
@@ -2328,6 +2338,7 @@ async function saveProfile() {
 setLazyLoadedTools,
         setLazyToolLoading,
       });
+      setBlankWorkspaceMode(false);
       setProfile(uploadedProfile);
       // Uploaded profile becomes the active authority for this account.
       // This keeps old GP/Harbor/previous policy rows from appearing inside a new upload's schedule.
@@ -2961,7 +2972,11 @@ const claimBasedPolicySchedule = Object.values(
 );
 
 const policySchedule =
-  recoveredPolicySchedule.length > 0 ? recoveredPolicySchedule : claimBasedPolicySchedule;
+  blankWorkspaceMode
+    ? []
+    : recoveredPolicySchedule.length > 0
+    ? recoveredPolicySchedule
+    : claimBasedPolicySchedule;
 
 
 // LOSSQ_FINAL_BAD_POLICY_DISPLAY_GUARDRAIL
@@ -2983,7 +2998,9 @@ if (isBadPolicyNumberValue(profile?.policy_number) && safeDisplayAccountKey) {
 }
 
 
-const mainPolicyNumber = chooseSafePolicyNumber(
+const mainPolicyNumber = blankWorkspaceMode
+  ? ""
+  : chooseSafePolicyNumber(
   ...(policySchedule || []).map((item: any) => item?.policy_number),
   ...(Array.isArray(displayProfile?.policies) ? displayProfile.policies.map((item: any) => item?.policy_number) : []),
   ...(Array.isArray(profile?.policies) ? profile.policies.map((item: any) => item?.policy_number) : []),
@@ -2994,7 +3011,9 @@ const activeAccountPolicyNumber = normalizePolicyNumber(displayProfile?.policy_n
 const activeAccountNumber = normalizePolicyNumber(displayProfile?.account_number);
 const activeCustomerNumber = normalizePolicyNumber(displayProfile?.customer_number);
 
-const activePolicyNumbers = Array.from(
+const activePolicyNumbers = blankWorkspaceMode
+  ? []
+  : Array.from(
   new Set(
     [
       ...policySchedule.map((item: any) => item?.policy_number),
@@ -3065,7 +3084,9 @@ const lastUploadPolicySet = new Set(
 );
 
 const visibleClaims =
-  filteredVisibleClaims.length > 0
+  blankWorkspaceMode
+    ? []
+    : filteredVisibleClaims.length > 0
     ? filteredVisibleClaims
     : currentUploadMatches.length > 0
     ? currentUploadMatches
