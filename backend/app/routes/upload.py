@@ -690,10 +690,12 @@ async def save_uploaded_files(files, policy_number, db, current_user):
                 # LOSSQ_REHOME_DUPLICATE_CLAIMS_TO_ACCOUNT_KEY
                 # If the claim already exists from an earlier upload, re-home it to the corrected
                 # account/profile key so it survives logout/login and appears under the right profile.
+                safe_profile_data = locals().get("profile_data", {}) or {}
+
                 corrected_policy_key = (
-                    profile_data.get("policy_number")
-                    or profile_data.get("account_number")
-                    or profile_data.get("customer_number")
+                    safe_profile_data.get("policy_number")
+                    or safe_profile_data.get("account_number")
+                    or safe_profile_data.get("customer_number")
                     or policy_number
                     or policy_value
                 )
