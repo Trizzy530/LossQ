@@ -4,6 +4,7 @@ from fastapi import FastAPI, Request, Response
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
+from app.security_middleware import SecurityHeadersMiddleware, TrustedHostGuardMiddleware, SimpleRateLimitMiddleware
 from app.routes import (
     auth,
     upload,
@@ -34,11 +35,28 @@ from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
 from app.models.audit_log import AuditLog
 
+# LOSSQ_SECURITY_PHASE_1_V1
+ALLOWED_ORIGINS = [
+    origin.strip()
+    for origin in os.getenv(
+        "ALLOWED_ORIGINS",
+        "https://www.lossq.com,https://lossq.com,http://localhost:3000",
+    ).split(",")
+    if origin.strip()
+]
+
+
 load_dotenv()
 
 Base.metadata.create_all(bind=engine)
 
 app = FastAPI(title="LossQ API", redirect_slashes=False)
+
+# Security Phase 1 middleware
+app.add_middleware(SecurityHeadersMiddleware)
+app.add_middleware(TrustedHostGuardMiddleware)
+app.add_middleware(SimpleRateLimitMiddleware)
+
 
 
 
