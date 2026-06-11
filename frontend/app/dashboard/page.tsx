@@ -3531,6 +3531,7 @@ const effectiveCarrierAppetite =
 
 
 // LOSSQ_EXPOSURE_PREMIUM_FORECAST_LINK_V1
+// LOSSQ_FORCE_FILE_EXPOSURE_PREMIUM_FORECAST_V1
 function parsePremiumInput(value: any): number {
   if (value === null || value === undefined) return 0;
 
@@ -3651,81 +3652,119 @@ const localForecastDrivers =
       ]
     : ["No validated claims were available."];
 
+const fileExposureCurrentPremium =
+  parsePremiumInput(profile?.current_premium) ||
+  parsePremiumInput(displayProfile?.current_premium) ||
+  parsePremiumInput(profile?.expiring_premium) ||
+  parsePremiumInput(displayProfile?.expiring_premium);
+
+const fileExposureTargetRenewalPremium =
+  parsePremiumInput(profile?.target_renewal_premium) ||
+  parsePremiumInput(displayProfile?.target_renewal_premium);
+
+const fileExposureHasPremiumData = fileExposureCurrentPremium > 0;
+
+const fileExposureIncreasePercent =
+  fileExposureTargetRenewalPremium > 0 && fileExposureCurrentPremium > 0
+    ? Math.round(
+        ((fileExposureTargetRenewalPremium - fileExposureCurrentPremium) /
+          fileExposureCurrentPremium) *
+          100
+      )
+    : localPremiumIncreasePercent;
+
+const fileExposureExpectedRenewalPremium =
+  fileExposureTargetRenewalPremium > 0
+    ? fileExposureTargetRenewalPremium
+    : fileExposureCurrentPremium > 0 && fileExposureIncreasePercent != null
+    ? Math.round(fileExposureCurrentPremium * (1 + fileExposureIncreasePercent / 100))
+    : null;
+
 const effectivePremiumForecast =
-  validatedClaimsAvailable
+  fileExposureHasPremiumData
     ? {
         ...(premiumForecast || {}),
-
-        forecast_type: hasRealCurrentPremium
-          ? "premium_projection"
-          : "claim_based_pressure_estimate",
-
-        current_premium: hasRealCurrentPremium ? realCurrentPremium : null,
-
-        expected_renewal_premium:
-          manualTargetRenewalPremium > 0
-            ? manualTargetRenewalPremium
-            : premiumBackendHasUsableForecast
-            ? premiumForecast.expected_renewal_premium
-            : localExpectedRenewalPremium,
-
-        expected_increase_percent:
-          manualTargetIncreasePercent != null
-            ? manualTargetIncreasePercent
-            : premiumBackendHasUsableForecast
-            ? premiumForecast.expected_increase_percent
-            : localPremiumIncreasePercent,
-
-        confidence_score:
-          premiumBackendHasUsableForecast
-            ? premiumForecast.confidence_score
-            : localPremiumConfidence,
-
+        forecast_type: "premium_projection",
+        data_source: "saved_file_exposure_inputs",
+        current_premium: fileExposureCurrentPremium,
+        expected_renewal_premium: fileExposureExpectedRenewalPremium,
+        expected_increase_percent: fileExposureIncreasePercent,
+        confidence_score: localPremiumConfidence || 80,
         best_case_percent:
-          premiumBackendHasUsableForecast
-            ? premiumForecast.best_case_percent
-            : localPremiumBestCase,
-
+          fileExposureIncreasePercent != null
+            ? Math.max(0, fileExposureIncreasePercent - 5)
+            : null,
         likely_range_percent:
-          premiumBackendHasUsableForecast
-            ? premiumForecast.likely_range_percent
-            : localPremiumIncreasePercent != null
+          fileExposureIncreasePercent != null
+            ? `${Math.max(0, fileExposureIncreasePercent - 5)}% to ${
+                fileExposureIncreasePercent + 10
+              }%`
+            : "-",
+        worst_case_percent:
+          fileExposureIncreasePercent != null
+            ? fileExposureIncreasePercent + 10
+            : null,
+        forecast_drivers: [
+          "Premium Forecast is using saved Exposure Inputs extracted from the account file.",
+          `Current premium from Exposure Inputs: $${Number(
+            fileExposureCurrentPremium || 0
+          ).toLocaleString()}.`,
+          fileExposureTargetRenewalPremium > 0
+            ? `Target renewal premium override from Exposure Inputs: $${Number(
+                fileExposureTargetRenewalPremium || 0
+              ).toLocaleString()}.`
+            : `Expected renewal premium was calculated from current premium and claim-based renewal pressure.`,
+          `${intelligenceClaims.length} account-specific claim row(s) are included in the renewal pressure review.`,
+          `$${Number(localClaimTotal || 0).toLocaleString()} total incurred losses from the uploaded account data.`,
+        ],
+        forecast_summary:
+          fileExposureTargetRenewalPremium > 0
+            ? `LossQ used the actual saved Exposure Inputs from the account file. Current premium is $${Number(
+                fileExposureCurrentPremium || 0
+              ).toLocaleString()} and target renewal premium is $${Number(
+                fileExposureTargetRenewalPremium || 0
+              ).toLocaleString()}, creating an estimated ${
+                fileExposureIncreasePercent ?? 0
+              }% renewal change.`
+            : `LossQ used the actual saved Exposure Inputs from the account file. Current premium is $${Number(
+                fileExposureCurrentPremium || 0
+              ).toLocaleString()} and expected renewal premium is $${Number(
+                fileExposureExpectedRenewalPremium || 0
+              ).toLocaleString()} based on the uploaded account claim activity and exposure basis.`,
+        claims_used: intelligenceClaims.length,
+        policy_numbers_used:
+          activePolicyNumbers.length > 0
+            ? activePolicyNumbers
+            : Array.from(currentUploadPolicySet),
+      }
+    : validatedClaimsAvailable
+    ? {
+        ...(premiumForecast || {}),
+        forecast_type: "claim_based_pressure_estimate",
+        current_premium: null,
+        expected_renewal_premium: null,
+        expected_increase_percent: localPremiumIncreasePercent,
+        confidence_score: localPremiumConfidence,
+        best_case_percent: localPremiumBestCase,
+        likely_range_percent:
+          localPremiumIncreasePercent != null
             ? `${Math.max(0, localPremiumIncreasePercent - 5)}% to ${
                 localPremiumIncreasePercent + 10
               }%`
             : "-",
-
-        worst_case_percent:
-          premiumBackendHasUsableForecast
-            ? premiumForecast.worst_case_percent
-            : localPremiumWorstCase,
-
-        forecast_drivers:
-          premiumBackendHasUsableForecast &&
-          Array.isArray(premiumForecast?.forecast_drivers) &&
-          premiumForecast.forecast_drivers.length > 0 &&
-          !premiumForecast.forecast_drivers.some((item: any) =>
-            isInsufficientBackendMessage(item)
-          )
-            ? premiumForecast.forecast_drivers
-            : localForecastDrivers,
-
-        forecast_summary:
-          manualTargetRenewalPremium > 0
-            ? `LossQ used the saved Exposure Inputs override. Current premium is $${Number(realCurrentPremium || 0).toLocaleString()} and target renewal premium is $${Number(manualTargetRenewalPremium || 0).toLocaleString()}, creating an estimated ${manualTargetIncreasePercent ?? 0}% renewal change.`
-            : premiumBackendHasUsableForecast
-            ? premiumForecast.forecast_summary
-            : hasRealCurrentPremium
-            ? `LossQ generated a renewal premium projection using saved Exposure Inputs, ${intelligenceClaims.length} validated claim row(s), $${Number(localClaimTotal || 0).toLocaleString()} total incurred, ${localOpenClaimCount} open claim(s), and a current premium of $${Number(realCurrentPremium || 0).toLocaleString()}. Estimated pressure is approximately ${localPremiumIncreasePercent ?? 0}%.`
-            : `LossQ has validated claim rows for this account, but no current premium or exposure basis was provided. No renewal dollar amount is being projected. The displayed ${localPremiumIncreasePercent ?? 0}% is a claims-derived renewal pressure estimate based on claim frequency, severity, open claims, litigation indicators, and total incurred losses.`,
-
+        worst_case_percent: localPremiumWorstCase,
+        forecast_drivers: localForecastDrivers,
+        forecast_summary: `LossQ has validated claim rows for this account, but no current premium or exposure basis was provided. No renewal dollar amount is being projected. The displayed ${
+          localPremiumIncreasePercent ?? 0
+        }% is a claims-derived renewal pressure estimate based on claim frequency, severity, open claims, litigation indicators, and total incurred losses.`,
         claims_used: intelligenceClaims.length,
         policy_numbers_used:
-          activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
+          activePolicyNumbers.length > 0
+            ? activePolicyNumbers
+            : Array.from(currentUploadPolicySet),
         data_source: "local_visible_claims",
       }
     : premiumForecast;
-
 
 
 const premiumAccuracyStatus = (() => {
