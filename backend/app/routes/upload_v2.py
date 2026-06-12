@@ -18,6 +18,7 @@ from app.services.document_intelligence.parser_cleanup import cleanup_loss_run_e
 from app.services.lossq_loss_run_pipeline_v2 import parse_loss_run_upload
 
 from app.routes.upload import (
+    validate_upload_file_security,
     UPLOAD_DIR,
     clean_profile_value,
     ensure_account_profile_columns,
@@ -942,6 +943,151 @@ def _fallback_extract_full_text_from_content(content: bytes | None) -> str:
         return ""
 
 
+
+# LOSSQ_PLAIN_TEXT_CLAIM_BACKUP_EXTRACTOR_V1
+def _lossq_money_to_float(value: Any) -> float:
+    return _safe_float(str(value or "").replace("$", "").replace(",", "").strip())
+
+
+def _lossq_extract_labeled_value(raw_text: Any, labels: List[str]) -> str:
+    text = str(raw_text or "")
+    if not text:
+        return ""
+
+    stop_labels = [
+        "Current Premium",
+        "Target Renewal Premium",
+        "Primary Line of Business",
+        "Line of Business",
+        "Class Codes",
+        "Class Code",
+        "Policy Limits",
+        "Coverage Limit",
+        "Deductible",
+        "Retention / SIR",
+        "Retention",
+        "SIR",
+        "Payroll",
+        "Revenue / Sales",
+        "Revenue",
+        "Sales",
+        "Receipts",
+        "Employee Count",
+        "Vehicle Count",
+        "Driver Count",
+        "Experience Mod",
+        "Property TIV",
+        "Location Count",
+        "Policy Schedule",
+        "Claim Detail",
+        "Loss Summary",
+    ]
+
+    stop_pattern = "|".join(re.escape(item) for item in stop_labels)
+
+    for label in labels:
+        pattern = re.compile(
+            rf"{re.escape(label)}\s*:\s*(.*?)(?=\s+(?:{stop_pattern})\s*:|\s+Policy Schedule|\s+Claim Detail|\s+Loss Summary|$)",
+            re.IGNORECASE | re.DOTALL,
+        )
+        match = pattern.search(text)
+        if match:
+            value = re.sub(r"\s+", " ", match.group(1)).strip()
+            return value
+
+    return ""
+
+
+def _lossq_extract_exposure_inputs_from_raw_text(raw_text: Any) -> Dict[str, Any]:
+    exposure = {
+        "current_premium": _lossq_extract_labeled_value(raw_text, ["Current Premium"]),
+        "target_renewal_premium": _lossq_extract_labeled_value(raw_text, ["Target Renewal Premium"]),
+        "line_of_business": _lossq_extract_labeled_value(raw_text, ["Primary Line of Business", "Line of Business"]),
+        "class_codes": _lossq_extract_labeled_value(raw_text, ["Class Codes", "Class Code"]),
+        "class_code": _lossq_extract_labeled_value(raw_text, ["Class Codes", "Class Code"]),
+        "limits": _lossq_extract_labeled_value(raw_text, ["Policy Limits", "Limits"]),
+        "coverage_limit": _lossq_extract_labeled_value(raw_text, ["Coverage Limit", "Policy Limits", "Limits"]),
+        "deductible": _lossq_extract_labeled_value(raw_text, ["Deductible"]),
+        "retention": _lossq_extract_labeled_value(raw_text, ["Retention / SIR", "Retention", "SIR"]),
+        "payroll": _lossq_extract_labeled_value(raw_text, ["Payroll"]),
+        "revenue": _lossq_extract_labeled_value(raw_text, ["Revenue / Sales", "Revenue"]),
+        "sales": _lossq_extract_labeled_value(raw_text, ["Revenue / Sales", "Sales"]),
+        "employee_count": _lossq_extract_labeled_value(raw_text, ["Employee Count"]),
+        "vehicle_count": _lossq_extract_labeled_value(raw_text, ["Vehicle Count"]),
+        "driver_count": _lossq_extract_labeled_value(raw_text, ["Driver Count"]),
+        "experience_mod": _lossq_extract_labeled_value(raw_text, ["Experience Mod"]),
+        "mod": _lossq_extract_labeled_value(raw_text, ["Experience Mod", "Mod"]),
+        "property_tiv": _lossq_extract_labeled_value(raw_text, ["Property TIV"]),
+        "tiv": _lossq_extract_labeled_value(raw_text, ["Property TIV", "TIV"]),
+        "location_count": _lossq_extract_labeled_value(raw_text, ["Location Count"]),
+    }
+
+    return {key: value for key, value in exposure.items() if _clean(value)}
+
+
+def _lossq_extract_plain_text_claims_from_raw_text(raw_text: Any) -> List[Dict[str, Any]]:
+    text = str(raw_text or "")
+    if not text:
+        return []
+
+    pattern = re.compile(
+        r"Claim Number:\s*(?P<claim>[^|]+?)\s*\|\s*"
+        r"Policy Number:\s*(?P<policy>[^|]+?)\s*\|\s*"
+        r"Line of Business:\s*(?P<lob>[^|]+?)\s*\|\s*"
+        r"Loss Date:\s*(?P<loss_date>[^|]+?)\s*\|\s*"
+        r"Status:\s*(?P<status>[^|]+?)\s*\|\s*"
+        r"Paid:\s*(?P<paid>\$?\s*[0-9][0-9,]*(?:\.\d{2})?)\s*\|\s*"
+        r"Reserve:\s*(?P<reserve>\$?\s*[0-9][0-9,]*(?:\.\d{2})?)\s*\|\s*"
+        r"Total Incurred:\s*(?P<total>\$?\s*[0-9][0-9,]*(?:\.\d{2})?)\s*\|\s*"
+        r"Description:\s*(?P<description>.*?)(?=Claim Number:|Loss Summary|Generated for LossQ|$)",
+        re.IGNORECASE | re.DOTALL,
+    )
+
+    claims: List[Dict[str, Any]] = []
+    seen = set()
+
+    for match in pattern.finditer(text):
+        claim_number = _clean(match.group("claim")).upper()
+        policy_number = _clean(match.group("policy")).upper()
+
+        if not claim_number or claim_number in seen:
+            continue
+
+        if not _claim_number_looks_real(claim_number):
+            continue
+
+        if not _valid_policy_number(policy_number):
+            continue
+
+        paid = _lossq_money_to_float(match.group("paid"))
+        reserve = _lossq_money_to_float(match.group("reserve"))
+        total = _lossq_money_to_float(match.group("total"))
+
+        claim = {
+            "claim_number": claim_number,
+            "policy_number": policy_number,
+            "line_of_business": _clean(match.group("lob")),
+            "claim_type": _clean(match.group("lob")),
+            "date_of_loss": _clean(match.group("loss_date")),
+            "loss_date": _clean(match.group("loss_date")),
+            "status": _clean(match.group("status")).title() or ("Open" if reserve > 0 else "Closed"),
+            "description": re.sub(r"\s+", " ", _clean(match.group("description"))),
+            "loss_description": re.sub(r"\s+", " ", _clean(match.group("description"))),
+            "paid_amount": paid,
+            "paid": paid,
+            "reserve_amount": reserve,
+            "reserve": reserve,
+            "total_incurred": total,
+            "total_amount": total,
+            "total_net_loss": total,
+        }
+
+        claims.append(claim)
+        seen.add(claim_number)
+
+    return claims
+
+
 def _fallback_policy_lob_from_policy_number(policy_number: Any) -> str:
     policy = _clean(policy_number).upper()
 
@@ -1079,6 +1225,10 @@ def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any], content: bytes | 
     policies_for_claims = parsed.get("policies") or profile.get("policies") or fallback_policies
     fallback_claims = _fallback_extract_claims_from_raw_text(raw_text, policies_for_claims)
 
+    plain_text_claims = _lossq_extract_plain_text_claims_from_raw_text(raw_text)
+    if plain_text_claims:
+        fallback_claims = plain_text_claims
+
     if fallback_business and not _first_real_value(parsed.get("business_name"), profile.get("business_name")):
         parsed["business_name"] = fallback_business
         parsed["named_insured"] = fallback_business
@@ -1091,7 +1241,7 @@ def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any], content: bytes | 
         profile["carrier_name"] = fallback_carrier
         profile["writing_carrier"] = fallback_carrier
 
-    if fallback_claims and len(fallback_claims) > len(existing_claims):
+    if fallback_claims and len(fallback_claims) >= len(existing_claims):
         parsed["claims"] = fallback_claims
         parsed["parsed_claims"] = fallback_claims
         parsed["claim_count"] = len(fallback_claims)
@@ -1280,16 +1430,19 @@ async def save_uploaded_files_v2(
     claim_columns = {column.name for column in Claim.__table__.columns}
 
     for file in files:
+        # LOSSQ_UPLOAD_V2_FILE_SIZE_SECURITY_V1
+        # file_size/max_upload/content_type/filename validation is enforced before reading the full upload.
+        safe_upload_filename = await validate_upload_file_security(file)
         content = await file.read()
 
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        safe_filename = (file.filename or "loss_run.pdf").replace(" ", "_")
+        safe_filename = (safe_upload_filename or file.filename or "loss_run.pdf").replace(" ", "_")
         file_path = os.path.join(UPLOAD_DIR, f"{timestamp}_{safe_filename}")
 
         with open(file_path, "wb") as buffer:
             buffer.write(content)
 
-        parsed = parse_loss_run_upload(file.filename or safe_filename, content)
+        parsed = parse_loss_run_upload(safe_upload_filename or safe_filename, content)
         parsed = cleanup_loss_run_extraction(
             parsed,
             filename=(file.filename or safe_filename),
@@ -1305,6 +1458,18 @@ async def save_uploaded_files_v2(
         )
 
         parsed_profile = dict(parsed.get("profile") or {})
+
+        raw_text_for_exposure = (
+            parsed.get("raw_text")
+            or parsed.get("raw_text_preview")
+            or parsed.get("text")
+            or parsed_profile.get("raw_text_preview")
+            or ""
+        )
+        exposure_from_text = _lossq_extract_exposure_inputs_from_raw_text(raw_text_for_exposure)
+        for exposure_key, exposure_value in exposure_from_text.items():
+            if exposure_value and not _clean(parsed_profile.get(exposure_key)):
+                parsed_profile[exposure_key] = exposure_value
         parsed_policies = parsed.get("policies") or parsed_profile.get("policies") or []
         parsed_policies = _filter_policy_schedule_items(parsed_policies)
         parsed_validation = parsed.get("validation") or parsed_profile.get("validation") or {}
@@ -1591,7 +1756,7 @@ async def save_uploaded_files_v2(
 
         uploaded_files.append(
             {
-                "filename": file.filename,
+                "filename": safe_upload_filename or file.filename,
                 "claims_saved": file_saved,
                 "duplicates_skipped": file_duplicates,
                 "existing_claims_deleted": file_existing_claims_deleted,
