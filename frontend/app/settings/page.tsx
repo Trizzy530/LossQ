@@ -47,6 +47,38 @@ function roleBadgeClass(role?: string) {
   return "border-slate-400/30 bg-slate-500/10 text-slate-200";
 }
 
+
+// LOSSQ_SETTINGS_AGENCY_PROFILE_LINK_V1
+function CompanyAgencyProfileCard({ router }: { router: any }) {
+  return (
+    <section className="rounded-3xl border border-cyan-400/30 bg-cyan-400/10 p-6 shadow-xl shadow-cyan-500/10">
+      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
+        <div>
+          <p className="text-sm font-bold uppercase tracking-[0.25em] text-cyan-300">
+            Company Information
+          </p>
+          <h2 className="mt-2 text-2xl font-black text-white">
+            Company / Agency Profile
+          </h2>
+          <p className="mt-2 max-w-2xl text-sm text-slate-300">
+            Manage the organization name and agency information used for LossQ PDF exports,
+            including Executive Reports and Carrier Packets.
+          </p>
+        </div>
+
+        <button
+          type="button"
+          onClick={() => router.push("/settings/agency-profile")}
+          className="rounded-xl bg-cyan-400 px-5 py-3 font-black text-slate-950 hover:bg-cyan-300"
+        >
+          Open Company Profile
+        </button>
+      </div>
+    </section>
+  );
+}
+
+
 export default function SettingsPage() {
   const router = useRouter();
 
@@ -295,7 +327,10 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
-        <div className="text-center">
+        
+      <CompanyAgencyProfileCard router={router} />
+
+<div className="text-center">
           <div className="text-4xl font-black mb-3">Loss<span className="text-blue-400">Q</span></div>
           <p className="text-slate-400">Loading account security...</p>
         </div>
