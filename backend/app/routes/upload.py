@@ -13,7 +13,6 @@ from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
 from app.role_utils import require_permission
 import re
-import traceback
 from app.services.audit import record_audit_event
 from app.services.loss_run_pipeline import parse_loss_run_file
 from app.services.universal_profile import extract_universal_profile_from_text
@@ -483,9 +482,7 @@ def ensure_claim_timeline_columns(db: Session):
         db.commit()
     except Exception as e:
         # LOSSQ_UPLOAD_TRACEBACK_DEBUG_V1
-        print("LOSSQ UPLOAD ERROR TRACEBACK START")
-        traceback.print_exc()
-        print("LOSSQ UPLOAD ERROR TRACEBACK END")
+        print("LOSSQ_UPLOAD_ERROR_REDACTED")
         db.rollback()
         print(f"Claim timeline column check failed: {e}")
 
@@ -552,9 +549,7 @@ def ensure_account_profile_columns(db: Session):
 
         db.commit()
     except Exception as e:
-        print("LOSSQ UPLOAD ERROR TRACEBACK START")
-        traceback.print_exc()
-        print("LOSSQ UPLOAD ERROR TRACEBACK END")
+        print("LOSSQ_UPLOAD_ERROR_REDACTED")
         db.rollback()
         print(f"Account profile column check failed: {e}")
 
@@ -1097,9 +1092,7 @@ async def upload_loss_run(
     except HTTPException:
         raise
     except Exception as e:
-        print("LOSSQ UPLOAD ERROR TRACEBACK START")
-        traceback.print_exc()
-        print("LOSSQ UPLOAD ERROR TRACEBACK END")
+        print("LOSSQ_UPLOAD_ERROR_REDACTED")
         raise HTTPException(
             status_code=500,
             detail={
@@ -1129,9 +1122,7 @@ async def upload_multiple_loss_runs(
     except HTTPException:
         raise
     except Exception as e:
-        print("LOSSQ UPLOAD ERROR TRACEBACK START")
-        traceback.print_exc()
-        print("LOSSQ UPLOAD ERROR TRACEBACK END")
+        print("LOSSQ_UPLOAD_ERROR_REDACTED")
         raise HTTPException(
             status_code=500,
             detail={
@@ -1418,9 +1409,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             db.refresh(profile)
             account_profile_id = getattr(profile, "id", None)
         except Exception:
-            print("LOSSQ UPLOAD ERROR TRACEBACK START")
-            traceback.print_exc()
-            print("LOSSQ UPLOAD ERROR TRACEBACK END")
+            print("LOSSQ_UPLOAD_ERROR_REDACTED")
             account_profile_id = getattr(profile, "id", None)
 
     profile_response = dict(profile_data or {})
