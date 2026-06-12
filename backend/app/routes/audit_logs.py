@@ -4,12 +4,13 @@ import json
 from datetime import datetime
 from typing import Any
 
-from fastapi import APIRouter, Depends, Query, Request
+from fastapi import APIRouter, Depends, Query, Request, HTTPException
 from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from app.database import Base, engine, SessionLocal
 from app.models.audit_log import AuditLog
+from app.models.organization import Organization
 from app.routes.auth import get_current_user
 from app.services.audit_service import write_audit_event
 
@@ -466,6 +467,51 @@ def build_events(db: Session, current_user: Any, limit: int) -> tuple[list[dict]
     return events[:limit], source
 
 
+
+
+# LOSSQ_AUDIT_LOG_PACKAGE_GATE_V1
+AUDIT_LOG_ALLOWED_PLANS = {"agency", "founding_agency"}
+
+
+def normalize_audit_plan(plan: Any) -> str:
+    clean = str(plan or "free").strip().lower()
+
+    if clean in {"founder", "founding", "founding agency"}:
+        return "founding_agency"
+
+    if clean in {"enterprise"}:
+        return "agency"
+
+    if clean in {"pro"}:
+        return "professional"
+
+    return clean
+
+
+def require_audit_log_package(
+    current_user=Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    org_id = actor_value(current_user, "organization_id")
+
+    if not org_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Audit Logs are only available on the Agency and Founding Agency packages.",
+        )
+
+    organization = db.query(Organization).filter(Organization.id == org_id).first()
+    plan = normalize_audit_plan(getattr(organization, "plan", "free") if organization else "free")
+
+    if plan not in AUDIT_LOG_ALLOWED_PLANS:
+        raise HTTPException(
+            status_code=403,
+            detail="Audit Logs are only available on the Agency and Founding Agency packages.",
+        )
+
+    return current_user
+
+
 def audit_payload(limit: int, current_user: Any, db: Session) -> dict:
     try:
         events, source = build_events(db, current_user, limit)
@@ -527,7 +573,7 @@ def audit_summary_payload(limit: int, current_user: Any, db: Session) -> dict:
 @router.get("/")
 def list_audit_logs(
     limit: int = Query(100, ge=1, le=250),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_audit_log_package),
     db: Session = Depends(get_db),
 ):
     return audit_payload(limit=limit, current_user=current_user, db=db)
@@ -536,7 +582,7 @@ def list_audit_logs(
 @router.get("")
 def list_audit_logs_no_slash(
     limit: int = Query(100, ge=1, le=250),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_audit_log_package),
     db: Session = Depends(get_db),
 ):
     return audit_payload(limit=limit, current_user=current_user, db=db)
@@ -545,7 +591,7 @@ def list_audit_logs_no_slash(
 @router.get("/summary")
 def audit_log_summary(
     limit: int = Query(250, ge=1, le=500),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_audit_log_package),
     db: Session = Depends(get_db),
 ):
     return audit_summary_payload(limit=limit, current_user=current_user, db=db)
@@ -554,7 +600,7 @@ def audit_log_summary(
 @compat_router.get("/audit/events")
 def get_audit_events_compat(
     limit: int = Query(100, ge=1, le=250),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_audit_log_package),
     db: Session = Depends(get_db),
 ):
     return audit_payload(limit=limit, current_user=current_user, db=db)
@@ -563,7 +609,7 @@ def get_audit_events_compat(
 @compat_router.get("/audit/logs")
 def get_audit_logs_compat(
     limit: int = Query(100, ge=1, le=250),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_audit_log_package),
     db: Session = Depends(get_db),
 ):
     return audit_payload(limit=limit, current_user=current_user, db=db)
@@ -572,7 +618,7 @@ def get_audit_logs_compat(
 @compat_router.get("/audit-log")
 def get_audit_log_compat(
     limit: int = Query(100, ge=1, le=250),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_audit_log_package),
     db: Session = Depends(get_db),
 ):
     return audit_payload(limit=limit, current_user=current_user, db=db)
@@ -581,7 +627,7 @@ def get_audit_log_compat(
 @compat_router.get("/auth/audit-log")
 def get_auth_audit_log_compat(
     limit: int = Query(100, ge=1, le=250),
-    current_user=Depends(get_current_user),
+    current_user=Depends(require_audit_log_package),
     db: Session = Depends(get_db),
 ):
     return audit_payload(limit=limit, current_user=current_user, db=db)

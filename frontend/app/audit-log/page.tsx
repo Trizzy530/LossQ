@@ -91,6 +91,37 @@ function parseAuditDate(value?: string) {
   return date;
 }
 
+
+
+// LOSSQ_AUDIT_LOG_FRONTEND_PACKAGE_GATE_V1
+function normalizeAuditPlan(plan: any) {
+  const clean = String(plan || "free").trim().toLowerCase();
+
+  if (clean === "founder" || clean === "founding" || clean === "founding agency") {
+    return "founding_agency";
+  }
+
+  if (clean === "enterprise") return "agency";
+  if (clean === "pro") return "professional";
+
+  return clean;
+}
+
+function canAccessAuditLogsFromBilling(data: any) {
+  const plan = normalizeAuditPlan(
+    data?.plan ||
+      data?.subscription_plan ||
+      data?.plan_name ||
+      data?.organization?.plan ||
+      "free"
+  );
+
+  const features = Array.isArray(data?.features) ? data.features.map((item: any) => String(item)) : [];
+
+  return plan === "agency" || plan === "founding_agency" || features.includes("audit_logs");
+}
+
+
 function formatDate(value?: string) {
   const date = parseAuditDate(value);
 
@@ -602,8 +633,49 @@ export default function AuditLogPage() {
       return;
     }
 
-    setCurrentUserEmail(getCurrentUserEmail());
-    loadAuditLog();
+    async function verifyAuditAccessAndLoad() {
+      setLoading(true);
+      setError("");
+
+      try {
+        const response = await fetch(`${API}/billing/status`, {
+          method: "GET",
+          headers: {
+            "Content-Type": "application/json",
+            ...(token ? { Authorization: `Bearer ${token}` } : {}),
+          },
+          cache: "no-store",
+        });
+
+        if (response.status === 401 || response.status === 403) {
+          localStorage.removeItem("lossq_token");
+          localStorage.removeItem("token");
+          localStorage.removeItem("access_token");
+          router.push("/login?expired=1");
+          return;
+        }
+
+        const billingData = response.ok ? await response.json() : {};
+
+        if (!canAccessAuditLogsFromBilling(billingData)) {
+          setEvents([]);
+          setSummary(null);
+          setError("Audit Logs are only included with the Agency and Founding Agency packages.");
+          setLoading(false);
+          return;
+        }
+
+        setCurrentUserEmail(getCurrentUserEmail());
+        await loadAuditLog();
+      } catch (err: any) {
+        setEvents([]);
+        setSummary(null);
+        setError(err?.message || "Audit Log access could not be verified.");
+        setLoading(false);
+      }
+    }
+
+    verifyAuditAccessAndLoad();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
