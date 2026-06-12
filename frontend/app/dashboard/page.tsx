@@ -3032,19 +3032,46 @@ async function exportExecutiveReport() {
 
     setMessage("Generating carrier submission packet...");
 
-    await downloadPdf(
-      `${API}/reports/carrier-packet-pdf${query}`,
-      "lossq_carrier_submission_packet.pdf",
-      {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify(buildReportPayload()),
-      }
-    );
+    try {
+      await downloadPdf(
+        `${API}/reports/carrier-packet-pdf${query}`,
+        "lossq_carrier_submission_packet.pdf",
+        {
+          method: "POST",
+          headers: {
+            ...authHeaders(),
+            "Content-Type": "application/json",
+          },
+          body: JSON.stringify(buildReportPayload()),
+        }
+      );
 
-    setMessage("Carrier submission packet generated.");
+      setMessage("Carrier submission packet generated.");
+    } catch (error: any) {
+      console.error("Carrier packet generation failed:", error);
+
+      try {
+        setMessage("Carrier packet POST failed. Trying authenticated fallback export...");
+
+        await downloadPdf(
+          `${API}/reports/carrier-packet-pdf${query}`,
+          "lossq_carrier_submission_packet.pdf",
+          {
+            method: "GET",
+            headers: authHeaders(),
+          }
+        );
+
+        setMessage("Carrier submission packet generated using fallback export.");
+      } catch (fallbackError: any) {
+        console.error("Carrier packet fallback failed:", fallbackError);
+        setMessage(
+          `Carrier packet failed. ${
+            fallbackError?.message || error?.message || "Please refresh and try again."
+          }`
+        );
+      }
+    }
   }
 
   function copyRenewalMemo() {
