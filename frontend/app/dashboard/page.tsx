@@ -1097,7 +1097,45 @@ function clearDeletedProfileBrowserTraces(profileToDelete: any) {
 }
 
 
+
+// LOSSQ_CLEAR_DASHBOARD_TENANT_CACHE_V1
+function clearLossQDashboardTenantCache() {
+  if (typeof window === "undefined") return;
+
+  const shouldClear = (key: string) => {
+    const clean = String(key || "").toLowerCase();
+
+    return (
+      clean.includes("claim") ||
+      clean.includes("claims") ||
+      clean.includes("profile") ||
+      clean.includes("account") ||
+      clean.includes("dashboard") ||
+      clean.includes("carrier") ||
+      clean.includes("renewal")
+    );
+  };
+
+  Object.keys(localStorage).forEach((key) => {
+    if (shouldClear(key) && key !== "lossq_token") {
+      localStorage.removeItem(key);
+    }
+  });
+
+  Object.keys(sessionStorage).forEach((key) => {
+    if (shouldClear(key)) {
+      sessionStorage.removeItem(key);
+    }
+  });
+}
+
+
 export default function DashboardPage() {
+
+  useEffect(() => {
+    clearLossQDashboardTenantCache();
+  }, []);
+
   const router = useRouter();
 
   const [activeTool, setActiveTool] = useState<ToolKey>("overview");

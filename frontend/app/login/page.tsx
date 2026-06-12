@@ -59,6 +59,40 @@ function getSafeNextPath() {
   return "/dashboard";
 }
 
+
+// LOSSQ_CLEAR_ACCOUNT_CACHE_ON_LOGIN_V1
+function clearLossQAccountCacheBeforeLogin() {
+  if (typeof window === "undefined") return;
+
+  const shouldClear = (key: string) => {
+    const clean = String(key || "").toLowerCase();
+
+    return (
+      clean.startsWith("lossq_") ||
+      clean.includes("claim") ||
+      clean.includes("claims") ||
+      clean.includes("profile") ||
+      clean.includes("account") ||
+      clean.includes("dashboard") ||
+      clean.includes("carrier") ||
+      clean.includes("renewal")
+    );
+  };
+
+  Object.keys(localStorage).forEach((key) => {
+    if (shouldClear(key)) {
+      localStorage.removeItem(key);
+    }
+  });
+
+  Object.keys(sessionStorage).forEach((key) => {
+    if (shouldClear(key)) {
+      sessionStorage.removeItem(key);
+    }
+  });
+}
+
+
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [step, setStep] = useState(1);
@@ -116,6 +150,7 @@ export default function LoginPage() {
       throw new Error("No login token returned.");
     }
 
+clearLossQAccountCacheBeforeLogin();
 localStorage.setItem("lossq_token", token);
 localStorage.setItem("lossq_user", JSON.stringify(loginData?.user || { email: cleanEmail }));
 localStorage.setItem("lossq_login_time", Date.now().toString());
