@@ -170,6 +170,8 @@ def get_db():
 
 
 def extract_exposure_inputs_from_raw_text(raw_text: str):
+    # LOSSQ_DISABLE_AUTO_EXPOSURE_EXTRACTION_V1
+    return {}
     # LOSSQ_RAW_TEXT_EXPOSURE_INPUT_EXTRACTOR_V1
     # Fallback extractor for clean commercial loss runs with labeled exposure/premium fields.
 
@@ -295,28 +297,8 @@ def parse_file(file_path: str, filename: str):
         profile["validation"] = validation
         profile["raw_text_preview"] = raw_text_preview
 
-        # LOSSQ_MERGE_EXPOSURE_INPUTS_BEFORE_PARSE_RETURN_V2
-        try:
-            raw_text_preview_value = str(
-                result.get("raw_text_preview")
-                or result.get("raw_text")
-                or profile.get("raw_text_preview")
-                or ""
-            )
-        
-            if raw_text_preview_value:
-                profile["raw_text_preview"] = raw_text_preview_value[:5000]
-        
-            extracted_exposure_inputs = extract_exposure_inputs_from_raw_text(raw_text_preview_value)
-        
-            for field, value in (extracted_exposure_inputs or {}).items():
-                if value not in [None, "", "Needs Review", "Not Set"] and not profile.get(field):
-                    profile[field] = value
-        
-            profile = derive_exposure_inputs_from_policy_schedule(profile)
-        except Exception as exposure_error:
-            print(f"Exposure input merge failed: {exposure_error}")
-
+        # LOSSQ_DISABLE_AUTO_EXPOSURE_PARSE_MERGE_V1
+        # Exposure Inputs are now manual only. Do not auto-merge premium/exposure fields from uploads.
         return claims, profile
 
     if lower_name.endswith(".csv") or lower_name.endswith(".xlsx"):

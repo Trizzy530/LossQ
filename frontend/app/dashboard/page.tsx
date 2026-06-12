@@ -4972,11 +4972,11 @@ const trendNoteDisplay =
               </p>
 
               <h2 className="text-2xl md:text-3xl font-bold mb-4">
-                Automatic Exposure Inputs + Manual Overrides
+                Manual Premium & Exposure Inputs
               </h2>
 
               <p className="text-slate-400 mb-8 max-w-4xl">
-                LossQ automatically extracts premium, exposure, limits, class, and underwriting data from the uploaded loss run when available. You can manually override or complete missing values, then save them permanently to the account profile.
+                Manually enter premium, exposure, limits, class, and underwriting data for the selected account. These values support Premium Forecast, Renewal Risk, Submission Builder, and underwriting review.
               </p>
 
               <div className="rounded-3xl border border-blue-400/20 bg-blue-500/10 p-5 mb-8">
@@ -5041,9 +5041,6 @@ const trendNoteDisplay =
               <div className="mt-8 flex flex-wrap gap-4">
                 <button onClick={saveExposureInputs} className="btn-success">
                   Save Exposure Inputs
-                </button>
-                <button onClick={saveProfile} className="btn-secondary">
-                  Save Full Profile
                 </button>
                 <button onClick={() => changeActiveTool("premium-forecast")} className="btn-purple">
                   Open Premium Forecast
