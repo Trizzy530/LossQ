@@ -28,6 +28,68 @@ class CarrierPacketRequest(BaseModel):
     policy_number: str
 
 
+
+
+# LOSSQ_CARRIER_PACKET_CURRENT_USER_ORG_BRANDING_V1
+def lossq_carrier_pdf_user_value(user, key, default=""):
+    if isinstance(user, dict):
+        return user.get(key, default) or default
+    return getattr(user, key, default) or default
+
+
+def lossq_carrier_pdf_clean_display(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    blocked = {
+        "agency not set",
+        "lossq demo agency",
+        "lossq user",
+        "none",
+        "null",
+        "n/a",
+        "-",
+    }
+
+    if raw.strip().lower() in blocked:
+        return ""
+
+    return raw
+
+
+def lossq_carrier_pdf_current_user_agency_name(db, current_user):
+    org_id = (
+        lossq_carrier_pdf_user_value(current_user, "organization_id")
+        or lossq_carrier_pdf_user_value(current_user, "org_id")
+    )
+
+    organization = None
+
+    if org_id:
+        try:
+            organization = (
+                db.query(Organization)
+                .filter(Organization.id == org_id)
+                .first()
+            )
+        except Exception:
+            organization = None
+
+    if organization:
+        agency_name = lossq_carrier_pdf_clean_display(getattr(organization, "agency_name", ""))
+        organization_name = lossq_carrier_pdf_clean_display(getattr(organization, "name", ""))
+        if agency_name or organization_name:
+            return agency_name or organization_name
+
+    return (
+        lossq_carrier_pdf_clean_display(lossq_carrier_pdf_user_value(current_user, "agency_name"))
+        or lossq_carrier_pdf_clean_display(lossq_carrier_pdf_user_value(current_user, "organization_name"))
+        or "Agency Not Set"
+    )
+
+
+
 def get_db():
     db = SessionLocal()
     try:

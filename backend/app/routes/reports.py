@@ -6982,6 +6982,101 @@ def get_report_agency_info(db: Session, current_user: dict | None):
 
 
 
+
+
+# LOSSQ_PDF_CURRENT_USER_ORG_BRANDING_V1
+def lossq_pdf_user_value(user, key, default=""):
+    if isinstance(user, dict):
+        return user.get(key, default) or default
+    return getattr(user, key, default) or default
+
+
+def lossq_pdf_clean_display(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    blocked = {
+        "agency not set",
+        "lossq demo agency",
+        "lossq user",
+        "none",
+        "null",
+        "n/a",
+        "-",
+    }
+
+    if raw.strip().lower() in blocked:
+        return ""
+
+    return raw
+
+
+def lossq_pdf_current_user_agency_name(db, current_user):
+    org_id = (
+        lossq_pdf_user_value(current_user, "organization_id")
+        or lossq_pdf_user_value(current_user, "org_id")
+    )
+
+    organization = None
+
+    if org_id:
+        try:
+            organization = (
+                db.query(Organization)
+                .filter(Organization.id == org_id)
+                .first()
+            )
+        except Exception:
+            organization = None
+
+    agency_name = ""
+    organization_name = ""
+
+    if organization:
+        agency_name = lossq_pdf_clean_display(getattr(organization, "agency_name", ""))
+        organization_name = lossq_pdf_clean_display(getattr(organization, "name", ""))
+
+    user_agency_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "agency_name"))
+    user_org_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "organization_name"))
+
+    return agency_name or organization_name or user_agency_name or user_org_name or "Agency Not Set"
+
+
+def lossq_pdf_current_user_report_created_by(current_user):
+    first_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "first_name"))
+    last_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "last_name"))
+    full_name = f"{first_name} {last_name}".strip()
+
+    if full_name:
+        return full_name
+
+    name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "name"))
+    if name:
+        return name
+
+    email = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "email"))
+    if email:
+        return email
+
+    return "Account User"
+
+
+def lossq_pdf_current_user_agency_info(db, current_user):
+    agency_name = lossq_pdf_current_user_agency_name(db, current_user)
+    org_id = (
+        lossq_pdf_user_value(current_user, "organization_id")
+        or lossq_pdf_user_value(current_user, "org_id")
+    )
+
+    return {
+        "agency_name": agency_name,
+        "organization_name": agency_name,
+        "organization_id": org_id,
+    }
+
+
+
 # LOSSQ_ORGANIZATION_PDF_BRANDING_V2
 def get_report_agency_info(db, current_user):
     from app.models.organization import Organization
@@ -7086,7 +7181,7 @@ def get_creator(current_user: dict | None):
     if creator and "@" not in creator:
         return creator
 
-    return "LossQ User"
+    return lossq_pdf_current_user_report_created_by(current_user) if "current_user" in locals() else "Account User"
 
 def get_logo_path():
     candidates = [
@@ -7572,9 +7667,9 @@ def make_doc(title: str):
     # LOSSQ_ATTACH_AGENCY_INFO_TO_PDF_DOC_V1
     try:
         _lossq_ctx = locals().get("ctx", {})
-        doc._agency_info = pdf_agency_name_only(_lossq_ctx.get("agency_info", {}) if isinstance(_lossq_ctx, dict) else {})
+        doc._agency_info = lossq_pdf_current_user_agency_info(db, current_user)
     except Exception:
-        doc._agency_info = {}
+        doc._agency_info = lossq_pdf_current_user_agency_info(db, current_user)
     styles = getSampleStyleSheet()
     styles.add(
         ParagraphStyle(
@@ -8287,13 +8382,13 @@ def profile_rows(profile, policy_number, creator):
         ["Insured", clean(profile.get("business_name")) or "Selected Account"],
         ["Writing Carrier", clean(profile.get("writing_carrier")) or clean(profile.get("carrier_name")) or "-"],
         ["Carrier", clean(profile.get("carrier_name")) or "-"],
-        ["Producing Agency", clean(profile.get("agency_name")) or "-"],
+        ["Producing Agency", lossq_pdf_current_user_agency_name(db, current_user)],
         ["Account / Policy", clean(policy_number) or clean(profile.get("policy_number")) or "-"],
         ["Account Number", clean(profile.get("account_number")) or clean(profile.get("customer_number")) or "-"],
         ["Effective Date", clean(profile.get("effective_date")) or "-"],
         ["Expiration Date", clean(profile.get("expiration_date")) or "-"],
         ["Evaluation Date", clean(profile.get("evaluation_date")) or datetime.utcnow().date().isoformat()],
-        ["Report Created By", creator],
+        ["Report Created By", lossq_pdf_current_user_report_created_by(current_user)],
     ]
 
 
@@ -8551,7 +8646,7 @@ def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=Non
         ["Dashboard Field", "Value"],
         ["Insured / Account", lossq_report_display(profile.get("business_name") or profile.get("insured") or profile.get("account_name"))],
         ["Writing Carrier", lossq_report_display(profile.get("writing_carrier") or profile.get("carrier_name"))],
-        ["Producing Agency", lossq_report_display(profile.get("agency_name"))],
+        ["Producing Agency", lossq_pdf_current_user_agency_name(db, current_user)],
         ["Account Number", lossq_report_display(profile.get("account_number") or profile.get("customer_number"))],
         ["Selected Policy / Account Key", lossq_report_display(effective_policy)],
         ["Policy Period", f"{lossq_report_display(profile.get('effective_date'))} to {lossq_report_display(profile.get('expiration_date'))}"],
