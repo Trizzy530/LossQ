@@ -28,6 +28,7 @@ from reportlab.platypus import (
 
 from app.database import SessionLocal
 from app.auth_utils import get_current_user
+from app.plan_limits import require_package_access
 from app.models.claim import Claim
 from app.models.account_profile import AccountProfile
 from app.routes.summary import (
@@ -8689,7 +8690,7 @@ def executive_report_pdf_post(
     policy_number: str | None = Query(default=None),
     profile_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_package_access),
 ):
     payload = report_payload_dict(report_payload)
     profile_payload = report_body_profile(payload)
@@ -8746,7 +8747,7 @@ def carrier_packet_pdf_post(
     policy_number: str | None = Query(default=None),
     profile_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_package_access),
 ):
     payload = report_payload_dict(report_payload)
     profile_payload = report_body_profile(payload)
@@ -8802,7 +8803,7 @@ def executive_report_pdf(
     policy_number: str | None = Query(default=None),
     profile_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_package_access),
 ):
     ctx = build_context(db, current_user, policy_number, profile_id=profile_id)
     record_audit_event(
@@ -8943,7 +8944,7 @@ def carrier_packet_pdf(
     policy_number: str | None = Query(default=None),
     profile_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_package_access),
 ):
     ctx = build_context(db, current_user, policy_number, profile_id=profile_id)
     record_audit_event(
@@ -8987,7 +8988,7 @@ def loss_run_template_pdf(
     policy_number: str | None = Query(default=None),
     profile_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user: dict = Depends(require_package_access),
 ):
     ctx = build_context(db, current_user, policy_number, profile_id=profile_id)
     profile = ctx["profile"]

@@ -7,6 +7,7 @@ from app.database import SessionLocal
 from app.models.claim import Claim
 from app.models.account_profile import AccountProfile
 from app.auth_utils import get_current_user
+from app.plan_limits import require_package_access
 
 router = APIRouter(prefix="/summary", tags=["Summary"])
 
@@ -746,7 +747,7 @@ def lossq_summary_force_exposure_from_result_profile(result, claims):
 
 
 @router.get("/underwriting")
-def underwriting_summary(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def underwriting_summary(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(require_package_access)):
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
     quality = data_quality(claims, policy_numbers_used, profile_data)
 

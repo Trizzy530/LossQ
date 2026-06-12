@@ -5,6 +5,7 @@ from pydantic import BaseModel
 from app.database import SessionLocal
 from app.models.claim import Claim
 from app.auth_utils import get_current_user
+from app.plan_limits import require_package_access
 from app.routes.summary import build_underwriting_intelligence
 from fastapi.responses import Response
 from reportlab.lib.pagesizes import letter
@@ -14,7 +15,9 @@ from app.role_utils import require_permission
 
 from app.services.audit import record_audit_event
 
-router = APIRouter(prefix="/carrier-packet", tags=["Carrier Packet"])
+router = APIRouter(
+    # LOSSQ_CARRIER_PACKET_ROUTER_PACKAGE_GATE_V1
+    dependencies=[Depends(require_package_access)],prefix="/carrier-packet", tags=["Carrier Packet"])
 
 
 class CarrierPacketRequest(BaseModel):

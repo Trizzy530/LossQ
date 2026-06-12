@@ -4,6 +4,7 @@ from datetime import datetime
 
 from app.database import SessionLocal
 from app.auth_utils import get_current_user
+from app.plan_limits import require_package_access
 from app.routes.summary import build_underwriting_intelligence, get_claims_for_account, data_quality, money, is_open_claim, has_litigation, is_flagged_claim
 from app.models.claim import Claim
 from app.models.account_profile import AccountProfile
@@ -1673,7 +1674,7 @@ def lossq_force_exposure_from_result_profile(result):
 
 
 @router.get("/decision")
-def renewal_decision(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def renewal_decision(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(require_package_access)):
     result = engine_response(build_underwriter_decision_engine, db, current_user, policy_number)
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
     profile_data = lossq_best_exposure_profile(result, profile_data)
@@ -1902,7 +1903,7 @@ def lossq_marketable_carrier_appetite(result, profile_data, claims, policy_numbe
 
 
 @router.get("/carrier-appetite")
-def carrier_appetite(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def carrier_appetite(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(require_package_access)):
     result = engine_response(build_carrier_appetite_engine, db, current_user, policy_number)
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
 
@@ -1922,7 +1923,7 @@ def carrier_appetite(policy_number: str | None = Query(default=None), db: Sessio
 
 
 @router.get("/submission-readiness")
-def submission_readiness(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def submission_readiness(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(require_package_access)):
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
     quality = data_quality(claims, policy_numbers_used, profile_data)
     if not quality["is_credible"]:
@@ -1986,7 +1987,7 @@ def lossq_apply_exposure_to_premium_forecast(result, profile_data, claims):
 
 
 @router.get("/premium-forecast")
-def premium_forecast(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def premium_forecast(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(require_package_access)):
     result = engine_response(build_premium_forecast_engine, db, current_user, policy_number)
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
     profile_data = lossq_best_exposure_profile(result, profile_data)
@@ -1997,7 +1998,7 @@ def premium_forecast(policy_number: str | None = Query(default=None), db: Sessio
     return result
 
 @router.get("/carrier-match")
-def carrier_match(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def carrier_match(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(require_package_access)):
     result = engine_response(build_carrier_match_engine, db, current_user, policy_number)
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
     profile_data = lossq_best_exposure_profile(result, profile_data)
@@ -2277,7 +2278,7 @@ LossQ Note: This memo is generated from saved account profile data, policy sched
 
 
 @router.get("/memo")
-def renewal_memo(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def renewal_memo(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(require_package_access)):
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
 
     # Recover full saved account profile/exposure data before building memo.

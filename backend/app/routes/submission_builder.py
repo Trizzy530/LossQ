@@ -3,6 +3,7 @@ from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
 from app.auth_utils import get_current_user
+from app.plan_limits import require_package_access
 from app.routes.summary import build_underwriting_intelligence, get_claims_for_account, data_quality
 from app.routes.renewal import build_underwriter_decision_engine, build_carrier_appetite_engine, build_carrier_match_engine, build_premium_forecast_engine, money, is_open, is_litigated
 
@@ -18,7 +19,7 @@ def get_db():
 
 
 @router.get("/")
-def submission_builder(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
+def submission_builder(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(require_package_access)):
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
     quality = data_quality(claims, policy_numbers_used, profile_data)
     if not quality["is_credible"]:
