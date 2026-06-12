@@ -12,6 +12,8 @@ from reportlab.pdfgen import canvas
 from io import BytesIO
 from app.role_utils import require_permission
 
+from app.services.audit import record_audit_event
+
 router = APIRouter(prefix="/carrier-packet", tags=["Carrier Packet"])
 
 
@@ -33,6 +35,21 @@ def generate_carrier_packet(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("export")),
 ):
+    # LOSSQ_CARRIER_PACKET_GENERATE_AUDIT_V1
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="carrier_packet_generated",
+        resource_type="report",
+        resource_id=str(getattr(request, "policy_number", "") or ""),
+        details={
+            "event": "carrier_packet_generated",
+            "report_type": "carrier_packet",
+            "policy_number": getattr(request, "policy_number", ""),
+            "route": "/carrier-packet/generate",
+        },
+    )
+
     claims = (
         db.query(Claim)
         .filter(Claim.organization_id == current_user["organization_id"])
@@ -147,6 +164,20 @@ def download_carrier_packet_pdf(
     current_user: dict = Depends(require_permission("export")),
 ):
     packet = generate_carrier_packet(request, db, current_user)
+
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="carrier_packet_pdf_downloaded",
+        resource_type="report",
+        resource_id=str(getattr(request, "policy_number", "") or ""),
+        details={
+            "event": "carrier_packet_pdf_downloaded",
+            "report_type": "carrier_packet_pdf",
+            "policy_number": getattr(request, "policy_number", ""),
+            "route": "/carrier-packet/pdf",
+        },
+    )
 
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)

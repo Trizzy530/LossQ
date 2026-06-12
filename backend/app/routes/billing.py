@@ -18,6 +18,8 @@ from app.models.user import User
 
 load_dotenv()
 
+from app.services.audit import record_audit_event
+
 router = APIRouter(prefix="/billing", tags=["Billing"])
 security = HTTPBearer()
 
@@ -301,6 +303,21 @@ def create_checkout_session(
         },
     )
 
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="billing_checkout_started",
+        resource_type="billing",
+        resource_id=str(session.id),
+        details={
+            "event": "billing_checkout_started",
+            "session_id": session.id,
+            "checkout_url_created": bool(session.url),
+            "price_id": price_id if "price_id" in locals() else "",
+            "plan": getattr(data, "plan", "") or getattr(data, "plan_key", "") or getattr(data, "price_id", ""),
+        },
+    )
+
     return {"checkout_url": session.url, "session_id": session.id}
 
 
@@ -418,5 +435,21 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
             org.user_limit = 1
             org.upload_limit = 0
             db.commit()
+
+    record_audit_event(
+        db,
+        current_user={"organization_id": getattr(org, "id", None)} if "org" in locals() and org else {},
+        action="billing_webhook_received",
+        resource_type="billing",
+        resource_id=str(event_type or ""),
+        details={
+            "event": "billing_webhook_received",
+            "stripe_event_type": event_type,
+            "stripe_event_id": event.get("id") if isinstance(event, dict) else "",
+            "subscription_id": subscription_id if "subscription_id" in locals() else "",
+            "organization_id": getattr(org, "id", None) if "org" in locals() and org else None,
+        },
+        request=request,
+    )
 
     return {"received": True}

@@ -45,6 +45,8 @@ from app.routes.renewal import (
     is_litigated,
 )
 
+from app.services.audit import record_audit_event
+
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 NAVY = colors.HexColor("#0f172a")
@@ -8261,6 +8263,21 @@ def executive_report_pdf_post(
         profile_id=profile_id or payload.get("profile_id"),
         report_payload=payload,
     )
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="executive_report_generated",
+        resource_type="report",
+        resource_id=str(effective_policy or ""),
+        details={
+            "event": "executive_report_generated",
+            "report_type": "executive_underwriting_report",
+            "policy_number": effective_policy,
+            "route": "/reports/executive-report-pdf",
+            "method": "POST",
+        },
+    )
+
     return build_executive_pdf_response(ctx, effective_policy)
 
 
@@ -8286,6 +8303,21 @@ def carrier_packet_pdf_post(
         profile_id=profile_id or payload.get("profile_id"),
         report_payload=payload,
     )
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="carrier_packet_pdf_generated",
+        resource_type="report",
+        resource_id=str(effective_policy or ""),
+        details={
+            "event": "carrier_packet_pdf_generated",
+            "report_type": "carrier_submission_packet",
+            "policy_number": effective_policy,
+            "route": "/reports/carrier-packet-pdf",
+            "method": "POST",
+        },
+    )
+
     return build_carrier_packet_pdf_response(ctx, effective_policy)
 
 
@@ -8297,6 +8329,21 @@ def executive_report_pdf(
     current_user: dict = Depends(get_current_user),
 ):
     ctx = build_context(db, current_user, policy_number, profile_id=profile_id)
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="executive_report_generated",
+        resource_type="report",
+        resource_id=str(policy_number or ""),
+        details={
+            "event": "executive_report_generated",
+            "report_type": "executive_underwriting_report",
+            "policy_number": policy_number,
+            "route": "/reports/executive-report-pdf",
+            "method": "GET",
+        },
+    )
+
     return build_executive_pdf_response(ctx, policy_number)
 
 
@@ -8396,6 +8443,21 @@ def carrier_packet_pdf(
     current_user: dict = Depends(get_current_user),
 ):
     ctx = build_context(db, current_user, policy_number, profile_id=profile_id)
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="carrier_packet_pdf_generated",
+        resource_type="report",
+        resource_id=str(policy_number or ""),
+        details={
+            "event": "carrier_packet_pdf_generated",
+            "report_type": "carrier_submission_packet",
+            "policy_number": policy_number,
+            "route": "/reports/carrier-packet-pdf",
+            "method": "GET",
+        },
+    )
+
     return build_carrier_packet_pdf_response(ctx, policy_number)
 
 
