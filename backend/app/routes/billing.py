@@ -21,7 +21,9 @@ load_dotenv()
 router = APIRouter(prefix="/billing", tags=["Billing"])
 security = HTTPBearer()
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-this-secret-key-later")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError("SECRET_KEY environment variable is required")
 ALGORITHM = "HS256"
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://lossq.com").rstrip("/")
 
