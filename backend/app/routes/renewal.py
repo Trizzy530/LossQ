@@ -1284,10 +1284,70 @@ def lossq_apply_exposure_to_carrier_match(result, profile_data, claims):
     return result
 
 
+
+# LOSSQ_FORCE_RESULT_ACCOUNT_PROFILE_EXPOSURE_SOURCE_V1
+def lossq_profile_has_exposure_values(profile_data):
+    if not profile_data:
+        return False
+
+    try:
+        data = profile_data if isinstance(profile_data, dict) else lossq_normalize_profile_data(profile_data)
+    except Exception:
+        data = profile_data if isinstance(profile_data, dict) else {}
+
+    exposure_keys = [
+        "current_premium",
+        "expiring_premium",
+        "target_renewal_premium",
+        "payroll",
+        "revenue",
+        "sales",
+        "receipts",
+        "vehicle_count",
+        "driver_count",
+        "employee_count",
+        "experience_mod",
+        "mod",
+        "line_of_business",
+        "class_code",
+        "class_codes",
+        "limits",
+        "coverage_limit",
+        "deductible",
+        "retention",
+        "property_tiv",
+        "tiv",
+    ]
+
+    for key in exposure_keys:
+        value = data.get(key) if isinstance(data, dict) else None
+        if value not in (None, "", "0", "$0", 0):
+            return True
+
+    return False
+
+
+def lossq_best_exposure_profile(result, profile_data):
+    result_profile = {}
+    try:
+        result_profile = dict((result or {}).get("account_profile") or {})
+    except Exception:
+        result_profile = {}
+
+    if lossq_profile_has_exposure_values(profile_data):
+        return profile_data
+
+    if lossq_profile_has_exposure_values(result_profile):
+        return result_profile
+
+    return profile_data or result_profile or {}
+
+
 @router.get("/decision")
 def renewal_decision(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     result = engine_response(build_underwriter_decision_engine, db, current_user, policy_number)
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
+    profile_data = lossq_best_exposure_profile(result, profile_data)
     result = lossq_apply_exposure_to_decision(result, profile_data, claims)
     result["policy_numbers_used"] = policy_numbers_used
     return result
@@ -1296,6 +1356,7 @@ def renewal_decision(policy_number: str | None = Query(default=None), db: Sessio
 def carrier_appetite(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     result = engine_response(build_carrier_appetite_engine, db, current_user, policy_number)
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
+    profile_data = lossq_best_exposure_profile(result, profile_data)
     result = lossq_apply_exposure_to_appetite(result, profile_data, claims)
     result["policy_numbers_used"] = policy_numbers_used
     return result
@@ -1319,6 +1380,7 @@ def premium_forecast(policy_number: str | None = Query(default=None), db: Sessio
 def carrier_match(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     result = engine_response(build_carrier_match_engine, db, current_user, policy_number)
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
+    profile_data = lossq_best_exposure_profile(result, profile_data)
     result = lossq_apply_exposure_to_carrier_match(result, profile_data, claims)
     result["policy_numbers_used"] = policy_numbers_used
     return result
