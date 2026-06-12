@@ -8278,6 +8278,23 @@ def executive_report_pdf_post(
         },
     )
 
+    profile_for_audit = ctx.get("profile", {}) if isinstance(ctx, dict) else {}
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="executive_report_generated",
+        resource_type="report",
+        resource_id=str(effective_policy or ""),
+        details={
+            "event": "executive_report_generated",
+            "report_type": "executive_underwriting_report",
+            "policy_number": effective_policy,
+            "business_name": profile_for_audit.get("business_name") if isinstance(profile_for_audit, dict) else "",
+            "route": "/reports/executive-report-pdf",
+            "method": "POST",
+        },
+    )
+
     return build_executive_pdf_response(ctx, effective_policy)
 
 
@@ -8318,6 +8335,23 @@ def carrier_packet_pdf_post(
         },
     )
 
+    profile_for_audit = ctx.get("profile", {}) if isinstance(ctx, dict) else {}
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="carrier_packet_pdf_generated",
+        resource_type="report",
+        resource_id=str(effective_policy or ""),
+        details={
+            "event": "carrier_packet_pdf_generated",
+            "report_type": "carrier_submission_packet",
+            "policy_number": effective_policy,
+            "business_name": profile_for_audit.get("business_name") if isinstance(profile_for_audit, dict) else "",
+            "route": "/reports/carrier-packet-pdf",
+            "method": "POST",
+        },
+    )
+
     return build_carrier_packet_pdf_response(ctx, effective_policy)
 
 
@@ -8339,6 +8373,23 @@ def executive_report_pdf(
             "event": "executive_report_generated",
             "report_type": "executive_underwriting_report",
             "policy_number": policy_number,
+            "route": "/reports/executive-report-pdf",
+            "method": "GET",
+        },
+    )
+
+    profile_for_audit = ctx.get("profile", {}) if isinstance(ctx, dict) else {}
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="executive_report_generated",
+        resource_type="report",
+        resource_id=str(policy_number or ""),
+        details={
+            "event": "executive_report_generated",
+            "report_type": "executive_underwriting_report",
+            "policy_number": policy_number,
+            "business_name": profile_for_audit.get("business_name") if isinstance(profile_for_audit, dict) else "",
             "route": "/reports/executive-report-pdf",
             "method": "GET",
         },
@@ -8453,6 +8504,23 @@ def carrier_packet_pdf(
             "event": "carrier_packet_pdf_generated",
             "report_type": "carrier_submission_packet",
             "policy_number": policy_number,
+            "route": "/reports/carrier-packet-pdf",
+            "method": "GET",
+        },
+    )
+
+    profile_for_audit = ctx.get("profile", {}) if isinstance(ctx, dict) else {}
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="carrier_packet_pdf_generated",
+        resource_type="report",
+        resource_id=str(policy_number or ""),
+        details={
+            "event": "carrier_packet_pdf_generated",
+            "report_type": "carrier_submission_packet",
+            "policy_number": policy_number,
+            "business_name": profile_for_audit.get("business_name") if isinstance(profile_for_audit, dict) else "",
             "route": "/reports/carrier-packet-pdf",
             "method": "GET",
         },
