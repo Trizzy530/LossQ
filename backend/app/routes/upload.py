@@ -427,6 +427,70 @@ def choose_upload_account_key(profile_data: dict, direct_profile: dict | None = 
     return ""
 
 
+
+
+# LOSSQ_TABULAR_UPLOAD_POLICY_SCHEDULE_FROM_CLAIMS_V1
+def build_policy_schedule_from_claims_for_upload(claims):
+    """
+    CSV/XLSX files often do not include a profile-level policy schedule.
+    Build one from claim rows so the dashboard keeps all account claims after reload/back navigation.
+    """
+    schedule = {}
+
+    for claim in claims or []:
+        if not isinstance(claim, dict):
+            continue
+
+        policy_number = clean_profile_value(
+            claim.get("policy_number")
+            or claim.get("policyNumber")
+            or claim.get("policy_no")
+            or claim.get("policy")
+        )
+
+        if not policy_number or is_bad_policy_key_for_upload(policy_number):
+            continue
+
+        key = policy_number.strip().upper()
+
+        line_of_business = clean_profile_value(
+            claim.get("line_of_business")
+            or claim.get("coverage")
+            or claim.get("coverage_line")
+            or claim.get("lob")
+            or claim.get("policy_type")
+        )
+
+        if key not in schedule:
+            schedule[key] = {
+                "policy_number": policy_number,
+                "line_of_business": line_of_business or "Unknown",
+                "claim_count": 0,
+                "total_incurred": 0,
+            }
+
+        schedule[key]["claim_count"] += 1
+
+        try:
+            incurred_raw = (
+                claim.get("total_incurred")
+                or claim.get("incurred")
+                or claim.get("loss_amount")
+                or claim.get("amount")
+                or 0
+            )
+            incurred = float(str(incurred_raw).replace("$", "").replace(",", "").strip() or 0)
+        except Exception:
+            incurred = 0
+
+        schedule[key]["total_incurred"] += incurred
+
+        if line_of_business and schedule[key].get("line_of_business") in ("", "Unknown", None):
+            schedule[key]["line_of_business"] = line_of_business
+
+    return list(schedule.values())
+
+
 def merge_policy_lists_for_upload(*policy_lists):
     merged = {}
 
@@ -1363,6 +1427,14 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         if claim_policy_number and not is_bad_policy_key_for_upload(claim_policy_number):
             primary_claim_policy_number = claim_policy_number
             break
+
+    # LOSSQ_TABULAR_UPLOAD_POLICY_SCHEDULE_SAVE_V1
+    claim_policy_schedule = build_policy_schedule_from_claims_for_upload(all_parsed_claims)
+    existing_policy_schedule = profile_data.get("policies") if isinstance(profile_data.get("policies"), list) else []
+    profile_data["policies"] = merge_policy_lists_for_upload(
+        existing_policy_schedule,
+        claim_policy_schedule,
+    )
 
     profile_account_key = choose_upload_account_key(profile_data, direct_profile)
 
