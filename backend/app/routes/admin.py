@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException
+﻿from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
@@ -22,10 +22,14 @@ def require_admin(current_user: dict):
     if not current_user:
         raise HTTPException(status_code=401, detail="Not authenticated")
 
-    role = current_user.get("role") or "user"
+    role = str(current_user.get("role") or "user").strip().lower()
 
     if role not in ["owner", "admin"]:
         raise HTTPException(status_code=403, detail="Admin access required")
+
+    org_id = current_user.get("organization_id")
+    if not org_id:
+        raise HTTPException(status_code=403, detail="Organization access required")
 
     return current_user
 
@@ -37,10 +41,25 @@ def admin_overview(
 ):
     require_admin(current_user)
 
+    org_id = current_user.get("organization_id")
+
     return {
-        "total_users": db.query(User).count(),
-        "total_claims": db.query(Claim).count(),
-        "total_uploads": db.query(UploadHistory).count(),
+        "organization_id": org_id,
+        "total_users": (
+            db.query(User)
+            .filter(User.organization_id == org_id)
+            .count()
+        ),
+        "total_claims": (
+            db.query(Claim)
+            .filter(Claim.organization_id == org_id)
+            .count()
+        ),
+        "total_uploads": (
+            db.query(UploadHistory)
+            .filter(UploadHistory.organization_id == org_id)
+            .count()
+        ),
     }
 
 
@@ -51,9 +70,11 @@ def admin_users(
 ):
     require_admin(current_user)
 
+    org_id = current_user.get("organization_id")
+
     users = (
         db.query(User)
-        .filter(User.organization_id == current_user.get("organization_id"))
+        .filter(User.organization_id == org_id)
         .order_by(User.id.asc())
         .all()
     )
