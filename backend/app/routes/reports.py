@@ -6874,6 +6874,43 @@ def claim_attr(claim, *names, default=""):
 
 
 # LOSSQ_ORGANIZATION_PDF_BRANDING_V1
+
+# LOSSQ_FORCE_AGENCY_PROFILE_IN_EXECUTIVE_REPORT_V1
+def agency_display_line_from_info(agency_info: dict | None):
+    agency_info = agency_info or {}
+
+    agency_name = str(agency_info.get("agency_name") or "").strip()
+    contact = str(agency_info.get("agency_contact_name") or "").strip()
+    phone = str(agency_info.get("agency_phone") or "").strip()
+    email = str(agency_info.get("agency_email") or "").strip()
+
+    parts = [agency_name]
+
+    contact_parts = [x for x in [contact, phone, email] if x]
+    if contact_parts:
+        parts.append(" | ".join(contact_parts))
+
+    clean_parts = [p for p in parts if p]
+
+    return " - ".join(clean_parts) if clean_parts else force_agency_value("Agency Not Set", ctx.get("agency_info"))
+
+
+def force_agency_value(existing_value, agency_info: dict | None):
+    clean = str(existing_value or "").strip()
+
+    if clean and clean.lower() not in {
+        "agency not set",
+        "not set",
+        "n/a",
+        "none",
+        "-",
+        "unknown",
+    }:
+        return clean
+
+    return agency_display_line_from_info(agency_info)
+
+
 def get_report_agency_info(db: Session, current_user: dict | None):
     user = current_user or {}
     org_id = user.get("organization_id") if isinstance(user, dict) else getattr(user, "organization_id", None)
