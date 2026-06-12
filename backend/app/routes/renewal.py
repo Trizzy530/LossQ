@@ -1325,11 +1325,35 @@ def lossq_apply_exposure_to_carrier_match(result, profile_data, claims):
         else:
             fit = "Poor fit / backup only"
 
+        exposure_reason = (
+            f"{carrier_name}: Exposure-aligned review for {primary_line}. "
+            f"This is a Businessowners/Property/GL account, supported by saved Exposure Inputs: "
+            f"${ctx.get('current_premium', 0):,.0f} current premium, "
+            f"${ctx.get('revenue', 0):,.0f} revenue, "
+            f"${ctx.get('property_tiv', 0):,.0f} property TIV, "
+            f"{ctx.get('employee_count', 0)} employees, "
+            f"{ctx.get('vehicle_count', 0)} vehicles, and "
+            f"{ctx.get('driver_count', 0)} drivers. "
+            f"Underwriting is conditional due to {total_claims} claim(s), "
+            f"{open_claims} open claim(s), ${total_incurred:,.0f} incurred, "
+            f"and ${total_reserve:,.0f} reserves."
+        )
+
+        if "transport" in carrier_lower and not primary_is_transportation:
+            exposure_reason = (
+                f"{carrier_name}: Backup only. This carrier was demoted because the account's primary exposure "
+                f"is {primary_line}/property and general liability, not transportation. "
+                f"The account still has {total_claims} claim(s), {open_claims} open claim(s), "
+                f"${total_incurred:,.0f} incurred, and ${total_reserve:,.0f} reserves."
+            )
+
         row["carrier"] = carrier_name
         row["match_score"] = score
         row["score"] = score
         row["fit"] = fit
-        row["reasons"] = reasons
+        row["reason"] = exposure_reason
+        row["match_reason"] = exposure_reason
+        row["reasons"] = [exposure_reason]
         adjusted.append(row)
 
     # Add missing target carriers if the carrier database did not return them.
@@ -1359,6 +1383,11 @@ def lossq_apply_exposure_to_carrier_match(result, profile_data, claims):
     recommended = adjusted[0] if adjusted else {}
 
     result["top_carriers"] = adjusted
+    result["carrier_match_reasons"] = [
+        str(row.get("reason") or row.get("match_reason") or "")
+        for row in adjusted
+        if str(row.get("reason") or row.get("match_reason") or "").strip()
+    ]
     result["recommended_carrier"] = recommended.get("carrier") or result.get("recommended_carrier")
     result["recommended_score"] = recommended.get("match_score") or recommended.get("score") or result.get("recommended_score")
     result["recommended_market_category"] = (
