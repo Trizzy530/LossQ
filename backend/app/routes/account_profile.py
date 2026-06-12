@@ -1,8 +1,8 @@
 import os
-from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
-from sqlalchemy import text, inspect, func
+from sqlalchemy import text, inspect, func, or_
 from typing import Optional, Any
 import json
 import re
@@ -13,6 +13,7 @@ from app.auth_utils import get_current_user
 from app.models.account_profile import AccountProfile
 from app.models.upload_history import UploadHistory
 from app.models.claim import Claim
+from app.services.audit import record_audit_event
 
 router = APIRouter(prefix="/account-profile", tags=["Account Profile"])
 
@@ -496,6 +497,25 @@ def blank_profile():
     }
 
 
+def profile_delete_audit_details(profile_snapshot: dict | None = None, extra: dict | None = None):
+    snapshot = profile_snapshot or {}
+
+    details = {
+        "profile_id": snapshot.get("id"),
+        "business_name": snapshot.get("business_name"),
+        "carrier_name": snapshot.get("carrier_name") or snapshot.get("writing_carrier"),
+        "policy_number": snapshot.get("policy_number"),
+        "account_number": snapshot.get("account_number"),
+        "customer_number": snapshot.get("customer_number"),
+        "line_of_business": snapshot.get("line_of_business"),
+    }
+
+    if extra:
+        details.update(extra)
+
+    return details
+
+
 def related_policy_numbers_for_profile(profile: AccountProfile):
     data = profile_to_dict(profile)
     related = set()
@@ -894,6 +914,7 @@ def hard_delete_profile_traces(db, current_user: dict, profile, delete_claims: b
 @router.delete("/hard-purge-id/{profile_id}")
 def hard_purge_profile_by_id(
     profile_id: int,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -914,6 +935,8 @@ def hard_purge_profile_by_id(
 
     if not profile:
         raise HTTPException(status_code=404, detail="Profile not found for this organization.")
+
+    profile_snapshot = profile_to_dict(profile)
 
     keys = set()
 
@@ -985,6 +1008,26 @@ def hard_purge_profile_by_id(
     db.delete(profile)
     db.commit()
 
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="account_profile_hard_purged",
+        resource_type="account_profile",
+        resource_id=str(profile_id),
+        details=profile_delete_audit_details(
+            profile_snapshot,
+            {
+                "event": "account_profile_hard_purged",
+                "profile_id": profile_id,
+                "keys_used": sorted(list(keys)),
+                "deleted_claims": deleted_claims,
+                "deleted_profiles": 1,
+                "deleted_upload_history": deleted_upload_history,
+            },
+        ),
+        request=request,
+    )
+
     return {
         "message": "Hard profile purge completed.",
         "profile_id": profile_id,
@@ -999,6 +1042,7 @@ def hard_purge_profile_by_id(
 
 @router.delete("/")
 def delete_account_profile_by_query(
+    request: Request,
     profile_id: Optional[int] = Query(default=None),
     policy_number: Optional[str] = Query(default=None),
     delete_claims: bool = Query(default=True),
@@ -1006,12 +1050,12 @@ def delete_account_profile_by_query(
     current_user: dict = Depends(get_current_user),
 ):
     if profile_id:
-        return delete_profile_by_id(profile_id, delete_claims, db, current_user)
+        return delete_profile_by_id(profile_id, delete_claims, db, current_user, request=request)
 
     if not policy_number:
         raise HTTPException(status_code=400, detail="profile_id or policy_number is required")
 
-    return delete_profile_by_policy(policy_number, delete_claims, db, current_user)
+    return delete_profile_by_policy(policy_number, delete_claims, db, current_user, request=request)
 
 
 @router.delete("/id/{profile_id}")
@@ -1020,6 +1064,7 @@ def delete_profile_by_id(
     delete_claims: bool = True,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    request: Request = None,
 ):
     """
     Safest delete route.
@@ -1040,6 +1085,7 @@ def delete_profile_by_id(
         }
 
     related_policy_numbers = related_policy_numbers_for_profile(profile)
+    profile_snapshot = profile_to_dict(profile)
 
     claims_deleted = 0
     if delete_claims and related_policy_numbers:
@@ -1055,6 +1101,26 @@ def delete_profile_by_id(
 
     db.delete(profile)
     db.commit()
+
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="account_profile_deleted",
+        resource_type="account_profile",
+        resource_id=str(profile_id),
+        details=profile_delete_audit_details(
+            profile_snapshot,
+            {
+                "event": "account_profile_deleted",
+                "profile_id": profile_id,
+                "delete_claims": delete_claims,
+                "claims_deleted": claims_deleted,
+                "hard_delete": hard_delete_result,
+                "related_policy_numbers": sorted(list(related_policy_numbers)),
+            },
+        ),
+        request=request,
+    )
 
     return {
         "deleted": True,
@@ -1073,6 +1139,7 @@ def delete_profile_by_policy(
     delete_claims: bool = True,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
+    request: Request = None,
 ):
     """
     Backward-compatible delete route.
@@ -1102,6 +1169,7 @@ def delete_profile_by_policy(
         delete_claims=delete_claims,
         db=db,
         current_user=current_user,
+        request=request,
     )
 
 
@@ -1110,6 +1178,7 @@ def delete_profile_by_policy(
 @router.delete("/hard-purge/{account_key}")
 def hard_purge_account_by_key(
     account_key: str,
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -1185,6 +1254,23 @@ def hard_purge_account_by_key(
         print(f"Hard purge profile cleanup failed: {e}")
 
     db.commit()
+
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="account_hard_purged",
+        resource_type="account_profile",
+        resource_id=key,
+        details={
+            "event": "account_hard_purged",
+            "account_key": key,
+            "deleted_claims": deleted_claims,
+            "deleted_profiles": deleted_profiles,
+            "deleted_upload_history": deleted_upload_history,
+            "organization_id": current_user.get("organization_id"),
+        },
+        request=request,
+    )
 
     return {
         "message": "Hard purge completed.",

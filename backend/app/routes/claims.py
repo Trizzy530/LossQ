@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, HTTPException, Query
+from fastapi import APIRouter, Depends, HTTPException, Query, Request
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect, func
 from typing import Any
@@ -6,6 +6,7 @@ from typing import Any
 from app.database import SessionLocal
 from app.models.claim import Claim
 from app.auth_utils import get_current_user
+from app.services.audit import record_audit_event
 
 router = APIRouter(prefix="/claims", tags=["Claims"])
 
@@ -261,6 +262,7 @@ def get_claim_detail(
 
 @router.delete("/bulk")
 def bulk_delete_claims(
+    request: Request,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
@@ -274,6 +276,21 @@ def bulk_delete_claims(
         .delete(synchronize_session=False)
     )
     db.commit()
+
+    record_audit_event(
+        db,
+        current_user=current_user,
+        action="claims_bulk_deleted",
+        resource_type="claim",
+        resource_id="bulk",
+        details={
+            "event": "claims_bulk_deleted",
+            "claims_deleted": deleted,
+            "organization_id": current_user.get("organization_id"),
+        },
+        request=request,
+    )
+
     return {"deleted": True, "claims_deleted": deleted}
 
 
