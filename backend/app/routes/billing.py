@@ -67,7 +67,7 @@ PLAN_TO_PRICE = {
     if price_id
 }
 
-FOUNDING_AGENCY_LIMIT = int(os.getenv("FOUNDING_AGENCY_LIMIT", "20"))
+FOUNDING_AGENCY_LIMIT = int(os.getenv("FOUNDING_AGENCY_LIMIT", "5"))
 
 
 class CheckoutRequest(BaseModel):
