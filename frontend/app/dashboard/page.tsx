@@ -1429,7 +1429,7 @@ function normalizeProfileName(item: any) {
     const ACTIVITY_KEY = "lossq_last_activity_at";
     const TIMEOUT_MESSAGE_KEY = "lossq_session_timeout_message";
 
-    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let timeoutId: number | null = null;
     let lastWrite = 0;
 
     function hasActiveToken() {
@@ -6752,6 +6752,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
