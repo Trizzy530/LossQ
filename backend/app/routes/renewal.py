@@ -729,6 +729,87 @@ def engine_response(builder, db, current_user, policy_number):
 
 
 
+
+# LOSSQ_PROFILE_DATA_NORMALIZER_FOR_EXPOSURE_V1
+def lossq_profile_get(profile_data, key, default=None):
+    if profile_data is None:
+        return default
+
+    if isinstance(profile_data, dict):
+        value = profile_data.get(key, default)
+        return default if value is None else value
+
+    try:
+        value = getattr(profile_data, key, default)
+        return default if value is None else value
+    except Exception:
+        return default
+
+
+def lossq_normalize_profile_data(profile_data):
+    if profile_data is None:
+        return {}
+
+    if isinstance(profile_data, dict):
+        normalized = dict(profile_data)
+    else:
+        normalized = {}
+
+    keys = [
+        "id",
+        "business_name",
+        "carrier_name",
+        "writing_carrier",
+        "agency_name",
+        "policy_number",
+        "account_number",
+        "customer_number",
+        "effective_date",
+        "expiration_date",
+        "evaluation_date",
+        "current_premium",
+        "expiring_premium",
+        "target_renewal_premium",
+        "line_of_business",
+        "exposure_basis",
+        "class_code",
+        "class_codes",
+        "limits",
+        "coverage_limit",
+        "deductible",
+        "retention",
+        "payroll",
+        "revenue",
+        "sales",
+        "receipts",
+        "employee_count",
+        "vehicle_count",
+        "driver_count",
+        "experience_mod",
+        "mod",
+        "property_tiv",
+        "tiv",
+        "building_value",
+        "contents_value",
+        "square_footage",
+        "location_count",
+        "unit_count",
+        "umbrella_limit",
+        "cargo_limit",
+        "underwriter_notes",
+        "state",
+        "policies",
+    ]
+
+    for key in keys:
+        if not normalized.get(key):
+            value = lossq_profile_get(profile_data, key)
+            if value not in (None, ""):
+                normalized[key] = value
+
+    return normalized
+
+
 # LOSSQ_EXPOSURE_AWARE_RENEWAL_INTELLIGENCE_V1
 def lossq_clean_text(value):
     return str(value or "").strip()
@@ -752,7 +833,7 @@ def lossq_int_value(value):
         return 0
 
 def lossq_exposure_context(profile_data):
-    profile_data = profile_data or {}
+    profile_data = lossq_normalize_profile_data(profile_data)
 
     line_text = " ".join([
         lossq_clean_text(profile_data.get("line_of_business")),
@@ -957,6 +1038,7 @@ def lossq_exposure_carrier_targets(ctx):
 
 def lossq_apply_exposure_to_decision(result, profile_data, claims):
     result = dict(result or {})
+    profile_data = lossq_normalize_profile_data(profile_data)
     ctx = lossq_exposure_context(profile_data)
 
     if not ctx.get("has_exposure_inputs"):
@@ -1064,6 +1146,7 @@ def lossq_apply_exposure_to_decision(result, profile_data, claims):
 
 def lossq_apply_exposure_to_appetite(result, profile_data, claims):
     result = dict(result or {})
+    profile_data = lossq_normalize_profile_data(profile_data)
     ctx = lossq_exposure_context(profile_data)
 
     if not ctx.get("has_exposure_inputs"):
@@ -1110,6 +1193,7 @@ def lossq_apply_exposure_to_appetite(result, profile_data, claims):
 
 def lossq_apply_exposure_to_carrier_match(result, profile_data, claims):
     result = dict(result or {})
+    profile_data = lossq_normalize_profile_data(profile_data)
     ctx = lossq_exposure_context(profile_data)
 
     if not ctx.get("has_exposure_inputs"):
