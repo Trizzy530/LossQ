@@ -31,9 +31,12 @@ class SecurityHeadersMiddleware(BaseHTTPMiddleware):
 
 class TrustedHostGuardMiddleware(BaseHTTPMiddleware):
     async def dispatch(self, request: Request, call_next):
+        # LOSSQ_TRUSTED_HOST_LOCKDOWN_V1
+        # Production default only allows the real backend host and LossQ domains.
+        # Add localhost through ALLOWED_HOSTS only when running local development.
         allowed_hosts = parse_csv_env(
             "ALLOWED_HOSTS",
-            "lossq-production.up.railway.app,www.lossq.com,lossq.com,localhost,127.0.0.1",
+            "lossq-production.up.railway.app,www.lossq.com,lossq.com",
         )
 
         host = request.headers.get("host", "").split(":")[0].lower()
