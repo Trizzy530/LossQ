@@ -7,6 +7,27 @@ import Link from "next/link";
 const API =
   process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
 
+
+// LOSSQ_REGISTER_PAGE_WELCOME_NAME_V1
+function setLossQRegisterPageWelcomeName(user: any, fallbackEmail: string) {
+  if (typeof window === "undefined") return;
+
+  const fullName = `${user?.first_name || ""} ${user?.last_name || ""}`.trim();
+  const cleanName =
+    fullName ||
+    user?.name ||
+    user?.email ||
+    fallbackEmail ||
+    "there";
+
+  sessionStorage.setItem("lossq_welcome", "1");
+  sessionStorage.setItem("lossq_welcome_name", cleanName);
+  localStorage.setItem("lossq_new_user_welcome", "1");
+  localStorage.setItem("lossq_new_user_welcome_name", cleanName);
+  localStorage.removeItem("lossq_new_user_welcome_seen");
+}
+
+
 export default function RegisterPage() {
   const router = useRouter();
 

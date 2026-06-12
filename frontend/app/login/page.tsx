@@ -93,6 +93,7 @@ function clearLossQAccountCacheBeforeLogin() {
 }
 
 
+
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [step, setStep] = useState(1);
@@ -131,7 +132,7 @@ export default function LoginPage() {
     }
   }, []);
 
-  async function loginUser(cleanEmail: string, cleanPassword: string, isNewUser = false) {
+  async function loginUser(cleanEmail: string, cleanPassword: string, isNewUser = false, welcomeName = "") {
     const loginRes = await fetch(`${API}/auth/login`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
@@ -155,14 +156,27 @@ localStorage.setItem("lossq_token", token);
 localStorage.setItem("lossq_user", JSON.stringify(loginData?.user || { email: cleanEmail }));
 localStorage.setItem("lossq_login_time", Date.now().toString());
 
-    sessionStorage.setItem(
-      "lossq_welcome",
-      isNewUser
-        ? `Welcome to LossQ, ${cleanEmail.split("@")[0]}`
-        : `Welcome back, ${cleanEmail.split("@")[0]}`
-    );
+    if (isNewUser) {
+      const cleanWelcomeName =
+        String(welcomeName || "").trim() ||
+        `${loginData?.user?.first_name || ""} ${loginData?.user?.last_name || ""}`.trim() ||
+        loginData?.user?.name ||
+        loginData?.user?.email ||
+        cleanEmail.split("@")[0];
 
-    const nextPath = getSafeNextPath();
+      sessionStorage.setItem("lossq_welcome", "1");
+      sessionStorage.setItem("lossq_welcome_name", cleanWelcomeName);
+      localStorage.setItem("lossq_new_user_welcome", "1");
+      localStorage.setItem("lossq_new_user_welcome_name", cleanWelcomeName);
+      localStorage.removeItem("lossq_new_user_welcome_seen");
+    } else {
+      sessionStorage.removeItem("lossq_welcome");
+      sessionStorage.removeItem("lossq_welcome_name");
+      localStorage.removeItem("lossq_new_user_welcome");
+      localStorage.removeItem("lossq_new_user_welcome_name");
+    }
+
+    const nextPath = isNewUser ? "/dashboard?welcome=1" : getSafeNextPath();
     sessionStorage.removeItem("lossq_next_after_login");
     window.location.href = nextPath;
   }
@@ -261,7 +275,7 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
         "Account created. Email verification is pending. Redirecting to your dashboard..."
       );
 
-      await loginUser(cleanEmail, password, true);
+      await loginUser(cleanEmail, password, true, fullName.trim());
     } catch (err: any) {
       setMessage(err?.message || "Request failed. Check backend connection.");
     } finally {

@@ -1216,6 +1216,7 @@ function normalizeProfileName(item: any) {
   const [billingStatus, setBillingStatus] = useState<any>({});
   const [billingLoaded, setBillingLoaded] = useState(false);
   const [showNewUserWelcome, setShowNewUserWelcome] = useState(false);
+  const [newUserWelcomeName, setNewUserWelcomeName] = useState("");
   const [authReady, setAuthReady] = useState(false);
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState("");
@@ -1339,6 +1340,29 @@ function normalizeProfileName(item: any) {
   }
 
 
+
+  // LOSSQ_NAMED_WELCOME_BANNER_V1
+  function getNewUserWelcomeName() {
+    if (typeof window === "undefined") return "";
+
+    const storedName =
+      sessionStorage.getItem("lossq_welcome_name") ||
+      localStorage.getItem("lossq_new_user_welcome_name") ||
+      "";
+
+    if (storedName.trim()) return storedName.trim();
+
+    try {
+      const rawUser = localStorage.getItem("lossq_user");
+      const user = rawUser ? JSON.parse(rawUser) : null;
+      const fullName = `${user?.first_name || ""} ${user?.last_name || ""}`.trim();
+      return fullName || user?.name || user?.email || "";
+    } catch {
+      return "";
+    }
+  }
+
+
   // LOSSQ_NEW_USER_WELCOME_FINAL_V1
   useEffect(() => {
     if (typeof window === "undefined") return;
@@ -1358,6 +1382,7 @@ function normalizeProfileName(item: any) {
         pendingWelcome === "true" ||
         pendingWelcome === "new-user")
     ) {
+      setNewUserWelcomeName(getNewUserWelcomeName());
       setShowNewUserWelcome(true);
 
       if (welcomeParam) {
@@ -1374,7 +1399,9 @@ function normalizeProfileName(item: any) {
     if (typeof window !== "undefined") {
       localStorage.setItem("lossq_new_user_welcome_seen", Date.now().toString());
       localStorage.removeItem("lossq_new_user_welcome");
+      localStorage.removeItem("lossq_new_user_welcome_name");
       sessionStorage.removeItem("lossq_welcome");
+      sessionStorage.removeItem("lossq_welcome_name");
     }
 
     setShowNewUserWelcome(false);
@@ -5086,8 +5113,12 @@ const trendNoteDisplay =
                   </div>
 
                   <h2 className="text-2xl font-black tracking-tight text-white">
-                    Your underwriting workspace is ready.
+                    Welcome, {newUserWelcomeName || "there"}.
                   </h2>
+
+                  <p className="mt-2 text-sm font-semibold text-cyan-100">
+                    Your underwriting workspace is ready.
+                  </p>
 
                   <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300">
                     LossQ was built to help brokers and agencies turn loss runs into carrier-ready underwriting intelligence. Start by uploading a loss run, reviewing the account profile, adding exposure inputs, and then generating renewal risk, carrier appetite, premium forecast, submission packets, and carrier email drafts from one place.
@@ -5117,32 +5148,12 @@ const trendNoteDisplay =
                   </div>
                 </div>
 
-                <div className="flex shrink-0 flex-col gap-3 sm:flex-row lg:flex-col">
-                  <button
-                    onClick={() => {
-                      changeActiveTool("upload");
-                      dismissNewUserWelcome();
-                    }}
-                    className="btn-primary whitespace-nowrap"
-                  >
-                    Upload First Loss Run
-                  </button>
-
-                  <button
-                    onClick={() => {
-                      changeActiveTool("exposure-inputs");
-                      dismissNewUserWelcome();
-                    }}
-                    className="btn-secondary whitespace-nowrap"
-                  >
-                    Add Exposure Inputs
-                  </button>
-
+                <div className="flex shrink-0">
                   <button
                     onClick={dismissNewUserWelcome}
                     className="rounded-xl border border-white/10 px-4 py-2 text-sm font-bold text-slate-300 transition hover:bg-white/10 hover:text-white"
                   >
-                    Dismiss
+                    Got it
                   </button>
                 </div>
               </div>
