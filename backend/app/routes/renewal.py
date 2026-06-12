@@ -1343,6 +1343,45 @@ def lossq_best_exposure_profile(result, profile_data):
     return profile_data or result_profile or {}
 
 
+
+# LOSSQ_ENDPOINT_FORCE_EXPOSURE_RETURN_V1
+def lossq_force_exposure_from_result_profile(result):
+    result = dict(result or {})
+    profile = result.get("account_profile") or {}
+
+    if not isinstance(profile, dict):
+        try:
+            profile = lossq_normalize_profile_data(profile)
+        except Exception:
+            profile = {}
+
+    ctx = lossq_exposure_context(profile)
+
+    if ctx.get("has_exposure_inputs"):
+        result["exposure_inputs_used"] = True
+        result["exposure_profile"] = {
+            "primary_line_of_business": ctx.get("primary_line_of_business"),
+            "current_premium": ctx.get("current_premium"),
+            "target_renewal_premium": ctx.get("target_renewal_premium"),
+            "payroll": ctx.get("payroll"),
+            "revenue": ctx.get("revenue"),
+            "vehicle_count": ctx.get("vehicle_count"),
+            "driver_count": ctx.get("driver_count"),
+            "employee_count": ctx.get("employee_count"),
+            "property_tiv": ctx.get("property_tiv"),
+            "coverage_limit": ctx.get("coverage_limit"),
+            "deductible": ctx.get("deductible"),
+            "retention": ctx.get("retention"),
+            "experience_mod": ctx.get("experience_mod"),
+        }
+        result["exposure_drivers"] = ctx.get("exposure_drivers") or []
+        result["lossq_exposure_patch_version"] = "LOSSQ_ENDPOINT_FORCE_EXPOSURE_RETURN_V1"
+    else:
+        result["lossq_exposure_patch_version"] = "LOSSQ_ENDPOINT_FORCE_EXPOSURE_RETURN_V1_NO_EXPOSURE_FOUND"
+
+    return result
+
+
 @router.get("/decision")
 def renewal_decision(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     result = engine_response(build_underwriter_decision_engine, db, current_user, policy_number)
@@ -1350,6 +1389,7 @@ def renewal_decision(policy_number: str | None = Query(default=None), db: Sessio
     profile_data = lossq_best_exposure_profile(result, profile_data)
     result = lossq_apply_exposure_to_decision(result, profile_data, claims)
     result["policy_numbers_used"] = policy_numbers_used
+    result = lossq_force_exposure_from_result_profile(result)
     return result
 
 @router.get("/carrier-appetite")
@@ -1359,6 +1399,7 @@ def carrier_appetite(policy_number: str | None = Query(default=None), db: Sessio
     profile_data = lossq_best_exposure_profile(result, profile_data)
     result = lossq_apply_exposure_to_appetite(result, profile_data, claims)
     result["policy_numbers_used"] = policy_numbers_used
+    result = lossq_force_exposure_from_result_profile(result)
     return result
 
 @router.get("/submission-readiness")
@@ -1383,6 +1424,7 @@ def carrier_match(policy_number: str | None = Query(default=None), db: Session =
     profile_data = lossq_best_exposure_profile(result, profile_data)
     result = lossq_apply_exposure_to_carrier_match(result, profile_data, claims)
     result["policy_numbers_used"] = policy_numbers_used
+    result = lossq_force_exposure_from_result_profile(result)
     return result
 
 @router.get("/memo")
