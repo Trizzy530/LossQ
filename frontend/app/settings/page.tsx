@@ -328,7 +328,6 @@ export default function SettingsPage() {
     return (
       <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
         
-      <CompanyAgencyProfileCard router={router} />
 
 <div className="text-center">
           <div className="text-4xl font-black mb-3">Loss<span className="text-blue-400">Q</span></div>
@@ -341,7 +340,10 @@ export default function SettingsPage() {
   return (
     <main className="min-h-screen bg-[#020617] text-white px-5 py-8">
 
-      <section className="mb-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
+      
+      <CompanyAgencyProfileCard router={router} />
+
+<section className="mb-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
             <p className="text-xs uppercase tracking-[0.25em] text-cyan-300">
