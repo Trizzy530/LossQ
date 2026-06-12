@@ -1228,6 +1228,8 @@ def lossq_apply_exposure_to_appetite(result, profile_data, claims):
 
     return result
 
+
+# LOSSQ_EXPOSURE_ALIGNED_CARRIER_MATCH_RERANK_V1
 def lossq_apply_exposure_to_carrier_match(result, profile_data, claims):
     result = dict(result or {})
     profile_data = lossq_normalize_profile_data(profile_data)
@@ -1236,6 +1238,152 @@ def lossq_apply_exposure_to_carrier_match(result, profile_data, claims):
     if not ctx.get("has_exposure_inputs"):
         result["exposure_inputs_used"] = False
         return result
+
+    primary_line = str(ctx.get("primary_line_of_business") or "").strip()
+    primary_lower = primary_line.lower()
+
+    primary_is_transportation = any(
+        word in primary_lower
+        for word in ["auto", "transport", "truck", "fleet", "vehicle", "driver", "cargo"]
+    )
+
+    primary_is_bop_property_gl = any(
+        word in primary_lower
+        for word in ["businessowners", "bop", "property", "general liability", "liability", "package"]
+    )
+
+    target_carriers = lossq_exposure_carrier_targets(ctx)
+
+    # For BOP/package/property/GL accounts, keep the target market focused on broad commercial carriers.
+    if primary_is_bop_property_gl and not primary_is_transportation:
+        target_carriers = ["Travelers", "The Hartford", "CNA", "Liberty Mutual"]
+
+    if not target_carriers:
+        target_carriers = ["Travelers", "The Hartford", "CNA", "Liberty Mutual"]
+
+    metrics = result.get("carrier_match_metrics") or result.get("appetite_metrics") or {}
+    total_claims = lossq_int_value(metrics.get("total_claims"))
+    open_claims = lossq_int_value(metrics.get("open_claims"))
+    total_incurred = lossq_money_value(metrics.get("total_incurred"))
+    total_reserve = lossq_money_value(metrics.get("total_reserve"))
+    large_claims = lossq_int_value(metrics.get("large_claims"))
+
+    current_premium = ctx.get("current_premium") or 0
+    loss_ratio = (total_incurred / current_premium) if current_premium and total_incurred else 0
+
+    top_carriers = list(result.get("top_carriers") or [])
+    adjusted = []
+
+    for item in top_carriers:
+        row = dict(item or {})
+        carrier_name = str(row.get("carrier") or row.get("name") or "").strip()
+        carrier_lower = carrier_name.lower()
+        score = lossq_int_value(row.get("match_score") or row.get("score"))
+
+        reasons = list(row.get("reasons") or [])
+        target_match = any(
+            target.lower() in carrier_lower or carrier_lower in target.lower()
+            for target in target_carriers
+        )
+
+        if target_match:
+            score += 18
+            reasons.append(
+                f"Exposure-aligned for {primary_line}: broad commercial/BOP, property, and casualty appetite."
+            )
+            reasons.append(
+                f"Saved exposure inputs considered: ${ctx.get('current_premium', 0):,.0f} current premium, "
+                f"${ctx.get('revenue', 0):,.0f} revenue, ${ctx.get('property_tiv', 0):,.0f} property TIV, "
+                f"{ctx.get('employee_count', 0)} employees."
+            )
+
+            if loss_ratio >= 0.75 or open_claims > 0:
+                score = min(score, 72)
+                reasons.append(
+                    f"Conditional due to loss pressure: {total_claims} claim(s), {open_claims} open, "
+                    f"${total_incurred:,.0f} incurred, ${total_reserve:,.0f} reserves."
+                )
+
+        else:
+            score -= 8
+            reasons.append(
+                f"Not a primary exposure target for {primary_line}; treated as secondary/backup market."
+            )
+
+            if "transport" in carrier_lower and not primary_is_transportation:
+                score -= 20
+                reasons.append(
+                    "Demoted because the account's primary exposure is Businessowners/Property/GL, not transportation."
+                )
+
+        score = max(0, min(100, score))
+
+        if score >= 70:
+            fit = "Conditional exposure-aligned fit"
+        elif score >= 50:
+            fit = "Conditional backup fit"
+        else:
+            fit = "Poor fit / backup only"
+
+        row["carrier"] = carrier_name
+        row["match_score"] = score
+        row["score"] = score
+        row["fit"] = fit
+        row["reasons"] = reasons
+        adjusted.append(row)
+
+    # Add missing target carriers if the carrier database did not return them.
+    existing_names = " | ".join(str(row.get("carrier") or "").lower() for row in adjusted)
+
+    for target in target_carriers:
+        if target.lower() not in existing_names:
+            score = 66
+            if loss_ratio >= 0.75 or open_claims > 0:
+                score = 62
+
+            adjusted.append({
+                "carrier": target,
+                "match_score": score,
+                "score": score,
+                "fit": "Conditional exposure-aligned fit",
+                "reasons": [
+                    f"Added as an exposure-aligned market for {primary_line}.",
+                    f"Saved exposure inputs considered: ${ctx.get('current_premium', 0):,.0f} current premium, "
+                    f"${ctx.get('revenue', 0):,.0f} revenue, ${ctx.get('property_tiv', 0):,.0f} property TIV.",
+                    f"Requires underwriting review due to {open_claims} open claim(s) and ${total_incurred:,.0f} incurred."
+                ],
+            })
+
+    adjusted = sorted(adjusted, key=lambda item: int(item.get("match_score") or item.get("score") or 0), reverse=True)
+
+    recommended = adjusted[0] if adjusted else {}
+
+    result["top_carriers"] = adjusted
+    result["recommended_carrier"] = recommended.get("carrier") or result.get("recommended_carrier")
+    result["recommended_score"] = recommended.get("match_score") or recommended.get("score") or result.get("recommended_score")
+    result["recommended_market_category"] = (
+        "Businessowners / Property / General Liability"
+        if primary_is_bop_property_gl and not primary_is_transportation
+        else result.get("recommended_market_category", "Commercial Insurance")
+    )
+
+    result["exposure_target_carriers"] = target_carriers
+    result["exposure_inputs_used"] = True
+    result["exposure_profile"] = ctx
+    result["lossq_carrier_match_reason_version"] = "LOSSQ_EXPOSURE_ALIGNED_CARRIER_MATCH_RERANK_V1"
+
+    result["carrier_match_summary"] = (
+        f"LossQ recommends {result['recommended_carrier']} with a {result['recommended_score']}/100 "
+        f"exposure-aligned match for {primary_line}. The ranking used saved Exposure Inputs "
+        f"(${ctx.get('current_premium', 0):,.0f} current premium, ${ctx.get('revenue', 0):,.0f} revenue, "
+        f"${ctx.get('property_tiv', 0):,.0f} property TIV, {ctx.get('employee_count', 0)} employees) "
+        f"plus claim activity ({total_claims} claim(s), {open_claims} open, ${total_incurred:,.0f} incurred, "
+        f"${total_reserve:,.0f} reserves). Transportation-specific markets are treated as secondary unless "
+        f"auto/transportation is the primary account exposure."
+    )
+
+    return result
+
 
     target_carriers = lossq_exposure_carrier_targets(ctx)
     top_carriers = list(result.get("top_carriers") or [])
