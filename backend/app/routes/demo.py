@@ -1,6 +1,8 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException
 import shutil
+import re
 import os
+from pathlib import Path
 from datetime import datetime
 
 from app.services.parser_service import extract_text_from_pdf, parse_claims_from_text
@@ -11,6 +13,53 @@ router = APIRouter(prefix="/demo", tags=["Demo"])
 
 DEMO_UPLOAD_DIR = "demo_uploads"
 os.makedirs(DEMO_UPLOAD_DIR, exist_ok=True)
+
+# LOSSQ_DEMO_UPLOAD_SECURITY_V1
+MAX_DEMO_UPLOAD_BYTES = int(os.getenv("LOSSQ_DEMO_MAX_UPLOAD_MB", "10")) * 1024 * 1024
+ALLOWED_DEMO_EXTENSIONS = {".pdf", ".csv", ".xlsx"}
+ALLOWED_DEMO_CONTENT_TYPES = {
+    "application/pdf",
+    "text/csv",
+    "application/csv",
+    "application/vnd.ms-excel",
+    "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    "application/octet-stream",
+}
+
+
+def validate_demo_upload_file(file: UploadFile) -> str:
+    original_name = Path(file.filename or "").name
+    if not original_name:
+        raise HTTPException(status_code=400, detail="A filename is required.")
+
+    extension = Path(original_name).suffix.lower()
+    if extension not in ALLOWED_DEMO_EXTENSIONS:
+        raise HTTPException(status_code=400, detail="Unsupported demo file type. Upload PDF, CSV, or XLSX.")
+
+    content_type = (file.content_type or "").lower().strip()
+    if content_type and content_type not in ALLOWED_DEMO_CONTENT_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported demo upload content type.")
+
+    try:
+        file.file.seek(0, os.SEEK_END)
+        file_size = file.file.tell()
+        file.file.seek(0)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Could not validate uploaded file size.")
+
+    if file_size <= 0:
+        raise HTTPException(status_code=400, detail="Uploaded file is empty.")
+
+    if file_size > MAX_DEMO_UPLOAD_BYTES:
+        max_mb = MAX_DEMO_UPLOAD_BYTES // (1024 * 1024)
+        raise HTTPException(status_code=413, detail=f"Demo upload is too large. Maximum size is {max_mb} MB.")
+
+    safe_name = re.sub(r"[^A-Za-z0-9._-]", "_", original_name).strip("._")
+    if not safe_name:
+        safe_name = f"lossq_demo_upload{extension}"
+
+    return safe_name
+
 
 
 class DemoClaim:
@@ -56,13 +105,13 @@ def parse_demo_file(file_path: str, filename: str):
 async def demo_analyze(file: UploadFile = File(...)):
     try:
         timestamp = datetime.now().strftime("%Y%m%d%H%M%S")
-        safe_filename = file.filename.replace(" ", "_")
+        safe_filename = validate_demo_upload_file(file)
         file_path = os.path.join(DEMO_UPLOAD_DIR, f"{timestamp}_{safe_filename}")
 
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        parsed_claims = parse_demo_file(file_path, file.filename)
+        parsed_claims = parse_demo_file(file_path, safe_filename)
 
         demo_claims = [DemoClaim(claim) for claim in parsed_claims]
 
