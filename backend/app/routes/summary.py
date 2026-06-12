@@ -356,7 +356,6 @@ def lossq_summary_apply_exposure(result, profile_data, claims):
 
     if not exposure_drivers and not line_of_business:
         result["exposure_inputs_used"] = False
-        result = lossq_summary_force_exposure_from_full_profile(db, current_user, policy_number, result, claims)
     return result
 
     total_incurred = 0.0
@@ -669,5 +668,17 @@ def lossq_summary_force_exposure_from_result_profile(result, claims):
 def underwriting_summary(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
     quality = data_quality(claims, policy_numbers_used, profile_data)
+
     result = lossq_summary_apply_exposure(build_underwriting_intelligence(claims), profile_data, claims)
-    return {**result, "data_quality": quality, "is_credible": quality["is_credible"], "policy_number": policy_number, "policy_numbers_used": policy_numbers_used, "claims_used": len(claims), "account_profile": profile_data}
+    result = {
+        **result,
+        "data_quality": quality,
+        "is_credible": quality["is_credible"],
+        "policy_number": policy_number,
+        "policy_numbers_used": policy_numbers_used,
+        "claims_used": len(claims),
+        "account_profile": profile_data,
+    }
+
+    result = lossq_summary_force_exposure_from_full_profile(db, current_user, policy_number, result, claims)
+    return result
