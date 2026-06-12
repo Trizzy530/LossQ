@@ -3526,67 +3526,11 @@ const localRenewalDrivers = [
   `${localLitigationCount} litigation/attorney indicator(s).`,
 ];
 
-const effectiveSummary =
-  validatedClaimsAvailable
-    ? {
-        ...(summary || {}),
-        renewal_score: localRenewalScore,
-        renewal_risk_level: localRenewalRiskLevel,
-        renewal_drivers: localRenewalDrivers,
-        carrier_concerns:
-          localOpenClaimCount > 0 || localLargeLossCount > 0 || localLitigationCount > 0
-            ? [
-                localOpenClaimCount > 0
-                  ? "Open claim activity requires underwriting review."
-                  : "Open claim count is controlled.",
-                localLargeLossCount > 0
-                  ? "Large loss severity may affect renewal terms."
-                  : "No claim over the large-loss threshold was detected.",
-                localLitigationCount > 0
-                  ? "Litigation/attorney involvement should be documented."
-                  : "No litigation indicator detected from visible claims.",
-              ]
-            : ["Claims loaded. No major severity indicator detected from visible claims."],
-        broker_recommendation:
-          "Use the loaded claims to prepare a carrier narrative, explain open claims, confirm reserves, and document corrective actions before submission.",
-        renewal_summary:
-          `LossQ analyzed ${intelligenceClaims.length} claim(s) for the selected account with $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Renewal risk is ${localRenewalRiskLevel}.`,
-        claims_used: intelligenceClaims.length,
-        policy_numbers_used: activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
-        data_source: backendSaysInsufficient ? "local_visible_claims_fallback" : "local_visible_claims",
-      }
-    : summary;
+const effectiveSummary = summary;
+const effectiveDecision = decision;
 
-const effectiveDecision =
-  validatedClaimsAvailable
-    ? {
-        ...(decision || {}),
-        renewal_probability: Math.max(35, Math.min(95, localRenewalScore || 50)),
-        expected_premium_impact:
-          localRenewalRiskLevel === "Low"
-            ? "Flat to modest increase"
-            : localRenewalRiskLevel === "Moderate"
-            ? "Moderate increase possible"
-            : "Increase or restriction likely",
-        carrier_appetite: localCarrierAppetiteScore && localCarrierAppetiteScore >= 75 ? "Standard / Preferred" : "Selective",
-        marketability_score: localCarrierAppetiteScore,
-        submission_readiness:
-          "Claims are loaded. Complete carrier narrative, open-claim explanations, reserve notes, and corrective actions before submission.",
-        underwriting_concerns: [
-          `${intelligenceClaims.length} claim(s) in the selected account.`,
-          `${localOpenClaimCount} open claim(s).`,
-          `${localLargeLossCount} large loss claim(s) over $50,000.`,
-          `${localLitigationCount} litigation/attorney indicator(s).`,
-        ],
-        best_market_types: ["Standard market", "Middle-market commercial carrier", "E&S backup if loss activity worsens"],
-        underwriter_decision_summary:
-          `The account has ${visibleClaims.length} loaded claim(s) and $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Review open claims, large losses, and reserve adequacy before final carrier decision.`,
-        claims_used: intelligenceClaims.length,
-        policy_numbers_used: activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
-        data_source: backendSaysInsufficient ? "local_visible_claims_fallback" : "local_visible_claims",
-      }
-    : decision;
-
+// Local claim lines remain available only for display helpers, charts, and claim detail views.
+// They are no longer used to manufacture Renewal Risk or Underwriter Decision scores.
 const localClaimLines = Array.from(
   new Set(
     intelligenceClaims
@@ -3697,51 +3641,7 @@ if (localCarrierBuckets.length === 0) {
   });
 }
 
-const effectiveCarrierAppetite =
-  validatedClaimsAvailable
-    ? {
-        ...(carrierAppetite || {}),
-        carrier_appetite_score: localCarrierAppetiteScore,
-        carrier_appetite_level:
-          localCarrierAppetiteScore == null
-            ? "Not Rated"
-            : localCarrierAppetiteScore >= 80
-            ? "Preferred"
-            : localCarrierAppetiteScore >= 65
-            ? "Standard"
-            : "Selective",
-        best_fit_carriers: localCarrierBuckets.sort(
-          (a, b) => Number(b.match_score || 0) - Number(a.match_score || 0)
-        ),
-        carrier_match_reasons: [
-          `${intelligenceClaims.length} claim(s) are loaded across ${
-            localClaimLines.length || 1
-          } coverage line(s).`,
-          appetiteHasOpenReserveConcern
-            ? "Open reserve exposure requires a clear claim-status and reserve adequacy narrative."
-            : "Reserve exposure appears manageable based on currently visible claims.",
-          appetiteHasLargeLoss
-            ? "Large-loss activity may limit preferred-market appetite until the account story is explained."
-            : "No severe large-loss concentration is currently driving the appetite result.",
-          appetiteHasAuto
-            ? `Carrier selection should follow ${getUniversalIndustryLabel(displayProfile, intelligenceClaims)} and the actual coverage lines shown in the claim data.`
-            : "Market selection should follow the dominant coverage lines shown in the claim data.",
-        ],
-        market_strategy: appetiteHasOpenReserveConcern
-          ? `Market this account through carriers that fit ${getUniversalIndustryLabel(displayProfile, intelligenceClaims)}. Include a clear loss narrative, open-claim status, reserve explanation, corrective actions, safety controls, and claim closure plan.`
-          : "Market this account to standard commercial markets first, with regional and selective markets as backup. Include loss narrative, corrective actions, and current claim status notes.",
-        placement_summary:
-          localCarrierAppetiteScore != null && localCarrierAppetiteScore >= 65
-            ? `Claims are loaded for this account. Appetite is ${localCarrierAppetiteScore}/100, making the account marketable in standard-to-selective channels depending on carrier tolerance by line of business.`
-            : `Claims are loaded for this account. Appetite is ${localCarrierAppetiteScore || 0}/100, so the account should be approached through selective markets with a strong underwriting narrative.`,
-        claims_used: intelligenceClaims.length,
-        policy_numbers_used:
-          activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
-        data_source: backendSaysInsufficient
-          ? "local_visible_claims_fallback"
-          : "local_visible_claims",
-      }
-    : carrierAppetite;
+const effectiveCarrierAppetite = carrierAppetite;
 
 
 // LOSSQ_EXPOSURE_PREMIUM_FORECAST_LINK_V1
@@ -3985,7 +3885,7 @@ const effectivePremiumForecast =
           activePolicyNumbers.length > 0
             ? activePolicyNumbers
             : Array.from(currentUploadPolicySet),
-        data_source: "local_visible_claims",
+        data_source: "backend_engine_only",
       }
     : premiumForecast;
 
@@ -4192,81 +4092,10 @@ const sortedMarketCategories = lineBasedMarketCategories.sort(
   (a, b) => Number(b.match_score || 0) - Number(a.match_score || 0)
 );
 
-const effectiveCarrierMatch =
-  validatedClaimsAvailable
-    ? {
-        ...(carrierMatch || {}),
-        recommended_carrier:
-          realCarrierDatabaseAvailable && !isInsufficientBackendMessage(carrierMatch?.recommended_carrier)
-            ? carrierMatch.recommended_carrier
-            : "No named carrier selected - ” market category only",
-        recommended_market_category:
-          sortedMarketCategories[0]?.market_category || "Needs coverage classification",
-        recommended_score:
-          carrierMatch?.recommended_score ??
-          sortedMarketCategories[0]?.match_score ??
-          Math.max(45, Math.min(90, localCarrierAppetiteScore || 60)),
-        top_carriers:
-          realCarrierDatabaseAvailable && backendTopCarriersAreUsable
-            ? carrierMatch.top_carriers
-            : [],
-        market_categories: sortedMarketCategories,
-        carrier_match_summary:
-          realCarrierDatabaseAvailable && !isInsufficientBackendMessage(carrierMatch?.carrier_match_summary)
-            ? carrierMatch.carrier_match_summary
-            : `LossQ did not use a real carrier database for this result. This is a claims-derived market category recommendation based on ${intelligenceClaims.length} validated claim row(s), $${Number(localClaimTotal || 0).toLocaleString()} total incurred, ${localOpenClaimCount} open claim(s), ${localLargeLossCount} large loss claim(s), and ${localLitigationCount} litigation/attorney indicator(s).`,
-        claims_used: intelligenceClaims.length,
-        policy_numbers_used:
-          activePolicyNumbers.length > 0 ? activePolicyNumbers : Array.from(currentUploadPolicySet),
-        data_source: backendSaysInsufficient
-          ? "local_visible_claims_fallback"
-          : "local_visible_claims",
-        result_type: realCarrierDatabaseAvailable
-          ? "named_carrier_match"
-          : "market_category_only",
-      }
-    : carrierMatch;
+const effectiveCarrierMatch = carrierMatch;
 
 
-const effectiveSubmissionReadiness =
-  validatedClaimsAvailable
-    ? {
-        ...(submissionReadiness || {}),
-        submission_readiness_score: backendSaysInsufficient
-          ? localSubmissionReadinessScore
-          : submissionReadiness?.submission_readiness_score ?? localSubmissionReadinessScore,
-        submission_readiness_level: backendSaysInsufficient
-          ? localSubmissionReadinessScore && localSubmissionReadinessScore >= 85
-            ? "Strong"
-            : "Needs Review"
-          : submissionReadiness?.submission_readiness_level ||
-            (localSubmissionReadinessScore && localSubmissionReadinessScore >= 85 ? "Strong" : "Needs Review"),
-        carrier_confidence: backendSaysInsufficient
-          ? localOpenClaimCount > 0
-            ? "Moderate"
-            : "Good"
-          : submissionReadiness?.carrier_confidence || (localOpenClaimCount > 0 ? "Moderate" : "Good"),
-        submission_quality: backendSaysInsufficient
-          ? "Claims loaded from the selected account; narrative review required."
-          : submissionReadiness?.submission_quality || "Claims loaded; narrative review required.",
-        missing_items: backendSaysInsufficient
-          ? localOpenClaimCount > 0
-            ? ["Open claim status updates", "Corrective action summary", "Carrier-ready loss narrative"]
-            : ["Carrier-ready loss narrative"]
-          : submissionReadiness?.missing_items ||
-            (localOpenClaimCount > 0 ? ["Open claim status updates", "Corrective action summary"] : ["Carrier-ready loss narrative"]),
-        required_documents: backendSaysInsufficient
-          ? ["Validated loss runs", "Parsed claim rows", "Claim narrative", "Operations overview"]
-          : submissionReadiness?.required_documents || ["Loss runs", "Claim narrative", "Operations overview"],
-        recommended_actions: backendSaysInsufficient
-          ? ["Review extracted claim rows", "Confirm claim amounts", "Explain open claims", "Add safety/controls narrative"]
-          : submissionReadiness?.recommended_actions || ["Confirm claim amounts", "Explain open claims", "Add safety/controls narrative"],
-        readiness_summary: backendSaysInsufficient
-          ? `Submission has ${visibleClaims.length} loaded claim(s) with $${Number(localClaimTotal || 0).toLocaleString()} total incurred. Backend readiness was insufficient, so LossQ is using the visible claim rows until backend intelligence catches up.`
-          : submissionReadiness?.readiness_summary ||
-            `Submission has ${visibleClaims.length} loaded claim(s). Add narrative context before carrier release.`,
-      }
-    : submissionReadiness;
+const effectiveSubmissionReadiness = submissionReadiness;
 
 const scheduleClaimStats = visibleClaims.reduce((acc: AnyObject, claim: any) => {
   const claimPolicy = getClaimPolicyNumber(claim);
