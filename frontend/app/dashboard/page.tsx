@@ -1387,6 +1387,54 @@ function normalizeProfileName(item: any) {
     );
   }
 
+
+  // LOSSQ_DASHBOARD_PAYMENT_GATE_V1
+  const PAID_DASHBOARD_PLANS = new Set([
+    "starter",
+    "professional",
+    "agency",
+    "founding_agency",
+  ]);
+
+  const ACTIVE_DASHBOARD_BILLING_STATUSES = new Set([
+    "active",
+    "paid",
+  ]);
+
+  function normalizeDashboardBillingStatus(status: any) {
+    const clean = String(status || "").trim().toLowerCase();
+    return clean || "unpaid";
+  }
+
+  function getDashboardBillingStatus() {
+    return normalizeDashboardBillingStatus(
+      billingStatus?.subscription_status ||
+        billingStatus?.status ||
+        billingStatus?.billing_status ||
+        billingStatus?.organization?.subscription_status
+    );
+  }
+
+  function isDashboardBillingUnlocked() {
+    if (!billingLoaded) return false;
+
+    const plan = getDashboardPlan();
+    const status = getDashboardBillingStatus();
+
+    return PAID_DASHBOARD_PLANS.has(plan) && ACTIVE_DASHBOARD_BILLING_STATUSES.has(status);
+  }
+
+  function getDashboardPaymentLockMessage() {
+    const plan = getDashboardPlan();
+    const status = getDashboardBillingStatus();
+
+    if (!PAID_DASHBOARD_PLANS.has(plan)) {
+      return "A paid LossQ subscription is required before you can access the dashboard.";
+    }
+
+    return `Your ${plan} subscription is currently ${status}. Please update billing to continue using the dashboard.`;
+  }
+
   function getDashboardPlanFeatures() {
     const serverFeatures = Array.isArray(billingStatus?.features)
       ? billingStatus.features
@@ -4796,6 +4844,57 @@ const trendNoteDisplay =
           >
             Return to login
           </button>
+        </div>
+      </main>
+    );
+  }
+
+  if (billingLoaded && !isDashboardBillingUnlocked()) {
+    return (
+      <main className="min-h-screen bg-[#050816] text-white flex items-center justify-center px-6">
+        <div className="max-w-xl w-full rounded-3xl border border-cyan-400/30 bg-slate-950/90 p-8 shadow-2xl shadow-cyan-500/10">
+          <div className="mb-5 inline-flex rounded-full border border-amber-400/40 bg-amber-400/10 px-4 py-2 text-sm font-semibold text-amber-200">
+            Payment Required
+          </div>
+
+          <h1 className="text-3xl font-black tracking-tight">
+            Activate billing to access LossQ
+          </h1>
+
+          <p className="mt-4 text-slate-300 leading-relaxed">
+            {getDashboardPaymentLockMessage()}
+          </p>
+
+          <div className="mt-6 rounded-2xl border border-white/10 bg-white/5 p-4 text-sm text-slate-300">
+            This protects the dashboard, claims workspace, uploads, renewal tools,
+            carrier packets, reports, and AI underwriting tools from unpaid access.
+          </div>
+
+          <div className="mt-7 flex flex-col sm:flex-row gap-3">
+            <button
+              type="button"
+              onClick={() => router.push("/pricing?required=dashboard")}
+              className="rounded-xl bg-cyan-400 px-5 py-3 font-bold text-slate-950 hover:bg-cyan-300"
+            >
+              Choose a Plan
+            </button>
+
+            <button
+              type="button"
+              onClick={() => window.location.reload()}
+              className="rounded-xl border border-white/15 px-5 py-3 font-bold text-white hover:bg-white/10"
+            >
+              Refresh Billing
+            </button>
+
+            <button
+              type="button"
+              onClick={logout}
+              className="rounded-xl border border-red-400/30 px-5 py-3 font-bold text-red-200 hover:bg-red-500/10"
+            >
+              Log Out
+            </button>
+          </div>
         </div>
       </main>
     );
