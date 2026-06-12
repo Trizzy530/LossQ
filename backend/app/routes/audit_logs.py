@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import json
 from datetime import datetime
@@ -71,6 +71,105 @@ def parse_json(value: Any) -> Any:
     return str(value)
 
 
+# LOSSQ_AUDIT_USER_IDENTITY_DISPLAY_V1
+def clean_full_name(first_name: Any, last_name: Any) -> str:
+    first = str(first_name or "").strip()
+    last = str(last_name or "").strip()
+    return " ".join(part for part in [first, last] if part).strip()
+
+
+def build_user_identity_lookup(db: Session, org_id: Any) -> dict:
+    lookup = {"by_id": {}, "by_email": {}}
+
+    try:
+        names = table_names(db)
+        if "users" not in names:
+            return lookup
+
+        cols = columns_for(db, "users")
+        wanted = [col for col in ["id", "email", "first_name", "last_name", "organization_id"] if col in cols]
+
+        if not wanted:
+            return lookup
+
+        params = {}
+        where = ""
+
+        if org_id is not None and "organization_id" in cols:
+            where = " WHERE organization_id = :org_id"
+            params["org_id"] = org_id
+
+        sql = f"SELECT {', '.join(wanted)} FROM users{where} LIMIT 5000"
+        rows = db.execute(text(sql), params).mappings().all()
+
+        for row in rows:
+            user_id = str(row.get("id") or "").strip()
+            email = str(row.get("email") or "").strip()
+            full_name = clean_full_name(row.get("first_name"), row.get("last_name"))
+
+            identity = {
+                "user_id": row.get("id"),
+                "user_email": email,
+                "user_full_name": full_name,
+            }
+
+            if user_id:
+                lookup["by_id"][user_id] = identity
+
+            if email:
+                lookup["by_email"][email.lower()] = identity
+
+        return lookup
+
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        return lookup
+
+
+def enrich_events_with_user_identity(db: Session, events: list[dict], org_id: Any) -> list[dict]:
+    lookup = build_user_identity_lookup(db, org_id)
+
+    for event in events:
+        details = parse_json(event.get("details"))
+        if not isinstance(details, dict):
+            details = {}
+
+        user_id = str(event.get("user_id") or details.get("user_id") or details.get("uploaded_by_user_id") or "").strip()
+        user_email = str(
+            event.get("user_email")
+            or event.get("actor_email")
+            or details.get("user_email")
+            or details.get("actor_email")
+            or ""
+        ).strip()
+
+        identity = None
+
+        if user_id:
+            identity = lookup["by_id"].get(user_id)
+
+        if not identity and user_email:
+            identity = lookup["by_email"].get(user_email.lower())
+
+        if identity:
+            event["user_id"] = event.get("user_id") or identity.get("user_id")
+            event["user_email"] = event.get("user_email") or identity.get("user_email")
+            event["user_full_name"] = event.get("user_full_name") or identity.get("user_full_name")
+
+        if not event.get("user_full_name"):
+            event["user_full_name"] = (
+                details.get("user_full_name")
+                or details.get("actor_name")
+                or details.get("user_name")
+                or ""
+            )
+
+    return events
+
+
 def table_names(db: Session) -> set[str]:
     try:
         return set(inspect(db.bind).get_table_names())
@@ -139,7 +238,9 @@ def normalize_audit_event(row: dict) -> dict:
     return {
         "id": row.get("id"),
         "created_at": iso_or_string(row.get("created_at") or row.get("timestamp") or row.get("updated_at")),
+        "user_id": row.get("user_id") or row.get("uploaded_by_user_id"),
         "user_email": row.get("user_email") or row.get("email") or "",
+        "user_full_name": row.get("user_full_name") or row.get("actor_name") or "",
         "action": row.get("action") or "audit_event",
         "resource_type": row.get("resource_type") or "",
         "resource_id": row.get("resource_id") or "",
@@ -151,7 +252,9 @@ def normalize_upload_event(row: dict) -> dict:
     return {
         "id": f"upload-{row.get('id', '')}",
         "created_at": iso_or_string(row.get("created_at") or row.get("uploaded_at") or row.get("timestamp")),
+        "user_id": row.get("uploaded_by_user_id") or row.get("user_id"),
         "user_email": row.get("user_email") or row.get("uploaded_by_email") or row.get("email") or "",
+        "user_full_name": row.get("user_full_name") or row.get("actor_name") or "",
         "action": "loss_run_uploaded",
         "resource_type": "upload",
         "resource_id": str(row.get("id") or ""),
@@ -160,6 +263,7 @@ def normalize_upload_event(row: dict) -> dict:
             "policy_number": row.get("policy_number") or row.get("policy") or "",
             "account_number": row.get("account_number") or row.get("customer_number") or "",
             "claims_saved": row.get("claims_saved") or row.get("claim_count") or row.get("claims_count"),
+            "user_id": row.get("uploaded_by_user_id") or row.get("user_id"),
         },
     }
 
@@ -168,7 +272,9 @@ def normalize_claim_event(row: dict) -> dict:
     return {
         "id": f"claim-{row.get('id', '')}",
         "created_at": iso_or_string(row.get("created_at") or row.get("uploaded_at") or row.get("updated_at")),
+        "user_id": row.get("uploaded_by_user_id") or row.get("user_id"),
         "user_email": row.get("user_email") or row.get("uploaded_by_email") or row.get("email") or "",
+        "user_full_name": row.get("user_full_name") or row.get("actor_name") or "",
         "action": "claim_record_saved",
         "resource_type": "claim",
         "resource_id": str(row.get("id") or row.get("claim_number") or ""),
@@ -181,6 +287,7 @@ def normalize_claim_event(row: dict) -> dict:
             "reserve_amount": row.get("reserve_amount"),
             "total_incurred": row.get("total_incurred") or row.get("incurred_amount"),
             "uploaded_at": iso_or_string(row.get("uploaded_at")),
+            "user_id": row.get("uploaded_by_user_id") or row.get("user_id"),
         },
     }
 
@@ -233,6 +340,8 @@ def add_claim_events(db: Session, events: list[dict], names: set[str], org_id: A
             "reserve_amount",
             "total_incurred",
             "incurred_amount",
+            "user_id",
+            "uploaded_by_user_id",
             "user_email",
             "uploaded_by_email",
             "email",
@@ -275,6 +384,7 @@ def build_events(db: Session, current_user: Any, limit: int) -> tuple[list[dict]
             [
                 "id",
                 "created_at",
+                "user_id",
                 "user_email",
                 "action",
                 "resource_type",
@@ -328,6 +438,8 @@ def build_events(db: Session, current_user: Any, limit: int) -> tuple[list[dict]
                     "claims_saved",
                     "claim_count",
                     "claims_count",
+                    "user_id",
+                    "uploaded_by_user_id",
                     "user_email",
                     "uploaded_by_email",
                     "email",
@@ -347,6 +459,7 @@ def build_events(db: Session, current_user: Any, limit: int) -> tuple[list[dict]
         if any(event.get("resource_type") == "claim" for event in events):
             sources.append("claims")
 
+    events = enrich_events_with_user_identity(db, events, org_id)
     events.sort(key=lambda item: item.get("created_at") or "", reverse=True)
 
     source = "_with_".join(dict.fromkeys(sources)) if sources else "no_events_found"
@@ -373,6 +486,7 @@ def audit_payload(limit: int, current_user: Any, db: Session) -> dict:
                     "id": "audit-endpoint-error",
                     "created_at": "",
                     "user_email": "",
+                    "user_full_name": "",
                     "action": "audit_endpoint_error",
                     "resource_type": "system",
                     "resource_id": "",

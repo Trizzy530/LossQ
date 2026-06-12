@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -10,8 +10,12 @@ type AuditEvent = {
   id?: string | number;
   created_at?: string;
   timestamp?: string;
+  user_id?: string | number;
   user_email?: string;
+  user_full_name?: string;
   actor_email?: string;
+  actor_name?: string;
+  user_name?: string;
   action?: string;
   resource_type?: string;
   resource_id?: string;
@@ -71,13 +75,40 @@ function getCurrentUserEmail() {
   );
 }
 
+function parseAuditDate(value?: string) {
+  if (!value) return null;
+
+  const clean = String(value).trim();
+
+  if (!clean) return null;
+
+  const hasTimezone = /([zZ]|[+-]\d{2}:?\d{2})$/.test(clean);
+  const normalized = hasTimezone ? clean : `${clean}Z`;
+  const date = new Date(normalized);
+
+  if (Number.isNaN(date.getTime())) return null;
+
+  return date;
+}
+
 function formatDate(value?: string) {
-  if (!value) return "";
+  const date = parseAuditDate(value);
+
+  if (!date) return value || "";
 
   try {
-    return new Date(value).toLocaleString();
+    return new Intl.DateTimeFormat("en-US", {
+      timeZone: "America/New_York",
+      year: "numeric",
+      month: "short",
+      day: "numeric",
+      hour: "numeric",
+      minute: "2-digit",
+      second: "2-digit",
+      timeZoneName: "short",
+    }).format(date);
   } catch {
-    return value;
+    return value || "";
   }
 }
 
@@ -180,6 +211,37 @@ function safeText(value: any) {
 
 function eventTime(event: AuditEvent) {
   return event.created_at || event.timestamp || "";
+}
+
+function optionalDisplayText(value: any) {
+  if (value === null || value === undefined || value === "") return "";
+  const clean = cleanDisplayText(value).trim();
+  return clean === "-" ? "" : clean;
+}
+
+function eventUserName(event: AuditEvent) {
+  const details = toDetails(event.details);
+
+  return optionalDisplayText(
+    event.user_full_name ||
+      event.actor_name ||
+      event.user_name ||
+      details.user_full_name ||
+      details.actor_name ||
+      details.user_name
+  );
+}
+
+function eventUserEmail(event: AuditEvent, fallbackEmail = "") {
+  const details = toDetails(event.details);
+
+  return optionalDisplayText(
+    event.user_email ||
+      event.actor_email ||
+      details.user_email ||
+      details.actor_email ||
+      fallbackEmail
+  );
 }
 
 function resourceLabel(event: AuditEvent) {
@@ -442,6 +504,9 @@ export default function AuditLogPage() {
         event.action,
         event.resource_type,
         event.resource_id,
+        event.user_full_name,
+        event.actor_name,
+        event.user_name,
         event.user_email,
         event.actor_email,
         currentUserEmail,
@@ -682,6 +747,8 @@ export default function AuditLogPage() {
             <div className="grid divide-y divide-white/10">
               {filteredEvents.map((event, index) => {
                 const tone = actionTone(event);
+                const userName = eventUserName(event);
+                const userEmail = eventUserEmail(event, currentUserEmail);
 
                 return (
                   <article
@@ -691,15 +758,20 @@ export default function AuditLogPage() {
                     <aside className="space-y-3">
                       <div>
                         <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Time</p>
-                        <p className="mt-1 text-sm font-bold text-slate-200">
+                        <p className="mt-1 text-sm font-bold text-slate-200" title={eventTime(event)}>
                           {formatDate(eventTime(event))}
                         </p>
                       </div>
 
                       <div>
                         <p className="text-xs uppercase tracking-[0.2em] text-slate-500">User</p>
+                        {userName ? (
+                          <p className="mt-1 break-words text-sm font-bold text-slate-100">
+                            {userName}
+                          </p>
+                        ) : null}
                         <p className="mt-1 break-all text-sm text-slate-300">
-                          {event.user_email || event.actor_email || currentUserEmail || "System"}
+                          {userEmail || "System"}
                         </p>
                       </div>
 
