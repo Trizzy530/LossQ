@@ -1211,18 +1211,50 @@ def lossq_apply_exposure_to_appetite(result, profile_data, claims):
     reasons = list(result.get("carrier_match_reasons") or [])
     reasons.extend(ctx["exposure_drivers"])
 
+    markets = lossq_exposure_markets(ctx)
+
+    if score < 25:
+        level = "Distressed"
+    elif score < 50:
+        level = "Restricted"
+    elif score < 75:
+        level = "Limited"
+    else:
+        level = "Strong"
+
+    best_fit_markets = []
+    for market in markets:
+        best_fit_markets.append({
+            "carrier": market,
+            "name": market,
+            "market": market,
+            "score": score,
+            "match_score": score,
+            "fit": level,
+            "reason": (
+                f"{market}: Appetite reviewed using saved Exposure Inputs for "
+                f"{ctx['primary_line_of_business']}. Current premium ${ctx.get('current_premium', 0):,.0f}, "
+                f"revenue ${ctx.get('revenue', 0):,.0f}, property TIV ${ctx.get('property_tiv', 0):,.0f}, "
+                f"{ctx.get('employee_count', 0)} employees, {ctx.get('vehicle_count', 0)} vehicles, "
+                f"and {ctx.get('driver_count', 0)} drivers were considered."
+            )
+        })
+
     result["carrier_appetite_score"] = score
     result["carrier_appetite_level"] = level
+    result["best_market"] = markets[0] if markets else "Selective commercial markets"
     result["carrier_match_reasons"] = reasons
-    result["best_fit_carriers"] = lossq_exposure_markets(ctx)
+    result["best_fit_carriers"] = best_fit_markets
+    result["best_fit_markets"] = best_fit_markets
     result["exposure_inputs_used"] = True
     result["exposure_profile"] = ctx
+    result["lossq_appetite_reason_version"] = "LOSSQ_APPETITE_BEST_FIT_MARKET_OBJECTS_V1"
     result["market_strategy"] = (
         f"Market this as a {ctx['primary_line_of_business']} account using both account-specific claims and saved Exposure Inputs. "
-        f"Target: {', '.join(lossq_exposure_markets(ctx)[:3])}."
+        f"Best target markets: {', '.join(markets[:3]) if markets else 'Selective commercial markets'}."
     )
     result["placement_summary"] = (
-        f"Carrier appetite is {score}/100 after considering claims plus saved Exposure Inputs for "
+        f"Carrier appetite is {score}/100, rated {level}, after considering claims plus saved Exposure Inputs for "
         f"{ctx['primary_line_of_business']}."
     )
 
