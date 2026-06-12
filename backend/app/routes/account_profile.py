@@ -1,4 +1,4 @@
-﻿import os
+import os
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -671,7 +671,6 @@ def upsert_account_profile(
         or "Carrier Not Set"
     )
 
-
     # Save automatic extraction + manual override exposure inputs.
     for field in [
         "current_premium",
@@ -722,18 +721,12 @@ def upsert_account_profile(
     return profile_to_dict(profile)
 
 
-
 def hard_delete_profile_traces(db, current_user: dict, profile, delete_claims: bool = True):
     # LOSSQ_HARD_DELETE_PROFILE_TRACES_V2
     # Permanently wipes backend traces tied to a deleted account profile.
     # This prevents deleted profiles from being recognized again after reupload.
 
-    import os
-    import json
     from sqlalchemy import or_, func
-
-    from app.models.claim import Claim
-    from app.models.upload_history import UploadHistory
 
     deleted_claims = 0
     deleted_upload_history = 0
@@ -806,7 +799,6 @@ def hard_delete_profile_traces(db, current_user: dict, profile, delete_claims: b
                 claim_filters.append(func.upper(func.trim(Claim.policy_number)).in_(upper_keys))
 
             if hasattr(Claim, "claim_number"):
-                # This is defensive only. Some imported rows can accidentally store account identifiers in the wrong field.
                 claim_filters.append(func.upper(func.trim(Claim.claim_number)).in_(upper_keys))
 
         for hint in profile_name_hints:
@@ -873,7 +865,6 @@ def hard_delete_profile_traces(db, current_user: dict, profile, delete_claims: b
                     break
 
         if should_delete_upload:
-            # Try to remove the stored uploaded file from disk if the row has a path.
             for path_attr in ["file_path", "path", "stored_path", "saved_path"]:
                 if hasattr(upload, path_attr):
                     file_path = getattr(upload, path_attr, None)
@@ -895,109 +886,6 @@ def hard_delete_profile_traces(db, current_user: dict, profile, delete_claims: b
         "deleted_upload_history": deleted_upload_history,
         "deleted_files": deleted_files,
     }
-    # LOSSQ_HARD_DELETE_PROFILE_TRACES_V1
-    # Hard delete every backend trace tied to a deleted profile/account.
-    import json
-
-    org_id = current_user["organization_id"]
-    deleted_claims = 0
-    deleted_upload_history = 0
-    deleted_files = 0
-
-    profile_keys = []
-    profile_text_parts = []
-
-    def add_key(value):
-        cleaned = str(value or "").strip()
-        if cleaned and cleaned not in profile_keys:
-            profile_keys.append(cleaned)
-
-    if profile is not None:
-        add_key(getattr(profile, "policy_number", None))
-        add_key(getattr(profile, "account_number", None))
-        add_key(getattr(profile, "customer_number", None))
-
-        profile_text_parts.extend([
-            str(getattr(profile, "business_name", "") or ""),
-            str(getattr(profile, "carrier_name", "") or ""),
-            str(getattr(profile, "writing_carrier", "") or ""),
-            str(getattr(profile, "policy_number", "") or ""),
-            str(getattr(profile, "account_number", "") or ""),
-            str(getattr(profile, "customer_number", "") or ""),
-        ])
-
-        try:
-            policies_value = getattr(profile, "policies", None)
-            policies = json.loads(policies_value) if isinstance(policies_value, str) else policies_value
-            if isinstance(policies, list):
-                for item in policies:
-                    if isinstance(item, dict):
-                        add_key(item.get("policy_number"))
-                        add_key(item.get("policy"))
-                        add_key(item.get("number"))
-                        profile_text_parts.append(json.dumps(item))
-        except Exception:
-            pass
-
-    profile_text = " ".join(profile_text_parts).lower()
-
-    # Add profile-name based hints for test/demo files and real customer names.
-    name_tokens = []
-    for raw_name in [
-        getattr(profile, "business_name", "") if profile is not None else "",
-        getattr(profile, "account_name", "") if profile is not None and hasattr(profile, "account_name") else "",
-    ]:
-        cleaned_name = str(raw_name or "").strip().lower()
-        if cleaned_name:
-            name_tokens.append(cleaned_name)
-
-    if delete_claims and profile_keys:
-        claim_query = db.query(Claim).filter(Claim.organization_id == org_id)
-        claim_query = claim_query.filter(Claim.policy_number.in_(profile_keys))
-        deleted_claims = claim_query.delete(synchronize_session=False)
-
-    # Delete UploadHistory rows that likely belong to the deleted account/profile.
-    upload_query = db.query(UploadHistory).filter(UploadHistory.organization_id == org_id)
-    uploads = upload_query.all()
-
-    for upload in uploads:
-        upload_text = " ".join([
-            str(getattr(upload, "filename", "") or ""),
-            str(getattr(upload, "stored_path", "") or ""),
-            str(getattr(upload, "content_type", "") or ""),
-        ]).lower()
-
-        should_delete_upload = False
-
-        for key in profile_keys:
-            if str(key).lower() and str(key).lower() in upload_text:
-                should_delete_upload = True
-
-        for token in name_tokens:
-            first_word = token.split(" ")[0] if token else ""
-            if first_word and first_word in upload_text:
-                should_delete_upload = True
-
-        # If filename does not include account name/key, do not over-delete unrelated uploads.
-        if should_delete_upload:
-            stored_path = getattr(upload, "stored_path", None)
-            if stored_path and os.path.exists(stored_path):
-                try:
-                    os.remove(stored_path)
-                    deleted_files += 1
-                except Exception:
-                    pass
-
-            db.delete(upload)
-            deleted_upload_history += 1
-
-    return {
-        "profile_keys": profile_keys,
-        "deleted_claims": deleted_claims,
-        "deleted_upload_history": deleted_upload_history,
-        "deleted_files": deleted_files,
-    }
-
 
 
 @router.delete("/")
@@ -1054,10 +942,7 @@ def delete_profile_by_id(
         )
 
     # LOSSQ_HARD_DELETE_CALL_V1
-
-
     hard_delete_result = hard_delete_profile_traces(db, current_user, profile, delete_claims=delete_claims)
-
 
     db.delete(profile)
     db.commit()
@@ -1110,3 +995,92 @@ def delete_profile_by_policy(
         current_user=current_user,
     )
 
+
+
+# LOSSQ_HARD_PURGE_ACCOUNT_BY_KEY_V1
+@router.delete("/hard-purge/{account_key}")
+def hard_purge_account_by_key(
+    account_key: str,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Emergency hard purge for stale account data.
+
+    Deletes all profiles, claims, upload history, and related rows that contain
+    the shared account/policy key, such as 742918.
+
+    This prevents LossQ from reusing old claim rows after backend/parser fixes.
+    """
+    key = clean_value(account_key).upper()
+
+    if not key or len(key) < 4:
+        raise HTTPException(status_code=400, detail="Account key must be at least 4 characters.")
+
+    org_id = current_user["organization_id"]
+    like_key = f"%{key}%"
+
+    deleted_claims = 0
+    deleted_profiles = 0
+    deleted_upload_history = 0
+
+    try:
+        from app.models.claim import Claim
+        deleted_claims = (
+            db.query(Claim)
+            .filter(
+                Claim.organization_id == org_id,
+                or_(
+                    func.upper(func.coalesce(Claim.policy_number, "")).like(like_key),
+                    func.upper(func.coalesce(Claim.claim_number, "")).like(like_key),
+                ),
+            )
+            .delete(synchronize_session=False)
+        )
+    except Exception as e:
+        print(f"Hard purge claim cleanup failed: {e}")
+
+    try:
+        from app.models.upload_history import UploadHistory
+        deleted_upload_history = (
+            db.query(UploadHistory)
+            .filter(
+                UploadHistory.organization_id == org_id,
+                or_(
+                    func.upper(func.coalesce(UploadHistory.policy_number, "")).like(like_key),
+                    func.upper(func.coalesce(UploadHistory.filename, "")).like(like_key),
+                ),
+            )
+            .delete(synchronize_session=False)
+        )
+    except Exception as e:
+        print(f"Hard purge upload history cleanup failed: {e}")
+
+    try:
+        deleted_profiles = (
+            db.query(AccountProfile)
+            .filter(
+                AccountProfile.organization_id == org_id,
+                or_(
+                    func.upper(func.coalesce(AccountProfile.policy_number, "")).like(like_key),
+                    func.upper(func.coalesce(AccountProfile.account_number, "")).like(like_key),
+                    func.upper(func.coalesce(AccountProfile.customer_number, "")).like(like_key),
+                    func.upper(func.coalesce(AccountProfile.business_name, "")).like(like_key),
+                    func.upper(func.coalesce(AccountProfile.named_insured, "")).like(like_key),
+                    func.upper(func.coalesce(AccountProfile.policies, "")).like(like_key),
+                ),
+            )
+            .delete(synchronize_session=False)
+        )
+    except Exception as e:
+        print(f"Hard purge profile cleanup failed: {e}")
+
+    db.commit()
+
+    return {
+        "message": "Hard purge completed.",
+        "account_key": key,
+        "deleted_claims": deleted_claims,
+        "deleted_profiles": deleted_profiles,
+        "deleted_upload_history": deleted_upload_history,
+    }
