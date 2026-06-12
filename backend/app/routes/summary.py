@@ -356,7 +356,8 @@ def lossq_summary_apply_exposure(result, profile_data, claims):
 
     if not exposure_drivers and not line_of_business:
         result["exposure_inputs_used"] = False
-        return result
+        result = lossq_summary_force_exposure_from_result_profile(result, claims)
+    return result
 
     total_incurred = 0.0
     for claim in claims or []:
@@ -425,6 +426,58 @@ def lossq_summary_apply_exposure(result, profile_data, claims):
         + f" Saved Exposure Inputs were included in the renewal risk review for {line_of_business or 'the selected account'}."
     ).strip()
 
+    return result
+
+
+
+# LOSSQ_SUMMARY_FORCE_RESULT_ACCOUNT_PROFILE_EXPOSURE_V1
+def lossq_summary_profile_has_exposure(profile_data):
+    if not isinstance(profile_data, dict):
+        return False
+
+    keys = [
+        "current_premium",
+        "expiring_premium",
+        "target_renewal_premium",
+        "payroll",
+        "revenue",
+        "sales",
+        "receipts",
+        "vehicle_count",
+        "driver_count",
+        "employee_count",
+        "experience_mod",
+        "mod",
+        "line_of_business",
+        "class_code",
+        "class_codes",
+        "limits",
+        "coverage_limit",
+        "deductible",
+        "retention",
+        "property_tiv",
+        "tiv",
+    ]
+
+    for key in keys:
+        value = profile_data.get(key)
+        if value not in (None, "", "0", "$0", 0):
+            return True
+
+    return False
+
+
+def lossq_summary_force_exposure_from_result_profile(result, claims):
+    result = dict(result or {})
+    profile_data = result.get("account_profile") or {}
+
+    if not lossq_summary_profile_has_exposure(profile_data):
+        result["exposure_inputs_used"] = False
+        result["lossq_exposure_patch_version"] = "LOSSQ_SUMMARY_FORCE_RESULT_ACCOUNT_PROFILE_EXPOSURE_V1_NO_EXPOSURE_FOUND"
+        return result
+
+    result = lossq_summary_apply_exposure(result, profile_data, claims)
+    result["lossq_exposure_patch_version"] = "LOSSQ_SUMMARY_FORCE_RESULT_ACCOUNT_PROFILE_EXPOSURE_V1"
     return result
 
 

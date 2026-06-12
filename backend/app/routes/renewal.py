@@ -1498,9 +1498,69 @@ def submission_readiness(policy_number: str | None = Query(default=None), db: Se
     level = "Excellent" if score >= 85 else "Good" if score >= 70 else "Needs Work" if score >= 50 else "Not Ready"
     return {"policy_number": policy_number, "is_credible": True, "claims_used": len(claims), "policy_numbers_used": policy_numbers_used, "submission_readiness_score": score, "submission_readiness_level": level, "missing_items": decision.get("underwriting_concerns", []), "required_documents": ["Currently valued loss runs", "Claim narratives", "Reserve status", "Loss-control plan"], "recommended_actions": decision.get("underwriting_concerns", []), "carrier_confidence": "High" if score >= 75 else "Moderate" if score >= 50 else "Low", "submission_quality": level, "readiness_summary": f"Submission readiness is {score}/100 based on validated account-specific claims."}
 
+
+# LOSSQ_EXPOSURE_AWARE_PREMIUM_FORECAST_V1
+def lossq_apply_exposure_to_premium_forecast(result, profile_data, claims):
+    result = dict(result or {})
+    profile_data = lossq_normalize_profile_data(profile_data)
+    ctx = lossq_exposure_context(profile_data)
+
+    if not ctx.get("has_exposure_inputs"):
+        result["exposure_inputs_used"] = False
+        return result
+
+    current_premium = ctx.get("current_premium") or 0
+    target_premium = ctx.get("target_renewal_premium") or 0
+
+    if current_premium > 0:
+        result["current_premium"] = int(round(current_premium))
+
+    if current_premium > 0 and target_premium > 0:
+        expected_increase = int(round(((target_premium - current_premium) / current_premium) * 100))
+        result["expected_renewal_premium"] = int(round(target_premium))
+        result["expected_increase_percent"] = expected_increase
+        result["best_case_percent"] = max(-10, expected_increase - 5)
+        result["likely_range_percent"] = f"{max(-10, expected_increase - 5)}% to {expected_increase + 10}%"
+        result["worst_case_percent"] = expected_increase + 10
+        result["confidence_score"] = 92
+        result["forecast_summary"] = (
+            f"LossQ projects ${target_premium:,.0f}, an estimated {expected_increase}% change "
+            f"from saved current premium of ${current_premium:,.0f}. This uses saved Exposure Inputs "
+            f"plus account-specific claim activity, not a generic modeled premium."
+        )
+
+    result["exposure_inputs_used"] = True
+    result["exposure_profile"] = {
+        "primary_line_of_business": ctx.get("primary_line_of_business"),
+        "current_premium": ctx.get("current_premium"),
+        "target_renewal_premium": ctx.get("target_renewal_premium"),
+        "payroll": ctx.get("payroll"),
+        "revenue": ctx.get("revenue"),
+        "vehicle_count": ctx.get("vehicle_count"),
+        "driver_count": ctx.get("driver_count"),
+        "employee_count": ctx.get("employee_count"),
+        "property_tiv": ctx.get("property_tiv"),
+        "coverage_limit": ctx.get("coverage_limit"),
+        "deductible": ctx.get("deductible"),
+        "retention": ctx.get("retention"),
+        "experience_mod": ctx.get("experience_mod"),
+    }
+    result["exposure_drivers"] = ctx.get("exposure_drivers") or []
+    result["lossq_exposure_patch_version"] = "LOSSQ_EXPOSURE_AWARE_PREMIUM_FORECAST_V1"
+
+    return result
+
+
 @router.get("/premium-forecast")
 def premium_forecast(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return engine_response(build_premium_forecast_engine, db, current_user, policy_number)
+    result = engine_response(build_premium_forecast_engine, db, current_user, policy_number)
+    claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
+    profile_data = lossq_best_exposure_profile(result, profile_data)
+    profile_data = lossq_full_profile_for_exposure(db, current_user, policy_number, result, profile_data)
+    result["account_profile"] = profile_data
+    result = lossq_apply_exposure_to_premium_forecast(result, profile_data, claims)
+    result["policy_numbers_used"] = policy_numbers_used
+    return result
 
 @router.get("/carrier-match")
 def carrier_match(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
