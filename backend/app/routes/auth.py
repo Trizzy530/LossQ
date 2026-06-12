@@ -872,11 +872,3 @@ def bootstrap_owner(request: Request, current_user: User = Depends(get_current_u
         "note": "Log out and log back in so your new owner role is included in your token.",
     }
 
-
-@router.get("/debug-auth-version")
-def debug_auth_version(current_user: User = Depends(require_admin_or_owner)):
-    # LOSSQ_DISABLE_PUBLIC_AUTH_DEBUG_V1
-    return {
-        "auth_version": "protected",
-        "message": "Auth debug endpoint is protected.",
-    }
