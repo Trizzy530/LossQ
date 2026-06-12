@@ -1285,6 +1285,87 @@ def lossq_apply_exposure_to_carrier_match(result, profile_data, claims):
 
 
 
+
+# LOSSQ_DIRECT_FULL_ACCOUNT_PROFILE_EXPOSURE_LOOKUP_V1
+def lossq_full_profile_for_exposure(db, current_user, policy_number, result=None, profile_data=None):
+    organization_id = current_user.get("organization_id") if isinstance(current_user, dict) else None
+
+    result_profile = {}
+    try:
+        result_profile = dict((result or {}).get("account_profile") or {})
+    except Exception:
+        result_profile = {}
+
+    base_profile = profile_data if profile_data else result_profile
+
+    if not organization_id:
+        return lossq_normalize_profile_data(base_profile)
+
+    profile_id = (
+        lossq_profile_get(base_profile, "id")
+        or result_profile.get("id")
+    )
+
+    try:
+        if profile_id:
+            profile = (
+                db.query(AccountProfile)
+                .filter(AccountProfile.organization_id == organization_id)
+                .filter(AccountProfile.id == int(profile_id))
+                .first()
+            )
+            if profile:
+                return lossq_normalize_profile_data(profile)
+    except Exception:
+        pass
+
+    selected_policy = str(policy_number or "").strip().upper()
+
+    candidate_values = set()
+    for source in [base_profile, result_profile]:
+        for key in ["policy_number", "account_number", "customer_number"]:
+            value = str(lossq_profile_get(source, key) or "").strip().upper()
+            if value:
+                candidate_values.add(value)
+
+    if selected_policy:
+        candidate_values.add(selected_policy)
+
+    try:
+        profiles = (
+            db.query(AccountProfile)
+            .filter(AccountProfile.organization_id == organization_id)
+            .all()
+        )
+
+        for profile in profiles:
+            profile_values = {
+                str(getattr(profile, "policy_number", "") or "").strip().upper(),
+                str(getattr(profile, "account_number", "") or "").strip().upper(),
+                str(getattr(profile, "customer_number", "") or "").strip().upper(),
+            }
+
+            policies = _safe_policy_json(getattr(profile, "policies", None))
+            for item in policies:
+                if isinstance(item, dict):
+                    pnum = str(
+                        item.get("policy_number")
+                        or item.get("policyNumber")
+                        or item.get("policy")
+                        or ""
+                    ).strip().upper()
+                    if pnum:
+                        profile_values.add(pnum)
+
+            if candidate_values & profile_values:
+                return lossq_normalize_profile_data(profile)
+
+    except Exception:
+        pass
+
+    return lossq_normalize_profile_data(base_profile)
+
+
 # LOSSQ_FORCE_RESULT_ACCOUNT_PROFILE_EXPOSURE_SOURCE_V1
 def lossq_profile_has_exposure_values(profile_data):
     if not profile_data:
@@ -1387,6 +1468,8 @@ def renewal_decision(policy_number: str | None = Query(default=None), db: Sessio
     result = engine_response(build_underwriter_decision_engine, db, current_user, policy_number)
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
     profile_data = lossq_best_exposure_profile(result, profile_data)
+    profile_data = lossq_full_profile_for_exposure(db, current_user, policy_number, result, profile_data)
+    result["account_profile"] = profile_data
     result = lossq_apply_exposure_to_decision(result, profile_data, claims)
     result["policy_numbers_used"] = policy_numbers_used
     result = lossq_force_exposure_from_result_profile(result)
@@ -1397,6 +1480,8 @@ def carrier_appetite(policy_number: str | None = Query(default=None), db: Sessio
     result = engine_response(build_carrier_appetite_engine, db, current_user, policy_number)
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
     profile_data = lossq_best_exposure_profile(result, profile_data)
+    profile_data = lossq_full_profile_for_exposure(db, current_user, policy_number, result, profile_data)
+    result["account_profile"] = profile_data
     result = lossq_apply_exposure_to_appetite(result, profile_data, claims)
     result["policy_numbers_used"] = policy_numbers_used
     result = lossq_force_exposure_from_result_profile(result)
@@ -1422,6 +1507,8 @@ def carrier_match(policy_number: str | None = Query(default=None), db: Session =
     result = engine_response(build_carrier_match_engine, db, current_user, policy_number)
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
     profile_data = lossq_best_exposure_profile(result, profile_data)
+    profile_data = lossq_full_profile_for_exposure(db, current_user, policy_number, result, profile_data)
+    result["account_profile"] = profile_data
     result = lossq_apply_exposure_to_carrier_match(result, profile_data, claims)
     result["policy_numbers_used"] = policy_numbers_used
     result = lossq_force_exposure_from_result_profile(result)
