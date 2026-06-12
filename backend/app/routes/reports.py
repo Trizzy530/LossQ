@@ -6876,23 +6876,10 @@ def claim_attr(claim, *names, default=""):
 # LOSSQ_ORGANIZATION_PDF_BRANDING_V1
 
 # LOSSQ_FORCE_AGENCY_PROFILE_IN_EXECUTIVE_REPORT_V1
+
 def agency_display_line_from_info(agency_info: dict | None):
-    agency_info = agency_info or {}
-
-    agency_name = str(agency_info.get("agency_name") or "").strip()
-    contact = str(agency_info.get("agency_contact_name") or "").strip()
-    phone = str(agency_info.get("agency_phone") or "").strip()
-    email = str(agency_info.get("agency_email") or "").strip()
-
-    parts = [agency_name]
-
-    contact_parts = [x for x in [contact, phone, email] if x]
-    if contact_parts:
-        parts.append(" | ".join(contact_parts))
-
-    clean_parts = [p for p in parts if p]
-
-    return " - ".join(clean_parts) if clean_parts else force_agency_value("Agency Not Set", ctx.get("agency_info"))
+    agency_info = pdf_agency_name_only(agency_info)
+    return agency_info.get("agency_name") or "Agency Not Set"
 
 
 def force_agency_value(existing_value, agency_info: dict | None):
@@ -6906,10 +6893,46 @@ def force_agency_value(existing_value, agency_info: dict | None):
         "-",
         "unknown",
     }:
-        return clean
+        return clean.split(" - ")[0].split(" | ")[0].strip() or clean
 
     return agency_display_line_from_info(agency_info)
 
+
+# LOSSQ_PDF_AGENCY_NAME_ONLY_V1
+def pdf_agency_name_only(agency_info: dict | None):
+    agency_info = agency_info or {}
+
+    agency_name = str(
+        agency_info.get("agency_name")
+        or agency_info.get("organization_name")
+        or ""
+    ).strip()
+
+    return {
+        "agency_name": agency_name or "Agency Not Set",
+    }
+
+
+def agency_display_line_from_info(agency_info: dict | None):
+    agency_info = pdf_agency_name_only(agency_info)
+    return agency_info.get("agency_name") or "Agency Not Set"
+
+
+def force_agency_value(existing_value, agency_info: dict | None):
+    clean = str(existing_value or "").strip()
+
+    if clean and clean.lower() not in {
+        "agency not set",
+        "not set",
+        "n/a",
+        "none",
+        "-",
+        "unknown",
+    }:
+        # Keep only the agency name if older data includes contact separators.
+        return clean.split(" - ")[0].split(" | ")[0].strip() or clean
+
+    return agency_display_line_from_info(agency_info)
 
 def get_report_agency_info(db: Session, current_user: dict | None):
     user = current_user or {}
@@ -7549,7 +7572,7 @@ def make_doc(title: str):
     # LOSSQ_ATTACH_AGENCY_INFO_TO_PDF_DOC_V1
     try:
         _lossq_ctx = locals().get("ctx", {})
-        doc._agency_info = _lossq_ctx.get("agency_info", {}) if isinstance(_lossq_ctx, dict) else {}
+        doc._agency_info = pdf_agency_name_only(_lossq_ctx.get("agency_info", {}) if isinstance(_lossq_ctx, dict) else {})
     except Exception:
         doc._agency_info = {}
     styles = getSampleStyleSheet()
@@ -7667,7 +7690,7 @@ def draw_header_footer(canvas, doc, report_title: str, prepared_by: str):
 
     # LOSSQ_DRAW_FULL_AGENCY_INFO_ON_PDF_V1
     try:
-        agency_info = getattr(doc, "_agency_info", {}) or {}
+        agency_info = pdf_agency_name_only(getattr(doc, "_agency_info", {}) or {})
         agency_lines = []
         agency_name = str(agency_info.get("agency_name") or "").strip()
         organization_id = agency_info.get("organization_id")
@@ -7698,7 +7721,7 @@ def draw_header_footer(canvas, doc, report_title: str, prepared_by: str):
 
     # LOSSQ_DRAW_AGENCY_INFO_ON_PDF_V1
     try:
-        agency_info = getattr(doc, "_agency_info", {}) or {}
+        agency_info = pdf_agency_name_only(getattr(doc, "_agency_info", {}) or {})
         agency_name = str(agency_info.get("agency_name") or "").strip()
         agency_contact = str(agency_info.get("agency_contact") or "").strip()
         organization_id = agency_info.get("organization_id")

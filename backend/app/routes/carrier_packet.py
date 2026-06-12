@@ -85,33 +85,25 @@ def get_carrier_packet_agency_info(db: Session, current_user: dict | None):
     }
 
 
+
+# LOSSQ_CARRIER_PACKET_AGENCY_NAME_ONLY_V1
 def draw_carrier_packet_agency_header(pdf, agency_info: dict | None):
     agency_info = agency_info or {}
-    agency_name = str(agency_info.get("agency_name") or "").strip()
-    agency_contact = str(agency_info.get("agency_contact") or "").strip()
-    organization_id = agency_info.get("organization_id")
 
-    agency_line = agency_name
-    if organization_id:
-        agency_line = f"{agency_name} | Org {organization_id}" if agency_name else f"Org {organization_id}"
+    agency_name = str(
+        agency_info.get("agency_name")
+        or agency_info.get("organization_name")
+        or ""
+    ).strip()
 
-    if not agency_line and not agency_contact:
+    if not agency_name:
         return
 
     pdf.setFillColor(colors.HexColor("#0f172a"))
-    pdf.setFont("Helvetica-Bold", 9)
-    pdf.drawRightString(7.85 * inch, 10.35 * inch, agency_line[:95])
-
-    if agency_contact:
-        pdf.setFillColor(colors.HexColor("#334155"))
-        pdf.setFont("Helvetica", 7)
-        pdf.drawRightString(7.85 * inch, 10.20 * inch, agency_contact[:95])
-
+    pdf.setFont("Helvetica-Bold", 8)
+    pdf.drawRightString(7.85 * inch, 10.38 * inch, agency_name[:115])
     pdf.setFillColor(colors.black)
 
-
-
-# LOSSQ_ORGANIZATION_CARRIER_PACKET_PDF_BRANDING_V2
 def get_carrier_packet_agency_info(db: Session, current_user: dict | None):
     user = current_user or {}
     org_id = user.get("organization_id") if isinstance(user, dict) else getattr(user, "organization_id", None)
