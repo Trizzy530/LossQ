@@ -1,5 +1,7 @@
 ﻿"use client";
 
+// LOSSQ_MANUAL_EXPOSURE_INPUTS_FRONTEND_REDEPLOY_V2
+
 import { useRouter } from "next/navigation";
 import { useEffect, useState, useRef, type ReactNode } from "react";
 import {
@@ -2296,7 +2298,7 @@ async function saveExposureInputs() {
     }
 
     try {
-      setMessage("Saving automatic exposure extraction and manual overrides...");
+      setMessage("Saving manual exposure inputs...");
 
       const res = await fetch(`${API}/account-profile/`, {
         method: "PUT",
