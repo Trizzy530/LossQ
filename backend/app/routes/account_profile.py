@@ -1,4 +1,4 @@
-import os
+﻿import os
 from fastapi import APIRouter, Depends, HTTPException, Query
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
@@ -651,9 +651,9 @@ def upsert_account_profile(
     if not is_valid_identifier(primary_policy) and safe_policies:
         primary_policy = normalize_key(safe_policies[0].get("policy_number"))
 
-    profile.business_name = clean_value(payload.business_name) or "Business Name Not Set"
-    profile.carrier_name = clean_value(payload.carrier_name) or "Carrier Not Set"
-    profile.agency_name = clean_value(payload.agency_name) or "Agency Not Set"
+    profile.business_name = clean_value(payload.business_name)
+    profile.carrier_name = clean_value(payload.carrier_name)
+    profile.agency_name = clean_value(payload.agency_name)
 
     profile.account_number = account_number or customer_number or primary_policy or save_key
     profile.customer_number = customer_number or account_number or primary_policy or save_key
@@ -661,8 +661,8 @@ def upsert_account_profile(
 
     profile.policy_number = primary_policy or profile.account_number
 
-    profile.effective_date = clean_value(payload.effective_date) or "Not Set"
-    profile.expiration_date = clean_value(payload.expiration_date) or "Not Set"
+    profile.effective_date = clean_value(payload.effective_date)
+    profile.expiration_date = clean_value(payload.expiration_date)
     profile.evaluation_date = clean_value(payload.evaluation_date) or datetime.now().date().isoformat()
 
     profile.writing_carrier = (
@@ -1109,3 +1109,4 @@ def delete_profile_by_policy(
         db=db,
         current_user=current_user,
     )
+
