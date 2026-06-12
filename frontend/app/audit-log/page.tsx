@@ -251,6 +251,9 @@ function resourceLabel(event: AuditEvent) {
   if (type === "claim") return "Claim";
   if (type === "report") return "Report";
   if (type === "user") return "User";
+  if (type === "account_profile") return "Account Profile";
+  if (type === "billing") return "Billing";
+  if (type === "system") return "System";
 
   return prettyAction(type);
 }
@@ -262,6 +265,8 @@ function actionTone(event: AuditEvent): ActionTone {
   if (resource === "claim" || action.includes("claim")) return "emerald";
   if (resource === "report" || action.includes("report") || action.includes("packet") || action.includes("memo")) return "purple";
   if (resource === "upload" || action.includes("upload")) return "blue";
+  if (resource === "billing" || action.includes("billing") || action.includes("checkout") || action.includes("subscription")) return "amber";
+  if (resource === "account_profile" || action.includes("delete") || action.includes("purge")) return "rose";
   if (action.includes("error") || action.includes("failed")) return "rose";
   if (action.includes("review") || action.includes("warning")) return "amber";
 
@@ -693,7 +698,10 @@ export default function AuditLogPage() {
                 <option value="upload">Uploads</option>
                 <option value="claim">Claims</option>
                 <option value="report">Reports</option>
+                <option value="account_profile">Account Profiles</option>
+                <option value="billing">Billing</option>
                 <option value="user">Users</option>
+                <option value="system">System</option>
               </select>
             </div>
           </div>
