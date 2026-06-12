@@ -310,44 +310,7 @@ export default function SettingsPage() {
 
   return (
     <main className="min-h-screen bg-[#020617] text-white px-5 py-8">
-<section className="mb-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
-        <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-          <div>
-            <p className="text-xs uppercase tracking-[0.25em] text-cyan-300">
-              Platform Admin
-            </p>
-            <h2 className="mt-1 text-xl font-black text-white">Support Lookup</h2>
-            <p className="mt-1 text-sm text-slate-300">
-              Search companies and users by phone number, email, company name, contact name, or organization ID.
-            </p>
-          </div>
 
-          
-            {/* LOSSQ_SETTINGS_TOP_ACTION_BUTTONS_V1 */}
-            <button
-              type="button"
-              onClick={() => router.push("/settings/agency-profile")}
-              className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-bold text-cyan-100 hover:bg-cyan-400/20"
-            >
-              Company Profile
-            </button>
-
-            <button
-              type="button"
-              onClick={() => router.push("/settings/support-lookup")}
-              className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-bold text-cyan-100 hover:bg-cyan-400/20"
-            >
-              Support Lookup
-            </button>
-
-<button
-            onClick={() => router.push("/settings/support-lookup")}
-            className="rounded-xl bg-cyan-500 px-5 py-3 text-sm font-black text-slate-950 hover:bg-cyan-400"
-          >
-            Open Support Lookup
-          </button>
-        </div>
-      </section>
 
 
       <div className="fixed inset-0 bg-[radial-gradient(circle_at_top_left,#1d4ed855,transparent_30%),radial-gradient(circle_at_bottom_right,#7c3aed33,transparent_32%)] pointer-events-none" />
@@ -370,7 +333,23 @@ export default function SettingsPage() {
             <a href="/dashboard" className="rounded-xl border border-white/10 px-5 py-3 font-semibold text-slate-200 hover:bg-white/10">
               Back to Dashboard
             </a>
-            <a href="/audit-log" className="rounded-xl border border-purple-400/30 bg-purple-500/10 px-5 py-3 font-semibold text-purple-100 hover:bg-purple-500/20">
+            
+            {/* LOSSQ_SETTINGS_HEADER_BUTTON_ROW_EXACT_V1 */}
+            <a
+              href="/settings/agency-profile"
+              className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-semibold text-cyan-100 hover:bg-cyan-400/20"
+            >
+              Company Profile
+            </a>
+
+            <a
+              href="/settings/support-lookup"
+              className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-semibold text-cyan-100 hover:bg-cyan-400/20"
+            >
+              Support Lookup
+            </a>
+
+<a href="/audit-log" className="rounded-xl border border-purple-400/30 bg-purple-500/10 px-5 py-3 font-semibold text-purple-100 hover:bg-purple-500/20">
               Audit Log
             </a>
             <button onClick={logout} className="rounded-xl border border-red-400/30 bg-red-500/10 px-5 py-3 font-semibold text-red-200 hover:bg-red-500/20">
