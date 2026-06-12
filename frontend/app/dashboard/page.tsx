@@ -1053,6 +1053,7 @@ function normalizeProfileName(item: any) {
 
 
   const [message, setMessage] = useState("");
+  const [showNewUserWelcome, setShowNewUserWelcome] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [dashboardLoading, setDashboardLoading] = useState(true);
   const [dashboardError, setDashboardError] = useState("");
@@ -1173,6 +1174,48 @@ function normalizeProfileName(item: any) {
   function authHeaders(): Record<string, string> {
     const token = getToken();
     return token ? { Authorization: `Bearer ${token}` } : {};
+  }
+
+
+  // LOSSQ_NEW_USER_WELCOME_FINAL_V1
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const params = new URLSearchParams(window.location.search);
+    const welcomeParam = params.get("welcome");
+    const pendingWelcome =
+      sessionStorage.getItem("lossq_welcome") ||
+      localStorage.getItem("lossq_new_user_welcome");
+
+    const seen = localStorage.getItem("lossq_new_user_welcome_seen");
+
+    if (
+      !seen &&
+      (welcomeParam === "1" ||
+        pendingWelcome === "1" ||
+        pendingWelcome === "true" ||
+        pendingWelcome === "new-user")
+    ) {
+      setShowNewUserWelcome(true);
+
+      if (welcomeParam) {
+        params.delete("welcome");
+        const cleanUrl = `${window.location.pathname}${
+          params.toString() ? `?${params.toString()}` : ""
+        }`;
+        window.history.replaceState({}, "", cleanUrl);
+      }
+    }
+  }, []);
+
+  function dismissNewUserWelcome() {
+    if (typeof window !== "undefined") {
+      localStorage.setItem("lossq_new_user_welcome_seen", Date.now().toString());
+      localStorage.removeItem("lossq_new_user_welcome");
+      sessionStorage.removeItem("lossq_welcome");
+    }
+
+    setShowNewUserWelcome(false);
   }
 
   // LOSSQ_PERSIST_ACTIVE_TOOL_V1
@@ -4562,6 +4605,81 @@ const trendNoteDisplay =
               </button>
             </div>
           </header>
+
+
+          {showNewUserWelcome && (
+            <div className="mb-8 rounded-3xl border border-cyan-400/30 bg-cyan-400/10 p-6 shadow-[0_0_40px_rgba(34,211,238,0.12)]">
+              <div className="flex flex-col gap-5 lg:flex-row lg:items-start lg:justify-between">
+                <div className="max-w-3xl">
+                  <div className="mb-3 inline-flex items-center gap-2 rounded-full border border-cyan-300/30 bg-cyan-300/10 px-3 py-1 text-xs font-black uppercase tracking-[0.2em] text-cyan-200">
+                    Welcome to LossQ
+                  </div>
+
+                  <h2 className="text-2xl font-black tracking-tight text-white">
+                    Your underwriting workspace is ready.
+                  </h2>
+
+                  <p className="mt-3 max-w-3xl text-sm leading-7 text-slate-300">
+                    LossQ was built to help brokers and agencies turn loss runs into carrier-ready underwriting intelligence. Start by uploading a loss run, reviewing the account profile, adding exposure inputs, and then generating renewal risk, carrier appetite, premium forecast, submission packets, and carrier email drafts from one place.
+                  </p>
+
+                  <div className="mt-5 grid gap-3 md:grid-cols-3">
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                      <p className="text-sm font-black text-white">1. Upload loss runs</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-400">
+                        Import PDF, CSV, or Excel files and let LossQ organize claim activity.
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                      <p className="text-sm font-black text-white">2. Add exposure inputs</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-400">
+                        Add premium, payroll, revenue, drivers, vehicles, limits, and underwriting context.
+                      </p>
+                    </div>
+
+                    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-4">
+                      <p className="text-sm font-black text-white">3. Build the submission</p>
+                      <p className="mt-1 text-xs leading-5 text-slate-400">
+                        Generate carrier packets, renewal memos, and prefilled carrier email drafts.
+                      </p>
+                    </div>
+                  </div>
+                </div>
+
+                <div className="flex shrink-0 flex-col gap-3 sm:flex-row lg:flex-col">
+                  <button
+                    onClick={() => {
+                      changeActiveTool("upload");
+                      dismissNewUserWelcome();
+                    }}
+                    className="btn-primary whitespace-nowrap"
+                  >
+                    Upload First Loss Run
+                  </button>
+
+                  <button
+                    onClick={() => {
+                      changeActiveTool("exposure-inputs");
+                      dismissNewUserWelcome();
+                    }}
+                    className="btn-secondary whitespace-nowrap"
+                  >
+                    Add Exposure Inputs
+                  </button>
+
+                  <button
+                    onClick={dismissNewUserWelcome}
+                    className="rounded-xl border border-white/10 px-4 py-2 text-sm font-bold text-slate-300 transition hover:bg-white/10 hover:text-white"
+                  >
+                    Dismiss
+                  </button>
+                </div>
+              </div>
+            </div>
+          )}
+
+
 
           <div className="lg:hidden glass-panel p-4 mb-6 overflow-x-auto">
             <div className="flex gap-3 min-w-max">
