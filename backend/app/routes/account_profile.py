@@ -724,6 +724,177 @@ def upsert_account_profile(
 
 
 def hard_delete_profile_traces(db, current_user: dict, profile, delete_claims: bool = True):
+    # LOSSQ_HARD_DELETE_PROFILE_TRACES_V2
+    # Permanently wipes backend traces tied to a deleted account profile.
+    # This prevents deleted profiles from being recognized again after reupload.
+
+    import os
+    import json
+    from sqlalchemy import or_, func
+
+    from app.models.claim import Claim
+    from app.models.upload_history import UploadHistory
+
+    deleted_claims = 0
+    deleted_upload_history = 0
+    deleted_files = 0
+
+    organization_id = current_user["organization_id"]
+
+    profile_keys = []
+    profile_name_hints = []
+
+    def clean_key(value):
+        return str(value or "").strip()
+
+    def add_key(value):
+        cleaned = clean_key(value)
+        if cleaned and cleaned.upper() not in {"NOT SET", "NONE", "NULL", "N/A"}:
+            if cleaned not in profile_keys:
+                profile_keys.append(cleaned)
+
+    def add_name_hint(value):
+        cleaned = clean_key(value)
+        if cleaned and cleaned.upper() not in {"NOT SET", "NONE", "NULL", "N/A", "BUSINESS NAME NOT SET", "CARRIER NOT SET"}:
+            lowered = cleaned.lower()
+            if lowered not in profile_name_hints:
+                profile_name_hints.append(lowered)
+
+    if profile is not None:
+        add_key(getattr(profile, "policy_number", None))
+        add_key(getattr(profile, "account_number", None))
+        add_key(getattr(profile, "customer_number", None))
+        add_key(getattr(profile, "producer_number", None))
+
+        add_name_hint(getattr(profile, "business_name", None))
+        add_name_hint(getattr(profile, "carrier_name", None))
+        add_name_hint(getattr(profile, "writing_carrier", None))
+
+        # Pull child policy numbers from the saved policies JSON/text column.
+        try:
+            policies_value = getattr(profile, "policies", None)
+            parsed_policies = []
+
+            if isinstance(policies_value, str) and policies_value.strip():
+                parsed_policies = json.loads(policies_value)
+            elif isinstance(policies_value, list):
+                parsed_policies = policies_value
+
+            if isinstance(parsed_policies, list):
+                for item in parsed_policies:
+                    if isinstance(item, dict):
+                        add_key(item.get("policy_number"))
+                        add_key(item.get("account_number"))
+                        add_key(item.get("customer_number"))
+                        add_key(item.get("policy"))
+                        add_key(item.get("policyNumber"))
+                    else:
+                        add_key(item)
+        except Exception:
+            pass
+
+    # Delete claims that match policy/account/customer identifiers OR business/carrier hints.
+    if delete_claims:
+        claim_query = db.query(Claim).filter(Claim.organization_id == organization_id)
+
+        claim_filters = []
+
+        if profile_keys:
+            upper_keys = [key.upper() for key in profile_keys]
+
+            if hasattr(Claim, "policy_number"):
+                claim_filters.append(func.upper(func.trim(Claim.policy_number)).in_(upper_keys))
+
+            if hasattr(Claim, "claim_number"):
+                # This is defensive only. Some imported rows can accidentally store account identifiers in the wrong field.
+                claim_filters.append(func.upper(func.trim(Claim.claim_number)).in_(upper_keys))
+
+        for hint in profile_name_hints:
+            like_hint = f"%{hint}%"
+
+            if hasattr(Claim, "insured_name"):
+                claim_filters.append(func.lower(Claim.insured_name).like(like_hint))
+
+            if hasattr(Claim, "business_name"):
+                claim_filters.append(func.lower(Claim.business_name).like(like_hint))
+
+            if hasattr(Claim, "carrier_name"):
+                claim_filters.append(func.lower(Claim.carrier_name).like(like_hint))
+
+            if hasattr(Claim, "raw_text"):
+                claim_filters.append(func.lower(Claim.raw_text).like(like_hint))
+
+        if claim_filters:
+            deleted_claims = (
+                claim_query
+                .filter(or_(*claim_filters))
+                .delete(synchronize_session=False)
+            )
+
+    # Delete upload history rows that match the same profile identifiers/name hints.
+    upload_rows = (
+        db.query(UploadHistory)
+        .filter(UploadHistory.organization_id == organization_id)
+        .all()
+    )
+
+    for upload in upload_rows:
+        upload_text_parts = []
+
+        for attr in [
+            "filename",
+            "file_name",
+            "original_filename",
+            "policy_number",
+            "account_number",
+            "customer_number",
+            "business_name",
+            "carrier_name",
+            "status",
+            "notes",
+            "raw_text_preview",
+        ]:
+            if hasattr(upload, attr):
+                upload_text_parts.append(str(getattr(upload, attr) or ""))
+
+        upload_text = " ".join(upload_text_parts).lower()
+
+        should_delete_upload = False
+
+        for key in profile_keys:
+            if key and key.lower() in upload_text:
+                should_delete_upload = True
+                break
+
+        if not should_delete_upload:
+            for hint in profile_name_hints:
+                if hint and hint in upload_text:
+                    should_delete_upload = True
+                    break
+
+        if should_delete_upload:
+            # Try to remove the stored uploaded file from disk if the row has a path.
+            for path_attr in ["file_path", "path", "stored_path", "saved_path"]:
+                if hasattr(upload, path_attr):
+                    file_path = getattr(upload, path_attr, None)
+                    if file_path:
+                        try:
+                            if os.path.exists(file_path):
+                                os.remove(file_path)
+                                deleted_files += 1
+                        except Exception:
+                            pass
+
+            db.delete(upload)
+            deleted_upload_history += 1
+
+    return {
+        "profile_keys": profile_keys,
+        "profile_name_hints": profile_name_hints,
+        "deleted_claims": deleted_claims,
+        "deleted_upload_history": deleted_upload_history,
+        "deleted_files": deleted_files,
+    }
     # LOSSQ_HARD_DELETE_PROFILE_TRACES_V1
     # Hard delete every backend trace tied to a deleted profile/account.
     import json
