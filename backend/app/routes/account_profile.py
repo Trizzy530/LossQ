@@ -888,6 +888,115 @@ def hard_delete_profile_traces(db, current_user: dict, profile, delete_claims: b
     }
 
 
+
+
+# LOSSQ_HARD_PURGE_PROFILE_ID_V1
+@router.delete("/hard-purge-id/{profile_id}")
+def hard_purge_profile_by_id(
+    profile_id: int,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Hard purge one exact AccountProfile row and all claims tied to its account,
+    policy number, account number, customer number, and policy schedule.
+    """
+    org_id = current_user["organization_id"]
+
+    profile = (
+        db.query(AccountProfile)
+        .filter(
+            AccountProfile.id == profile_id,
+            AccountProfile.organization_id == org_id,
+        )
+        .first()
+    )
+
+    if not profile:
+        raise HTTPException(status_code=404, detail="Profile not found for this organization.")
+
+    keys = set()
+
+    def add_key(value):
+        value = clean_value(value).upper()
+        if value and value not in {"NONE", "NULL", "UNKNOWN"}:
+            keys.add(value)
+
+    add_key(getattr(profile, "policy_number", ""))
+    add_key(getattr(profile, "account_number", ""))
+    add_key(getattr(profile, "customer_number", ""))
+
+    try:
+        policies = parse_json_field(getattr(profile, "policies", None), [])
+        if isinstance(policies, list):
+            for item in policies:
+                if isinstance(item, dict):
+                    add_key(item.get("policy_number"))
+                    add_key(item.get("policyNumber"))
+                    add_key(item.get("number"))
+                    add_key(item.get("account_number"))
+                    add_key(item.get("accountNumber"))
+    except Exception:
+        pass
+
+    deleted_claims = 0
+    deleted_upload_history = 0
+
+    try:
+        from app.models.claim import Claim
+
+        filters = []
+        for key in keys:
+            filters.append(func.upper(func.coalesce(Claim.policy_number, "")).like(f"%{key}%"))
+            filters.append(func.upper(func.coalesce(Claim.claim_number, "")).like(f"%{key}%"))
+
+        if filters:
+            deleted_claims = (
+                db.query(Claim)
+                .filter(
+                    Claim.organization_id == org_id,
+                    or_(*filters),
+                )
+                .delete(synchronize_session=False)
+            )
+    except Exception as e:
+        print(f"Hard purge profile claims failed: {e}")
+
+    try:
+        from app.models.upload_history import UploadHistory
+
+        filters = []
+        for key in keys:
+            filters.append(func.upper(func.coalesce(UploadHistory.policy_number, "")).like(f"%{key}%"))
+            filters.append(func.upper(func.coalesce(UploadHistory.filename, "")).like(f"%{key}%"))
+
+        if filters:
+            deleted_upload_history = (
+                db.query(UploadHistory)
+                .filter(
+                    UploadHistory.organization_id == org_id,
+                    or_(*filters),
+                )
+                .delete(synchronize_session=False)
+            )
+    except Exception as e:
+        print(f"Hard purge profile upload history failed: {e}")
+
+    db.delete(profile)
+    db.commit()
+
+    return {
+        "message": "Hard profile purge completed.",
+        "profile_id": profile_id,
+        "keys_used": sorted(list(keys)),
+        "deleted_claims": deleted_claims,
+        "deleted_profiles": 1,
+        "deleted_upload_history": deleted_upload_history,
+    }
+
+
+
+
 @router.delete("/")
 def delete_account_profile_by_query(
     profile_id: Optional[int] = Query(default=None),
