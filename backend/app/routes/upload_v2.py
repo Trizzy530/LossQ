@@ -536,6 +536,105 @@ def _lossq_correct_known_structured_claim_row(claim: Dict[str, Any]) -> Dict[str
     return row
 
 
+
+# LOSSQ_FORCE_REPLACE_ACCOUNT_UPLOAD_V1
+def _lossq_account_replace_keys(profile_data: Dict[str, Any], parsed_claims: List[Dict[str, Any]]) -> Dict[str, set]:
+    profile_data = profile_data or {}
+    parsed_claims = parsed_claims or []
+
+    policy_numbers = set()
+    account_keys = set()
+    business_names = set()
+
+    for key in ["policy_number", "account_number", "customer_number"]:
+        value = _clean(profile_data.get(key)).upper()
+        if value:
+            if _valid_policy_number(value):
+                policy_numbers.add(value)
+            account_keys.add(value)
+
+    for key in ["business_name", "insured_name", "named_insured", "company_name"]:
+        value = _clean(profile_data.get(key)).upper()
+        if value:
+            business_names.add(value)
+
+    policies = profile_data.get("policies") or []
+    if isinstance(policies, list):
+        for item in policies:
+            if isinstance(item, dict):
+                policy_number = _clean(
+                    item.get("policy_number")
+                    or item.get("policyNumber")
+                    or item.get("number")
+                ).upper()
+                if policy_number and _valid_policy_number(policy_number):
+                    policy_numbers.add(policy_number)
+                    account_keys.add(policy_number)
+
+    for claim in parsed_claims:
+        if isinstance(claim, dict):
+            policy_number = _clean(claim.get("policy_number")).upper()
+            if policy_number and _valid_policy_number(policy_number):
+                policy_numbers.add(policy_number)
+                account_keys.add(policy_number)
+
+    return {
+        "policy_numbers": policy_numbers,
+        "account_keys": account_keys,
+        "business_names": business_names,
+    }
+
+
+def _lossq_force_delete_existing_account_claims(
+    db: Session,
+    current_user: dict,
+    profile_data: Dict[str, Any],
+    parsed_claims: List[Dict[str, Any]],
+) -> int:
+    keys = _lossq_account_replace_keys(profile_data, parsed_claims)
+    org_id = current_user["organization_id"]
+
+    total_deleted = 0
+
+    policy_numbers = {item for item in keys["policy_numbers"] if item}
+    account_keys = {item for item in keys["account_keys"] if item}
+    business_names = {item for item in keys["business_names"] if item}
+
+    if policy_numbers:
+        total_deleted += (
+            db.query(Claim)
+            .filter(
+                Claim.organization_id == org_id,
+                func.upper(func.trim(Claim.policy_number)).in_(list(policy_numbers)),
+            )
+            .delete(synchronize_session=False)
+        )
+
+    if account_keys:
+        # Some older uploads saved account/customer number as the claim policy key.
+        total_deleted += (
+            db.query(Claim)
+            .filter(
+                Claim.organization_id == org_id,
+                func.upper(func.trim(Claim.policy_number)).in_(list(account_keys)),
+            )
+            .delete(synchronize_session=False)
+        )
+
+    if business_names and hasattr(Claim, "insured_name"):
+        total_deleted += (
+            db.query(Claim)
+            .filter(
+                Claim.organization_id == org_id,
+                func.upper(func.trim(Claim.insured_name)).in_(list(business_names)),
+            )
+            .delete(synchronize_session=False)
+        )
+
+    db.flush()
+    return total_deleted
+
+
 def _build_policy_rollup_from_claims(claims: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     rollup: Dict[str, Dict[str, Any]] = {}
 
