@@ -1177,6 +1177,9 @@ def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any], content: bytes | 
     if not isinstance(parsed, dict):
         return parsed
 
+    # LOSSQ_UNIVERSAL_POLICY_DATE_HEADER_APPLY_V1
+    # Generic loss-run date extraction. No customer/file-specific hardcoding.
+    parsed = _lossq_csv_apply_policy_dates(parsed)
     profile = dict(parsed.get("profile") or {})
 
     full_content_text = _fallback_extract_full_text_from_content(content)
@@ -1369,6 +1372,195 @@ def force_save_account_profile_v2(
         db.refresh(saved)
 
     return saved
+
+
+
+
+# LOSSQ_UNIVERSAL_POLICY_DATE_HEADER_EXTRACTION_V1
+def _lossq_csv_flat_key(value):
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _lossq_csv_clean_date(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    # Remove common noise.
+    raw = raw.replace("\\", "/").replace(".", "/").strip()
+    raw = re.sub(r"\s+", " ", raw)
+
+    # Already ISO-like.
+    iso_match = re.search(r"\b(20\d{2}|19\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", raw)
+    if iso_match:
+        yyyy, mm, dd = iso_match.groups()
+        return f"{int(yyyy):04d}-{int(mm):02d}-{int(dd):02d}"
+
+    # MM/DD/YYYY or M/D/YY.
+    us_match = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", raw)
+    if us_match:
+        mm, dd, yyyy = us_match.groups()
+        yyyy = int(yyyy)
+        if yyyy < 100:
+            yyyy += 2000 if yyyy < 70 else 1900
+        return f"{yyyy:04d}-{int(mm):02d}-{int(dd):02d}"
+
+    return raw
+
+
+def _lossq_csv_detect_date_kind(key):
+    clean = _lossq_csv_flat_key(key)
+
+    effective_keys = {
+        "policyeffectivedate",
+        "policyinceptiondate",
+        "effectivedate",
+        "effdate",
+        "inceptiondate",
+        "policyeffdate",
+        "policyperiodstart",
+        "periodstart",
+    }
+
+    expiration_keys = {
+        "policyexpirationdate",
+        "policyexpirydate",
+        "expirationdate",
+        "expirydate",
+        "expdate",
+        "policexpdate",
+        "policyexpdate",
+        "policyperiodend",
+        "periodend",
+    }
+
+    valuation_keys = {
+        "valuationdate",
+        "valuedate",
+        "valuedasof",
+        "valuedasofdate",
+        "evaluationdate",
+        "lossrunvaluationdate",
+        "lossrunasofdate",
+        "asofdate",
+        "reportdate",
+    }
+
+    if clean in effective_keys:
+        return "effective_date"
+
+    if clean in expiration_keys:
+        return "expiration_date"
+
+    if clean in valuation_keys:
+        return "valuation_date"
+
+    if "valuation" in clean and "date" in clean:
+        return "valuation_date"
+
+    if "evaluation" in clean and "date" in clean:
+        return "valuation_date"
+
+    if "effective" in clean and "date" in clean:
+        return "effective_date"
+
+    if "expiration" in clean and "date" in clean:
+        return "expiration_date"
+
+    if "expiry" in clean and "date" in clean:
+        return "expiration_date"
+
+    return ""
+
+
+def _lossq_csv_scan_policy_dates(value, found=None):
+    if found is None:
+        found = {
+            "effective_date": "",
+            "expiration_date": "",
+            "valuation_date": "",
+        }
+
+    if isinstance(value, dict):
+        for key, item in value.items():
+            kind = _lossq_csv_detect_date_kind(key)
+            if kind and not found.get(kind):
+                clean_date = _lossq_csv_clean_date(item)
+                if clean_date:
+                    found[kind] = clean_date
+
+            if isinstance(item, (dict, list, tuple)):
+                _lossq_csv_scan_policy_dates(item, found)
+
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _lossq_csv_scan_policy_dates(item, found)
+
+    return found
+
+
+def _lossq_csv_apply_policy_dates(parsed):
+    if not isinstance(parsed, dict):
+        return parsed
+
+    profile = dict(parsed.get("profile") or {})
+    account_profile = dict(parsed.get("account_profile") or {})
+
+    found_dates = _lossq_csv_scan_policy_dates(parsed)
+
+    effective = found_dates.get("effective_date") or ""
+    expiration = found_dates.get("expiration_date") or ""
+    valuation = found_dates.get("valuation_date") or ""
+
+    for target in [profile, account_profile, parsed]:
+        if not isinstance(target, dict):
+            continue
+
+        if effective and not target.get("effective_date"):
+            target["effective_date"] = effective
+            target["policy_effective_date"] = effective
+
+        if expiration and not target.get("expiration_date"):
+            target["expiration_date"] = expiration
+            target["policy_expiration_date"] = expiration
+
+        if valuation and not target.get("valuation_date"):
+            target["valuation_date"] = valuation
+            target["evaluation_date"] = valuation
+            target["loss_run_valuation_date"] = valuation
+
+    policies = parsed.get("policies")
+    if isinstance(policies, list):
+        for policy in policies:
+            if isinstance(policy, dict):
+                if effective and not policy.get("effective_date"):
+                    policy["effective_date"] = effective
+                if expiration and not policy.get("expiration_date"):
+                    policy["expiration_date"] = expiration
+
+    profile_policies = profile.get("policies")
+    if isinstance(profile_policies, list):
+        for policy in profile_policies:
+            if isinstance(policy, dict):
+                if effective and not policy.get("effective_date"):
+                    policy["effective_date"] = effective
+                if expiration and not policy.get("expiration_date"):
+                    policy["expiration_date"] = expiration
+
+    account_policies = account_profile.get("policies")
+    if isinstance(account_policies, list):
+        for policy in account_policies:
+            if isinstance(policy, dict):
+                if effective and not policy.get("effective_date"):
+                    policy["effective_date"] = effective
+                if expiration and not policy.get("expiration_date"):
+                    policy["expiration_date"] = expiration
+
+    parsed["profile"] = profile
+    parsed["account_profile"] = account_profile
+
+    return parsed
+
 
 
 @router.post("/loss-run-v2")

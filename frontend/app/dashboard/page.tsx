@@ -240,16 +240,52 @@ function getEvaluationDateFromExpiration(expirationDate: any) {
   return parsed.toISOString().slice(0, 10);
 }
 
+
+function normalizeDateInput(value: any) {
+  const raw = String(value || "").trim();
+
+  if (!raw) return "";
+
+  const isoMatch = raw.match(/\b((?:19|20)\d{2})[-/](\d{1,2})[-/](\d{1,2})\b/);
+  if (isoMatch) {
+    const [, yyyy, mm, dd] = isoMatch;
+    return `${yyyy}-${String(Number(mm)).padStart(2, "0")}-${String(Number(dd)).padStart(2, "0")}`;
+  }
+
+  const usMatch = raw.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/);
+  if (usMatch) {
+    const [, mm, dd, yearValue] = usMatch;
+    let yyyy = Number(yearValue);
+
+    if (yyyy < 100) {
+      yyyy += yyyy < 70 ? 2000 : 1900;
+    }
+
+    return `${yyyy}-${String(Number(mm)).padStart(2, "0")}-${String(Number(dd)).padStart(2, "0")}`;
+  }
+
+  return raw;
+}
+
+// LOSSQ_PREFER_UPLOAD_VALUATION_DATE_V1
 function getBestEvaluationDate(profileLike: any) {
+  const explicitValuationDate = normalizeDateInput(
+    profileLike?.valuation_date ||
+      profileLike?.loss_run_valuation_date ||
+      profileLike?.valuationDate ||
+      profileLike?.lossRunValuationDate ||
+      profileLike?.evaluation_date
+  );
+
+  if (explicitValuationDate) return explicitValuationDate;
+
   const derivedDate = getEvaluationDateFromExpiration(
     profileLike?.expiration_date ||
       profileLike?.policy_expiration_date ||
       profileLike?.expiry_date
   );
 
-  // Renewal evaluation date should default to 3 months before expiration.
-  // This intentionally overrides stale upload/save dates like today's date.
-  return derivedDate || profileLike?.evaluation_date || "";
+  return derivedDate || "";
 }
 
 function normalizePolicyNumber(value: any) {
@@ -3021,6 +3057,35 @@ async function saveExposureInputs() {
         ...extractedExposureInputs,
         carrier_name: cleanCarrierName || primaryProfile?.carrier_name || "",
         writing_carrier: cleanCarrierName || primaryProfile?.writing_carrier || primaryProfile?.carrier_name || "",
+
+        // LOSSQ_UNIVERSAL_UPLOAD_PROFILE_DATE_ALIAS_CARRY_FORWARD_V1
+        effective_date:
+          primaryProfile?.effective_date ||
+          primaryProfile?.policy_effective_date ||
+          primaryData?.effective_date ||
+          primaryData?.policy_effective_date ||
+          primaryData?.account_profile?.effective_date ||
+          primaryData?.profile?.effective_date ||
+          "",
+
+        expiration_date:
+          primaryProfile?.expiration_date ||
+          primaryProfile?.policy_expiration_date ||
+          primaryData?.expiration_date ||
+          primaryData?.policy_expiration_date ||
+          primaryData?.account_profile?.expiration_date ||
+          primaryData?.profile?.expiration_date ||
+          "",
+
+        valuation_date:
+          primaryProfile?.valuation_date ||
+          primaryProfile?.loss_run_valuation_date ||
+          primaryData?.valuation_date ||
+          primaryData?.loss_run_valuation_date ||
+          primaryData?.evaluation_date ||
+          primaryData?.account_profile?.valuation_date ||
+          primaryData?.profile?.valuation_date ||
+          "",
 
         insured:
           primaryProfile?.insured ||
