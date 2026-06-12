@@ -35,18 +35,19 @@ from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
 from app.models.audit_log import AuditLog
 
-# LOSSQ_SECURITY_PHASE_1_V1
+load_dotenv()
+
+# LOSSQ_CORS_LOCKDOWN_V1
+# Production default only allows the real LossQ domains and the current Vercel production project.
+DEFAULT_ALLOWED_ORIGINS = "https://www.lossq.com,https://lossq.com,https://loss-q.vercel.app"
+
 ALLOWED_ORIGINS = [
-    origin.strip()
-    for origin in os.getenv(
-        "ALLOWED_ORIGINS",
-        "https://www.lossq.com,https://lossq.com,http://localhost:3000",
-    ).split(",")
+    origin.strip().rstrip("/")
+    for origin in os.getenv("ALLOWED_ORIGINS", DEFAULT_ALLOWED_ORIGINS).split(",")
     if origin.strip()
 ]
 
-
-load_dotenv()
+ALLOWED_LOSSQ_ORIGINS = set(ALLOWED_ORIGINS)
 
 Base.metadata.create_all(bind=engine)
 
@@ -60,21 +61,18 @@ app.add_middleware(SimpleRateLimitMiddleware)
 
 
 
-ALLOWED_LOSSQ_ORIGINS = {
-    "https://lossq.com",
-    "https://www.lossq.com",
-    "http://localhost:3000",
-    "http://127.0.0.1:3000",
-}
+def lossq_origin_allowed(origin: str | None) -> bool:
+    if not origin:
+        return False
+    return origin.rstrip("/") in ALLOWED_LOSSQ_ORIGINS
+
 
 def lossq_emergency_cors_headers(origin: str | None) -> dict:
-    if not origin:
+    if not lossq_origin_allowed(origin):
         return {}
-    allowed = origin in ALLOWED_LOSSQ_ORIGINS or (origin.startswith("https://") and origin.endswith(".vercel.app"))
-    if not allowed:
-        return {}
+    clean_origin = origin.rstrip("/")
     return {
-        "Access-Control-Allow-Origin": origin,
+        "Access-Control-Allow-Origin": clean_origin,
         "Vary": "Origin",
         "Access-Control-Allow-Credentials": "true",
         "Access-Control-Allow-Methods": "GET, POST, PUT, PATCH, DELETE, OPTIONS",
@@ -99,18 +97,11 @@ async def lossq_emergency_cors_middleware(request: Request, call_next):
 # Production CORS - must stay before route registration.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "https://lossq.com",
-        "https://www.lossq.com",
-        "http://localhost:3000",
-        "http://127.0.0.1:3000",
-        "https://loss-q.vercel.app",
-        "https://loss-q-tmst.vercel.app",
-        "https://loss-q-git-main-trizzy530.vercel.app",],
-    allow_origin_regex=r"https://.*\.vercel\.app",
+    allow_origins=ALLOWED_ORIGINS,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
+    max_age=86400,
 )
 
 app.include_router(auth.router)
