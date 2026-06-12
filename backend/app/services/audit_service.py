@@ -10,7 +10,17 @@ from app.models.audit_log import AuditLog
 
 def actor_value(current_user: Any, key: str, default: Any = None) -> Any:
     if isinstance(current_user, dict):
+        if key == "id":
+            return current_user.get("id", current_user.get("user_id", default))
+        if key == "email":
+            return current_user.get("email", current_user.get("user_email", current_user.get("sub", default)))
         return current_user.get(key, default)
+
+    if key == "id":
+        return getattr(current_user, "id", getattr(current_user, "user_id", default))
+    if key == "email":
+        return getattr(current_user, "email", getattr(current_user, "user_email", default))
+
     return getattr(current_user, key, default)
 
 
