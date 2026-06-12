@@ -8430,7 +8430,188 @@ def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=Non
     ))
 
 
+
+
+# LOSSQ_REPORT_DATA_ACCURACY_FIX_V1
+def lossq_report_get_claim_value(claim, key, default=""):
+    if isinstance(claim, dict):
+        return claim.get(key, default)
+    return getattr(claim, key, default)
+
+
+def lossq_report_number(value):
+    try:
+        cleaned = str(value or "").replace("$", "").replace(",", "").replace("%", "").strip()
+        if cleaned.lower() in {"", "-", "none", "null", "nan"}:
+            return 0.0
+        return float(cleaned)
+    except Exception:
+        return 0.0
+
+
+def lossq_report_is_open_claim(claim):
+    status = str(lossq_report_get_claim_value(claim, "status", "") or "").strip().lower()
+    return status in {"open", "reopened", "re-opened", "pending", "active"}
+
+
+def lossq_report_is_litigated_claim(claim):
+    value = lossq_report_get_claim_value(claim, "litigation", False)
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    if text in {"true", "yes", "y", "1", "litigated", "litigation"}:
+        return True
+    desc = str(lossq_report_get_claim_value(claim, "description", "") or "").lower()
+    return any(word in desc for word in ["attorney", "lawsuit", "counsel", "litigat", "represented"])
+
+
+def lossq_report_is_flagged_claim(claim):
+    value = (
+        lossq_report_get_claim_value(claim, "flag", None)
+        or lossq_report_get_claim_value(claim, "flagged", None)
+        or lossq_report_get_claim_value(claim, "watchlist", None)
+    )
+    if isinstance(value, bool):
+        return value
+    text = str(value or "").strip().lower()
+    return bool(text) and text not in {"false", "no", "0", "none", "-", "standard"}
+
+
+def lossq_report_claim_dedupe_key(claim):
+    claim_number = str(
+        lossq_report_get_claim_value(claim, "claim_number", "")
+        or lossq_report_get_claim_value(claim, "claimNumber", "")
+        or ""
+    ).strip().upper()
+
+    policy_number = str(
+        lossq_report_get_claim_value(claim, "policy_number", "")
+        or lossq_report_get_claim_value(claim, "policyNumber", "")
+        or ""
+    ).strip().upper()
+
+    date_of_loss = str(
+        lossq_report_get_claim_value(claim, "date_of_loss", "")
+        or lossq_report_get_claim_value(claim, "loss_date", "")
+        or ""
+    ).strip().upper()
+
+    total = str(
+        lossq_report_get_claim_value(claim, "total_incurred", "")
+        or lossq_report_get_claim_value(claim, "incurred", "")
+        or lossq_report_get_claim_value(claim, "loss_amount", "")
+        or ""
+    ).strip().upper()
+
+    # Claim number + policy should be unique for real loss runs.
+    if claim_number and policy_number:
+        return f"{claim_number}|{policy_number}"
+
+    return f"{claim_number}|{policy_number}|{date_of_loss}|{total}"
+
+
+def lossq_report_dedupe_claims(claims):
+    seen = set()
+    deduped = []
+
+    for claim in claims or []:
+        key = lossq_report_claim_dedupe_key(claim)
+        if not key or key in seen:
+            continue
+        seen.add(key)
+        deduped.append(claim)
+
+    return deduped
+
+
+def lossq_report_recalculate_metrics(claims):
+    claims = lossq_report_dedupe_claims(claims)
+
+    total_claims = len(claims)
+    open_claims = len([claim for claim in claims if lossq_report_is_open_claim(claim)])
+    litigation_claims = len([claim for claim in claims if lossq_report_is_litigated_claim(claim)])
+    flagged_claims = len([claim for claim in claims if lossq_report_is_flagged_claim(claim)])
+
+    total_paid = sum(lossq_report_number(lossq_report_get_claim_value(claim, "paid_amount", 0)) for claim in claims)
+    total_reserve = sum(lossq_report_number(lossq_report_get_claim_value(claim, "reserve_amount", 0)) for claim in claims)
+    total_incurred = sum(
+        lossq_report_number(
+            lossq_report_get_claim_value(claim, "total_incurred", None)
+            or lossq_report_get_claim_value(claim, "incurred", None)
+            or lossq_report_get_claim_value(claim, "loss_amount", 0)
+        )
+        for claim in claims
+    )
+
+    largest_loss = max(
+        [
+            lossq_report_number(
+                lossq_report_get_claim_value(claim, "total_incurred", None)
+                or lossq_report_get_claim_value(claim, "incurred", None)
+                or lossq_report_get_claim_value(claim, "loss_amount", 0)
+            )
+            for claim in claims
+        ]
+        or [0]
+    )
+
+    return {
+        "total_claims": total_claims,
+        "open_claims": open_claims,
+        "closed_claims": max(total_claims - open_claims, 0),
+        "litigation_claims": litigation_claims,
+        "flagged_claims": flagged_claims,
+        "total_paid": total_paid,
+        "total_reserve": total_reserve,
+        "total_incurred": total_incurred,
+        "largest_loss": largest_loss,
+        "large_claims": len([
+            claim for claim in claims
+            if lossq_report_number(
+                lossq_report_get_claim_value(claim, "total_incurred", None)
+                or lossq_report_get_claim_value(claim, "incurred", None)
+                or lossq_report_get_claim_value(claim, "loss_amount", 0)
+            ) >= 100000
+        ]),
+    }
+
+
+def lossq_report_normalize_ctx(ctx):
+    ctx = dict(ctx or {})
+
+    claims = lossq_report_dedupe_claims(ctx.get("claims") or [])
+    metrics = lossq_report_recalculate_metrics(claims)
+
+    ctx["claims"] = claims
+    ctx["metrics"] = metrics
+
+    # Keep engine sections aligned with deduped metrics so PDFs do not double totals.
+    for section_key in [
+        "intelligence",
+        "summary",
+        "decision",
+        "appetite",
+        "carrier_appetite",
+        "carrier_match",
+        "forecast",
+        "premium_forecast",
+        "submission_readiness",
+    ]:
+        section = ctx.get(section_key)
+        if isinstance(section, dict):
+            section = dict(section)
+            section.setdefault("claims_used", metrics["total_claims"])
+            section.setdefault("metrics", metrics)
+            section.setdefault("renewal_metrics", metrics)
+            section.setdefault("decision_metrics", metrics)
+            section.setdefault("appetite_metrics", metrics)
+            ctx[section_key] = section
+
+    return ctx
+
+
 def build_executive_pdf_response(ctx, policy_number=None):
+    ctx = lossq_report_normalize_ctx(ctx)
     profile = ctx["profile"]
     metrics = ctx["metrics"]
     summary = ctx["summary"]
@@ -8661,6 +8842,7 @@ def executive_report_pdf(
 
 
 def build_carrier_packet_pdf_response(ctx, policy_number=None):
+    ctx = lossq_report_normalize_ctx(ctx)
     profile = ctx["profile"]
     metrics = ctx["metrics"]
     summary = ctx["summary"]
