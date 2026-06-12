@@ -1,3 +1,4 @@
+import re
 import os
 import resend
 from datetime import datetime, timedelta
@@ -37,6 +38,34 @@ if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 
 pwd_context = CryptContext(schemes=["pbkdf2_sha256"], deprecated="auto")
+
+
+# LOSSQ_PASSWORD_POLICY_AUTH_ROUTE_V1
+PASSWORD_POLICY_MESSAGE = (
+    "Password must be at least 8 characters and include at least "
+    "1 uppercase letter and 1 special character."
+)
+
+
+def validate_password_strength(password: str):
+    password = str(password or "")
+
+    if len(password) < 8:
+        raise HTTPException(status_code=400, detail=PASSWORD_POLICY_MESSAGE)
+
+    if not re.search(r"[A-Z]", password):
+        raise HTTPException(status_code=400, detail=PASSWORD_POLICY_MESSAGE)
+
+    if not re.search(r"[^A-Za-z0-9]", password):
+        raise HTTPException(status_code=400, detail=PASSWORD_POLICY_MESSAGE)
+
+    return True
+
+
+def hash_valid_password(password: str):
+    validate_password_strength(password)
+    return pwd_context.hash(password)
+
 security = HTTPBearer()
 
 
@@ -371,7 +400,7 @@ def register_user(data: RegisterRequest, request: Request, db: Session = Depends
 
     new_user = User(
         email=clean_email,
-        password_hash=pwd_context.hash(data.password),
+        password_hash=hash_valid_password(data.password),
         role=new_role,
         organization_id=organization.id,
         first_name=(data.first_name or "").strip(),
@@ -513,7 +542,7 @@ def change_password(data: ChangePasswordRequest, request: Request, current_user:
         raise HTTPException(status_code=401, detail="Current password is incorrect")
     if len(data.new_password) < 8:
         raise HTTPException(status_code=400, detail="New password must be at least 8 characters")
-    current_user.password_hash = pwd_context.hash(data.new_password)
+    current_user.password_hash = hash_valid_password(data.new_password)
     current_user.updated_at = datetime.utcnow()
     db.commit()
 
@@ -626,7 +655,7 @@ def accept_invite(data: AcceptInviteRequest, request: Request, db: Session = Dep
 
     new_user = User(
         email=clean_email,
-        password_hash=pwd_context.hash(data.password),
+        password_hash=hash_valid_password(data.password),
         role=role,
         organization_id=organization.id,
         first_name=(data.first_name or "").strip(),
@@ -773,7 +802,7 @@ def reset_password(data: ResetPasswordRequest, request: Request, db: Session = D
     user = db.query(User).filter(User.email == email).first()
     if not user:
         raise HTTPException(status_code=404, detail="User not found")
-    user.password_hash = pwd_context.hash(data.new_password)
+    user.password_hash = hash_valid_password(data.new_password)
     user.updated_at = datetime.utcnow()
     db.commit()
 

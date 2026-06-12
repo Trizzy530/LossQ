@@ -1420,6 +1420,98 @@ function normalizeProfileName(item: any) {
     return `${label} is not included in the current ${plan} package. Upgrade the account package to unlock this function.`;
   }
 
+
+  // LOSSQ_IDLE_TIMEOUT_60_MINUTES_V1
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    const IDLE_LIMIT_MS = 60 * 60 * 1000;
+    const ACTIVITY_KEY = "lossq_last_activity_at";
+    const TIMEOUT_MESSAGE_KEY = "lossq_session_timeout_message";
+
+    let timeoutId: ReturnType<typeof setTimeout> | null = null;
+    let lastWrite = 0;
+
+    function hasActiveToken() {
+      return Boolean(localStorage.getItem("lossq_token"));
+    }
+
+    function expireIdleSession() {
+      if (!hasActiveToken()) return;
+
+      sessionStorage.setItem(
+        TIMEOUT_MESSAGE_KEY,
+        "Your session timed out after 60 minutes of inactivity. Please log in again."
+      );
+
+      clearSession();
+      router.replace("/login?timeout=1");
+    }
+
+    function scheduleIdleCheck() {
+      if (timeoutId) window.clearTimeout(timeoutId);
+
+      if (!hasActiveToken()) return;
+
+      const lastActivity = Number(localStorage.getItem(ACTIVITY_KEY) || Date.now());
+      const elapsed = Date.now() - lastActivity;
+      const remaining = Math.max(IDLE_LIMIT_MS - elapsed, 0);
+
+      timeoutId = window.setTimeout(() => {
+        const latestActivity = Number(localStorage.getItem(ACTIVITY_KEY) || 0);
+
+        if (Date.now() - latestActivity >= IDLE_LIMIT_MS) {
+          expireIdleSession();
+          return;
+        }
+
+        scheduleIdleCheck();
+      }, remaining || 1000);
+    }
+
+    function markActivity() {
+      if (!hasActiveToken()) return;
+
+      const now = Date.now();
+
+      // Avoid writing localStorage constantly during mousemove.
+      if (now - lastWrite < 30000) return;
+
+      lastWrite = now;
+      localStorage.setItem(ACTIVITY_KEY, String(now));
+      scheduleIdleCheck();
+    }
+
+    function handleStorage(event: StorageEvent) {
+      if (event.key === ACTIVITY_KEY) {
+        scheduleIdleCheck();
+      }
+    }
+
+    if (!localStorage.getItem(ACTIVITY_KEY)) {
+      localStorage.setItem(ACTIVITY_KEY, String(Date.now()));
+    }
+
+    const events = ["click", "keydown", "mousemove", "scroll", "touchstart"];
+
+    events.forEach((eventName) => {
+      window.addEventListener(eventName, markActivity, { passive: true });
+    });
+
+    window.addEventListener("storage", handleStorage);
+    scheduleIdleCheck();
+
+    return () => {
+      if (timeoutId) window.clearTimeout(timeoutId);
+
+      events.forEach((eventName) => {
+        window.removeEventListener(eventName, markActivity);
+      });
+
+      window.removeEventListener("storage", handleStorage);
+    };
+  }, [router]);
+
   // LOSSQ_PERSIST_ACTIVE_TOOL_V1
   function changeActiveTool(tool: ToolKey) {
     if (!canUseTool(tool)) {
