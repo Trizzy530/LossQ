@@ -2008,15 +2008,324 @@ def carrier_match(policy_number: str | None = Query(default=None), db: Session =
     result = lossq_force_exposure_from_result_profile(result)
     return result
 
+
+
+# LOSSQ_FULL_ACCOUNT_RENEWAL_MEMO_V1
+def lossq_memo_clean(value, fallback="-"):
+    text = str(value or "").strip()
+    if text.lower() in {"", "none", "null", "nan", "not set", "needs review"}:
+        return fallback
+    return text
+
+
+def lossq_memo_money(value):
+    try:
+        cleaned = str(value or "").replace("$", "").replace(",", "").replace("%", "").strip()
+        if cleaned.lower() in {"", "-", "none", "null", "nan"}:
+            return 0.0
+        return float(cleaned)
+    except Exception:
+        return 0.0
+
+
+def lossq_memo_dollar(value):
+    amount = lossq_memo_money(value)
+    return f"${amount:,.0f}" if amount else "-"
+
+
+def lossq_memo_int(value):
+    try:
+        cleaned = str(value or "").replace(",", "").strip()
+        if cleaned.lower() in {"", "-", "none", "null", "nan"}:
+            return 0
+        return int(float(cleaned))
+    except Exception:
+        return 0
+
+
+def lossq_memo_profile_value(profile_data, *keys, fallback="-"):
+    profile_data = profile_data or {}
+    for key in keys:
+        value = profile_data.get(key)
+        if value not in (None, "", [], {}):
+            return lossq_memo_clean(value, fallback)
+    return fallback
+
+
+def lossq_memo_policy_schedule_text(profile_data, policy_numbers_used):
+    profile_data = profile_data or {}
+    policies = profile_data.get("policies") if isinstance(profile_data.get("policies"), list) else []
+
+    lines = []
+
+    for item in policies:
+        if not isinstance(item, dict):
+            continue
+
+        policy_number = lossq_memo_clean(
+            item.get("policy_number") or item.get("policyNumber") or item.get("policy") or item.get("number"),
+            ""
+        )
+
+        if not policy_number:
+            continue
+
+        line = lossq_memo_clean(
+            item.get("line_of_business") or item.get("policy_type") or item.get("coverage") or item.get("lob"),
+            "Coverage not classified"
+        )
+
+        claim_count = item.get("claim_count")
+        total_incurred = item.get("total_incurred")
+
+        detail = f"- {policy_number}: {line}"
+
+        if claim_count not in (None, ""):
+            detail += f" | Claims: {claim_count}"
+
+        if total_incurred not in (None, ""):
+            detail += f" | Incurred: {lossq_memo_dollar(total_incurred)}"
+
+        lines.append(detail)
+
+    if not lines:
+        for policy in policy_numbers_used or []:
+            lines.append(f"- {policy}: Coverage classification should be confirmed.")
+
+    return "\\n".join(lines) if lines else "- No policy schedule was available."
+
+
+def lossq_memo_top_claims_text(claims, limit=6):
+    rows = []
+
+    sorted_claims = sorted(
+        claims or [],
+        key=lambda claim: lossq_memo_money(getattr(claim, "total_incurred", 0)),
+        reverse=True,
+    )
+
+    for claim in sorted_claims[:limit]:
+        claim_number = lossq_memo_clean(getattr(claim, "claim_number", None), "Unknown Claim")
+        policy_number = lossq_memo_clean(getattr(claim, "policy_number", None), "Unknown Policy")
+        status = lossq_memo_clean(getattr(claim, "status", None), "Unknown Status")
+        date_of_loss = lossq_memo_clean(getattr(claim, "date_of_loss", None), "Unknown Date")
+        cause = lossq_memo_clean(
+            getattr(claim, "cause_of_loss", None) or getattr(claim, "description", None),
+            "Cause not classified",
+        )
+        incurred = lossq_memo_dollar(getattr(claim, "total_incurred", 0))
+        reserve = lossq_memo_dollar(getattr(claim, "reserve_amount", 0))
+
+        rows.append(
+            f"- {claim_number} | {policy_number} | {status} | DOL: {date_of_loss} | "
+            f"Incurred: {incurred} | Reserve: {reserve} | {cause}"
+        )
+
+    return "\\n".join(rows) if rows else "- No individual claim rows were available."
+
+
+def lossq_memo_list(items, fallback):
+    if isinstance(items, list) and items:
+        return "\\n".join(f"- {lossq_memo_clean(item, fallback)}" for item in items)
+    return f"- {fallback}"
+
+
+def lossq_build_full_account_renewal_memo(
+    *,
+    policy_number,
+    claims,
+    policy_numbers_used,
+    profile_data,
+    intelligence,
+    decision,
+    appetite,
+    forecast,
+):
+    profile_data = profile_data or {}
+    intelligence = intelligence or {}
+    decision = decision or {}
+    appetite = appetite or {}
+    forecast = forecast or {}
+
+    metrics = (
+        intelligence.get("metrics")
+        or intelligence.get("renewal_metrics")
+        or decision.get("decision_metrics")
+        or appetite.get("appetite_metrics")
+        or {}
+    )
+
+    total_claims = int(metrics.get("total_claims") or len(claims or []) or 0)
+    open_claims = int(metrics.get("open_claims") or len([claim for claim in claims or [] if is_open(claim)]) or 0)
+    litigation_claims = int(metrics.get("litigation_claims") or len([claim for claim in claims or [] if is_litigated(claim)]) or 0)
+    total_incurred = lossq_memo_money(metrics.get("total_incurred") or sum(lossq_memo_money(getattr(claim, "total_incurred", 0)) for claim in claims or []))
+    total_reserve = lossq_memo_money(metrics.get("total_reserve") or sum(lossq_memo_money(getattr(claim, "reserve_amount", 0)) for claim in claims or []))
+
+    business_name = lossq_memo_profile_value(profile_data, "business_name", "insured", fallback="Selected Account")
+    carrier_name = lossq_memo_profile_value(profile_data, "writing_carrier", "carrier_name", fallback="-")
+    agency_name = lossq_memo_profile_value(profile_data, "agency_name", fallback="-")
+    account_number = lossq_memo_profile_value(profile_data, "account_number", "customer_number", fallback="-")
+    main_policy = lossq_memo_profile_value(profile_data, "policy_number", fallback=policy_number or "-")
+    effective_date = lossq_memo_profile_value(profile_data, "effective_date", fallback="-")
+    expiration_date = lossq_memo_profile_value(profile_data, "expiration_date", fallback="-")
+    line_of_business = lossq_memo_profile_value(profile_data, "line_of_business", "exposure_basis", fallback="-")
+
+    current_premium = lossq_memo_dollar(profile_data.get("current_premium") or profile_data.get("expiring_premium"))
+    target_premium = lossq_memo_dollar(profile_data.get("target_renewal_premium"))
+    payroll = lossq_memo_dollar(profile_data.get("payroll"))
+    revenue = lossq_memo_dollar(profile_data.get("revenue") or profile_data.get("sales") or profile_data.get("receipts"))
+    property_tiv = lossq_memo_dollar(profile_data.get("property_tiv") or profile_data.get("tiv"))
+    deductible = lossq_memo_dollar(profile_data.get("deductible"))
+    experience_mod = lossq_memo_profile_value(profile_data, "experience_mod", "mod", fallback="-")
+    vehicle_count = lossq_memo_int(profile_data.get("vehicle_count"))
+    driver_count = lossq_memo_int(profile_data.get("driver_count"))
+    employee_count = lossq_memo_int(profile_data.get("employee_count"))
+
+    renewal_score = intelligence.get("renewal_score", "-")
+    renewal_level = intelligence.get("renewal_risk_level") or intelligence.get("risk_level") or "-"
+    renewal_probability = decision.get("renewal_probability", "-")
+    appetite_score = appetite.get("carrier_appetite_score", "-")
+    appetite_level = appetite.get("carrier_appetite_level", "-")
+    premium_change = forecast.get("expected_increase_percent", "-")
+    expected_premium = forecast.get("expected_renewal_premium")
+
+    executive_summary = (
+        intelligence.get("renewal_summary")
+        or intelligence.get("summary")
+        or f"LossQ reviewed {total_claims} account-specific claims for {business_name}. The account reflects {open_claims} open claims, ${total_incurred:,.0f} total incurred, and ${total_reserve:,.0f} outstanding reserves."
+    )
+
+    broker_recommendation = (
+        intelligence.get("broker_recommendation")
+        or intelligence.get("recommendation")
+        or decision.get("recommended_action")
+        or "Prepare updated loss runs, claim narratives, reserve status, and corrective-action documentation before renewal marketing."
+    )
+
+    memo = f"""LOSSQ AI RENEWAL MEMO
+
+ACCOUNT DETAIL
+Account / Insured: {business_name}
+Writing Carrier: {carrier_name}
+Producing Agency: {agency_name}
+Account Number: {account_number}
+Main Policy: {main_policy}
+Selected Policy / Account Key: {policy_number or main_policy}
+Policy Period: {effective_date} to {expiration_date}
+Primary Line of Business: {line_of_business}
+
+POLICY SCHEDULE
+{lossq_memo_policy_schedule_text(profile_data, policy_numbers_used)}
+
+EXPOSURE INPUTS
+Current / Expiring Premium: {current_premium}
+Target Renewal Premium: {target_premium}
+Payroll: {payroll}
+Revenue / Sales: {revenue}
+Vehicle Count: {vehicle_count or "-"}
+Driver Count: {driver_count or "-"}
+Employee Count: {employee_count or "-"}
+Property TIV: {property_tiv}
+Deductible / Retention: {deductible}
+Experience Mod: {experience_mod}
+
+RENEWAL INTELLIGENCE
+Renewal Score: {renewal_score}/100
+Renewal Risk Level: {renewal_level}
+Renewal Probability: {renewal_probability}%
+Carrier Appetite: {appetite_score}/100 - {appetite_level}
+Premium Forecast: {premium_change}% expected change
+Expected Renewal Premium: {lossq_memo_dollar(expected_premium)}
+
+CLAIM SUMMARY
+Claims Reviewed: {total_claims}
+Open Claims: {open_claims}
+Litigation Claims: {litigation_claims}
+Total Incurred: ${total_incurred:,.0f}
+Outstanding Reserve: ${total_reserve:,.0f}
+
+EXECUTIVE SUMMARY
+{executive_summary}
+
+RENEWAL DRIVERS
+{lossq_memo_list(intelligence.get("renewal_drivers"), "Claims and exposure information reviewed for renewal positioning.")}
+
+CARRIER CONCERNS
+{lossq_memo_list(intelligence.get("carrier_concerns") or decision.get("underwriting_concerns"), "Confirm open claim status, reserves, valuation date, and corrective actions.")}
+
+TOP CLAIMS / CLAIM NARRATIVE ITEMS
+{lossq_memo_top_claims_text(claims)}
+
+BROKER RECOMMENDATION
+{broker_recommendation}
+
+MARKET STRATEGY
+{appetite.get("market_strategy") or appetite.get("placement_summary") or "Approach target markets with claim narratives, reserve explanations, loss-control documentation, and a clear renewal strategy."}
+
+DOCUMENTATION CHECKLIST
+- Currently valued loss runs
+- Claim narratives for open and large losses
+- Reserve status confirmation
+- Corrective-action or loss-control summary
+- Updated exposure basis and premium target
+- Policy schedule confirmation across all lines
+
+LossQ Note: This memo is generated from saved account profile data, policy schedule, claim activity, renewal engines, and exposure inputs available inside LossQ.
+"""
+
+    return memo
+
+
 @router.get("/memo")
 def renewal_memo(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
+
+    # Recover full saved account profile/exposure data before building memo.
+    try:
+        base_result = {"account_profile": profile_data or {}}
+        profile_data = lossq_full_profile_for_exposure(db, current_user, policy_number, base_result, profile_data)
+    except Exception:
+        profile_data = profile_data or {}
+
     quality = data_quality(claims, policy_numbers_used, profile_data)
-    if not quality["is_credible"]:
-        return {"memo": "INSUFFICIENT DATA: LossQ cannot generate a credible renewal memo until policy schedule and claims are parsed and saved.", "policy_number": policy_number, "claims_used": len(claims), "policy_numbers_used": policy_numbers_used, "data_quality": quality}
+
     intelligence = build_underwriting_intelligence(claims)
+    intelligence = lossq_apply_exposure_to_underwriting_decision(intelligence, profile_data, claims) if "lossq_apply_exposure_to_underwriting_decision" in globals() else intelligence
+
     decision = build_underwriter_decision_engine(claims, policy_number)
     appetite = build_carrier_appetite_engine(claims, policy_number)
     forecast = build_premium_forecast_engine(claims, policy_number)
-    metrics = intelligence.get("metrics", {})
-    memo = f"""LOSSQ AI RENEWAL MEMO\nSelected Account / Policy: {policy_number or 'Selected Account'}\nPolicy Numbers Used: {', '.join(policy_numbers_used)}\nClaims Used: {len(claims)}\n\nRenewal Score: {intelligence.get('renewal_score')}/100\nRenewal Risk Level: {intelligence.get('renewal_risk_level')}\nRenewal Probability: {decision.get('renewal_probability')}%\nCarrier Appetite: {appetite.get('carrier_appetite_level')}\nPremium Forecast: {forecast.get('expected_increase_percent')}% expected change\n\nClaim Summary:\nTotal Claims: {metrics.get('total_claims',0)}\nOpen Claims: {metrics.get('open_claims',0)}\nLitigation Claims: {metrics.get('litigation_claims',0)}\nTotal Incurred: ${metrics.get('total_incurred',0):,.2f}\nTotal Reserve: ${metrics.get('total_reserve',0):,.2f}\n\nBroker Recommendation:\n{intelligence.get('recommendation')}\n"""
+
+    try:
+        appetite = lossq_marketable_carrier_appetite(appetite, profile_data, claims, policy_numbers_used, policy_number)
+    except Exception:
+        pass
+
+    try:
+        forecast = lossq_apply_exposure_to_premium_forecast(forecast, profile_data, claims)
+    except Exception:
+        pass
+
+    memo = lossq_build_full_account_renewal_memo(
+        policy_number=policy_number,
+        claims=claims,
+        policy_numbers_used=policy_numbers_used,
+        profile_data=profile_data,
+        intelligence=intelligence,
+        decision=decision,
+        appetite=appetite,
+        forecast=forecast,
+    )
+
+    return {
+        "memo": memo,
+        "renewal_memo": memo,
+        "policy_number": policy_number,
+        "claims_used": len(claims),
+        "policy_numbers_used": policy_numbers_used,
+        "account_profile": profile_data,
+        "data_quality": quality,
+        "memo_quality": "full_account_detail",
+        "backend_memo_version": "LOSSQ_FULL_ACCOUNT_RENEWAL_MEMO_V1",
+    }
+
