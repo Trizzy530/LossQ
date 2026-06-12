@@ -175,6 +175,27 @@ def extract_exposure_inputs_from_raw_text(raw_text: str):
 
     text_value = str(raw_text or "")
     profile = {}
+    # Prefer exact labeled lines before broad scanning.
+    label_patterns = {
+        "current_premium": [r"Current\s+Premium\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
+        "expiring_premium": [r"Expiring\s+Premium\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
+        "target_renewal_premium": [r"Target\s+Renewal\s+Premium\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
+        "payroll": [r"Payroll\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
+        "revenue": [r"Revenue\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)", r"Revenue\s*/\s*Sales\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
+        "sales": [r"Sales\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
+        "property_tiv": [r"Property\s+TIV\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)", r"Total\s+Insured\s+Value\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
+        "vehicle_count": [r"Vehicle\s+Count\s*[:\-]\s*([0-9,]+)", r"Vehicles\s*[:\-]\s*([0-9,]+)"],
+        "employee_count": [r"Employee\s+Count\s*[:\-]\s*([0-9,]+)", r"Employees\s*[:\-]\s*([0-9,]+)"],
+        "driver_count": [r"Driver\s+Count\s*[:\-]\s*([0-9,]+)", r"Drivers\s*[:\-]\s*([0-9,]+)"],
+    }
+
+    for field, patterns in label_patterns.items():
+        for pattern in patterns:
+            match = re.search(pattern, text_value, re.IGNORECASE)
+            if match and match.group(1):
+                profile[field] = clean_value(match.group(1)).replace(" ", "")
+                break
+
 
     def clean_value(value):
         value = str(value or "").strip()
@@ -816,6 +837,20 @@ def serialize_json(value, fallback):
 
 
 
+
+def strict_money_value_for_exposure(value):
+    # LOSSQ_STRICT_EXPOSURE_MONEY_VALUES_V1
+    # Exposure money fields must look like actual dollars.
+    # This prevents policy/account numbers like PV-ACCT-572914 from becoming Property TIV.
+    text_value = str(value or "")
+
+    money_match = re.search(r"\$\s*[0-9][0-9,]*(?:\.\d{2})?", text_value)
+    if money_match:
+        return money_match.group(0).replace(" ", "")
+
+    return ""
+
+
 def derive_exposure_inputs_from_policy_schedule(profile_data: dict):
     # LOSSQ_POLICY_SCHEDULE_TO_EXPOSURE_INPUTS_V1
     # Copies exposure/premium values that were detected inside policy schedule rows
@@ -830,8 +865,7 @@ def derive_exposure_inputs_from_policy_schedule(profile_data: dict):
     money_values_for_premium = []
 
     def first_money(value):
-        match = re.search(r"\$?\s*[0-9][0-9,]*(?:\.\d{2})?", str(value or ""))
-        return match.group(0).replace(" ", "") if match else ""
+        return strict_money_value_for_exposure(value)
 
     def first_number(value):
         match = re.search(r"\b[0-9][0-9,]*\b", str(value or ""))
