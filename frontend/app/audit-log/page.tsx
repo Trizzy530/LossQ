@@ -93,6 +93,7 @@ function parseAuditDate(value?: string) {
 
 
 
+// LOSSQ_AUDIT_RETRY_NO_LOGOUT_ON_403_V1
 // LOSSQ_AUDIT_LOG_FRONTEND_PACKAGE_GATE_V1
 function normalizeAuditPlan(plan: any) {
   const clean = String(plan || "free").trim().toLowerCase();
@@ -567,7 +568,7 @@ export default function AuditLogPage() {
       cache: "no-store",
     });
 
-    if (response.status === 401 || response.status === 403) {
+    if (response.status === 401) {
       localStorage.removeItem("lossq_token");
       localStorage.removeItem("token");
       localStorage.removeItem("access_token");
@@ -647,11 +648,19 @@ export default function AuditLogPage() {
           cache: "no-store",
         });
 
-        if (response.status === 401 || response.status === 403) {
+        if (response.status === 401) {
           localStorage.removeItem("lossq_token");
           localStorage.removeItem("token");
           localStorage.removeItem("access_token");
           router.push("/login?expired=1");
+          return;
+        }
+
+        if (response.status === 403) {
+          setEvents([]);
+          setSummary(null);
+          setError("Audit Logs are only included with the Agency and Founding Agency packages.");
+          setLoading(false);
           return;
         }
 
