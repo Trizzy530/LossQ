@@ -5531,9 +5531,107 @@ const trendNoteDisplay =
 
           {activeTool === "summary" && (
             <section className="glass-panel p-6 md:p-8">
-              <h2 className="text-2xl md:text-3xl font-bold mb-5">AI Underwriting Summary</h2>
-              <p className="text-slate-300 leading-8">{summary?.summary || "No summary available."}</p>
-              <p className="text-blue-200 mt-6">{summary?.recommendation || "Upload claims to generate intelligence."}</p>
+              <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between mb-8">
+                <div>
+                  <p className="text-sm uppercase tracking-[0.25em] text-blue-300 mb-3">
+                    AI Underwriting Summary
+                  </p>
+
+                  <h2 className="text-2xl md:text-3xl font-bold">
+                    Executive Account Intelligence
+                  </h2>
+
+                  <p className="text-slate-400 mt-2 max-w-3xl">
+                    Full underwriting narrative using claim frequency, open claims, severity, policy schedule, carrier concerns, and saved exposure inputs.
+                  </p>
+                </div>
+
+                <div className="rounded-3xl border border-white/10 bg-slate-950/70 px-8 py-6 text-center min-w-[180px]">
+                  <div className="text-5xl font-black">
+                    {effectiveSummary?.renewal_score ?? "-"}
+                  </div>
+                  <div className="text-slate-400 text-sm mt-1">Renewal Score</div>
+
+                  <div className="mt-4 inline-flex rounded-full border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-bold text-blue-200">
+                    {effectiveSummary?.renewal_risk_level || effectiveSummary?.risk_level || "Not Rated"}
+                  </div>
+                </div>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+                <MetricCard title="Claims Used" value={effectiveSummary?.claims_used ?? effectiveSummary?.metrics?.total_claims ?? effectiveSummary?.renewal_metrics?.total_claims ?? "-"} />
+                <MetricCard title="Open Claims" value={effectiveSummary?.metrics?.open_claims ?? effectiveSummary?.renewal_metrics?.open_claims ?? "-"} />
+                <MetricCard title="Total Incurred" value={effectiveSummary?.metrics?.total_incurred != null ? `$${Number(effectiveSummary.metrics.total_incurred || 0).toLocaleString()}` : effectiveSummary?.renewal_metrics?.total_incurred != null ? `$${Number(effectiveSummary.renewal_metrics.total_incurred || 0).toLocaleString()}` : "-"} />
+                <MetricCard title="Submission Strength" value={effectiveSummary?.submission_strength || "-"} />
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+                <TextCard
+                  title="Executive Summary"
+                  text={
+                    effectiveSummary?.renewal_summary ||
+                    effectiveSummary?.summary ||
+                    effectiveSummary?.carrier_narrative ||
+                    "No executive summary available yet."
+                  }
+                />
+
+                <TextCard
+                  title="Broker Recommendation"
+                  text={
+                    effectiveSummary?.broker_recommendation ||
+                    effectiveSummary?.recommendation ||
+                    "Upload claims to generate a broker recommendation."
+                  }
+                />
+              </div>
+
+              <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+                <ListCard
+                  title="Renewal Drivers"
+                  items={
+                    Array.isArray(effectiveSummary?.renewal_drivers) && effectiveSummary.renewal_drivers.length
+                      ? effectiveSummary.renewal_drivers
+                      : Array.isArray(effectiveSummary?.recommended_actions) && effectiveSummary.recommended_actions.length
+                      ? effectiveSummary.recommended_actions
+                      : ["No renewal drivers available."]
+                  }
+                  color="blue"
+                />
+
+                <ListCard
+                  title="Carrier Concerns"
+                  items={
+                    Array.isArray(effectiveSummary?.carrier_concerns) && effectiveSummary.carrier_concerns.length
+                      ? effectiveSummary.carrier_concerns
+                      : Array.isArray(effectiveSummary?.missing_items) && effectiveSummary.missing_items.length
+                      ? effectiveSummary.missing_items
+                      : ["No carrier concerns available."]
+                  }
+                  color="red"
+                />
+              </div>
+
+              {Array.isArray(effectiveSummary?.exposure_drivers) && effectiveSummary.exposure_drivers.length > 0 && (
+                <div className="mt-6">
+                  <ListCard
+                    title="Exposure Inputs Used"
+                    items={effectiveSummary.exposure_drivers}
+                    color="purple"
+                  />
+                </div>
+              )}
+
+              <div className="mt-6">
+                <TextCard
+                  title="Carrier Narrative"
+                  text={
+                    effectiveSummary?.carrier_narrative ||
+                    effectiveSummary?.client_narrative ||
+                    "No carrier narrative available yet."
+                  }
+                />
+              </div>
             </section>
           )}
 

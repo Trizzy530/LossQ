@@ -1684,17 +1684,242 @@ def renewal_decision(policy_number: str | None = Query(default=None), db: Sessio
     result = lossq_force_exposure_from_result_profile(result)
     return result
 
+
+
+# LOSSQ_MARKETABLE_CARRIER_APPETITE_V1
+def lossq_claim_text_for_appetite(claim):
+    parts = [
+        getattr(claim, "line_of_business", ""),
+        getattr(claim, "coverage", ""),
+        getattr(claim, "claim_type", ""),
+        getattr(claim, "description", ""),
+        getattr(claim, "cause_of_loss", ""),
+        getattr(claim, "policy_number", ""),
+    ]
+    return " ".join(str(x or "") for x in parts).lower()
+
+
+def lossq_detect_market_lines_for_appetite(claims, profile_data=None):
+    profile_data = profile_data or {}
+    text_parts = [
+        profile_data.get("line_of_business"),
+        profile_data.get("business_name"),
+        profile_data.get("exposure_basis"),
+        profile_data.get("class_code"),
+        profile_data.get("class_codes"),
+    ]
+
+    policies = profile_data.get("policies") if isinstance(profile_data.get("policies"), list) else []
+    for policy in policies:
+        if isinstance(policy, dict):
+            text_parts.extend([
+                policy.get("line_of_business"),
+                policy.get("policy_type"),
+                policy.get("coverage"),
+                policy.get("policy_number"),
+            ])
+
+    for claim in claims or []:
+        text_parts.append(lossq_claim_text_for_appetite(claim))
+
+    raw = " ".join(str(x or "") for x in text_parts).lower()
+    lines = []
+
+    if any(word in raw for word in ["auto", "vehicle", "fleet", "truck", "driver", "transport"]):
+        lines.append("commercial_auto")
+
+    if any(word in raw for word in ["general liability", "gl", "premises", "slip", "fall", "property damage", "liability"]):
+        lines.append("general_liability")
+
+    if any(word in raw for word in ["workers", "worker", "comp", "wc", "employee injury", "strain"]):
+        lines.append("workers_comp")
+
+    if any(word in raw for word in ["property", "building", "water", "fire", "theft", "wind", "equipment"]):
+        lines.append("property")
+
+    return list(dict.fromkeys(lines))
+
+
+def lossq_marketable_carrier_appetite(result, profile_data, claims, policy_numbers_used=None, policy_number=None):
+    result = dict(result or {})
+    profile_data = profile_data or {}
+    claims = claims or []
+    policy_numbers_used = policy_numbers_used or []
+
+    metrics = dict(result.get("appetite_metrics") or result.get("decision_metrics") or {})
+
+    total_claims = int(metrics.get("total_claims") or len(claims) or 0)
+    open_claims = int(metrics.get("open_claims") or len([c for c in claims if is_open(c)]) or 0)
+    litigation_claims = int(metrics.get("litigation_claims") or len([c for c in claims if is_litigated(c)]) or 0)
+
+    total_incurred = float(metrics.get("total_incurred") or sum(money(getattr(c, "total_incurred", 0)) for c in claims) or 0)
+    total_reserve = float(metrics.get("total_reserve") or sum(money(getattr(c, "reserve_amount", 0)) for c in claims) or 0)
+    largest_loss = float(metrics.get("largest_loss") or max([money(getattr(c, "total_incurred", 0)) for c in claims] or [0]) or 0)
+    large_claims = int(metrics.get("large_claims") or len([c for c in claims if money(getattr(c, "total_incurred", 0)) >= 50000]) or 0)
+
+    lines = lossq_detect_market_lines_for_appetite(claims, profile_data)
+
+    # Market appetite score means carrier marketability, not claim severity.
+    # A real account with claims should rarely display 0/100 unless data is unusable.
+    score = 84
+    score -= min(total_claims * 2, 16)
+    score -= min(open_claims * 4, 22)
+    score -= min(litigation_claims * 12, 24)
+    score -= min(large_claims * 6, 18)
+
+    if total_incurred >= 1000000:
+        score -= 22
+    elif total_incurred >= 500000:
+        score -= 14
+    elif total_incurred >= 250000:
+        score -= 8
+    elif total_incurred >= 100000:
+        score -= 4
+
+    if total_reserve >= 250000:
+        score -= 14
+    elif total_reserve >= 100000:
+        score -= 9
+    elif total_reserve >= 50000:
+        score -= 5
+
+    if total_claims > 0:
+        # Floor prevents valid accounts from showing as impossible to market.
+        if litigation_claims == 0 and total_incurred < 500000:
+            score = max(score, 48)
+        else:
+            score = max(score, 35)
+
+    score = max(0, min(100, int(round(score))))
+
+    if score >= 80:
+        level = "Preferred"
+    elif score >= 70:
+        level = "Strong"
+    elif score >= 55:
+        level = "Moderate"
+    elif score >= 40:
+        level = "Limited"
+    else:
+        level = "Distressed"
+
+    best_fit = []
+
+    if "commercial_auto" in lines:
+        best_fit.append({
+            "carrier_type": "Commercial Auto / Fleet Market",
+            "market_category": "Transportation and commercial auto",
+            "match_score": max(40, min(88, score + 4)),
+            "fit": "Conditional fit" if open_claims else "Strong fit",
+            "reason": "Commercial auto or fleet exposure is present. Include driver controls, open-claim status, and corrective actions."
+        })
+
+    if "general_liability" in lines:
+        best_fit.append({
+            "carrier_type": "Regional Casualty / General Liability Market",
+            "market_category": "General liability and casualty",
+            "match_score": max(40, min(86, score + 2)),
+            "fit": "Moderate fit",
+            "reason": "General liability activity can be marketed with claim narratives and loss-control explanation."
+        })
+
+    if "workers_comp" in lines:
+        best_fit.append({
+            "carrier_type": "Workers Compensation Market",
+            "market_category": "Workers compensation",
+            "match_score": max(40, min(84, score)),
+            "fit": "Conditional fit" if open_claims else "Standard fit",
+            "reason": "Workers compensation exposure should be supported by payroll, mod, return-to-work, and claim status."
+        })
+
+    if "property" in lines:
+        best_fit.append({
+            "carrier_type": "Commercial Property / Package Market",
+            "market_category": "Property and package",
+            "match_score": max(40, min(86, score + 1)),
+            "fit": "Standard fit" if large_claims == 0 else "Selective fit",
+            "reason": "Property exposure can be reviewed through package markets with valuation and deductible details."
+        })
+
+    if not best_fit:
+        best_fit.append({
+            "carrier_type": "Regional Commercial Package Market",
+            "market_category": "Middle market commercial",
+            "match_score": max(40, score),
+            "fit": "Needs coverage classification",
+            "reason": "LossQ found claims but needs clearer coverage line classification for more specific market targeting."
+        })
+
+    best_fit = sorted(best_fit, key=lambda x: int(x.get("match_score") or 0), reverse=True)
+
+    reserve_reason = (
+        f"Reserve exposure reviewed: ${total_reserve:,.0f}."
+        if total_reserve > 0
+        else "Reserve exposure is not clearly populated in the claim rows; verify open-claim reserves before marketing."
+    )
+
+    result.update({
+        "policy_number": policy_number,
+        "is_credible": total_claims > 0,
+        "claims_used": total_claims,
+        "policy_numbers_used": policy_numbers_used,
+        "carrier_appetite_score": score,
+        "carrier_appetite_level": level,
+        "best_fit_carriers": best_fit,
+        "poor_fit_carriers": result.get("poor_fit_carriers") or [],
+        "carrier_match_reasons": [
+            f"Total claims reviewed: {total_claims}",
+            f"Open claims reviewed: {open_claims}",
+            f"Litigation claims reviewed: {litigation_claims}",
+            f"Total incurred reviewed: ${total_incurred:,.0f}",
+            reserve_reason,
+            f"Coverage lines detected: {', '.join(lines) if lines else 'Needs classification'}",
+        ],
+        "market_strategy": (
+            "Market this account as a conditional but marketable submission. Lead with the strongest matching market category, "
+            "attach claim narratives for open and large losses, confirm reserve adequacy, and explain corrective actions before approaching carriers."
+        ),
+        "placement_summary": (
+            f"Carrier appetite is {score}/100, rated {level}, based on {total_claims} account-specific claims, "
+            f"{open_claims} open claims, ${total_incurred:,.0f} incurred, and {litigation_claims} litigation-related claims. "
+            "This is a marketability score, not a guarantee of carrier acceptance."
+        ),
+        "appetite_metrics": {
+            **metrics,
+            "total_claims": total_claims,
+            "open_claims": open_claims,
+            "litigation_claims": litigation_claims,
+            "total_incurred": total_incurred,
+            "total_reserve": total_reserve,
+            "largest_loss": largest_loss,
+            "large_claims": large_claims,
+            "coverage_lines_detected": lines,
+        },
+        "lossq_appetite_patch_version": "LOSSQ_MARKETABLE_CARRIER_APPETITE_V1",
+    })
+
+    return result
+
+
 @router.get("/carrier-appetite")
 def carrier_appetite(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     result = engine_response(build_carrier_appetite_engine, db, current_user, policy_number)
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
-    profile_data = lossq_best_exposure_profile(result, profile_data)
-    profile_data = lossq_full_profile_for_exposure(db, current_user, policy_number, result, profile_data)
+
+    try:
+        profile_data = lossq_best_exposure_profile(result, profile_data)
+    except Exception:
+        pass
+
+    try:
+        profile_data = lossq_full_profile_for_exposure(db, current_user, policy_number, result, profile_data)
+    except Exception:
+        pass
+
     result["account_profile"] = profile_data
-    result = lossq_apply_exposure_to_appetite(result, profile_data, claims)
-    result["policy_numbers_used"] = policy_numbers_used
-    result = lossq_force_exposure_from_result_profile(result)
+    result = lossq_marketable_carrier_appetite(result, profile_data, claims, policy_numbers_used, policy_number)
     return result
+
 
 @router.get("/submission-readiness")
 def submission_readiness(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
