@@ -366,6 +366,51 @@ def founding_slots_remaining(db: Session):
     return max(FOUNDING_AGENCY_LIMIT - count, 0)
 
 
+
+
+# LOSSQ_FOUNDING_AGENCY_AUTO_HIDE_V1
+def founding_agency_used_count(db):
+    try:
+        if "ensure_billing_columns" in globals():
+            ensure_billing_columns(db)
+    except Exception:
+        pass
+
+    active_statuses = ["active", "trialing", "paid"]
+
+    query = db.query(Organization).filter(Organization.plan == "founding_agency")
+
+    try:
+        status_col = getattr(Organization, "subscription_status", None)
+        if status_col is not None:
+            query = query.filter(status_col.in_(active_statuses))
+    except Exception:
+        pass
+
+    return query.count()
+
+
+def founding_agency_status_payload(db):
+    used = founding_agency_used_count(db)
+    limit = FOUNDING_AGENCY_LIMIT
+    remaining = max(limit - used, 0)
+
+    return {
+        "plan": "founding_agency",
+        "label": "Founding Agency",
+        "limit": limit,
+        "used": used,
+        "remaining": remaining,
+        "available": remaining > 0,
+        "sold_out": remaining <= 0,
+    }
+
+
+@router.get("/public/founding-agency-status")
+def public_founding_agency_status(db = Depends(get_db)):
+    return founding_agency_status_payload(db)
+
+
 @router.get("/status")
 def billing_status(
     current_user: User = Depends(get_current_user),
