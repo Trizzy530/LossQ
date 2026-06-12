@@ -181,6 +181,138 @@ def to_datetime_from_unix(value: Any):
         return None
 
 
+
+
+# LOSSQ_PLAN_FUNCTION_LIMITS_V1
+PLAN_FUNCTION_LIMITS = {
+    "free": {
+        "label": "Free / Trial",
+        "user_limit": 1,
+        "upload_limit": 5,
+        "features": [
+            "overview",
+            "account_profiles",
+            "loss_run_upload",
+            "claims_dashboard",
+            "exposure_inputs",
+        ],
+    },
+    "starter": {
+        "label": "Starter",
+        "user_limit": 1,
+        "upload_limit": 50,
+        "features": [
+            "overview",
+            "account_profiles",
+            "loss_run_upload",
+            "claims_dashboard",
+            "exposure_inputs",
+            "ai_summary",
+            "renewal_memo",
+            "pdf_exports",
+        ],
+    },
+    "professional": {
+        "label": "Professional",
+        "user_limit": 5,
+        "upload_limit": -1,
+        "features": [
+            "overview",
+            "account_profiles",
+            "loss_run_upload",
+            "claims_dashboard",
+            "exposure_inputs",
+            "ai_summary",
+            "renewal_memo",
+            "pdf_exports",
+            "renewal_risk",
+            "underwriter_decision",
+            "carrier_appetite",
+            "carrier_match",
+            "submission_readiness",
+            "premium_forecast",
+            "submission_builder",
+            "carrier_packet",
+            "carrier_email_draft",
+        ],
+    },
+    "agency": {
+        "label": "Agency",
+        "user_limit": 25,
+        "upload_limit": -1,
+        "features": [
+            "overview",
+            "account_profiles",
+            "loss_run_upload",
+            "claims_dashboard",
+            "exposure_inputs",
+            "ai_summary",
+            "renewal_memo",
+            "pdf_exports",
+            "renewal_risk",
+            "underwriter_decision",
+            "carrier_appetite",
+            "carrier_match",
+            "submission_readiness",
+            "premium_forecast",
+            "submission_builder",
+            "carrier_packet",
+            "carrier_email_draft",
+            "advanced_analytics",
+            "audit_logs",
+            "team_management",
+            "user_permissions",
+        ],
+    },
+    "founding_agency": {
+        "label": "Founding Agency",
+        "user_limit": 5,
+        "upload_limit": -1,
+        "features": [
+            "overview",
+            "account_profiles",
+            "loss_run_upload",
+            "claims_dashboard",
+            "exposure_inputs",
+            "ai_summary",
+            "renewal_memo",
+            "pdf_exports",
+            "renewal_risk",
+            "underwriter_decision",
+            "carrier_appetite",
+            "carrier_match",
+            "submission_readiness",
+            "premium_forecast",
+            "submission_builder",
+            "carrier_packet",
+            "carrier_email_draft",
+            "advanced_analytics",
+            "audit_logs",
+            "team_management",
+            "user_permissions",
+        ],
+    },
+}
+
+
+def normalize_plan_name(plan):
+    clean = str(plan or "free").strip().lower()
+    if clean in {"founder", "founding", "founding agency"}:
+        return "founding_agency"
+    if clean in {"pro", "professional"}:
+        return "professional"
+    if clean in {"agency", "enterprise"}:
+        return "agency"
+    if clean in {"starter", "start"}:
+        return "starter"
+    return clean if clean in PLAN_FUNCTION_LIMITS else "free"
+
+
+def get_plan_limits(plan):
+    normalized = normalize_plan_name(plan)
+    return PLAN_FUNCTION_LIMITS.get(normalized, PLAN_FUNCTION_LIMITS["free"])
+
+
 def serialize_org_billing(org: Organization):
     return {
         "organization_id": org.id,
@@ -195,6 +327,8 @@ def serialize_org_billing(org: Organization):
         else None,
         "user_limit": getattr(org, "user_limit", 5) or 5,
         "upload_limit": getattr(org, "upload_limit", 0),
+        "plan_limits": get_plan_limits(getattr(org, "plan", "free")),
+        "features": get_plan_limits(getattr(org, "plan", "free")).get("features", []),
     }
 
 

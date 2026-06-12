@@ -39,7 +39,7 @@ const plans: Array<{
     key: "founding_agency",
     name: "Founding Agency",
     price: "$99",
-    description: "Locked-in launch pricing for the first 10 agencies that help shape LossQ.",
+    description: "Locked-in launch pricing for the first 5 agencies that help shape LossQ.",
     badge: "Limited Launch Offer",
     features: [
       "5 users",

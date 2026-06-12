@@ -29,6 +29,128 @@ const SELECTED_POLICY_CACHE_KEY = "lossq_selected_policy_number";
 const SELECTED_CLAIM_CACHE_KEY = "lossq_selected_claim";
 const CURRENT_UPLOAD_CACHE_KEY = "lossq_current_upload_claims";
 
+// LOSSQ_FRONTEND_PLAN_FUNCTION_LIMITS_V1
+const LOSSQ_PLAN_FUNCTION_LIMITS: Record<string, string[]> = {
+  free: [
+    "overview",
+    "account_profiles",
+    "loss_run_upload",
+    "claims_dashboard",
+    "exposure_inputs",
+  ],
+  starter: [
+    "overview",
+    "account_profiles",
+    "loss_run_upload",
+    "claims_dashboard",
+    "exposure_inputs",
+    "ai_summary",
+    "renewal_memo",
+    "pdf_exports",
+  ],
+  professional: [
+    "overview",
+    "account_profiles",
+    "loss_run_upload",
+    "claims_dashboard",
+    "exposure_inputs",
+    "ai_summary",
+    "renewal_memo",
+    "pdf_exports",
+    "renewal_risk",
+    "underwriter_decision",
+    "carrier_appetite",
+    "carrier_match",
+    "submission_readiness",
+    "premium_forecast",
+    "submission_builder",
+    "carrier_packet",
+    "carrier_email_draft",
+  ],
+  agency: [
+    "overview",
+    "account_profiles",
+    "loss_run_upload",
+    "claims_dashboard",
+    "exposure_inputs",
+    "ai_summary",
+    "renewal_memo",
+    "pdf_exports",
+    "renewal_risk",
+    "underwriter_decision",
+    "carrier_appetite",
+    "carrier_match",
+    "submission_readiness",
+    "premium_forecast",
+    "submission_builder",
+    "carrier_packet",
+    "carrier_email_draft",
+    "advanced_analytics",
+    "audit_logs",
+    "team_management",
+    "user_permissions",
+  ],
+  founding_agency: [
+    "overview",
+    "account_profiles",
+    "loss_run_upload",
+    "claims_dashboard",
+    "exposure_inputs",
+    "ai_summary",
+    "renewal_memo",
+    "pdf_exports",
+    "renewal_risk",
+    "underwriter_decision",
+    "carrier_appetite",
+    "carrier_match",
+    "submission_readiness",
+    "premium_forecast",
+    "submission_builder",
+    "carrier_packet",
+    "carrier_email_draft",
+    "advanced_analytics",
+    "audit_logs",
+    "team_management",
+    "user_permissions",
+  ],
+};
+
+const LOSSQ_TOOL_REQUIRED_FEATURE: Record<string, string> = {
+  overview: "overview",
+  profiles: "account_profiles",
+  upload: "loss_run_upload",
+  "exposure-inputs": "exposure_inputs",
+  claims: "claims_dashboard",
+  summary: "ai_summary",
+  memo: "renewal_memo",
+  "renewal-risk": "renewal_risk",
+  decision: "underwriter_decision",
+  "carrier-appetite": "carrier_appetite",
+  "carrier-match": "carrier_match",
+  "submission-readiness": "submission_readiness",
+  "premium-forecast": "premium_forecast",
+  "submission-builder": "submission_builder",
+  charts: "advanced_analytics",
+};
+
+const LOSSQ_FEATURE_LABELS: Record<string, string> = {
+  renewal_risk: "Renewal Risk",
+  underwriter_decision: "Underwriter Decision",
+  carrier_appetite: "Carrier Appetite",
+  carrier_match: "Carrier Match",
+  submission_readiness: "Submission Readiness",
+  premium_forecast: "Premium Forecast",
+  submission_builder: "Submission Builder",
+  carrier_packet: "Carrier Packet",
+  carrier_email_draft: "Prepare Carrier Email",
+  advanced_analytics: "Advanced Analytics",
+  audit_logs: "Audit Logs",
+  team_management: "Team Management",
+  user_permissions: "User Permissions",
+};
+
+
+
 type AnyObject = Record<string, any>;
 
 type ToolKey =
@@ -1053,6 +1175,8 @@ function normalizeProfileName(item: any) {
 
 
   const [message, setMessage] = useState("");
+  const [billingStatus, setBillingStatus] = useState<any>({});
+  const [billingLoaded, setBillingLoaded] = useState(false);
   const [showNewUserWelcome, setShowNewUserWelcome] = useState(false);
   const [authReady, setAuthReady] = useState(false);
   const [dashboardLoading, setDashboardLoading] = useState(true);
@@ -1218,8 +1342,92 @@ function normalizeProfileName(item: any) {
     setShowNewUserWelcome(false);
   }
 
+
+  // LOSSQ_PACKAGE_FUNCTION_LIMITS_DASHBOARD_V1
+  useEffect(() => {
+    if (!authReady) return;
+
+    async function loadBillingStatusForLimits() {
+      try {
+        const res = await fetch(`${API}/billing/status`, {
+          headers: authHeaders(),
+        });
+
+        const data = res.ok ? ((await safeJson(res)) || {}) : {};
+        setBillingStatus(data);
+      } catch {
+        setBillingStatus({});
+      } finally {
+        setBillingLoaded(true);
+      }
+    }
+
+    loadBillingStatusForLimits();
+  }, [authReady]);
+
+  function normalizeDashboardPlan(plan: any) {
+    const clean = String(plan || "free").trim().toLowerCase();
+
+    if (clean === "founder" || clean === "founding" || clean === "founding agency") {
+      return "founding_agency";
+    }
+
+    if (clean === "pro") return "professional";
+    if (clean === "enterprise") return "agency";
+
+    return LOSSQ_PLAN_FUNCTION_LIMITS[clean] ? clean : "free";
+  }
+
+  function getDashboardPlan() {
+    return normalizeDashboardPlan(
+      billingStatus?.plan ||
+        billingStatus?.subscription_plan ||
+        billingStatus?.plan_name ||
+        "free"
+    );
+  }
+
+  function getDashboardPlanFeatures() {
+    const serverFeatures = Array.isArray(billingStatus?.features)
+      ? billingStatus.features
+      : [];
+
+    if (serverFeatures.length > 0) {
+      return serverFeatures.map((item: any) => String(item));
+    }
+
+    return LOSSQ_PLAN_FUNCTION_LIMITS[getDashboardPlan()] || LOSSQ_PLAN_FUNCTION_LIMITS.free;
+  }
+
+  function canUseFeature(feature: string) {
+    if (!billingLoaded) return true;
+
+    const features = getDashboardPlanFeatures();
+    return features.includes(feature);
+  }
+
+  function canUseTool(tool: ToolKey) {
+    const feature = LOSSQ_TOOL_REQUIRED_FEATURE[String(tool)];
+    if (!feature) return true;
+    return canUseFeature(feature);
+  }
+
+  function getLockedFeatureMessage(tool: ToolKey) {
+    const feature = LOSSQ_TOOL_REQUIRED_FEATURE[String(tool)] || String(tool);
+    const label = LOSSQ_FEATURE_LABELS[feature] || feature;
+    const plan = billingStatus?.plan_limits?.label || billingStatus?.label || getDashboardPlan();
+
+    return `${label} is not included in the current ${plan} package. Upgrade the account package to unlock this function.`;
+  }
+
   // LOSSQ_PERSIST_ACTIVE_TOOL_V1
   function changeActiveTool(tool: ToolKey) {
+    if (!canUseTool(tool)) {
+      setMessage(getLockedFeatureMessage(tool));
+      setActiveTool("overview");
+      return;
+    }
+
     setActiveTool(tool);
 
     if (typeof window !== "undefined") {
@@ -1705,6 +1913,12 @@ if (activeProfile?.policy_number) {
   }
 
   async function loadLazyToolData(toolKey: ToolKey) {
+    if (!canUseTool(toolKey)) {
+      setMessage(getLockedFeatureMessage(toolKey));
+      console.log("Lazy tool blocked by package gate:", toolKey);
+      return;
+    }
+
     const heavyTools: ToolKey[] = [
       "summary",
       "memo",
@@ -2939,7 +3153,13 @@ async function exportCarrierLossRun() {
   );
 }
 
-async function exportExecutiveReport() {
+
+  async function exportExecutiveReport() {
+    if (!canUseFeature("pdf_exports")) {
+      setMessage("PDF exports are not included in the current package.");
+      return;
+    }
+
   const query = buildReportQuery();
 
   setMessage("Generating executive underwriting report...");
@@ -3076,7 +3296,13 @@ async function exportExecutiveReport() {
     }
   }
 
+  
   async function generateCarrierPacket() {
+    if (!canUseFeature("carrier_packet")) {
+      setMessage("Carrier Packet is not included in the current package.");
+      return;
+    }
+
     const query = buildReportQuery();
 
     setMessage("Generating carrier submission packet...");
@@ -3121,7 +3347,13 @@ async function exportExecutiveReport() {
     }
   }
 
+  
   async function prepareCarrierEmail() {
+    if (!canUseFeature("carrier_email_draft")) {
+      setMessage("Prepare Carrier Email is not included in the current package.");
+      return;
+    }
+
     const selectedName =
       displayProfile?.business_name ||
       displayProfile?.insured ||
