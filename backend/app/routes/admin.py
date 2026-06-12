@@ -24,7 +24,7 @@ def require_admin(current_user: dict):
 
     role = current_user.get("role") or "user"
 
-    if role not in ["admin", "user"]:
+    if role not in ["owner", "admin"]:
         raise HTTPException(status_code=403, detail="Admin access required")
 
     return current_user

@@ -34,7 +34,7 @@ def require_platform_admin(current_user: dict):
 
     user_role = str(current_user.get("role") or "").strip().lower()
 
-    if user_email in allowed_emails or user_role in {"platform_admin", "super_admin", "owner"}:
+    if user_email in allowed_emails or user_role in {"platform_admin", "super_admin"}:
         return True
 
     raise HTTPException(status_code=403, detail="Platform admin access required.")
