@@ -67,6 +67,51 @@ def row_to_dict(row):
         return dict(row)
 
 
+
+
+# LOSSQ_FOUNDER_TECH_SUPPORT_LOOKUP_GATE_V1
+def require_founder_or_tech_support(current_user=Depends(get_current_user)):
+    """
+    Support Lookup is a LossQ internal tool.
+
+    Allowed:
+    - Founder / platform admin emails
+    - Tech support emails
+
+    Not allowed:
+    - Regular agency users
+    - Regular agency admins
+    - Regular agency owners
+    - Founding Agency customers unless specifically allowlisted
+    """
+    if isinstance(current_user, dict):
+        user_email = str(current_user.get("email", "") or "").strip().lower()
+    else:
+        user_email = str(getattr(current_user, "email", "") or "").strip().lower()
+
+    founder_emails = [
+        item.strip().lower()
+        for item in os.getenv("PLATFORM_ADMIN_EMAILS", "").split(",")
+        if item.strip()
+    ]
+
+    tech_support_emails = [
+        item.strip().lower()
+        for item in os.getenv("TECH_SUPPORT_EMAILS", "").split(",")
+        if item.strip()
+    ]
+
+    allowed_emails = set(founder_emails + tech_support_emails)
+
+    if user_email and user_email in allowed_emails:
+        return current_user
+
+    raise HTTPException(
+        status_code=403,
+        detail="Support Lookup is restricted to LossQ Founder and Tech Support only.",
+    )
+
+
 @router.get("/stats")
 def platform_stats(
     db: Session = Depends(get_db),
@@ -239,7 +284,7 @@ def platform_organizations(
 def platform_support_lookup(
     q: str = "",
     db: Session = Depends(get_db),
-    current_user: dict = Depends(get_current_user),
+    current_user=Depends(require_founder_or_tech_support),
 ):
     # LOSSQ_SUPPORT_LOOKUP_V1
     require_platform_admin(current_user)

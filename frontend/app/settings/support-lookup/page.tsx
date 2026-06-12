@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
@@ -99,7 +99,7 @@ export default function SupportLookupPage() {
       }
 
       if (res.status === 403) {
-        setError("You do not have Platform Admin access.");
+        setError("Support Lookup is restricted to LossQ Founder and Tech Support only.");
         return;
       }
 
