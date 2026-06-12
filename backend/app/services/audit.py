@@ -31,9 +31,15 @@ def record_audit_event(
         try:
             organization_id = None
             user_id = None
+            user_email = None
             if current_user:
                 organization_id = current_user.get("organization_id")
                 user_id = current_user.get("id") or current_user.get("user_id")
+                user_email = (
+                    current_user.get("email")
+                    or current_user.get("user_email")
+                    or current_user.get("sub")
+                )
             ip_address = None
             user_agent = None
             if request:
@@ -43,6 +49,7 @@ def record_audit_event(
             audit = AuditLog(
                 organization_id=organization_id,
                 user_id=user_id,
+                user_email=user_email,
                 action=action,
                 resource_type=resource_type,
                 resource_id=str(resource_id) if resource_id is not None else None,

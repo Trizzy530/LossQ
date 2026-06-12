@@ -4,7 +4,7 @@ from datetime import datetime, timedelta
 from typing import Optional
 
 from dotenv import load_dotenv
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Request
 from fastapi.security import HTTPAuthorizationCredentials, HTTPBearer
 from jose import JWTError, jwt
 from passlib.context import CryptContext
@@ -15,6 +15,7 @@ from sqlalchemy.orm import Session
 from app.database import SessionLocal
 from app.models.organization import Organization
 from app.models.user import User
+from app.services.audit import record_audit_event
 
 load_dotenv()
 
@@ -240,6 +241,43 @@ def public_user(user: User):
     }
 
 
+def audit_actor(user):
+    if not user:
+        return None
+
+    return {
+        "id": getattr(user, "id", None),
+        "user_id": getattr(user, "id", None),
+        "email": getattr(user, "email", ""),
+        "user_email": getattr(user, "email", ""),
+        "organization_id": getattr(user, "organization_id", None),
+        "first_name": getattr(user, "first_name", "") or "",
+        "last_name": getattr(user, "last_name", "") or "",
+    }
+
+
+def audit_user_details(user, extra=None):
+    details = {
+        "user_id": getattr(user, "id", None),
+        "user_email": getattr(user, "email", ""),
+        "user_full_name": " ".join(
+            part
+            for part in [
+                getattr(user, "first_name", "") or "",
+                getattr(user, "last_name", "") or "",
+            ]
+            if str(part).strip()
+        ).strip(),
+        "role": getattr(user, "role", "") or "",
+        "organization_id": getattr(user, "organization_id", None),
+    }
+
+    if extra:
+        details.update(extra)
+
+    return details
+
+
 def user_count_for_org(db: Session, organization_id: int):
     return (
         db.query(User)
@@ -303,7 +341,7 @@ def public_registration_role(requested_role=None):
 
 
 @router.post("/register")
-def register_user(data: RegisterRequest, db: Session = Depends(get_db)):
+def register_user(data: RegisterRequest, request: Request, db: Session = Depends(get_db)):
     clean_email = data.email.strip().lower()
     organization_name = data.organization_name.strip()
 
@@ -351,6 +389,23 @@ def register_user(data: RegisterRequest, db: Session = Depends(get_db)):
         organization.owner_user_id = new_user.id
         db.commit()
 
+    record_audit_event(
+        db,
+        current_user=audit_actor(new_user),
+        action="user_registered",
+        resource_type="user",
+        resource_id=str(new_user.id),
+        details=audit_user_details(
+            new_user,
+            {
+                "event": "public_registration",
+                "organization_name": organization.name,
+                "email_verification_status": "pending",
+            },
+        ),
+        request=request,
+    )
+
     access_token = create_access_token(new_user)
 
     verify_token = create_token({"sub": new_user.email, "type": "email_verify"}, VERIFY_TOKEN_EXPIRE_MINUTES)
@@ -384,7 +439,7 @@ def register_user(data: RegisterRequest, db: Session = Depends(get_db)):
 
 
 @router.post("/login")
-def login_user(data: LoginRequest, db: Session = Depends(get_db)):
+def login_user(data: LoginRequest, request: Request, db: Session = Depends(get_db)):
     clean_email = data.email.strip().lower()
     user = db.query(User).filter(User.email == clean_email).first()
 
@@ -396,6 +451,16 @@ def login_user(data: LoginRequest, db: Session = Depends(get_db)):
 
     user.last_login_at = datetime.utcnow()
     db.commit()
+
+    record_audit_event(
+        db,
+        current_user=audit_actor(user),
+        action="user_login",
+        resource_type="user",
+        resource_id=str(user.id),
+        details=audit_user_details(user, {"event": "login_success"}),
+        request=request,
+    )
 
     token = create_access_token(user)
     return {
@@ -422,17 +487,28 @@ def get_me(current_user: User = Depends(get_current_user), db: Session = Depends
 
 
 @router.put("/me")
-def update_me(data: UpdateMeRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def update_me(data: UpdateMeRequest, request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     current_user.first_name = (data.first_name or "").strip()
     current_user.last_name = (data.last_name or "").strip()
     current_user.updated_at = datetime.utcnow()
     db.commit()
     db.refresh(current_user)
+
+    record_audit_event(
+        db,
+        current_user=audit_actor(current_user),
+        action="user_profile_updated",
+        resource_type="user",
+        resource_id=str(current_user.id),
+        details=audit_user_details(current_user, {"event": "profile_updated"}),
+        request=request,
+    )
+
     return {"message": "Profile updated.", "user": public_user(current_user)}
 
 
 @router.post("/change-password")
-def change_password(data: ChangePasswordRequest, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def change_password(data: ChangePasswordRequest, request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     if not pwd_context.verify(data.current_password, current_user.password_hash):
         raise HTTPException(status_code=401, detail="Current password is incorrect")
     if len(data.new_password) < 8:
@@ -440,6 +516,17 @@ def change_password(data: ChangePasswordRequest, current_user: User = Depends(ge
     current_user.password_hash = pwd_context.hash(data.new_password)
     current_user.updated_at = datetime.utcnow()
     db.commit()
+
+    record_audit_event(
+        db,
+        current_user=audit_actor(current_user),
+        action="password_changed",
+        resource_type="user",
+        resource_id=str(current_user.id),
+        details=audit_user_details(current_user, {"event": "password_changed"}),
+        request=request,
+    )
+
     return {"message": "Password changed successfully."}
 
 
@@ -452,7 +539,7 @@ def verify_password(data: VerifyPasswordRequest, current_user: User = Depends(ge
 
 
 @router.post("/invite")
-def invite_user(data: InviteUserRequest, current_user: User = Depends(require_admin_or_owner), db: Session = Depends(get_db)):
+def invite_user(data: InviteUserRequest, request: Request, current_user: User = Depends(require_admin_or_owner), db: Session = Depends(get_db)):
     clean_email = data.email.strip().lower()
     invite_role=public_registration_role(getattr(data, "role", None)).strip().lower()
 
@@ -490,11 +577,29 @@ def invite_user(data: InviteUserRequest, current_user: User = Depends(require_ad
         ),
     )
 
+    record_audit_event(
+        db,
+        current_user=audit_actor(current_user),
+        action="user_invited",
+        resource_type="user",
+        resource_id=clean_email,
+        details=audit_user_details(
+            current_user,
+            {
+                "event": "user_invited",
+                "invited_email": clean_email,
+                "invited_role": invite_role,
+                "organization_name": organization.name,
+            },
+        ),
+        request=request,
+    )
+
     return {"message": "Invite created.", "invite_email": clean_email, "invite_role": invite_role, "invite_link": invite_link, "expires_minutes": INVITE_TOKEN_EXPIRE_MINUTES}
 
 
 @router.post("/accept-invite")
-def accept_invite(data: AcceptInviteRequest, db: Session = Depends(get_db)):
+def accept_invite(data: AcceptInviteRequest, request: Request, db: Session = Depends(get_db)):
     payload = decode_token_or_400(data.token, "invite")
     clean_email = str(payload.get("sub") or "").strip().lower()
     organization_id = payload.get("organization_id")
@@ -534,6 +639,23 @@ def accept_invite(data: AcceptInviteRequest, db: Session = Depends(get_db)):
     db.commit()
     db.refresh(new_user)
 
+    record_audit_event(
+        db,
+        current_user=audit_actor(new_user),
+        action="invite_accepted",
+        resource_type="user",
+        resource_id=str(new_user.id),
+        details=audit_user_details(
+            new_user,
+            {
+                "event": "invite_accepted",
+                "accepted_email": new_user.email,
+                "role": role,
+            },
+        ),
+        request=request,
+    )
+
     token = create_access_token(new_user)
     return {"message": "Invite accepted.", "access_token": token, "token_type": "bearer", "session_timeout_minutes": ACCESS_TOKEN_EXPIRE_MINUTES, "user": public_user(new_user)}
 
@@ -557,7 +679,7 @@ def list_org_users(current_user: User = Depends(require_admin_or_owner), db: Ses
 
 
 @router.delete("/users/{user_id}")
-def remove_org_user(user_id: int, current_user: User = Depends(require_admin_or_owner), db: Session = Depends(get_db)):
+def remove_org_user(user_id: int, request: Request, current_user: User = Depends(require_admin_or_owner), db: Session = Depends(get_db)):
     target_user = db.query(User).filter(User.id == user_id, User.organization_id == current_user.organization_id).first()
     if not target_user:
         raise HTTPException(status_code=404, detail="User not found")
@@ -575,13 +697,40 @@ def remove_org_user(user_id: int, current_user: User = Depends(require_admin_or_
     # LOSSQ_HARD_DELETE_ORG_USER_V1
     # Fully delete the user so they no longer appear in User Management.
     removed_email = target_user.email
+    removed_role = target_user.role or "user"
+    removed_name = " ".join(
+        part
+        for part in [target_user.first_name or "", target_user.last_name or ""]
+        if str(part).strip()
+    ).strip()
+
     db.delete(target_user)
     db.commit()
+
+    record_audit_event(
+        db,
+        current_user=audit_actor(current_user),
+        action="user_removed",
+        resource_type="user",
+        resource_id=str(user_id),
+        details=audit_user_details(
+            current_user,
+            {
+                "event": "user_removed",
+                "removed_user_id": user_id,
+                "removed_user_email": removed_email,
+                "removed_user_full_name": removed_name,
+                "removed_user_role": removed_role,
+            },
+        ),
+        request=request,
+    )
+
     return {"message": f"{removed_email} was deleted from the account.", "deleted_user_id": user_id}
 
 
 @router.post("/forgot-password")
-def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
+def forgot_password(data: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
     clean_email = data.email.strip().lower()
     user = db.query(User).filter(User.email == clean_email).first()
     if not user:
@@ -600,11 +749,21 @@ def forgot_password(data: ForgotPasswordRequest, db: Session = Depends(get_db)):
             footer_note="If you did not request a password reset, you can ignore this email.",
         ),
     )
+    record_audit_event(
+        db,
+        current_user=audit_actor(user),
+        action="password_reset_requested",
+        resource_type="user",
+        resource_id=str(user.id),
+        details=audit_user_details(user, {"event": "password_reset_requested"}),
+        request=request,
+    )
+
     return {"message": "If an account exists, a reset email has been sent."}
 
 
 @router.post("/reset-password")
-def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
+def reset_password(data: ResetPasswordRequest, request: Request, db: Session = Depends(get_db)):
     payload = decode_token_or_400(data.token, "password_reset")
     email = payload.get("sub")
     if not email:
@@ -617,11 +776,22 @@ def reset_password(data: ResetPasswordRequest, db: Session = Depends(get_db)):
     user.password_hash = pwd_context.hash(data.new_password)
     user.updated_at = datetime.utcnow()
     db.commit()
+
+    record_audit_event(
+        db,
+        current_user=audit_actor(user),
+        action="password_reset_completed",
+        resource_type="user",
+        resource_id=str(user.id),
+        details=audit_user_details(user, {"event": "password_reset_completed"}),
+        request=request,
+    )
+
     return {"message": "Password reset successful. You can now log in."}
 
 
 @router.get("/verify-email")
-def verify_email(token: str, db: Session = Depends(get_db)):
+def verify_email(token: str, request: Request, db: Session = Depends(get_db)):
     payload = decode_token_or_400(token, "email_verify")
     email = payload.get("sub")
     if not email:
@@ -632,6 +802,17 @@ def verify_email(token: str, db: Session = Depends(get_db)):
     user.is_email_verified = True
     user.updated_at = datetime.utcnow()
     db.commit()
+
+    record_audit_event(
+        db,
+        current_user=audit_actor(user),
+        action="email_verified",
+        resource_type="user",
+        resource_id=str(user.id),
+        details=audit_user_details(user, {"event": "email_verified"}),
+        request=request,
+    )
+
     return {"message": "Email verified successfully.", "email": email, "status": "verified"}
 
 
@@ -642,7 +823,7 @@ def validate_token(credentials: HTTPAuthorizationCredentials = Depends(security)
 
 
 @router.post("/bootstrap-owner")
-def bootstrap_owner(current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
+def bootstrap_owner(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
     allowed_owner_email = os.getenv("LOSSQ_OWNER_EMAIL", "tmckenzie49@gmail.com").strip().lower()
     current_email = (current_user.email or "").strip().lower()
 
@@ -661,6 +842,23 @@ def bootstrap_owner(current_user: User = Depends(get_current_user), db: Session 
     db.commit()
     db.refresh(current_user)
     db.refresh(organization)
+
+    record_audit_event(
+        db,
+        current_user=audit_actor(current_user),
+        action="owner_bootstrapped",
+        resource_type="user",
+        resource_id=str(current_user.id),
+        details=audit_user_details(
+            current_user,
+            {
+                "event": "owner_bootstrapped",
+                "organization_name": organization.name,
+                "owner_user_id": organization.owner_user_id,
+            },
+        ),
+        request=request,
+    )
 
     return {
         "message": "Owner account confirmed.",
