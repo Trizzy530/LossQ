@@ -1,6 +1,6 @@
 // LOSSQ_CORRECT_LOSS_Q_MANUAL_EXPOSURE_DEPLOY_20260611210542
 // LOSSQ_CORRECT_PROJECT_REDEPLOY_20260611210133
-﻿"use client";
+"use client";
 
 // LOSSQ_MANUAL_EXPOSURE_INPUTS_FRONTEND_REDEPLOY_V2
 
@@ -976,6 +976,11 @@ function clearDeletedProfileBrowserTraces(profileToDelete: any) {
 }
 
 
+
+function editableValue(value: unknown): string {
+  if (value === null || value === undefined) return "";
+  return String(value);
+}
 export default function DashboardPage() {
   const router = useRouter();
 
@@ -4200,7 +4205,7 @@ const effectiveCarrierMatch =
         recommended_carrier:
           realCarrierDatabaseAvailable && !isInsufficientBackendMessage(carrierMatch?.recommended_carrier)
             ? carrierMatch.recommended_carrier
-            : "No named carrier selected - ” market category only",
+            : "No named carrier selected - ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â market category only",
         recommended_market_category:
           sortedMarketCategories[0]?.market_category || "Needs coverage classification",
         recommended_score:
@@ -4903,7 +4908,7 @@ const trendNoteDisplay =
                         {profiles.map((item) => (
                           <option key={item.id || item.policy_number} value={item.policy_number}>
                             {(getAccountDisplayName(item) || "Unnamed Business") +
-                              " - ” " +
+                              " - ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â " +
                               (item.policy_number || "No Policy Number")}
                           </option>
                         ))}
@@ -4997,37 +5002,37 @@ const trendNoteDisplay =
                 <Input label="Expiring Premium" value={displayProfile?.expiring_premium || profile?.expiring_premium || deriveExposureInputsFromPolicyRows(profile)?.expiring_premium || ""} onChange={(v) => setProfile({ ...profile, expiring_premium: v })} />
                 <Input label="Target Renewal Premium" value={displayProfile?.target_renewal_premium || profile?.target_renewal_premium || deriveExposureInputsFromPolicyRows(profile)?.target_renewal_premium || ""} onChange={(v) => setProfile({ ...profile, target_renewal_premium: v })} />
 
-                <Input label="Primary Line of Business" value={displayProfile?.line_of_business || profile?.line_of_business || deriveExposureInputsFromPolicyRows(profile)?.line_of_business || ""} onChange={(v) => setProfile({ ...profile, line_of_business: v })} />
+                <Input label="Primary Line of Business" value={editableValue(displayProfile?.line_of_business || profile?.line_of_business || deriveExposureInputsFromPolicyRows(profile)?.line_of_business)} onChange={(v) => setProfile({ ...profile, line_of_business: v })} />
                 <Input label="State" value={displayProfile?.state || profile?.state || deriveExposureInputsFromPolicyRows(profile)?.state || ""} onChange={(v) => setProfile({ ...profile, state: v })} />
-                <Input label="Class Code(s)" value={profile?.class_code || profile?.class_codes || ""} onChange={(v) => setProfile({ ...profile, class_code: v, class_codes: v })} />
+                <Input label="Class Code(s)" value={editableValue(profile?.class_code || profile?.class_codes)} onChange={(v) => setProfile({ ...profile, class_code: v, class_codes: v })} />
 
-                <Input label="Policy Limits" value={profile?.limits || profile?.coverage_limit || ""} onChange={(v) => setProfile({ ...profile, limits: v, coverage_limit: v })} />
-                <Input label="Deductible" value={displayProfile?.deductible || profile?.deductible || deriveExposureInputsFromPolicyRows(profile)?.deductible || ""} onChange={(v) => setProfile({ ...profile, deductible: v })} />
-                <Input label="Retention / SIR" value={displayProfile?.retention || profile?.retention || deriveExposureInputsFromPolicyRows(profile)?.retention || ""} onChange={(v) => setProfile({ ...profile, retention: v })} />
+                <Input label="Policy Limits" value={editableValue(profile?.limits || profile?.coverage_limit)} onChange={(v) => setProfile({ ...profile, limits: v, coverage_limit: v })} />
+                <Input label="Deductible" value={editableValue(displayProfile?.deductible || profile?.deductible || deriveExposureInputsFromPolicyRows(profile)?.deductible)} onChange={(v) => setProfile({ ...profile, deductible: v })} />
+                <Input label="Retention / SIR" value={editableValue(displayProfile?.retention || profile?.retention || deriveExposureInputsFromPolicyRows(profile)?.retention)} onChange={(v) => setProfile({ ...profile, retention: v })} />
 
-                <Input label="Payroll" value={displayProfile?.payroll || profile?.payroll || deriveExposureInputsFromPolicyRows(profile)?.payroll || ""} onChange={(v) => setProfile({ ...profile, payroll: v })} />
-                <Input label="Revenue / Sales" value={profile?.revenue || profile?.sales || ""} onChange={(v) => setProfile({ ...profile, revenue: v, sales: v })} />
-                <Input label="Receipts" value={displayProfile?.receipts || profile?.receipts || deriveExposureInputsFromPolicyRows(profile)?.receipts || ""} onChange={(v) => setProfile({ ...profile, receipts: v })} />
+                <Input label="Payroll" value={editableValue(displayProfile?.payroll || profile?.payroll || deriveExposureInputsFromPolicyRows(profile)?.payroll)} onChange={(v) => setProfile({ ...profile, payroll: v })} />
+                <Input label="Revenue / Sales" value={editableValue(profile?.revenue || profile?.sales)} onChange={(v) => setProfile({ ...profile, revenue: v, sales: v })} />
+                <Input label="Receipts" value={editableValue(displayProfile?.receipts || profile?.receipts || deriveExposureInputsFromPolicyRows(profile)?.receipts)} onChange={(v) => setProfile({ ...profile, receipts: v })} />
 
-                <Input label="Employee Count" value={displayProfile?.employee_count || profile?.employee_count || deriveExposureInputsFromPolicyRows(profile)?.employee_count || ""} onChange={(v) => setProfile({ ...profile, employee_count: v })} />
-                <Input label="Vehicle Count" value={displayProfile?.vehicle_count || profile?.vehicle_count || deriveExposureInputsFromPolicyRows(profile)?.vehicle_count || ""} onChange={(v) => setProfile({ ...profile, vehicle_count: v })} />
-                <Input label="Driver Count" value={displayProfile?.driver_count || profile?.driver_count || deriveExposureInputsFromPolicyRows(profile)?.driver_count || ""} onChange={(v) => setProfile({ ...profile, driver_count: v })} />
+                <Input label="Employee Count" value={editableValue(displayProfile?.employee_count || profile?.employee_count || deriveExposureInputsFromPolicyRows(profile)?.employee_count)} onChange={(v) => setProfile({ ...profile, employee_count: v })} />
+                <Input label="Vehicle Count" value={editableValue(displayProfile?.vehicle_count || profile?.vehicle_count || deriveExposureInputsFromPolicyRows(profile)?.vehicle_count)} onChange={(v) => setProfile({ ...profile, vehicle_count: v })} />
+                <Input label="Driver Count" value={editableValue(displayProfile?.driver_count || profile?.driver_count || deriveExposureInputsFromPolicyRows(profile)?.driver_count)} onChange={(v) => setProfile({ ...profile, driver_count: v })} />
 
-                <Input label="Property TIV" value={profile?.property_tiv || profile?.tiv || ""} onChange={(v) => setProfile({ ...profile, property_tiv: v, tiv: v })} />
+                <Input label="Property TIV" value={editableValue(profile?.property_tiv || profile?.tiv)} onChange={(v) => setProfile({ ...profile, property_tiv: v, tiv: v })} />
                 <Input label="Building Value" value={displayProfile?.building_value || profile?.building_value || deriveExposureInputsFromPolicyRows(profile)?.building_value || ""} onChange={(v) => setProfile({ ...profile, building_value: v })} />
                 <Input label="Contents Value" value={displayProfile?.contents_value || profile?.contents_value || deriveExposureInputsFromPolicyRows(profile)?.contents_value || ""} onChange={(v) => setProfile({ ...profile, contents_value: v })} />
 
-                <Input label="Square Footage" value={displayProfile?.square_footage || profile?.square_footage || deriveExposureInputsFromPolicyRows(profile)?.square_footage || ""} onChange={(v) => setProfile({ ...profile, square_footage: v })} />
-                <Input label="Location Count" value={displayProfile?.location_count || profile?.location_count || deriveExposureInputsFromPolicyRows(profile)?.location_count || ""} onChange={(v) => setProfile({ ...profile, location_count: v })} />
-                <Input label="Unit Count" value={displayProfile?.unit_count || profile?.unit_count || deriveExposureInputsFromPolicyRows(profile)?.unit_count || ""} onChange={(v) => setProfile({ ...profile, unit_count: v })} />
+                <Input label="Square Footage" value={editableValue(displayProfile?.square_footage || profile?.square_footage || deriveExposureInputsFromPolicyRows(profile)?.square_footage)} onChange={(v) => setProfile({ ...profile, square_footage: v })} />
+                <Input label="Location Count" value={editableValue(displayProfile?.location_count || profile?.location_count || deriveExposureInputsFromPolicyRows(profile)?.location_count)} onChange={(v) => setProfile({ ...profile, location_count: v })} />
+                <Input label="Unit Count" value={editableValue(displayProfile?.unit_count || profile?.unit_count || deriveExposureInputsFromPolicyRows(profile)?.unit_count)} onChange={(v) => setProfile({ ...profile, unit_count: v })} />
 
                 <Input label="Cargo Limit" value={displayProfile?.cargo_limit || profile?.cargo_limit || deriveExposureInputsFromPolicyRows(profile)?.cargo_limit || ""} onChange={(v) => setProfile({ ...profile, cargo_limit: v })} />
                 <Input label="Umbrella / Excess Limit" value={displayProfile?.umbrella_limit || profile?.umbrella_limit || deriveExposureInputsFromPolicyRows(profile)?.umbrella_limit || ""} onChange={(v) => setProfile({ ...profile, umbrella_limit: v })} />
                 <Input label="Experience Mod" value={profile?.experience_mod || profile?.mod || ""} onChange={(v) => setProfile({ ...profile, experience_mod: v, mod: v })} />
 
                 <Input label="Exposure Change %" value={displayProfile?.exposure_change_percent || profile?.exposure_change_percent || deriveExposureInputsFromPolicyRows(profile)?.exposure_change_percent || ""} onChange={(v) => setProfile({ ...profile, exposure_change_percent: v })} />
-                <Input label="Cyber Revenue" value={displayProfile?.cyber_revenue || profile?.cyber_revenue || deriveExposureInputsFromPolicyRows(profile)?.cyber_revenue || ""} onChange={(v) => setProfile({ ...profile, cyber_revenue: v })} />
-                <Input label="Professional Revenue" value={displayProfile?.professional_revenue || profile?.professional_revenue || deriveExposureInputsFromPolicyRows(profile)?.professional_revenue || ""} onChange={(v) => setProfile({ ...profile, professional_revenue: v })} />
+                <Input label="Cyber Revenue" value={editableValue(displayProfile?.cyber_revenue || profile?.cyber_revenue || deriveExposureInputsFromPolicyRows(profile)?.cyber_revenue)} onChange={(v) => setProfile({ ...profile, cyber_revenue: v })} />
+                <Input label="Professional Revenue" value={editableValue(displayProfile?.professional_revenue || profile?.professional_revenue || deriveExposureInputsFromPolicyRows(profile)?.professional_revenue)} onChange={(v) => setProfile({ ...profile, professional_revenue: v })} />
               </div>
 
               <div className="mt-6">
@@ -5171,7 +5176,7 @@ const trendNoteDisplay =
                     effectiveCarrierAppetite?.best_fit_carriers?.length
                       ? effectiveCarrierAppetite.best_fit_carriers.map(
                           (item: any) =>
-                            `${item.carrier_type} - ” ${item.match_score}/100 - ” ${item.fit}`
+                            `${item.carrier_type} - ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ${item.match_score}/100 - ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ${item.fit}`
                         )
                       : ["No best fit markets available."]
                   }
@@ -5283,7 +5288,7 @@ const trendNoteDisplay =
           effectiveCarrierMatch?.top_carriers?.length
             ? effectiveCarrierMatch.top_carriers.map(
                 (item: any) =>
-                  `${item.carrier || item.carrier_name || 'Carrier'} - ” ${item.match_score ?? item.recommended_score ?? item.score ?? '-'}/100 - ” ${item.fit || item.appetite || 'Market fit'}`
+                  `${item.carrier || item.carrier_name || 'Carrier'} - ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ${item.match_score ?? item.recommended_score ?? item.score ?? '-'}/100 - ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ${item.fit || item.appetite || 'Market fit'}`
               )
             : ["No carrier matches available yet."]
         }
@@ -5549,9 +5554,9 @@ const trendNoteDisplay =
           {profiles.map((item) => (
             <option key={item.id || item.policy_number} value={item.policy_number}>
               {(item.business_name || "Unnamed Business") +
-                " - ” " +
+                " - ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â " +
                 (item.carrier_name || "No Carrier") +
-                " - ” " +
+                " - ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â " +
                 (item.policy_number || "No Policy")}
             </option>
           ))}
@@ -5677,7 +5682,7 @@ const trendNoteDisplay =
           submissionBuilder?.loss_explanations?.length
             ? submissionBuilder.loss_explanations.map(
                 (item: any) =>
-                  `${item.claim_number} - ” ${item.explanation} Broker position: ${item.broker_position}`
+                  `${item.claim_number} - ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â ${item.explanation} Broker position: ${item.broker_position}`
               )
             : ["No loss explanations available yet."]
         }
@@ -5976,7 +5981,7 @@ const trendNoteDisplay =
             </div>
 
             <button onClick={() => setCopilotOpen(false)} className="text-slate-400 hover:text-white">
-              âœ•
+              ÃƒÆ’Ã‚Â¢Ãƒâ€¦Ã¢â‚¬Å“ÃƒÂ¢Ã¢â€šÂ¬Ã‚Â¢
             </button>
           </div>
 
@@ -6247,6 +6252,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
