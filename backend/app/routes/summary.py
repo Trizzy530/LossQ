@@ -356,7 +356,7 @@ def lossq_summary_apply_exposure(result, profile_data, claims):
 
     if not exposure_drivers and not line_of_business:
         result["exposure_inputs_used"] = False
-        result = lossq_summary_force_exposure_from_result_profile(result, claims)
+        result = lossq_summary_force_exposure_from_full_profile(db, current_user, policy_number, result, claims)
     return result
 
     total_incurred = 0.0
@@ -428,6 +428,190 @@ def lossq_summary_apply_exposure(result, profile_data, claims):
 
     return result
 
+
+
+
+# LOSSQ_SUMMARY_DIRECT_FULL_ACCOUNT_PROFILE_EXPOSURE_LOOKUP_V1
+def lossq_summary_profile_get(profile_data, key, default=None):
+    if profile_data is None:
+        return default
+
+    if isinstance(profile_data, dict):
+        value = profile_data.get(key, default)
+        return default if value is None else value
+
+    try:
+        value = getattr(profile_data, key, default)
+        return default if value is None else value
+    except Exception:
+        return default
+
+
+def lossq_summary_normalize_profile_data(profile_data):
+    if profile_data is None:
+        return {}
+
+    if isinstance(profile_data, dict):
+        normalized = dict(profile_data)
+    else:
+        normalized = {}
+
+    keys = [
+        "id",
+        "business_name",
+        "carrier_name",
+        "writing_carrier",
+        "agency_name",
+        "policy_number",
+        "account_number",
+        "customer_number",
+        "effective_date",
+        "expiration_date",
+        "evaluation_date",
+        "state",
+        "current_premium",
+        "expiring_premium",
+        "target_renewal_premium",
+        "line_of_business",
+        "exposure_basis",
+        "class_code",
+        "class_codes",
+        "limits",
+        "coverage_limit",
+        "deductible",
+        "retention",
+        "payroll",
+        "revenue",
+        "sales",
+        "receipts",
+        "employee_count",
+        "vehicle_count",
+        "driver_count",
+        "experience_mod",
+        "mod",
+        "property_tiv",
+        "tiv",
+        "building_value",
+        "contents_value",
+        "square_footage",
+        "location_count",
+        "unit_count",
+        "umbrella_limit",
+        "cargo_limit",
+        "underwriter_notes",
+        "policies",
+    ]
+
+    for key in keys:
+        if not normalized.get(key):
+            value = lossq_summary_profile_get(profile_data, key)
+            if value not in (None, ""):
+                normalized[key] = value
+
+    return normalized
+
+
+def lossq_summary_safe_policy_json(value):
+    if isinstance(value, list):
+        return value
+
+    if isinstance(value, str):
+        try:
+            parsed = json.loads(value)
+            return parsed if isinstance(parsed, list) else []
+        except Exception:
+            return []
+
+    return []
+
+
+def lossq_summary_full_profile_for_exposure(db, current_user, policy_number, result=None):
+    organization_id = current_user.get("organization_id") if isinstance(current_user, dict) else None
+
+    result_profile = {}
+    try:
+        result_profile = dict((result or {}).get("account_profile") or {})
+    except Exception:
+        result_profile = {}
+
+    if not organization_id:
+        return lossq_summary_normalize_profile_data(result_profile)
+
+    profile_id = result_profile.get("id")
+
+    try:
+        if profile_id:
+            profile = (
+                db.query(AccountProfile)
+                .filter(AccountProfile.organization_id == organization_id)
+                .filter(AccountProfile.id == int(profile_id))
+                .first()
+            )
+            if profile:
+                return lossq_summary_normalize_profile_data(profile)
+    except Exception:
+        pass
+
+    selected_policy = str(policy_number or "").strip().upper()
+
+    candidate_values = set()
+    for key in ["policy_number", "account_number", "customer_number"]:
+        value = str(result_profile.get(key) or "").strip().upper()
+        if value:
+            candidate_values.add(value)
+
+    if selected_policy:
+        candidate_values.add(selected_policy)
+
+    try:
+        profiles = (
+            db.query(AccountProfile)
+            .filter(AccountProfile.organization_id == organization_id)
+            .all()
+        )
+
+        for profile in profiles:
+            profile_values = {
+                str(getattr(profile, "policy_number", "") or "").strip().upper(),
+                str(getattr(profile, "account_number", "") or "").strip().upper(),
+                str(getattr(profile, "customer_number", "") or "").strip().upper(),
+            }
+
+            policies = lossq_summary_safe_policy_json(getattr(profile, "policies", None))
+            for item in policies:
+                if isinstance(item, dict):
+                    pnum = str(
+                        item.get("policy_number")
+                        or item.get("policyNumber")
+                        or item.get("policy")
+                        or ""
+                    ).strip().upper()
+                    if pnum:
+                        profile_values.add(pnum)
+
+            if candidate_values & profile_values:
+                return lossq_summary_normalize_profile_data(profile)
+
+    except Exception:
+        pass
+
+    return lossq_summary_normalize_profile_data(result_profile)
+
+
+def lossq_summary_force_exposure_from_full_profile(db, current_user, policy_number, result, claims):
+    result = dict(result or {})
+    profile_data = lossq_summary_full_profile_for_exposure(db, current_user, policy_number, result)
+
+    result["account_profile"] = profile_data
+
+    if not lossq_summary_profile_has_exposure(profile_data):
+        result["exposure_inputs_used"] = False
+        result["lossq_exposure_patch_version"] = "LOSSQ_SUMMARY_DIRECT_FULL_ACCOUNT_PROFILE_EXPOSURE_LOOKUP_V1_NO_EXPOSURE_FOUND"
+        return result
+
+    result = lossq_summary_apply_exposure(result, profile_data, claims)
+    result["lossq_exposure_patch_version"] = "LOSSQ_SUMMARY_DIRECT_FULL_ACCOUNT_PROFILE_EXPOSURE_LOOKUP_V1"
+    return result
 
 
 # LOSSQ_SUMMARY_FORCE_RESULT_ACCOUNT_PROFILE_EXPOSURE_V1
