@@ -49,35 +49,6 @@ function roleBadgeClass(role?: string) {
 
 
 // LOSSQ_SETTINGS_AGENCY_PROFILE_LINK_V1
-function CompanyAgencyProfileCard({ router }: { router: any }) {
-  return (
-    <section className="rounded-3xl border border-cyan-400/30 bg-cyan-400/10 p-6 shadow-xl shadow-cyan-500/10">
-      <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
-        <div>
-          <p className="text-sm font-bold uppercase tracking-[0.25em] text-cyan-300">
-            Company Information
-          </p>
-          <h2 className="mt-2 text-2xl font-black text-white">
-            Company / Agency Profile
-          </h2>
-          <p className="mt-2 max-w-2xl text-sm text-slate-300">
-            Manage the organization name and agency information used for LossQ PDF exports,
-            including Executive Reports and Carrier Packets.
-          </p>
-        </div>
-
-        <button
-          type="button"
-          onClick={() => router.push("/settings/agency-profile")}
-          className="rounded-xl bg-cyan-400 px-5 py-3 font-black text-slate-950 hover:bg-cyan-300"
-        >
-          Open Company Profile
-        </button>
-      </div>
-    </section>
-  );
-}
-
 
 export default function SettingsPage() {
   const router = useRouter();
@@ -339,10 +310,6 @@ export default function SettingsPage() {
 
   return (
     <main className="min-h-screen bg-[#020617] text-white px-5 py-8">
-
-      
-      <CompanyAgencyProfileCard router={router} />
-
 <section className="mb-6 rounded-2xl border border-cyan-400/20 bg-cyan-400/10 p-5">
         <div className="flex flex-col gap-4 md:flex-row md:items-center md:justify-between">
           <div>
@@ -355,7 +322,25 @@ export default function SettingsPage() {
             </p>
           </div>
 
-          <button
+          
+            {/* LOSSQ_SETTINGS_TOP_ACTION_BUTTONS_V1 */}
+            <button
+              type="button"
+              onClick={() => router.push("/settings/agency-profile")}
+              className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-bold text-cyan-100 hover:bg-cyan-400/20"
+            >
+              Company Profile
+            </button>
+
+            <button
+              type="button"
+              onClick={() => router.push("/settings/support-lookup")}
+              className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-bold text-cyan-100 hover:bg-cyan-400/20"
+            >
+              Support Lookup
+            </button>
+
+<button
             onClick={() => router.push("/settings/support-lookup")}
             className="rounded-xl bg-cyan-500 px-5 py-3 text-sm font-black text-slate-950 hover:bg-cyan-400"
           >
