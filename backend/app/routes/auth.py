@@ -676,8 +676,9 @@ def bootstrap_owner(current_user: User = Depends(get_current_user), db: Session 
 
 
 @router.get("/debug-auth-version")
-def debug_auth_version():
+def debug_auth_version(current_user: User = Depends(require_admin_or_owner)):
+    # LOSSQ_DISABLE_PUBLIC_AUTH_DEBUG_V1
     return {
-        "auth_version": "owner-admin-invite-security-v1",
-        "features": ["owner account", "admin invites", "admin can remove users", "owner can remove admins and users", "user limit per account", "password reset", "email verification", "24 hour token timeout"],
+        "auth_version": "protected",
+        "message": "Auth debug endpoint is protected.",
     }

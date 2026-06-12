@@ -533,7 +533,7 @@ def get_default_profile(
 
 
 @router.get("/blank")
-def get_blank_profile():
+def get_blank_profile(current_user: dict = Depends(get_current_user)):
     return blank_profile()
 
 

@@ -1,16 +1,15 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, HTTPException
 
-router = APIRouter(prefix="/policies", tags=["Policies"])
+# LOSSQ_DISABLE_PUBLIC_POLICIES_ROUTE_V1
+# This old policies route is disabled.
+# Production account/policy data must flow through authenticated account-profile and renewal routes.
 
-@router.get("/")
-def get_policies():
-    return [
-        {
-            "id": 1,
-            "account_id": 1,
-            "carrier_name": "Progressive",
-            "policy_number": "POL123456",
-            "line_of_business": "Commercial Auto",
-            "status": "active"
-        }
-    ]
+router = APIRouter(prefix="/policies", tags=["Disabled Policies"])
+
+
+@router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+def disabled_policies_route(path: str = ""):
+    raise HTTPException(
+        status_code=410,
+        detail="Legacy policies route is disabled.",
+    )
