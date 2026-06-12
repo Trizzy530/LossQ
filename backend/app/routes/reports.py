@@ -6921,6 +6921,92 @@ def get_report_agency_info(db: Session, current_user: dict | None):
     }
 
 
+
+# LOSSQ_ORGANIZATION_PDF_BRANDING_V2
+def get_report_agency_info(db, current_user):
+    from app.models.organization import Organization
+    from app.models.user import User
+
+    user = current_user or {}
+    org_id = user.get("organization_id") if isinstance(user, dict) else getattr(user, "organization_id", None)
+
+    organization = None
+    owner = None
+
+    try:
+        if db is not None and org_id:
+            organization = db.query(Organization).filter(Organization.id == org_id).first()
+
+            owner_user_id = getattr(organization, "owner_user_id", None) if organization else None
+
+            if owner_user_id:
+                owner = db.query(User).filter(User.id == owner_user_id).first()
+
+            if not owner:
+                owner = (
+                    db.query(User)
+                    .filter(User.organization_id == org_id)
+                    .filter(User.role == "owner")
+                    .first()
+                )
+    except Exception:
+        organization = None
+        owner = None
+
+    owner_name = ""
+    if owner:
+        owner_name = " ".join(
+            [
+                str(getattr(owner, "first_name", "") or "").strip(),
+                str(getattr(owner, "last_name", "") or "").strip(),
+            ]
+        ).strip()
+
+    owner_email = getattr(owner, "email", "") if owner else ""
+
+    agency_name = (
+        getattr(organization, "name", None)
+        or user.get("organization_name")
+        or user.get("agency_name")
+        or "LossQ Agency"
+    )
+
+    agency_contact_name = getattr(organization, "agency_contact_name", None) or owner_name
+    agency_email = getattr(organization, "agency_email", None) or owner_email or user.get("email") or user.get("user_email") or ""
+    agency_phone = getattr(organization, "agency_phone", None) or ""
+    agency_address = getattr(organization, "agency_address", None) or ""
+    agency_city = getattr(organization, "agency_city", None) or ""
+    agency_state = getattr(organization, "agency_state", None) or ""
+    agency_zip = getattr(organization, "agency_zip", None) or ""
+    agency_website = getattr(organization, "agency_website", None) or ""
+    agency_license_number = getattr(organization, "agency_license_number", None) or ""
+    agency_logo_url = getattr(organization, "agency_logo_url", None) or ""
+
+    city_state_zip = " ".join(
+        [
+            str(agency_city or "").strip(),
+            str(agency_state or "").strip(),
+            str(agency_zip or "").strip(),
+        ]
+    ).strip()
+
+    address_line = str(agency_address or "").strip()
+    if city_state_zip:
+        address_line = f"{address_line}, {city_state_zip}" if address_line else city_state_zip
+
+    return {
+        "agency_name": str(agency_name or "LossQ Agency").strip(),
+        "agency_contact_name": str(agency_contact_name or "").strip(),
+        "agency_email": str(agency_email or "").strip(),
+        "agency_phone": str(agency_phone or "").strip(),
+        "agency_address_line": address_line,
+        "agency_website": str(agency_website or "").strip(),
+        "agency_license_number": str(agency_license_number or "").strip(),
+        "agency_logo_url": str(agency_logo_url or "").strip(),
+        "organization_id": org_id,
+    }
+
+
 def get_creator(current_user: dict | None):
     user = current_user or {}
     # Prefer a real first and last name on PDF reports. Do not display the email as the preparer name.
@@ -7541,6 +7627,37 @@ def logo_flowable(width=6.85 * inch):
 
 def draw_header_footer(canvas, doc, report_title: str, prepared_by: str):
     canvas.saveState()
+
+    # LOSSQ_DRAW_FULL_AGENCY_INFO_ON_PDF_V1
+    try:
+        agency_info = getattr(doc, "_agency_info", {}) or {}
+        agency_lines = []
+        agency_name = str(agency_info.get("agency_name") or "").strip()
+        organization_id = agency_info.get("organization_id")
+        if agency_name:
+            agency_lines.append(f"{agency_name} | Org {organization_id}" if organization_id else agency_name)
+        contact_bits = []
+        for key in ["agency_contact_name", "agency_phone", "agency_email"]:
+            value = str(agency_info.get(key) or "").strip()
+            if value:
+                contact_bits.append(value)
+        if contact_bits:
+            agency_lines.append(" | ".join(contact_bits))
+        address_line = str(agency_info.get("agency_address_line") or "").strip()
+        if address_line:
+            agency_lines.append(address_line)
+        website = str(agency_info.get("agency_website") or "").strip()
+        license_number = str(agency_info.get("agency_license_number") or "").strip()
+        if website or license_number:
+            agency_lines.append(" | ".join([x for x in [website, f"License: {license_number}" if license_number else ""] if x]))
+        y = 10.38
+        for idx, line in enumerate(agency_lines[:4]):
+            canvas.setFillColor(colors.HexColor("#0f172a") if idx == 0 else colors.HexColor("#334155"))
+            canvas.setFont("Helvetica-Bold" if idx == 0 else "Helvetica", 7 if idx else 8)
+            canvas.drawRightString(7.85 * inch, y * inch, line[:115])
+            y -= 0.13
+    except Exception:
+        pass
 
     # LOSSQ_DRAW_AGENCY_INFO_ON_PDF_V1
     try:

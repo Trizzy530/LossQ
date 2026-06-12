@@ -163,6 +163,18 @@ def ensure_security_columns(db: Session):
 
     add_column("organizations", "user_limit", "INTEGER DEFAULT 5")
     add_column("organizations", "owner_user_id", "INTEGER")
+
+    # LOSSQ_AGENCY_PROFILE_DB_COLUMNS_V1
+    add_column("organizations", "agency_contact_name", "VARCHAR")
+    add_column("organizations", "agency_email", "VARCHAR")
+    add_column("organizations", "agency_phone", "VARCHAR")
+    add_column("organizations", "agency_address", "VARCHAR")
+    add_column("organizations", "agency_city", "VARCHAR")
+    add_column("organizations", "agency_state", "VARCHAR")
+    add_column("organizations", "agency_zip", "VARCHAR")
+    add_column("organizations", "agency_website", "VARCHAR")
+    add_column("organizations", "agency_license_number", "VARCHAR")
+    add_column("organizations", "agency_logo_url", "VARCHAR")
     add_column("organizations", "created_at", "TIMESTAMP")
     add_column("organizations", "updated_at", "TIMESTAMP")
 
@@ -510,6 +522,17 @@ def get_me(current_user: User = Depends(get_current_user), db: Session = Depends
             "name": organization.name if organization else "",
             "user_limit": organization.user_limit if organization else 0,
             "owner_user_id": organization.owner_user_id if organization else None,
+            # LOSSQ_AUTH_ME_AGENCY_PROFILE_RESPONSE_V1
+            "agency_contact_name": getattr(organization, "agency_contact_name", "") if organization else "",
+            "agency_email": getattr(organization, "agency_email", "") if organization else "",
+            "agency_phone": getattr(organization, "agency_phone", "") if organization else "",
+            "agency_address": getattr(organization, "agency_address", "") if organization else "",
+            "agency_city": getattr(organization, "agency_city", "") if organization else "",
+            "agency_state": getattr(organization, "agency_state", "") if organization else "",
+            "agency_zip": getattr(organization, "agency_zip", "") if organization else "",
+            "agency_website": getattr(organization, "agency_website", "") if organization else "",
+            "agency_license_number": getattr(organization, "agency_license_number", "") if organization else "",
+            "agency_logo_url": getattr(organization, "agency_logo_url", "") if organization else "",
         },
         "session_timeout_minutes": ACCESS_TOKEN_EXPIRE_MINUTES,
     }
@@ -899,5 +922,139 @@ def bootstrap_owner(request: Request, current_user: User = Depends(get_current_u
             "owner_user_id": organization.owner_user_id,
         },
         "note": "Log out and log back in so your new owner role is included in your token.",
+    }
+
+
+# LOSSQ_AGENCY_PROFILE_API_V1
+AGENCY_PROFILE_FIELDS = [
+    "agency_contact_name",
+    "agency_email",
+    "agency_phone",
+    "agency_address",
+    "agency_city",
+    "agency_state",
+    "agency_zip",
+    "agency_website",
+    "agency_license_number",
+    "agency_logo_url",
+]
+
+
+class AgencyProfileUpdateRequest(BaseModel):
+    agency_contact_name: str | None = None
+    agency_email: str | None = None
+    agency_phone: str | None = None
+    agency_address: str | None = None
+    agency_city: str | None = None
+    agency_state: str | None = None
+    agency_zip: str | None = None
+    agency_website: str | None = None
+    agency_license_number: str | None = None
+    agency_logo_url: str | None = None
+
+
+def clean_agency_profile_value(value):
+    if value is None:
+        return None
+
+    clean = str(value).strip()
+    return clean[:500] if clean else None
+
+
+def agency_profile_payload(organization, current_user=None):
+    current_user = current_user or None
+
+    fallback_email = ""
+    if current_user is not None:
+        fallback_email = getattr(current_user, "email", "") or ""
+
+    if not organization:
+        return {
+            "organization_id": None,
+            "organization_name": "",
+            "agency_name": "",
+            "agency_contact_name": "",
+            "agency_email": fallback_email,
+            "agency_phone": "",
+            "agency_address": "",
+            "agency_city": "",
+            "agency_state": "",
+            "agency_zip": "",
+            "agency_website": "",
+            "agency_license_number": "",
+            "agency_logo_url": "",
+        }
+
+    return {
+        "organization_id": getattr(organization, "id", None),
+        "organization_name": getattr(organization, "name", "") or "",
+        "agency_name": getattr(organization, "name", "") or "",
+        "agency_contact_name": getattr(organization, "agency_contact_name", "") or "",
+        "agency_email": getattr(organization, "agency_email", "") or fallback_email,
+        "agency_phone": getattr(organization, "agency_phone", "") or "",
+        "agency_address": getattr(organization, "agency_address", "") or "",
+        "agency_city": getattr(organization, "agency_city", "") or "",
+        "agency_state": getattr(organization, "agency_state", "") or "",
+        "agency_zip": getattr(organization, "agency_zip", "") or "",
+        "agency_website": getattr(organization, "agency_website", "") or "",
+        "agency_license_number": getattr(organization, "agency_license_number", "") or "",
+        "agency_logo_url": getattr(organization, "agency_logo_url", "") or "",
+    }
+
+
+@router.get("/agency-profile")
+def get_agency_profile(
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    organization = (
+        db.query(Organization)
+        .filter(Organization.id == current_user.organization_id)
+        .first()
+    )
+
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+
+    return agency_profile_payload(organization, current_user)
+
+
+@router.put("/agency-profile")
+def update_agency_profile(
+    data: AgencyProfileUpdateRequest,
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    role = str(getattr(current_user, "role", "") or "").lower()
+
+    if role not in {"owner", "admin"}:
+        raise HTTPException(
+            status_code=403,
+            detail="Only an Owner or Admin can update agency profile information.",
+        )
+
+    organization = (
+        db.query(Organization)
+        .filter(Organization.id == current_user.organization_id)
+        .first()
+    )
+
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found.")
+
+    values = data.dict(exclude_unset=True)
+
+    for field in AGENCY_PROFILE_FIELDS:
+        if field in values:
+            setattr(organization, field, clean_agency_profile_value(values.get(field)))
+
+    organization.updated_at = datetime.utcnow()
+
+    db.commit()
+    db.refresh(organization)
+
+    return {
+        "message": "Agency profile updated.",
+        "agency_profile": agency_profile_payload(organization, current_user),
     }
 

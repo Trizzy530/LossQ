@@ -110,6 +110,112 @@ def draw_carrier_packet_agency_header(pdf, agency_info: dict | None):
     pdf.setFillColor(colors.black)
 
 
+
+# LOSSQ_ORGANIZATION_CARRIER_PACKET_PDF_BRANDING_V2
+def get_carrier_packet_agency_info(db: Session, current_user: dict | None):
+    user = current_user or {}
+    org_id = user.get("organization_id") if isinstance(user, dict) else getattr(user, "organization_id", None)
+
+    organization = None
+    owner = None
+
+    try:
+        if org_id:
+            organization = db.query(Organization).filter(Organization.id == org_id).first()
+
+            owner_user_id = getattr(organization, "owner_user_id", None) if organization else None
+
+            if owner_user_id:
+                owner = db.query(User).filter(User.id == owner_user_id).first()
+
+            if not owner:
+                owner = (
+                    db.query(User)
+                    .filter(User.organization_id == org_id)
+                    .filter(User.role == "owner")
+                    .first()
+                )
+    except Exception:
+        organization = None
+        owner = None
+
+    owner_name = ""
+    if owner:
+        owner_name = " ".join(
+            [
+                str(getattr(owner, "first_name", "") or "").strip(),
+                str(getattr(owner, "last_name", "") or "").strip(),
+            ]
+        ).strip()
+
+    agency_name = getattr(organization, "name", None) or user.get("organization_name") or "LossQ Agency"
+    agency_contact_name = getattr(organization, "agency_contact_name", None) or owner_name
+    agency_email = getattr(organization, "agency_email", None) or getattr(owner, "email", "") or user.get("email") or user.get("user_email") or ""
+    agency_phone = getattr(organization, "agency_phone", None) or ""
+    agency_address = getattr(organization, "agency_address", None) or ""
+    agency_city = getattr(organization, "agency_city", None) or ""
+    agency_state = getattr(organization, "agency_state", None) or ""
+    agency_zip = getattr(organization, "agency_zip", None) or ""
+    agency_website = getattr(organization, "agency_website", None) or ""
+    agency_license_number = getattr(organization, "agency_license_number", None) or ""
+
+    city_state_zip = " ".join([str(agency_city or "").strip(), str(agency_state or "").strip(), str(agency_zip or "").strip()]).strip()
+    address_line = str(agency_address or "").strip()
+
+    if city_state_zip:
+        address_line = f"{address_line}, {city_state_zip}" if address_line else city_state_zip
+
+    return {
+        "agency_name": str(agency_name or "LossQ Agency").strip(),
+        "agency_contact_name": str(agency_contact_name or "").strip(),
+        "agency_email": str(agency_email or "").strip(),
+        "agency_phone": str(agency_phone or "").strip(),
+        "agency_address_line": address_line,
+        "agency_website": str(agency_website or "").strip(),
+        "agency_license_number": str(agency_license_number or "").strip(),
+        "organization_id": org_id,
+    }
+
+
+def draw_carrier_packet_agency_header(pdf, agency_info: dict | None):
+    agency_info = agency_info or {}
+    agency_lines = []
+
+    agency_name = str(agency_info.get("agency_name") or "").strip()
+    organization_id = agency_info.get("organization_id")
+
+    if agency_name:
+        agency_lines.append(f"{agency_name} | Org {organization_id}" if organization_id else agency_name)
+
+    contact_bits = []
+    for key in ["agency_contact_name", "agency_phone", "agency_email"]:
+        value = str(agency_info.get(key) or "").strip()
+        if value:
+            contact_bits.append(value)
+
+    if contact_bits:
+        agency_lines.append(" | ".join(contact_bits))
+
+    address_line = str(agency_info.get("agency_address_line") or "").strip()
+    if address_line:
+        agency_lines.append(address_line)
+
+    website = str(agency_info.get("agency_website") or "").strip()
+    license_number = str(agency_info.get("agency_license_number") or "").strip()
+
+    if website or license_number:
+        agency_lines.append(" | ".join([x for x in [website, f"License: {license_number}" if license_number else ""] if x]))
+
+    y = 10.38
+    for idx, line in enumerate(agency_lines[:4]):
+        pdf.setFillColor(colors.HexColor("#0f172a") if idx == 0 else colors.HexColor("#334155"))
+        pdf.setFont("Helvetica-Bold" if idx == 0 else "Helvetica", 7 if idx else 8)
+        pdf.drawRightString(7.85 * inch, y * inch, line[:115])
+        y -= 0.13
+
+    pdf.setFillColor(colors.black)
+
+
 @router.post("/generate")
 def generate_carrier_packet(
     request: CarrierPacketRequest,
@@ -262,6 +368,9 @@ def download_carrier_packet_pdf(
 
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
+    # LOSSQ_DRAW_FULL_CARRIER_PACKET_AGENCY_HEADER_V1
+    agency_info = get_carrier_packet_agency_info(db, current_user)
+    draw_carrier_packet_agency_header(pdf, agency_info)
     # LOSSQ_DRAW_CARRIER_PACKET_AGENCY_HEADER_V1
     agency_info = get_carrier_packet_agency_info(db, current_user)
     draw_carrier_packet_agency_header(pdf, agency_info)
