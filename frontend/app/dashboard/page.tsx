@@ -3078,6 +3078,108 @@ async function exportExecutiveReport() {
     }
   }
 
+  async function prepareCarrierEmail() {
+    const selectedName =
+      displayProfile?.business_name ||
+      displayProfile?.insured ||
+      profile?.business_name ||
+      profile?.insured ||
+      "Selected Account";
+
+    const selectedPolicy =
+      displayProfile?.policy_number ||
+      profile?.policy_number ||
+      displayProfile?.account_number ||
+      profile?.account_number ||
+      displayProfile?.customer_number ||
+      profile?.customer_number ||
+      getCachedSelectedPolicy() ||
+      "Not Set";
+
+    const packetChoiceRaw =
+      window.prompt(
+        "Which packet should LossQ prepare?\n\nType one:\ncarrier\nexecutive\nboth",
+        "carrier"
+      ) || "carrier";
+
+    const packetChoice = packetChoiceRaw.trim().toLowerCase();
+
+    const useCarrier = packetChoice.includes("carrier") || packetChoice.includes("both");
+    const useExecutive = packetChoice.includes("executive") || packetChoice.includes("both");
+
+    if (!useCarrier && !useExecutive) {
+      setMessage("Carrier email canceled. Choose carrier, executive, or both.");
+      return;
+    }
+
+    const recipient =
+      window.prompt("Enter carrier / underwriter email address. You can leave this blank.", "") || "";
+
+    setMessage("Preparing packet download and carrier email draft...");
+
+    if (useCarrier) {
+      await generateCarrierPacket();
+    }
+
+    if (useExecutive) {
+      await exportExecutiveReport();
+    }
+
+    const claimsUsed = visibleClaims.length || claims.length || 0;
+    const riskLevel =
+      effectiveSummary?.renewal_risk_level ||
+      effectiveSummary?.risk_level ||
+      localRenewalRiskLevel ||
+      "Needs Review";
+
+    const renewalScore =
+      effectiveSummary?.renewal_score ??
+      localRenewalScore ??
+      "Not Rated";
+
+    const incurred = Number(totalIncurred || 0).toLocaleString();
+    const reserve = Number(totalReserve || 0).toLocaleString();
+    const openCount = Number(openClaims || 0).toLocaleString();
+
+    const packetLabel =
+      useCarrier && useExecutive
+        ? "LossQ carrier submission packet and executive underwriting report"
+        : useExecutive
+        ? "LossQ executive underwriting report"
+        : "LossQ carrier submission packet";
+
+    const subject = `Renewal Submission - ${selectedName}`;
+
+    const body = [
+      `Good afternoon,`,
+      ``,
+      `Please see the attached ${packetLabel} for review.`,
+      ``,
+      `Account: ${selectedName}`,
+      `Policy / Account Number: ${selectedPolicy}`,
+      `Claims Reviewed: ${claimsUsed}`,
+      `Open Claims: ${openCount}`,
+      `Total Incurred: $${incurred}`,
+      `Outstanding Reserve: $${reserve}`,
+      `Renewal Score: ${renewalScore}`,
+      `Renewal Risk Level: ${riskLevel}`,
+      ``,
+      `The submission package includes account profile detail, policy schedule, claim summary, renewal risk analysis, carrier appetite, market positioning, premium forecast, and underwriting recommendations generated through LossQ.`,
+      ``,
+      `Please let me know if you need updated loss runs, claim narratives, exposure detail, driver safety information, loss-control documentation, or any additional underwriting information for quoting consideration.`,
+      ``,
+      `Thank you,`,
+    ].join("\n");
+
+    const mailtoUrl = `mailto:${encodeURIComponent(recipient)}?subject=${encodeURIComponent(
+      subject
+    )}&body=${encodeURIComponent(body)}`;
+
+    window.location.href = mailtoUrl;
+
+    setMessage("Carrier email draft opened. Attach the downloaded packet before sending.");
+  }
+
   function copyRenewalMemo() {
     navigator.clipboard.writeText(renewalMemo || "");
     setMessage("Renewal memo copied.");
@@ -5551,6 +5653,10 @@ const trendNoteDisplay =
 
       <button onClick={generateCarrierPacket} className="btn-purple">
         Generate Carrier Packet
+      </button>
+
+      <button onClick={prepareCarrierEmail} className="btn-primary">
+        Prepare Carrier Email
       </button>
 
       <button onClick={() => changeActiveTool("memo")} className="btn-secondary">
