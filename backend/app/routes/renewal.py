@@ -620,17 +620,54 @@ def _resolve_related_claims_for_renewal(db, current_user, policy_number):
             if selected_policy in all_profile_values:
                 related_policy_numbers.update(value for value in all_profile_values if value)
 
+                # LOSSQ_PROFILE_EXPOSURE_FIELDS_FOR_RENEWAL_ENGINES_V1
                 profile_data = {
                     "id": getattr(profile, "id", None),
                     "business_name": getattr(profile, "business_name", None),
                     "insured": getattr(profile, "business_name", None),
                     "carrier_name": getattr(profile, "carrier_name", None),
                     "writing_carrier": getattr(profile, "writing_carrier", None),
+                    "agency_name": getattr(profile, "agency_name", None),
                     "policy_number": getattr(profile, "policy_number", None),
                     "account_number": getattr(profile, "account_number", None),
                     "customer_number": getattr(profile, "customer_number", None),
                     "effective_date": getattr(profile, "effective_date", None),
                     "expiration_date": getattr(profile, "expiration_date", None),
+                    "evaluation_date": getattr(profile, "evaluation_date", None),
+                    "state": getattr(profile, "state", None),
+
+                    # Saved Exposure Inputs
+                    "current_premium": getattr(profile, "current_premium", None),
+                    "expiring_premium": getattr(profile, "expiring_premium", None),
+                    "target_renewal_premium": getattr(profile, "target_renewal_premium", None),
+                    "line_of_business": getattr(profile, "line_of_business", None),
+                    "exposure_basis": getattr(profile, "exposure_basis", None),
+                    "class_code": getattr(profile, "class_code", None),
+                    "class_codes": getattr(profile, "class_codes", None),
+                    "limits": getattr(profile, "limits", None),
+                    "coverage_limit": getattr(profile, "coverage_limit", None),
+                    "deductible": getattr(profile, "deductible", None),
+                    "retention": getattr(profile, "retention", None),
+                    "payroll": getattr(profile, "payroll", None),
+                    "revenue": getattr(profile, "revenue", None),
+                    "sales": getattr(profile, "sales", None),
+                    "receipts": getattr(profile, "receipts", None),
+                    "employee_count": getattr(profile, "employee_count", None),
+                    "vehicle_count": getattr(profile, "vehicle_count", None),
+                    "driver_count": getattr(profile, "driver_count", None),
+                    "experience_mod": getattr(profile, "experience_mod", None),
+                    "mod": getattr(profile, "mod", None),
+                    "property_tiv": getattr(profile, "property_tiv", None),
+                    "tiv": getattr(profile, "tiv", None),
+                    "building_value": getattr(profile, "building_value", None),
+                    "contents_value": getattr(profile, "contents_value", None),
+                    "square_footage": getattr(profile, "square_footage", None),
+                    "location_count": getattr(profile, "location_count", None),
+                    "unit_count": getattr(profile, "unit_count", None),
+                    "umbrella_limit": getattr(profile, "umbrella_limit", None),
+                    "cargo_limit": getattr(profile, "cargo_limit", None),
+                    "underwriter_notes": getattr(profile, "underwriter_notes", None),
+
                     "policies": policies,
                 }
 
