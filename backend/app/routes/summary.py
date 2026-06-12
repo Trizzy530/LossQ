@@ -597,19 +597,100 @@ def lossq_summary_full_profile_for_exposure(db, current_user, policy_number, res
     return lossq_summary_normalize_profile_data(result_profile)
 
 
+
 def lossq_summary_force_exposure_from_full_profile(db, current_user, policy_number, result, claims):
     result = dict(result or {})
     profile_data = lossq_summary_full_profile_for_exposure(db, current_user, policy_number, result)
 
     result["account_profile"] = profile_data
 
-    if not lossq_summary_profile_has_exposure(profile_data):
+    current_premium = lossq_summary_money_value(profile_data.get("current_premium") or profile_data.get("expiring_premium"))
+    target_premium = lossq_summary_money_value(profile_data.get("target_renewal_premium"))
+    payroll = lossq_summary_money_value(profile_data.get("payroll"))
+    revenue = lossq_summary_money_value(profile_data.get("revenue") or profile_data.get("sales") or profile_data.get("receipts"))
+    property_tiv = lossq_summary_money_value(profile_data.get("property_tiv") or profile_data.get("tiv"))
+    coverage_limit = lossq_summary_money_value(profile_data.get("coverage_limit") or profile_data.get("limits"))
+    deductible = lossq_summary_money_value(profile_data.get("deductible"))
+    retention = lossq_summary_money_value(profile_data.get("retention"))
+    experience_mod = lossq_summary_money_value(profile_data.get("experience_mod") or profile_data.get("mod"))
+
+    vehicle_count = lossq_summary_int_value(profile_data.get("vehicle_count"))
+    driver_count = lossq_summary_int_value(profile_data.get("driver_count"))
+    employee_count = lossq_summary_int_value(profile_data.get("employee_count"))
+    location_count = lossq_summary_int_value(profile_data.get("location_count"))
+
+    line_of_business = str(profile_data.get("line_of_business") or profile_data.get("exposure_basis") or "").strip()
+
+    exposure_drivers = []
+
+    if current_premium:
+        exposure_drivers.append(f"Current premium considered: ${current_premium:,.0f}.")
+    if target_premium:
+        exposure_drivers.append(f"Target renewal premium considered: ${target_premium:,.0f}.")
+    if payroll:
+        exposure_drivers.append(f"Payroll exposure considered: ${payroll:,.0f}.")
+    if revenue:
+        exposure_drivers.append(f"Revenue or sales exposure considered: ${revenue:,.0f}.")
+    if vehicle_count:
+        exposure_drivers.append(f"Vehicle count considered: {vehicle_count}.")
+    if driver_count:
+        exposure_drivers.append(f"Driver count considered: {driver_count}.")
+    if employee_count:
+        exposure_drivers.append(f"Employee count considered: {employee_count}.")
+    if location_count:
+        exposure_drivers.append(f"Location count considered: {location_count}.")
+    if property_tiv:
+        exposure_drivers.append(f"Property TIV considered: ${property_tiv:,.0f}.")
+    if deductible:
+        exposure_drivers.append(f"Deductible considered: ${deductible:,.0f}.")
+    if retention:
+        exposure_drivers.append(f"Retention or SIR considered: ${retention:,.0f}.")
+    if experience_mod:
+        exposure_drivers.append(f"Experience mod considered: {experience_mod:.2f}.")
+
+    total_incurred = 0.0
+    for claim in claims or []:
+        total_incurred += lossq_summary_money_value(
+            getattr(claim, "total_incurred", None)
+            or getattr(claim, "incurred", None)
+            or getattr(claim, "loss_amount", None)
+        )
+
+    if current_premium > 0 and total_incurred > 0:
+        loss_ratio = total_incurred / current_premium
+        exposure_drivers.append(f"Loss ratio using saved current premium: {loss_ratio * 100:.1f}%.")
+
+    if not exposure_drivers and not line_of_business:
         result["exposure_inputs_used"] = False
-        result["lossq_exposure_patch_version"] = "LOSSQ_SUMMARY_DIRECT_FULL_ACCOUNT_PROFILE_EXPOSURE_LOOKUP_V1_NO_EXPOSURE_FOUND"
+        result["lossq_exposure_patch_version"] = "LOSSQ_SUMMARY_FORCE_EXPOSURE_PROFILE_V2_NO_EXPOSURE_FOUND"
         return result
 
-    result = lossq_summary_apply_exposure(result, profile_data, claims)
-    result["lossq_exposure_patch_version"] = "LOSSQ_SUMMARY_DIRECT_FULL_ACCOUNT_PROFILE_EXPOSURE_LOOKUP_V1"
+    result["exposure_inputs_used"] = True
+    result["exposure_profile"] = {
+        "primary_line_of_business": line_of_business or "Not specified",
+        "current_premium": current_premium,
+        "target_renewal_premium": target_premium,
+        "payroll": payroll,
+        "revenue": revenue,
+        "vehicle_count": vehicle_count,
+        "driver_count": driver_count,
+        "employee_count": employee_count,
+        "location_count": location_count,
+        "property_tiv": property_tiv,
+        "coverage_limit": coverage_limit,
+        "deductible": deductible,
+        "retention": retention,
+        "experience_mod": experience_mod,
+    }
+    result["exposure_drivers"] = exposure_drivers
+    result["lossq_exposure_patch_version"] = "LOSSQ_SUMMARY_FORCE_EXPOSURE_PROFILE_V2"
+
+    summary_text = str(result.get("renewal_summary") or result.get("summary") or "").rstrip()
+    result["renewal_summary"] = (
+        summary_text
+        + f" Saved Exposure Inputs were included in the renewal risk review for {line_of_business or 'the selected account'}."
+    ).strip()
+
     return result
 
 
