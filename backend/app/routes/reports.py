@@ -8169,6 +8169,267 @@ def executive_first_page(story, styles, profile, policy_number, creator, summary
     )
 
 
+
+
+# LOSSQ_DASHBOARD_PARITY_PACKET_PDFS_V1
+def lossq_report_display(value, fallback="-"):
+    text = str(value or "").strip()
+    if text.lower() in {"", "none", "null", "nan", "not set", "needs review"}:
+        return fallback
+    return text
+
+
+def lossq_report_money_display(value):
+    try:
+        cleaned = str(value or "").replace("$", "").replace(",", "").replace("%", "").strip()
+        if cleaned.lower() in {"", "-", "none", "null", "nan"}:
+            return "-"
+        return dollars(float(cleaned))
+    except Exception:
+        return "-"
+
+
+def lossq_report_percent_display(value):
+    if value in (None, "", "-"):
+        return "-"
+    text = str(value).strip()
+    return text if "%" in text else f"{text}%"
+
+
+def lossq_report_list_text(items, fallback="-"):
+    if isinstance(items, list) and items:
+        return "\\n".join(f"- {lossq_report_display(item)}" for item in items)
+    if isinstance(items, str) and items.strip():
+        return items
+    return fallback
+
+
+def lossq_report_market_rows(appetite, carrier_match):
+    rows = [["Market / Carrier", "Fit", "Score", "Reason"]]
+
+    best_fit = appetite.get("best_fit_carriers") or appetite.get("best_fit_markets") or []
+    top_carriers = carrier_match.get("top_carriers") or carrier_match.get("recommended_markets") or []
+
+    for item in best_fit[:6]:
+        if not isinstance(item, dict):
+            continue
+        rows.append([
+            lossq_report_display(item.get("carrier_type") or item.get("carrier") or item.get("market_category")),
+            lossq_report_display(item.get("fit") or item.get("appetite")),
+            lossq_report_display(item.get("match_score") or item.get("score")),
+            lossq_report_display(item.get("reason") or item.get("summary")),
+        ])
+
+    for item in top_carriers[:6]:
+        if not isinstance(item, dict):
+            continue
+        rows.append([
+            lossq_report_display(item.get("carrier") or item.get("market") or item.get("name")),
+            lossq_report_display(item.get("fit") or item.get("category")),
+            lossq_report_display(item.get("match_score") or item.get("score")),
+            lossq_report_display(", ".join(item.get("reasons") or []) if isinstance(item.get("reasons"), list) else item.get("reason")),
+        ])
+
+    if len(rows) == 1:
+        rows.append([
+            lossq_report_display(carrier_match.get("recommended_carrier"), "Recommended market not available"),
+            lossq_report_display(carrier_match.get("recommended_market_category")),
+            lossq_report_display(carrier_match.get("recommended_score")),
+            lossq_report_display(carrier_match.get("carrier_match_summary") or appetite.get("placement_summary")),
+        ])
+
+    return rows
+
+
+def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=None, report_kind="executive"):
+    """
+    Makes Executive Reports and Carrier Packets mirror the dashboard intelligence.
+    Uses posted dashboard payload first when available, then backend rebuilt context.
+    """
+    profile = ctx.get("profile") or {}
+    claims = ctx.get("claims") or []
+    metrics = ctx.get("metrics") or {}
+    quality = ctx.get("quality") or ctx.get("data_quality") or {}
+    intelligence = ctx.get("intelligence") or ctx.get("summary") or {}
+    decision = ctx.get("decision") or {}
+    appetite = ctx.get("appetite") or ctx.get("carrier_appetite") or {}
+    carrier_match = ctx.get("carrier_match") or {}
+    forecast = ctx.get("forecast") or ctx.get("premium_forecast") or {}
+    readiness = ctx.get("submission_readiness") or {}
+    policy_numbers_used = ctx.get("policy_numbers_used") or []
+
+    if not isinstance(profile, dict):
+        profile = {}
+    if not isinstance(metrics, dict):
+        metrics = {}
+    if not isinstance(quality, dict):
+        quality = {}
+    if not isinstance(intelligence, dict):
+        intelligence = {}
+    if not isinstance(decision, dict):
+        decision = {}
+    if not isinstance(appetite, dict):
+        appetite = {}
+    if not isinstance(carrier_match, dict):
+        carrier_match = {}
+    if not isinstance(forecast, dict):
+        forecast = {}
+    if not isinstance(readiness, dict):
+        readiness = {}
+
+    effective_policy = (
+        policy_number
+        or profile.get("policy_number")
+        or profile.get("account_number")
+        or profile.get("customer_number")
+        or "-"
+    )
+
+    story.append(heading("Dashboard Intelligence Reconciliation", styles))
+    story.append(p(
+        "This section mirrors the LossQ dashboard output used for underwriting, carrier strategy, "
+        "submission readiness, pricing outlook, account profile detail, exposure inputs, and claim review."
+    ))
+
+    dashboard_rows = [
+        ["Dashboard Field", "Value"],
+        ["Insured / Account", lossq_report_display(profile.get("business_name") or profile.get("insured") or profile.get("account_name"))],
+        ["Writing Carrier", lossq_report_display(profile.get("writing_carrier") or profile.get("carrier_name"))],
+        ["Producing Agency", lossq_report_display(profile.get("agency_name"))],
+        ["Account Number", lossq_report_display(profile.get("account_number") or profile.get("customer_number"))],
+        ["Selected Policy / Account Key", lossq_report_display(effective_policy)],
+        ["Policy Period", f"{lossq_report_display(profile.get('effective_date'))} to {lossq_report_display(profile.get('expiration_date'))}"],
+        ["Policy Numbers Used", ", ".join([str(x) for x in policy_numbers_used]) if policy_numbers_used else lossq_report_display(effective_policy)],
+        ["Data Quality", lossq_report_display(quality.get("status") or quality.get("data_quality_status") or ("Credible" if quality.get("is_credible") else ""))],
+        ["Claims Used", lossq_report_display(metrics.get("total_claims") or len(claims))],
+        ["Open Claims", lossq_report_display(metrics.get("open_claims"))],
+        ["Total Incurred", lossq_report_money_display(metrics.get("total_incurred"))],
+        ["Outstanding Reserve", lossq_report_money_display(metrics.get("total_reserve"))],
+    ]
+    story.append(table(dashboard_rows, widths=[1.95 * inch, 4.75 * inch], header=True, font_size=7.0, header_color=NAVY))
+
+    story.append(heading("Saved Exposure Inputs", styles))
+    exposure_rows = [
+        ["Exposure Field", "Value"],
+        ["Primary Line of Business", lossq_report_display(profile.get("line_of_business") or profile.get("exposure_basis"))],
+        ["Current / Expiring Premium", lossq_report_money_display(profile.get("current_premium") or profile.get("expiring_premium"))],
+        ["Target Renewal Premium", lossq_report_money_display(profile.get("target_renewal_premium"))],
+        ["Payroll", lossq_report_money_display(profile.get("payroll"))],
+        ["Revenue / Sales", lossq_report_money_display(profile.get("revenue") or profile.get("sales") or profile.get("receipts"))],
+        ["Vehicle Count", lossq_report_display(profile.get("vehicle_count"))],
+        ["Driver Count", lossq_report_display(profile.get("driver_count"))],
+        ["Employee Count", lossq_report_display(profile.get("employee_count"))],
+        ["Location Count", lossq_report_display(profile.get("location_count"))],
+        ["Property TIV", lossq_report_money_display(profile.get("property_tiv") or profile.get("tiv"))],
+        ["Coverage Limit", lossq_report_money_display(profile.get("coverage_limit") or profile.get("limits"))],
+        ["Deductible / Retention", lossq_report_money_display(profile.get("deductible") or profile.get("retention"))],
+        ["Experience Mod", lossq_report_display(profile.get("experience_mod") or profile.get("mod"))],
+    ]
+    story.append(table(exposure_rows, widths=[1.95 * inch, 4.75 * inch], header=True, font_size=7.0, header_color=PURPLE))
+
+    story.append(heading("Policy Schedule", styles))
+    try:
+        story.append(table(
+            policy_schedule_table(profile, policy_numbers_used),
+            widths=[1.25 * inch, 1.55 * inch, 1.35 * inch, 1.05 * inch, 1.05 * inch],
+            font_size=6.5,
+            header_color=NAVY,
+        ))
+    except Exception:
+        story.append(p("Policy schedule could not be rendered. Confirm saved policy schedule on the account profile."))
+
+    story.append(heading("AI Summary and Renewal Intelligence", styles))
+    story.append(p(
+        intelligence.get("renewal_summary")
+        or intelligence.get("summary")
+        or intelligence.get("carrier_narrative")
+        or "No AI underwriting summary was available."
+    ))
+
+    engine_rows = [
+        ["Engine", "Dashboard Result"],
+        ["Renewal Score", f"{lossq_report_display(intelligence.get('renewal_score'))}/100"],
+        ["Renewal Risk Level", lossq_report_display(intelligence.get("renewal_risk_level") or intelligence.get("risk_level"))],
+        ["Submission Strength", lossq_report_display(intelligence.get("submission_strength"))],
+        ["Underwriter Decision", lossq_report_display(decision.get("decision") or decision.get("underwriter_decision") or decision.get("renewal_decision"))],
+        ["Renewal Probability", lossq_report_percent_display(decision.get("renewal_probability"))],
+        ["Carrier Appetite", f"{lossq_report_display(appetite.get('carrier_appetite_score'))}/100 - {lossq_report_display(appetite.get('carrier_appetite_level'))}"],
+        ["Recommended Carrier", lossq_report_display(carrier_match.get("recommended_carrier"))],
+        ["Carrier Match Score", f"{lossq_report_display(carrier_match.get('recommended_score'))}/100"],
+        ["Expected Renewal Premium", lossq_report_money_display(forecast.get("expected_renewal_premium"))],
+        ["Expected Premium Change", lossq_report_percent_display(forecast.get("expected_increase_percent") or forecast.get("expected_change_percent"))],
+        ["Submission Readiness", f"{lossq_report_display(readiness.get('readiness_score') or readiness.get('submission_readiness_score'))}/100"],
+    ]
+    story.append(table(engine_rows, widths=[1.95 * inch, 4.75 * inch], header=True, font_size=7.0, header_color=NAVY))
+
+    story.append(heading("Renewal Drivers", styles))
+    story.append(p(lossq_report_list_text(
+        intelligence.get("renewal_drivers") or intelligence.get("recommended_actions"),
+        "No renewal drivers were returned by the dashboard engines."
+    ).replace("\\n", "<br/>")))
+
+    story.append(heading("Carrier Concerns", styles))
+    story.append(p(lossq_report_list_text(
+        intelligence.get("carrier_concerns") or decision.get("underwriting_concerns") or readiness.get("missing_items"),
+        "No carrier concerns were returned by the dashboard engines."
+    ).replace("\\n", "<br/>")))
+
+    story.append(heading("Carrier Appetite and Market Match Detail", styles))
+    story.append(table(
+        lossq_report_market_rows(appetite, carrier_match),
+        widths=[1.65 * inch, 1.0 * inch, 0.65 * inch, 3.35 * inch],
+        font_size=6.2,
+        header_color=PURPLE,
+    ))
+    story.append(p(
+        carrier_match.get("carrier_match_summary")
+        or appetite.get("placement_summary")
+        or appetite.get("market_strategy")
+        or "No carrier appetite strategy was available."
+    ))
+
+    story.append(heading("Premium Forecast and Pricing Notes", styles))
+    forecast_rows = [
+        ["Forecast Field", "Value"],
+        ["Expected Renewal Premium", lossq_report_money_display(forecast.get("expected_renewal_premium"))],
+        ["Expected Increase / Change", lossq_report_percent_display(forecast.get("expected_increase_percent") or forecast.get("expected_change_percent"))],
+        ["Forecast Confidence", lossq_report_percent_display(forecast.get("confidence") or forecast.get("confidence_score"))],
+        ["Pricing Summary", lossq_report_display(forecast.get("forecast_summary") or forecast.get("premium_forecast_summary") or forecast.get("pricing_summary"))],
+    ]
+    story.append(table(forecast_rows, widths=[1.95 * inch, 4.75 * inch], header=True, font_size=7.0, header_color=NAVY))
+
+    story.append(heading("Submission Readiness", styles))
+    story.append(p(
+        readiness.get("readiness_summary")
+        or readiness.get("submission_summary")
+        or readiness.get("summary")
+        or "No submission readiness narrative was available."
+    ))
+    readiness_items = readiness.get("missing_items") or readiness.get("required_items") or readiness.get("recommended_actions") or []
+    if readiness_items:
+        story.append(p(lossq_report_list_text(readiness_items, "").replace("\\n", "<br/>")))
+
+    story.append(heading("Top Claim Detail", styles))
+    try:
+        story.append(table(
+            top_claim_rows(claims, max_rows=12),
+            widths=[0.86 * inch, 1.08 * inch, 0.58 * inch, 0.72 * inch, 0.82 * inch, 0.70 * inch, 1.38 * inch, 0.88 * inch],
+            font_size=5.7,
+            header_color=NAVY,
+        ))
+    except Exception:
+        story.append(p("Top claim detail could not be rendered from the current dashboard claim rows."))
+
+    story.append(heading("Broker Recommendation / Market Strategy", styles))
+    story.append(p(
+        intelligence.get("broker_recommendation")
+        or intelligence.get("recommendation")
+        or decision.get("recommended_action")
+        or appetite.get("market_strategy")
+        or "Prepare updated loss runs, claim narratives, reserve status, exposure verification, and corrective-action documentation before carrier submission."
+    ))
+
+
 def build_executive_pdf_response(ctx, policy_number=None):
     profile = ctx["profile"]
     metrics = ctx["metrics"]
@@ -8476,6 +8737,8 @@ def build_carrier_packet_pdf_response(ctx, policy_number=None):
     story.append(p(email_text, styles))
 
     story.append(Spacer(1, 10))
+    lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number, report_kind="carrier")
+
     story.append(Paragraph("Disclaimer: This carrier packet is generated from available claim and account data inside LossQ. All figures should be reviewed against current carrier loss runs and confirmed before formal submission.", styles["SmallMuted"]))
 
     doc.build(
