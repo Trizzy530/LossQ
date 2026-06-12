@@ -91,7 +91,8 @@ async def lossq_emergency_cors_middleware(request: Request, call_next):
     try:
         response = await call_next(request)
     except Exception as exc:
-        response = Response(content=f'{{"detail":"Internal server error","error":"{str(exc)}"}}', status_code=500, media_type="application/json")
+        print(f"LOSSQ_BACKEND_ERROR: {type(exc).__name__}: {exc}")
+        response = Response(content='{"detail":"Internal server error"}', status_code=500, media_type="application/json")
     for key, value in headers.items():
         response.headers[key] = value
     return response
