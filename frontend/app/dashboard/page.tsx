@@ -4849,7 +4849,16 @@ const trendNoteDisplay =
     );
   }
 
-  if (billingLoaded && !isDashboardBillingUnlocked()) {
+  if (!billingLoaded) {
+    return (
+      <LoadingScreen
+        title="Checking billing..."
+        subtitle="Confirming your active LossQ subscription before loading dashboard data."
+      />
+    );
+  }
+
+  if (!isDashboardBillingUnlocked()) {
     return (
       <main className="min-h-screen bg-[#050816] text-white flex items-center justify-center px-6">
         <div className="max-w-xl w-full rounded-3xl border border-cyan-400/30 bg-slate-950/90 p-8 shadow-2xl shadow-cyan-500/10">
@@ -6851,6 +6860,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
