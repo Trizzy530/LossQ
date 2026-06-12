@@ -67,7 +67,7 @@ PLAN_TO_PRICE = {
     if price_id
 }
 
-FOUNDING_AGENCY_LIMIT = int(os.getenv("FOUNDING_AGENCY_LIMIT", "5"))
+FOUNDING_AGENCY_LIMIT = min(int(os.getenv("FOUNDING_AGENCY_LIMIT", "5")), 5)
 
 
 class CheckoutRequest(BaseModel):
@@ -632,3 +632,4 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     )
 
     return {"received": True}
+
