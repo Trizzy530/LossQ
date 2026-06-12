@@ -5,10 +5,14 @@ from pydantic import BaseModel
 from app.database import SessionLocal
 from app.models.claim import Claim
 from app.auth_utils import get_current_user
+from app.models.user import User
+from app.models.organization import Organization
 from app.plan_limits import require_package_access
 from app.routes.summary import build_underwriting_intelligence
 from fastapi.responses import Response
 from reportlab.lib.pagesizes import letter
+from reportlab.lib.units import inch
+from reportlab.lib import colors
 from reportlab.pdfgen import canvas
 from io import BytesIO
 from app.role_utils import require_permission
@@ -30,6 +34,80 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+
+# LOSSQ_ORGANIZATION_CARRIER_PACKET_PDF_BRANDING_V1
+def get_carrier_packet_agency_info(db: Session, current_user: dict | None):
+    user = current_user or {}
+    org_id = user.get("organization_id") if isinstance(user, dict) else getattr(user, "organization_id", None)
+
+    organization = None
+    owner = None
+
+    try:
+        if org_id:
+            organization = db.query(Organization).filter(Organization.id == org_id).first()
+            owner_user_id = getattr(organization, "owner_user_id", None) if organization else None
+
+            if owner_user_id:
+                owner = db.query(User).filter(User.id == owner_user_id).first()
+
+            if not owner:
+                owner = (
+                    db.query(User)
+                    .filter(User.organization_id == org_id)
+                    .filter(User.role == "owner")
+                    .first()
+                )
+    except Exception:
+        organization = None
+        owner = None
+
+    agency_name = (
+        getattr(organization, "name", None)
+        or user.get("organization_name")
+        or user.get("agency_name")
+        or "LossQ Agency"
+    )
+
+    owner_email = (
+        getattr(owner, "email", None)
+        or user.get("email")
+        or user.get("user_email")
+        or ""
+    )
+
+    return {
+        "agency_name": str(agency_name or "LossQ Agency").strip(),
+        "agency_contact": str(owner_email or "").strip(),
+        "organization_id": org_id,
+    }
+
+
+def draw_carrier_packet_agency_header(pdf, agency_info: dict | None):
+    agency_info = agency_info or {}
+    agency_name = str(agency_info.get("agency_name") or "").strip()
+    agency_contact = str(agency_info.get("agency_contact") or "").strip()
+    organization_id = agency_info.get("organization_id")
+
+    agency_line = agency_name
+    if organization_id:
+        agency_line = f"{agency_name} | Org {organization_id}" if agency_name else f"Org {organization_id}"
+
+    if not agency_line and not agency_contact:
+        return
+
+    pdf.setFillColor(colors.HexColor("#0f172a"))
+    pdf.setFont("Helvetica-Bold", 9)
+    pdf.drawRightString(7.85 * inch, 10.35 * inch, agency_line[:95])
+
+    if agency_contact:
+        pdf.setFillColor(colors.HexColor("#334155"))
+        pdf.setFont("Helvetica", 7)
+        pdf.drawRightString(7.85 * inch, 10.20 * inch, agency_contact[:95])
+
+    pdf.setFillColor(colors.black)
 
 
 @router.post("/generate")
@@ -184,6 +262,9 @@ def download_carrier_packet_pdf(
 
     buffer = BytesIO()
     pdf = canvas.Canvas(buffer, pagesize=letter)
+    # LOSSQ_DRAW_CARRIER_PACKET_AGENCY_HEADER_V1
+    agency_info = get_carrier_packet_agency_info(db, current_user)
+    draw_carrier_packet_agency_header(pdf, agency_info)
     width, height = letter
 
     y = height - 50

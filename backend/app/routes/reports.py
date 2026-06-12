@@ -28,6 +28,8 @@ from reportlab.platypus import (
 
 from app.database import SessionLocal
 from app.auth_utils import get_current_user
+from app.models.user import User
+from app.models.organization import Organization
 from app.plan_limits import require_package_access
 from app.models.claim import Claim
 from app.models.account_profile import AccountProfile
@@ -6870,6 +6872,55 @@ def claim_attr(claim, *names, default=""):
     return default
 
 
+
+# LOSSQ_ORGANIZATION_PDF_BRANDING_V1
+def get_report_agency_info(db: Session, current_user: dict | None):
+    user = current_user or {}
+    org_id = user.get("organization_id") if isinstance(user, dict) else getattr(user, "organization_id", None)
+
+    organization = None
+    owner = None
+
+    try:
+        if org_id:
+            organization = db.query(Organization).filter(Organization.id == org_id).first()
+            owner_user_id = getattr(organization, "owner_user_id", None) if organization else None
+
+            if owner_user_id:
+                owner = db.query(User).filter(User.id == owner_user_id).first()
+
+            if not owner:
+                owner = (
+                    db.query(User)
+                    .filter(User.organization_id == org_id)
+                    .filter(User.role == "owner")
+                    .first()
+                )
+    except Exception:
+        organization = None
+        owner = None
+
+    agency_name = (
+        getattr(organization, "name", None)
+        or user.get("organization_name")
+        or user.get("agency_name")
+        or "LossQ Agency"
+    )
+
+    owner_email = (
+        getattr(owner, "email", None)
+        or user.get("email")
+        or user.get("user_email")
+        or ""
+    )
+
+    return {
+        "agency_name": str(agency_name or "LossQ Agency").strip(),
+        "agency_contact": str(owner_email or "").strip(),
+        "organization_id": org_id,
+    }
+
+
 def get_creator(current_user: dict | None):
     user = current_user or {}
     # Prefer a real first and last name on PDF reports. Do not display the email as the preparer name.
@@ -7357,6 +7408,7 @@ def build_context(
         "forecast": forecast,
         "metrics": metrics,
         "creator": get_creator(current_user),
+        "agency_info": get_report_agency_info(db, current_user),
     }
 
 
@@ -7371,6 +7423,12 @@ def make_doc(title: str):
         bottomMargin=0.54 * inch,
         title=title,
     )
+    # LOSSQ_ATTACH_AGENCY_INFO_TO_PDF_DOC_V1
+    try:
+        _lossq_ctx = locals().get("ctx", {})
+        doc._agency_info = _lossq_ctx.get("agency_info", {}) if isinstance(_lossq_ctx, dict) else {}
+    except Exception:
+        doc._agency_info = {}
     styles = getSampleStyleSheet()
     styles.add(
         ParagraphStyle(
@@ -7483,6 +7541,26 @@ def logo_flowable(width=6.85 * inch):
 
 def draw_header_footer(canvas, doc, report_title: str, prepared_by: str):
     canvas.saveState()
+
+    # LOSSQ_DRAW_AGENCY_INFO_ON_PDF_V1
+    try:
+        agency_info = getattr(doc, "_agency_info", {}) or {}
+        agency_name = str(agency_info.get("agency_name") or "").strip()
+        agency_contact = str(agency_info.get("agency_contact") or "").strip()
+        organization_id = agency_info.get("organization_id")
+        agency_line = agency_name
+        if organization_id:
+            agency_line = f"{agency_name} | Org {organization_id}" if agency_name else f"Org {organization_id}"
+        if agency_line:
+            canvas.setFillColor(colors.HexColor("#0f172a"))
+            canvas.setFont("Helvetica-Bold", 8)
+            canvas.drawRightString(7.85 * inch, 10.18 * inch, agency_line[:95])
+        if agency_contact:
+            canvas.setFillColor(colors.HexColor("#334155"))
+            canvas.setFont("Helvetica", 7)
+            canvas.drawRightString(7.85 * inch, 10.03 * inch, agency_contact[:95])
+    except Exception:
+        pass
     width, height = letter
 
     # Corporate report chrome for pages after the cover. Page 1 carries the full brand banner in the body.
