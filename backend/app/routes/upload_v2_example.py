@@ -1,32 +1,15 @@
-"""
-Example upload route showing how to use lossq_loss_run_pipeline_v2.py.
+﻿from fastapi import APIRouter, HTTPException
 
-Use this as a reference if your current backend/app/routes/upload.py already has
-DB save logic you do not want to disrupt. The important part is the import and
-parse_loss_run_upload(...) call.
-"""
+# LOSSQ_DISABLE_UPLOAD_V2_EXAMPLE_V1
+# This example upload file is intentionally disabled.
+# Production uploads must use the secured upload.py or upload_v2.py routes.
 
-from __future__ import annotations
-
-from fastapi import APIRouter, File, UploadFile
-
-try:
-    from app.services.lossq_loss_run_pipeline_v2 import parse_loss_run_upload
-except Exception:
-    from ..services.lossq_loss_run_pipeline_v2 import parse_loss_run_upload
-
-router = APIRouter(prefix="/upload", tags=["Upload V2 Example"])
+router = APIRouter(prefix="/upload-v2-example", tags=["Disabled Upload V2 Example"])
 
 
-@router.post("/loss-run-v2")
-async def upload_loss_run_v2(file: UploadFile = File(...)):
-    content = await file.read()
-    parsed = parse_loss_run_upload(file.filename or "loss_run", content)
-
-    # Your existing upload.py likely saves claims to DB here.
-    # Keep that existing save logic. This response shape supports dashboard + review.
-    return {
-        **parsed,
-        "uploaded_files": [file.filename],
-        "saved_claims": parsed.get("claim_count", 0),
-    }
+@router.api_route("/{path:path}", methods=["GET", "POST", "PUT", "PATCH", "DELETE"])
+def disabled_upload_v2_example(path: str = ""):
+    raise HTTPException(
+        status_code=410,
+        detail="Upload V2 example route is disabled. Use the secured LossQ upload routes.",
+    )
