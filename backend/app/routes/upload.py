@@ -193,7 +193,7 @@ def extract_exposure_inputs_from_raw_text(raw_text: str):
         for pattern in patterns:
             match = re.search(pattern, text_value, re.IGNORECASE)
             if match and match.group(1):
-                profile[field] = clean_value(match.group(1)).replace(" ", "")
+                profile[field] = re.sub(r"\\s+", " ", str(match.group(1) or "")).strip(" :|-").replace(" ", "")
                 break
 
 
