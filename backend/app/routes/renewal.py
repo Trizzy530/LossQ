@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from datetime import datetime
 
@@ -727,13 +727,457 @@ def engine_response(builder, db, current_user, policy_number):
     }
 
 
+
+
+# LOSSQ_EXPOSURE_AWARE_RENEWAL_INTELLIGENCE_V1
+def lossq_clean_text(value):
+    return str(value or "").strip()
+
+def lossq_money_value(value):
+    try:
+        cleaned = str(value or "").replace("$", "").replace(",", "").replace("%", "").strip()
+        if cleaned in {"", "-", "None", "none", "null"}:
+            return 0.0
+        return float(cleaned)
+    except Exception:
+        return 0.0
+
+def lossq_int_value(value):
+    try:
+        cleaned = str(value or "").replace(",", "").strip()
+        if cleaned in {"", "-", "None", "none", "null"}:
+            return 0
+        return int(float(cleaned))
+    except Exception:
+        return 0
+
+def lossq_exposure_context(profile_data):
+    profile_data = profile_data or {}
+
+    line_text = " ".join([
+        lossq_clean_text(profile_data.get("line_of_business")),
+        lossq_clean_text(profile_data.get("class_code")),
+        lossq_clean_text(profile_data.get("class_codes")),
+        lossq_clean_text(profile_data.get("exposure_basis")),
+        lossq_clean_text(profile_data.get("underwriter_notes")),
+        lossq_clean_text(profile_data.get("business_name")),
+    ]).lower()
+
+    policies = profile_data.get("policies") or []
+    if isinstance(policies, list):
+        for item in policies:
+            if isinstance(item, dict):
+                line_text += " " + " ".join([
+                    lossq_clean_text(item.get("line_of_business")),
+                    lossq_clean_text(item.get("policy_type")),
+                    lossq_clean_text(item.get("coverage")),
+                ]).lower()
+
+    current_premium = lossq_money_value(profile_data.get("current_premium") or profile_data.get("expiring_premium"))
+    target_premium = lossq_money_value(profile_data.get("target_renewal_premium"))
+    payroll = lossq_money_value(profile_data.get("payroll"))
+    revenue = lossq_money_value(profile_data.get("revenue") or profile_data.get("sales") or profile_data.get("receipts"))
+    property_tiv = lossq_money_value(profile_data.get("property_tiv") or profile_data.get("tiv"))
+    coverage_limit = lossq_money_value(profile_data.get("coverage_limit") or profile_data.get("limits"))
+    deductible = lossq_money_value(profile_data.get("deductible"))
+    retention = lossq_money_value(profile_data.get("retention"))
+    cargo_limit = lossq_money_value(profile_data.get("cargo_limit"))
+    umbrella_limit = lossq_money_value(profile_data.get("umbrella_limit"))
+    experience_mod = lossq_money_value(profile_data.get("experience_mod") or profile_data.get("mod"))
+
+    vehicle_count = lossq_int_value(profile_data.get("vehicle_count"))
+    driver_count = lossq_int_value(profile_data.get("driver_count"))
+    employee_count = lossq_int_value(profile_data.get("employee_count"))
+    location_count = lossq_int_value(profile_data.get("location_count"))
+    unit_count = lossq_int_value(profile_data.get("unit_count"))
+
+    is_transportation = any(word in line_text for word in ["auto", "truck", "transport", "fleet", "vehicle", "driver", "cargo"])
+    is_workers_comp = any(word in line_text for word in ["workers", "worker", "comp", "payroll", "wc"])
+    is_property = any(word in line_text for word in ["property", "building", "tiv", "location", "contents"])
+    is_general_liability = any(word in line_text for word in ["general liability", "premises", "operations", "contractor", "maintenance", "janitor", "service"])
+    is_professional = any(word in line_text for word in ["professional", "errors", "omissions", "e&o"])
+    is_cyber = "cyber" in line_text
+
+    exposure_drivers = []
+
+    if current_premium:
+        exposure_drivers.append(f"Current premium considered: ${current_premium:,.0f}.")
+    if target_premium:
+        exposure_drivers.append(f"Target renewal premium considered: ${target_premium:,.0f}.")
+    if payroll:
+        exposure_drivers.append(f"Payroll exposure considered: ${payroll:,.0f}.")
+    if revenue:
+        exposure_drivers.append(f"Revenue or sales exposure considered: ${revenue:,.0f}.")
+    if vehicle_count:
+        exposure_drivers.append(f"Vehicle count considered: {vehicle_count}.")
+    if driver_count:
+        exposure_drivers.append(f"Driver count considered: {driver_count}.")
+    if employee_count:
+        exposure_drivers.append(f"Employee count considered: {employee_count}.")
+    if property_tiv:
+        exposure_drivers.append(f"Property TIV considered: ${property_tiv:,.0f}.")
+    if coverage_limit:
+        exposure_drivers.append(f"Coverage limit considered: ${coverage_limit:,.0f}.")
+    if deductible:
+        exposure_drivers.append(f"Deductible considered: ${deductible:,.0f}.")
+    if retention:
+        exposure_drivers.append(f"Retention or SIR considered: ${retention:,.0f}.")
+    if experience_mod:
+        exposure_drivers.append(f"Experience mod considered: {experience_mod:.2f}.")
+
+    primary_line = (
+        lossq_clean_text(profile_data.get("line_of_business"))
+        or lossq_clean_text(profile_data.get("exposure_basis"))
+        or "Not specified"
+    )
+
+    return {
+        "has_exposure_inputs": bool(exposure_drivers or primary_line != "Not specified"),
+        "primary_line_of_business": primary_line,
+        "line_text": line_text,
+        "current_premium": current_premium,
+        "target_renewal_premium": target_premium,
+        "payroll": payroll,
+        "revenue": revenue,
+        "property_tiv": property_tiv,
+        "coverage_limit": coverage_limit,
+        "deductible": deductible,
+        "retention": retention,
+        "cargo_limit": cargo_limit,
+        "umbrella_limit": umbrella_limit,
+        "experience_mod": experience_mod,
+        "vehicle_count": vehicle_count,
+        "driver_count": driver_count,
+        "employee_count": employee_count,
+        "location_count": location_count,
+        "unit_count": unit_count,
+        "is_transportation": is_transportation,
+        "is_workers_comp": is_workers_comp,
+        "is_property": is_property,
+        "is_general_liability": is_general_liability,
+        "is_professional": is_professional,
+        "is_cyber": is_cyber,
+        "exposure_drivers": exposure_drivers,
+    }
+
+def lossq_exposure_markets(ctx):
+    markets = []
+
+    if ctx.get("is_transportation"):
+        markets.extend([
+            "Transportation and commercial auto markets",
+            "Fleet auto liability markets",
+            "Motor truck cargo markets",
+        ])
+
+    if ctx.get("is_workers_comp"):
+        markets.extend([
+            "Workers compensation markets",
+            "Payroll-driven casualty markets",
+        ])
+
+    if ctx.get("is_property"):
+        markets.extend([
+            "Property and TIV-driven markets",
+            "Package markets with property capacity",
+        ])
+
+    if ctx.get("is_general_liability"):
+        markets.extend([
+            "General liability markets",
+            "Middle-market casualty carriers",
+        ])
+
+    if ctx.get("is_professional"):
+        markets.append("Professional liability markets")
+
+    if ctx.get("is_cyber"):
+        markets.append("Cyber liability markets")
+
+    if not markets:
+        markets = [
+            "Regional commercial markets",
+            "Middle-market carriers",
+            "Specialty markets if standard appetite is limited",
+        ]
+
+    seen = []
+    for item in markets:
+        if item not in seen:
+            seen.append(item)
+    return seen
+
+def lossq_exposure_carrier_targets(ctx):
+    carriers = []
+
+    if ctx.get("is_transportation"):
+        carriers.extend([
+            "Berkley Transportation",
+            "Great West Casualty",
+            "Progressive Commercial",
+            "National General",
+        ])
+
+    if ctx.get("is_workers_comp"):
+        carriers.extend([
+            "Travelers",
+            "The Hartford",
+            "AmTrust",
+            "EMPLOYERS",
+        ])
+
+    if ctx.get("is_property"):
+        carriers.extend([
+            "Travelers",
+            "The Hartford",
+            "Zurich",
+            "CNA",
+        ])
+
+    if ctx.get("is_general_liability"):
+        carriers.extend([
+            "Travelers",
+            "The Hartford",
+            "CNA",
+            "Liberty Mutual",
+        ])
+
+    if ctx.get("is_professional"):
+        carriers.extend(["CNA", "Travelers", "The Hartford"])
+
+    if ctx.get("is_cyber"):
+        carriers.extend(["Travelers", "The Hartford", "CNA"])
+
+    seen = []
+    for carrier in carriers:
+        if carrier not in seen:
+            seen.append(carrier)
+
+    return seen
+
+def lossq_apply_exposure_to_decision(result, profile_data, claims):
+    result = dict(result or {})
+    ctx = lossq_exposure_context(profile_data)
+
+    if not ctx.get("has_exposure_inputs"):
+        result["exposure_inputs_used"] = False
+        return result
+
+    concerns = list(result.get("underwriting_concerns") or [])
+    markets = list(result.get("best_market_types") or [])
+    drivers = list(result.get("exposure_drivers") or [])
+
+    drivers.extend(ctx["exposure_drivers"])
+
+    score = result.get("marketability_score")
+    try:
+        score = int(score) if score is not None else None
+    except Exception:
+        score = None
+
+    probability = result.get("renewal_probability")
+    try:
+        probability = int(probability) if probability is not None else None
+    except Exception:
+        probability = None
+
+    total_incurred = sum(lossq_money_value(getattr(c, "total_incurred", 0) or getattr(c, "incurred", 0)) for c in claims or [])
+    current_premium = ctx.get("current_premium") or 0
+
+    if current_premium > 0 and total_incurred > 0:
+        loss_ratio = total_incurred / current_premium
+        result.setdefault("decision_metrics", {})
+        result["decision_metrics"]["exposure_loss_ratio"] = round(loss_ratio, 4)
+
+        if loss_ratio >= 0.75:
+            concerns.append(f"Loss ratio is elevated at approximately {loss_ratio * 100:.1f}% based on saved current premium.")
+            if score is not None:
+                score -= 10
+            if probability is not None:
+                probability -= 8
+        elif loss_ratio <= 0.35:
+            drivers.append(f"Loss ratio is favorable at approximately {loss_ratio * 100:.1f}% based on saved current premium.")
+            if score is not None:
+                score += 5
+            if probability is not None:
+                probability += 5
+
+    if ctx.get("experience_mod") >= 1.25:
+        concerns.append(f"Experience mod of {ctx['experience_mod']:.2f} may create workers compensation underwriting pressure.")
+        if score is not None:
+            score -= 8
+    elif 0 < ctx.get("experience_mod") <= 0.90:
+        drivers.append(f"Experience mod of {ctx['experience_mod']:.2f} supports a stronger workers compensation position.")
+        if score is not None:
+            score += 4
+
+    if ctx.get("vehicle_count") >= 25 or ctx.get("driver_count") >= 25:
+        concerns.append("Fleet size creates elevated auto underwriting review requirements.")
+        if score is not None:
+            score -= 5
+
+    if ctx.get("property_tiv") >= 10000000:
+        concerns.append("Large property TIV requires carrier capacity and catastrophe/property underwriting review.")
+
+    if ctx.get("retention") >= 25000 or ctx.get("deductible") >= 25000:
+        drivers.append("Meaningful deductible or retention improves risk sharing and may support carrier appetite.")
+        if score is not None:
+            score += 3
+
+    for market in lossq_exposure_markets(ctx):
+        if market not in markets:
+            markets.append(market)
+
+    if score is not None:
+        score = max(0, min(100, score))
+        result["marketability_score"] = score
+
+    if probability is not None:
+        probability = max(0, min(100, probability))
+        result["renewal_probability"] = probability
+
+    result["best_market_types"] = markets
+    result["underwriting_concerns"] = concerns or ["No major underwriting concerns detected."]
+    result["exposure_inputs_used"] = True
+    result["exposure_profile"] = {
+        "primary_line_of_business": ctx["primary_line_of_business"],
+        "current_premium": ctx["current_premium"],
+        "target_renewal_premium": ctx["target_renewal_premium"],
+        "payroll": ctx["payroll"],
+        "revenue": ctx["revenue"],
+        "vehicle_count": ctx["vehicle_count"],
+        "driver_count": ctx["driver_count"],
+        "employee_count": ctx["employee_count"],
+        "property_tiv": ctx["property_tiv"],
+        "coverage_limit": ctx["coverage_limit"],
+        "deductible": ctx["deductible"],
+        "retention": ctx["retention"],
+        "experience_mod": ctx["experience_mod"],
+    }
+    result["exposure_drivers"] = drivers
+    result["underwriter_decision_summary"] = (
+        str(result.get("underwriter_decision_summary") or "").rstrip()
+        + f" Saved Exposure Inputs were also considered for {ctx['primary_line_of_business']}."
+    ).strip()
+
+    return result
+
+def lossq_apply_exposure_to_appetite(result, profile_data, claims):
+    result = dict(result or {})
+    ctx = lossq_exposure_context(profile_data)
+
+    if not ctx.get("has_exposure_inputs"):
+        result["exposure_inputs_used"] = False
+        return result
+
+    score = result.get("carrier_appetite_score")
+    try:
+        score = int(score) if score is not None else 0
+    except Exception:
+        score = 0
+
+    if ctx.get("retention") >= 25000 or ctx.get("deductible") >= 25000:
+        score += 4
+    if ctx.get("experience_mod") >= 1.25:
+        score -= 6
+    if ctx.get("vehicle_count") >= 25 or ctx.get("driver_count") >= 25:
+        score -= 4
+    if ctx.get("current_premium") >= 50000:
+        score += 2
+
+    score = max(0, min(100, score))
+    level = "Strong" if score >= 75 else "Moderate" if score >= 50 else "Limited"
+
+    reasons = list(result.get("carrier_match_reasons") or [])
+    reasons.extend(ctx["exposure_drivers"])
+
+    result["carrier_appetite_score"] = score
+    result["carrier_appetite_level"] = level
+    result["carrier_match_reasons"] = reasons
+    result["best_fit_carriers"] = lossq_exposure_markets(ctx)
+    result["exposure_inputs_used"] = True
+    result["exposure_profile"] = ctx
+    result["market_strategy"] = (
+        f"Market this as a {ctx['primary_line_of_business']} account using both account-specific claims and saved Exposure Inputs. "
+        f"Target: {', '.join(lossq_exposure_markets(ctx)[:3])}."
+    )
+    result["placement_summary"] = (
+        f"Carrier appetite is {score}/100 after considering claims plus saved Exposure Inputs for "
+        f"{ctx['primary_line_of_business']}."
+    )
+
+    return result
+
+def lossq_apply_exposure_to_carrier_match(result, profile_data, claims):
+    result = dict(result or {})
+    ctx = lossq_exposure_context(profile_data)
+
+    if not ctx.get("has_exposure_inputs"):
+        result["exposure_inputs_used"] = False
+        return result
+
+    target_carriers = lossq_exposure_carrier_targets(ctx)
+    top_carriers = list(result.get("top_carriers") or [])
+
+    adjusted = []
+    for item in top_carriers:
+        row = dict(item or {})
+        carrier_name = str(row.get("carrier") or "")
+        score = lossq_int_value(row.get("match_score"))
+
+        boost = 0
+        for target in target_carriers:
+            if target.lower() in carrier_name.lower() or carrier_name.lower() in target.lower():
+                boost = 12
+                break
+
+        if boost:
+            score = min(100, score + boost)
+            reasons = list(row.get("reasons") or [])
+            reasons.append(f"Boosted because saved Exposure Inputs match {ctx['primary_line_of_business']} appetite.")
+            row["reasons"] = reasons
+            row["fit"] = row.get("fit") or "Exposure-aligned fit"
+
+        row["match_score"] = score
+        adjusted.append(row)
+
+    adjusted = sorted(adjusted, key=lambda item: int(item.get("match_score") or 0), reverse=True)
+
+    result["top_carriers"] = adjusted
+    result["recommended_carrier"] = adjusted[0].get("carrier") if adjusted else (target_carriers[0] if target_carriers else result.get("recommended_carrier"))
+    result["recommended_market_category"] = (
+        "Transportation / Commercial Auto" if ctx.get("is_transportation")
+        else "Workers Compensation" if ctx.get("is_workers_comp")
+        else "Property / Package" if ctx.get("is_property")
+        else "General Liability / Casualty" if ctx.get("is_general_liability")
+        else result.get("recommended_market_category", "Commercial Insurance")
+    )
+    result["exposure_target_carriers"] = target_carriers
+    result["exposure_inputs_used"] = True
+    result["exposure_profile"] = ctx
+    result["carrier_match_summary"] = (
+        f"Carrier match used claim activity plus saved Exposure Inputs for {ctx['primary_line_of_business']}. "
+        f"Recommended target markets: {', '.join(target_carriers[:4]) if target_carriers else 'regional commercial markets'}."
+    )
+
+    return result
+
+
 @router.get("/decision")
 def renewal_decision(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return engine_response(build_underwriter_decision_engine, db, current_user, policy_number)
+    result = engine_response(build_underwriter_decision_engine, db, current_user, policy_number)
+    claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
+    result = lossq_apply_exposure_to_decision(result, profile_data, claims)
+    result["policy_numbers_used"] = policy_numbers_used
+    return result
 
 @router.get("/carrier-appetite")
 def carrier_appetite(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return engine_response(build_carrier_appetite_engine, db, current_user, policy_number)
+    result = engine_response(build_carrier_appetite_engine, db, current_user, policy_number)
+    claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
+    result = lossq_apply_exposure_to_appetite(result, profile_data, claims)
+    result["policy_numbers_used"] = policy_numbers_used
+    return result
 
 @router.get("/submission-readiness")
 def submission_readiness(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
@@ -752,7 +1196,11 @@ def premium_forecast(policy_number: str | None = Query(default=None), db: Sessio
 
 @router.get("/carrier-match")
 def carrier_match(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
-    return engine_response(build_carrier_match_engine, db, current_user, policy_number)
+    result = engine_response(build_carrier_match_engine, db, current_user, policy_number)
+    claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
+    result = lossq_apply_exposure_to_carrier_match(result, profile_data, claims)
+    result["policy_numbers_used"] = policy_numbers_used
+    return result
 
 @router.get("/memo")
 def renewal_memo(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):

@@ -1,4 +1,4 @@
-﻿from fastapi import APIRouter, Depends, Query
+from fastapi import APIRouter, Depends, Query
 from sqlalchemy.orm import Session
 from sqlalchemy import func
 import json
@@ -293,9 +293,144 @@ def build_underwriting_intelligence(claims):
     }
 
 
+
+
+# LOSSQ_EXPOSURE_AWARE_UNDERWRITING_SUMMARY_V1
+def lossq_summary_money_value(value):
+    try:
+        cleaned = str(value or "").replace("$", "").replace(",", "").replace("%", "").strip()
+        if cleaned in {"", "-", "None", "none", "null"}:
+            return 0.0
+        return float(cleaned)
+    except Exception:
+        return 0.0
+
+def lossq_summary_int_value(value):
+    try:
+        cleaned = str(value or "").replace(",", "").strip()
+        if cleaned in {"", "-", "None", "none", "null"}:
+            return 0
+        return int(float(cleaned))
+    except Exception:
+        return 0
+
+def lossq_summary_apply_exposure(result, profile_data, claims):
+    result = dict(result or {})
+    profile_data = profile_data or {}
+
+    current_premium = lossq_summary_money_value(profile_data.get("current_premium") or profile_data.get("expiring_premium"))
+    target_premium = lossq_summary_money_value(profile_data.get("target_renewal_premium"))
+    payroll = lossq_summary_money_value(profile_data.get("payroll"))
+    revenue = lossq_summary_money_value(profile_data.get("revenue") or profile_data.get("sales") or profile_data.get("receipts"))
+    property_tiv = lossq_summary_money_value(profile_data.get("property_tiv") or profile_data.get("tiv"))
+    coverage_limit = lossq_summary_money_value(profile_data.get("coverage_limit") or profile_data.get("limits"))
+    vehicle_count = lossq_summary_int_value(profile_data.get("vehicle_count"))
+    driver_count = lossq_summary_int_value(profile_data.get("driver_count"))
+    employee_count = lossq_summary_int_value(profile_data.get("employee_count"))
+    experience_mod = lossq_summary_money_value(profile_data.get("experience_mod") or profile_data.get("mod"))
+    line_of_business = str(profile_data.get("line_of_business") or profile_data.get("exposure_basis") or "").strip()
+
+    exposure_drivers = []
+    risk_delta = 0
+
+    if current_premium:
+        exposure_drivers.append(f"Current premium considered: ${current_premium:,.0f}.")
+    if target_premium:
+        exposure_drivers.append(f"Target renewal premium considered: ${target_premium:,.0f}.")
+    if payroll:
+        exposure_drivers.append(f"Payroll exposure considered: ${payroll:,.0f}.")
+    if revenue:
+        exposure_drivers.append(f"Revenue or sales exposure considered: ${revenue:,.0f}.")
+    if vehicle_count:
+        exposure_drivers.append(f"Vehicle count considered: {vehicle_count}.")
+    if driver_count:
+        exposure_drivers.append(f"Driver count considered: {driver_count}.")
+    if employee_count:
+        exposure_drivers.append(f"Employee count considered: {employee_count}.")
+    if property_tiv:
+        exposure_drivers.append(f"Property TIV considered: ${property_tiv:,.0f}.")
+    if coverage_limit:
+        exposure_drivers.append(f"Coverage limit considered: ${coverage_limit:,.0f}.")
+    if experience_mod:
+        exposure_drivers.append(f"Experience mod considered: {experience_mod:.2f}.")
+
+    if not exposure_drivers and not line_of_business:
+        result["exposure_inputs_used"] = False
+        return result
+
+    total_incurred = 0.0
+    for claim in claims or []:
+        total_incurred += lossq_summary_money_value(
+            getattr(claim, "total_incurred", None)
+            or getattr(claim, "incurred", None)
+            or getattr(claim, "loss_amount", None)
+        )
+
+    if current_premium > 0 and total_incurred > 0:
+        loss_ratio = total_incurred / current_premium
+        if loss_ratio >= 0.75:
+            risk_delta += 10
+            exposure_drivers.append(f"Loss ratio pressure: {loss_ratio * 100:.1f}% of saved current premium.")
+        elif loss_ratio <= 0.35:
+            risk_delta -= 5
+            exposure_drivers.append(f"Favorable loss ratio: {loss_ratio * 100:.1f}% of saved current premium.")
+
+    if experience_mod >= 1.25:
+        risk_delta += 8
+    elif 0 < experience_mod <= 0.90:
+        risk_delta -= 4
+
+    if vehicle_count >= 25 or driver_count >= 25:
+        risk_delta += 5
+
+    if property_tiv >= 10000000:
+        risk_delta += 3
+
+    score = result.get("renewal_score")
+    try:
+        score = int(score)
+        score = max(0, min(100, score + risk_delta))
+        result["renewal_score"] = score
+
+        if score >= 70:
+            result["renewal_risk_level"] = "High"
+            result["renewal_risk"] = "RED"
+        elif score >= 40:
+            result["renewal_risk_level"] = "Moderate"
+            result["renewal_risk"] = "YELLOW"
+        else:
+            result["renewal_risk_level"] = "Low"
+            result["renewal_risk"] = "GREEN"
+    except Exception:
+        pass
+
+    result["exposure_inputs_used"] = True
+    result["exposure_drivers"] = exposure_drivers
+    result["exposure_profile"] = {
+        "line_of_business": line_of_business,
+        "current_premium": current_premium,
+        "target_renewal_premium": target_premium,
+        "payroll": payroll,
+        "revenue": revenue,
+        "vehicle_count": vehicle_count,
+        "driver_count": driver_count,
+        "employee_count": employee_count,
+        "property_tiv": property_tiv,
+        "coverage_limit": coverage_limit,
+        "experience_mod": experience_mod,
+    }
+
+    result["renewal_summary"] = (
+        str(result.get("renewal_summary") or result.get("summary") or "").rstrip()
+        + f" Saved Exposure Inputs were included in the renewal risk review for {line_of_business or 'the selected account'}."
+    ).strip()
+
+    return result
+
+
 @router.get("/underwriting")
 def underwriting_summary(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(get_current_user)):
     claims, policy_numbers_used, profile_data = get_claims_for_account(db, current_user, policy_number)
     quality = data_quality(claims, policy_numbers_used, profile_data)
-    result = build_underwriting_intelligence(claims)
+    result = lossq_summary_apply_exposure(build_underwriting_intelligence(claims), profile_data, claims)
     return {**result, "data_quality": quality, "is_credible": quality["is_credible"], "policy_number": policy_number, "policy_numbers_used": policy_numbers_used, "claims_used": len(claims), "account_profile": profile_data}
