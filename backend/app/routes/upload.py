@@ -481,7 +481,7 @@ def ensure_claim_timeline_columns(db: Session):
 
         db.commit()
     except Exception as e:
-        # LOSSQ_UPLOAD_TRACEBACK_DEBUG_V1
+        # LOSSQ_UPLOAD_ERROR_REDACTED_V1
         print("LOSSQ_UPLOAD_ERROR_REDACTED")
         db.rollback()
         print(f"Claim timeline column check failed: {e}")
@@ -1080,7 +1080,7 @@ async def upload_loss_run(
     db: Session = Depends(get_db),
     current_user: dict = Depends(require_permission("upload")),
 ):
-    # LOSSQ_UPLOAD_ROUTE_REAL_TRACEBACK_V1
+    # LOSSQ_UPLOAD_ROUTE_ERROR_REDACTED_V1
     try:
         await validate_upload_file_security(file)
         return await save_uploaded_files(
@@ -1097,7 +1097,7 @@ async def upload_loss_run(
             status_code=500,
             detail={
                 "message": "Internal server error",
-                "error": str(e),
+                "error": "Upload processing failed.",
             },
         )
 
@@ -1127,7 +1127,7 @@ async def upload_multiple_loss_runs(
             status_code=500,
             detail={
                 "message": "Internal server error",
-                "error": str(e),
+                "error": "Upload processing failed.",
             },
         )
 
