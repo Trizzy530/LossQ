@@ -1058,3 +1058,177 @@ def update_agency_profile(
         "agency_profile": agency_profile_payload(organization, current_user),
     }
 
+
+# LOSSQ_ORG_SCOPED_SUPPORT_LOOKUP_V1
+@router.get("/support-lookup")
+def organization_support_lookup(
+    query: str = "",
+    db: Session = Depends(get_db),
+    current_user: User = Depends(get_current_user),
+):
+    """
+    Organization-scoped support lookup.
+
+    This endpoint intentionally does NOT search globally.
+    It only returns users and company information for the logged-in user's organization.
+    """
+    clean_query = str(query or "").strip()
+    clean_lower = clean_query.lower()
+    query_digits = "".join(ch for ch in clean_query if ch.isdigit())
+
+    org_id = getattr(current_user, "organization_id", None)
+
+    if not org_id:
+        return {
+            "organizations": [],
+            "organization_count": 0,
+            "scope": "organization",
+            "message": "No organization found for this user.",
+        }
+
+    if not clean_query:
+        return {
+            "organizations": [],
+            "organization_count": 0,
+            "scope": "organization",
+            "message": "Enter a phone number, email, company name, contact name, or organization ID.",
+        }
+
+    organization = (
+        db.query(Organization)
+        .filter(Organization.id == org_id)
+        .first()
+    )
+
+    users = (
+        db.query(User)
+        .filter(User.organization_id == org_id)
+        .order_by(User.created_at.desc())
+        .all()
+    )
+
+    def value_of(obj, field):
+        return str(getattr(obj, field, "") or "").strip()
+
+    def digits_of(value):
+        return "".join(ch for ch in str(value or "") if ch.isdigit())
+
+    def matches_text(value):
+        if not clean_lower:
+            return False
+        return clean_lower in str(value or "").lower()
+
+    def matches_digits(value):
+        if not query_digits:
+            return False
+        return query_digits in digits_of(value)
+
+    org_match = False
+
+    if organization:
+        org_fields = [
+            "id",
+            "name",
+            "agency_contact_name",
+            "agency_email",
+            "agency_phone",
+            "agency_address",
+            "agency_city",
+            "agency_state",
+            "agency_zip",
+            "agency_website",
+            "agency_license_number",
+        ]
+
+        for field in org_fields:
+            org_value = value_of(organization, field)
+            if matches_text(org_value) or matches_digits(org_value):
+                org_match = True
+                break
+
+    matched_users = []
+
+    for user in users:
+        user_fields = [
+            "id",
+            "email",
+            "first_name",
+            "last_name",
+            "role",
+        ]
+
+        full_name = f"{value_of(user, 'first_name')} {value_of(user, 'last_name')}".strip()
+
+        user_match = matches_text(full_name)
+
+        for field in user_fields:
+            user_value = value_of(user, field)
+            if matches_text(user_value) or matches_digits(user_value):
+                user_match = True
+                break
+
+        if user_match:
+            matched_users.append({
+                "id": getattr(user, "id", None),
+                "email": getattr(user, "email", ""),
+                "first_name": getattr(user, "first_name", ""),
+                "last_name": getattr(user, "last_name", ""),
+                "role": getattr(user, "role", "user"),
+                "organization_id": getattr(user, "organization_id", None),
+                "is_email_verified": getattr(user, "is_email_verified", False),
+                "is_active": getattr(user, "is_active", True),
+                "created_at": str(getattr(user, "created_at", "") or ""),
+            })
+
+    # If the company matches, show the company and all users in that company.
+    # If only users match, show the company with only those matched users.
+    if org_match:
+        matched_users = [
+            {
+                "id": getattr(user, "id", None),
+                "email": getattr(user, "email", ""),
+                "first_name": getattr(user, "first_name", ""),
+                "last_name": getattr(user, "last_name", ""),
+                "role": getattr(user, "role", "user"),
+                "organization_id": getattr(user, "organization_id", None),
+                "is_email_verified": getattr(user, "is_email_verified", False),
+                "is_active": getattr(user, "is_active", True),
+                "created_at": str(getattr(user, "created_at", "") or ""),
+            }
+            for user in users
+        ]
+
+    if not org_match and not matched_users:
+        return {
+            "organizations": [],
+            "organization_count": 0,
+            "scope": "organization",
+            "message": "No matching users found inside your organization.",
+        }
+
+    org_payload = {
+        "id": getattr(organization, "id", org_id) if organization else org_id,
+        "name": getattr(organization, "name", "") if organization else "",
+        "organization_name": getattr(organization, "name", "") if organization else "",
+        "agency_contact_name": getattr(organization, "agency_contact_name", "") if organization else "",
+        "agency_email": getattr(organization, "agency_email", "") if organization else "",
+        "agency_phone": getattr(organization, "agency_phone", "") if organization else "",
+        "agency_address": getattr(organization, "agency_address", "") if organization else "",
+        "agency_city": getattr(organization, "agency_city", "") if organization else "",
+        "agency_state": getattr(organization, "agency_state", "") if organization else "",
+        "agency_zip": getattr(organization, "agency_zip", "") if organization else "",
+        "agency_website": getattr(organization, "agency_website", "") if organization else "",
+        "agency_license_number": getattr(organization, "agency_license_number", "") if organization else "",
+        "plan": getattr(organization, "plan", "") if organization else "",
+        "subscription_status": getattr(organization, "subscription_status", "") if organization else "",
+        "users": matched_users,
+        "user_count": len(matched_users),
+        "scope": "organization",
+    }
+
+    return {
+        "organizations": [org_payload],
+        "organization_count": 1,
+        "scope": "organization",
+    }
+

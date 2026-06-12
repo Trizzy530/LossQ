@@ -104,7 +104,7 @@ export default function SupportLookupPage() {
       }
 
       if (!res.ok) {
-        throw new Error("Support lookup failed.");
+        throw new Error("Organization support lookup failed.");
       }
 
       const data = await res.json();
@@ -112,7 +112,7 @@ export default function SupportLookupPage() {
       setUsers(Array.isArray(data?.users) ? data.users : []);
       setOrganizations(Array.isArray(data?.organizations) ? data.organizations : []);
     } catch (err: any) {
-      setError(err?.message || "Support lookup failed.");
+      setError(err?.message || "Organization support lookup failed.");
     } finally {
       setLoading(false);
     }
@@ -128,7 +128,7 @@ export default function SupportLookupPage() {
             </p>
             <h1 className="mt-2 text-3xl font-black">Support Lookup</h1>
             <p className="mt-1 text-sm text-slate-400">
-              Search companies and users by phone number, email, company name, contact name, or organization ID.
+              Search users and company information inside your organization only.
             </p>
           </div>
 
