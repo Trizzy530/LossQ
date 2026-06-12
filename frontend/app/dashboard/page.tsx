@@ -2785,8 +2785,15 @@ async function downloadPdf(url: string, filename: string, init?: RequestInit) {
   }
 
   if (!res.ok) {
-    setMessage("Could not generate report.");
-    return;
+    let errorText = "";
+    try {
+      errorText = await res.text();
+    } catch {
+      errorText = "";
+    }
+
+    const shortError = errorText ? errorText.slice(0, 300) : "";
+    throw new Error(`Report export failed with status ${res.status}. ${shortError}`);
   }
 
   const blob = await res.blob();
@@ -3026,7 +3033,6 @@ async function exportExecutiveReport() {
     }
   }
 
-
   async function generateCarrierPacket() {
     const query = buildReportQuery();
 
@@ -3039,7 +3045,6 @@ async function exportExecutiveReport() {
         {
           method: "POST",
           headers: {
-            ...authHeaders(),
             "Content-Type": "application/json",
           },
           body: JSON.stringify(buildReportPayload()),
@@ -3048,17 +3053,16 @@ async function exportExecutiveReport() {
 
       setMessage("Carrier submission packet generated.");
     } catch (error: any) {
-      console.error("Carrier packet generation failed:", error);
+      console.error("Carrier packet POST failed:", error);
 
       try {
-        setMessage("Carrier packet POST failed. Trying authenticated fallback export...");
+        setMessage("Carrier packet POST failed. Trying fallback export...");
 
         await downloadPdf(
           `${API}/reports/carrier-packet-pdf${query}`,
           "lossq_carrier_submission_packet.pdf",
           {
             method: "GET",
-            headers: authHeaders(),
           }
         );
 

@@ -8737,7 +8737,14 @@ def build_carrier_packet_pdf_response(ctx, policy_number=None):
     story.append(p(email_text, styles))
 
     story.append(Spacer(1, 10))
-    lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number, report_kind="carrier")
+    try:
+        lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number, report_kind="carrier")
+    except Exception as exc:
+        try:
+            story.append(heading("Dashboard Intelligence Detail", styles))
+            story.append(p(f"Dashboard intelligence detail could not be fully rendered in this packet. Fallback packet was generated. Reason: {type(exc).__name__}"))
+        except Exception:
+            pass
 
     story.append(Paragraph("Disclaimer: This carrier packet is generated from available claim and account data inside LossQ. All figures should be reviewed against current carrier loss runs and confirmed before formal submission.", styles["SmallMuted"]))
 
