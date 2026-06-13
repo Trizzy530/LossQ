@@ -1197,7 +1197,6 @@ function clearDeletedProfileBrowserTraces(profileToDelete: any) {
         (profileText.includes("summit ridge") && itemText.includes("summit ridge")) ||
         (profileText.includes("cedar creek") && itemText.includes("cedar creek")) ||
         (profileText.includes("blue ridge") && itemText.includes("blue ridge")) ||
-        (profileText.includes("harbor") && itemText.includes("harbor")) ||
         (profileText.includes("granite") && itemText.includes("granite"))
       );
 
@@ -1276,7 +1275,17 @@ export default function DashboardPage() {
 
   const [activeTool, setActiveTool] = useState<ToolKey>("overview");
 
-  useEffect(() => {
+  
+  // LOSSQ_CLAIM_ANALYSIS_SORTABLE_TABLE_V1
+  const [claimAnalysisSort, setClaimAnalysisSort] = useState<{
+    key: string;
+    direction: "asc" | "desc";
+  }>({
+    key: "total",
+    direction: "desc",
+  });
+
+useEffect(() => {
     if (typeof window === "undefined") return;
 
     const toolParam = new URLSearchParams(window.location.search).get("tool");
@@ -3339,7 +3348,7 @@ setLazyLoadedTools,
       setBlankWorkspaceMode(false);
       setProfile(uploadedProfile);
       // Uploaded profile becomes the active authority for this account.
-      // This keeps old GP/Harbor/previous policy rows from appearing inside a new upload's schedule.
+      // This keeps old old/previous policy rows from appearing inside a new upload's schedule.
       setCachedProfiles([
         uploadedProfile,
         ...getCachedProfiles().filter((item: any) => {
@@ -6751,14 +6760,42 @@ const trendNoteDisplay =
                 <table className="w-full min-w-[900px]">
                   <thead>
                     <tr className="border-b border-white/10 text-left text-slate-300">
-                      <th className="pb-4">Claim #</th>
-                      <th className="pb-4">Line</th>
-                      <th className="pb-4">Status</th>
-                      <th className="pb-4">Paid</th>
-                      <th className="pb-4">Reserve</th>
-                      <th className="pb-4">Total</th>
-                      <th className="pb-4">Policy</th>
-                      <th className="pb-4">Flag</th>
+                      {[
+                        ["claim_number", "Claim #"],
+                        ["line", "Line"],
+                        ["status", "Status"],
+                        ["paid", "Paid"],
+                        ["reserve", "Reserve"],
+                        ["total", "Total"],
+                        ["policy", "Policy"],
+                        ["flag", "Flag"],
+                      ].map(([key, label]) => (
+                        <th key={key} className="pb-4">
+                          <button
+                            type="button"
+                            onClick={() =>
+                              setClaimAnalysisSort((current) => ({
+                                key,
+                                direction:
+                                  current.key === key && current.direction === "asc"
+                                    ? "desc"
+                                    : "asc",
+                              }))
+                            }
+                            className="inline-flex items-center gap-2 text-left text-slate-300 hover:text-white"
+                            title={`Sort by ${label}`}
+                          >
+                            <span>{label}</span>
+                            <span className="text-xs text-blue-300">
+                              {claimAnalysisSort.key === key
+                                ? claimAnalysisSort.direction === "asc"
+                                  ? "?"
+                                  : "?"
+                                : "?"}
+                            </span>
+                          </button>
+                        </th>
+                      ))}
                     </tr>
                   </thead>
 
@@ -6771,7 +6808,148 @@ const trendNoteDisplay =
     </tr>
   )}
 
-  {groupedVisibleClaims.map((claim: any) => (
+  {[...groupedVisibleClaims]
+    .sort((a: any, b: any) => {
+      const moneyValue = (value: any) => {
+        const cleaned = String(value || "").replace(/[^0-9.-]/g, "");
+        const parsed = Number(cleaned);
+        return Number.isFinite(parsed) ? parsed : 0;
+      };
+
+      const textValue = (value: any) => String(value || "").trim().toLowerCase();
+
+      const claimSortValue = (claim: any) => {
+        const paid = moneyValue(claim?.paid_amount || claim?.paid || claim?.paidAmount);
+        const reserve = moneyValue(claim?.reserve_amount || claim?.reserve || claim?.reserveAmount);
+        const total = Number(getClaimIncurred(claim) || paid + reserve || 0);
+
+        switch (claimAnalysisSort.key) {
+          case "claim_number":
+            return textValue(claim?.claim_number || claim?.claimNumber || claim?.claim_no);
+          case "line":
+            return textValue(claim?.line_of_business || claim?.line || claim?.coverage || claim?.lob);
+          case "status":
+            return textValue(claim?.status);
+          case "paid":
+            return paid;
+          case "reserve":
+            return reserve;
+          case "total":
+            return total;
+          case "policy":
+            return textValue(claim?.policy_number || claim?.policy || claim?.policyNumber);
+          case "flag":
+            return textValue(claim?.flag);
+          default:
+            return total;
+        }
+      };
+
+      const av = claimSortValue(a);
+      const bv = claimSortValue(b);
+
+      let comparison = 0;
+
+      if (typeof av === "number" && typeof bv === "number") {
+        comparison = av - bv;
+      } else {
+        comparison = String(av).localeCompare(String(bv), undefined, {
+          numeric: true,
+          sensitivity: "base",
+        });
+      }
+
+      return claimAnalysisSort.direction === "asc" ? comparison : -comparison;
+    })
+    .map((claim: any) => {
+      const cleanPolicyKey = (value: any) =>
+        String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+
+      const policyFamilyTokens = (policyNumber: any) =>
+        String(policyNumber || "")
+          .toUpperCase()
+          .split(/[^A-Z0-9]+/)
+          .filter((token) => /[A-Z]/.test(token) && token.length >= 2);
+
+      const getPolicyNumber = (item: any) =>
+        String(
+          item?.policy_number ||
+            item?.policyNumber ||
+            item?.policy_no ||
+            item?.policy ||
+            ""
+        ).trim();
+
+      const getPolicyLine = (item: any) =>
+        String(
+          item?.line_of_business ||
+            item?.policy_type ||
+            item?.line_coverage ||
+            item?.coverage ||
+            item?.line ||
+            item?.lob ||
+            ""
+        ).trim();
+
+      const isGenericLine = (value: any) => {
+        const clean = String(value || "").trim().toLowerCase();
+        return !clean || ["policy", "policies", "coverage", "line", "unknown", "n/a", "none", "-"].includes(clean);
+      };
+
+      const claimNumberText = String(
+        claim?.claim_number || claim?.claimNumber || claim?.claim_no || ""
+      ).toUpperCase();
+
+      const claimPolicyKey = cleanPolicyKey(
+        claim?.policy_number || claim?.policy || claim?.policyNumber || claim?.policy_no
+      );
+
+      const policyCandidates = (policySchedule || [])
+        .map((policy: any) => {
+          const policyNumber = getPolicyNumber(policy);
+          const line = getPolicyLine(policy);
+
+          return {
+            policy,
+            policyNumber,
+            line,
+            policyKey: cleanPolicyKey(policyNumber),
+            tokens: policyFamilyTokens(policyNumber),
+          };
+        })
+        .filter((item: any) => item.policyKey || item.line);
+
+      const matchedPolicy =
+        policyCandidates.find((item: any) => item.policyKey && item.policyKey === claimPolicyKey) ||
+        policyCandidates.find((item: any) =>
+          item.tokens.some((token: string) =>
+            new RegExp(`(^|[^A-Z0-9])${token}([^A-Z0-9]|$)`).test(claimNumberText)
+          )
+        ) ||
+        policyCandidates.find((item: any) =>
+          item.policyKey &&
+          claimPolicyKey &&
+          (item.policyKey.includes(claimPolicyKey) || claimPolicyKey.includes(item.policyKey))
+        );
+
+      const originalClaimLine =
+        claim?.line_of_business || claim?.line || claim?.coverage || claim?.lob || "";
+
+      const displayLine =
+        matchedPolicy?.line && !isGenericLine(matchedPolicy.line)
+          ? matchedPolicy.line
+          : !isGenericLine(originalClaimLine)
+            ? originalClaimLine
+            : "-";
+
+      const displayPolicyNumber =
+        matchedPolicy?.policyNumber ||
+        claim?.policy_number ||
+        claim?.policy ||
+        claim?.policyNumber ||
+        "-";
+
+      return (
     <tr
       key={claim.id || claim.claim_number}
       className="border-b border-white/10 text-slate-300"
@@ -6786,12 +6964,12 @@ const trendNoteDisplay =
         </button>
       </td>
 
-      <td>{claim.line_of_business || "-"}</td>
+      <td>{displayLine}</td>
       <td>{claim.status || "-"}</td>
-      <td>${Number(claim.paid_amount || 0).toLocaleString()}</td>
-      <td>${Number(claim.reserve_amount || 0).toLocaleString()}</td>
+      <td>${Number(claim.paid_amount || claim.paid || 0).toLocaleString()}</td>
+      <td>${Number(claim.reserve_amount || claim.reserve || 0).toLocaleString()}</td>
       <td>${Number(getClaimIncurred(claim)).toLocaleString()}</td>
-      <td>{claim.policy_number || "-"}</td>
+      <td>{displayPolicyNumber}</td>
 
       <td>
         {claim.flag ? (
@@ -6801,7 +6979,8 @@ const trendNoteDisplay =
         )}
       </td>
     </tr>
-  ))}
+      );
+    })}
 </tbody>
 </table>
 </div>
