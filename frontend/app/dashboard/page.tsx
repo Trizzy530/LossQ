@@ -268,6 +268,106 @@ function normalizeDateInput(value: any) {
 }
 
 // LOSSQ_PREFER_UPLOAD_VALUATION_DATE_V1
+
+// LOSSQ_UNIVERSAL_UPLOAD_DATE_MERGE_V1
+function lossqFlatDateKey(value: any) {
+  return String(value || "").trim().toLowerCase().replace(/[^a-z0-9]+/g, "");
+}
+
+function lossqUniversalDateKind(key: any) {
+  const clean = lossqFlatDateKey(key);
+
+  const effectiveKeys = new Set([
+    "policyeffectivedate",
+    "policyeffdate",
+    "effectivedate",
+    "effdate",
+    "policyinceptiondate",
+    "inceptiondate",
+    "policyperiodstart",
+    "periodstart",
+  ]);
+
+  const expirationKeys = new Set([
+    "policyexpirationdate",
+    "policyexpdate",
+    "policyexpirydate",
+    "expirationdate",
+    "expdate",
+    "expirydate",
+    "policyperiodend",
+    "periodend",
+  ]);
+
+  const valuationKeys = new Set([
+    "valuationdate",
+    "valuedate",
+    "evaluationdate",
+    "asofdate",
+    "reportdate",
+    "lossrunvaluationdate",
+    "lossrunasofdate",
+    "valuedasof",
+    "valuedasofdate",
+  ]);
+
+  if (effectiveKeys.has(clean)) return "effective_date";
+  if (expirationKeys.has(clean)) return "expiration_date";
+  if (valuationKeys.has(clean)) return "valuation_date";
+
+  if (clean.includes("effective") && clean.includes("date")) return "effective_date";
+  if (clean.includes("expiration") && clean.includes("date")) return "expiration_date";
+  if (clean.includes("expiry") && clean.includes("date")) return "expiration_date";
+  if (clean.includes("valuation") && clean.includes("date")) return "valuation_date";
+  if (clean.includes("evaluation") && clean.includes("date")) return "valuation_date";
+  if (clean.includes("asof") && clean.includes("date")) return "valuation_date";
+
+  return "";
+}
+
+function lossqScanUniversalUploadDates(value: any, found: any = {}) {
+  if (!found.effective_date) found.effective_date = "";
+  if (!found.expiration_date) found.expiration_date = "";
+  if (!found.valuation_date) found.valuation_date = "";
+
+  if (!value) return found;
+
+  if (Array.isArray(value)) {
+    value.forEach((item) => lossqScanUniversalUploadDates(item, found));
+    return found;
+  }
+
+  if (typeof value === "object") {
+    Object.entries(value).forEach(([key, item]) => {
+      const kind = lossqUniversalDateKind(key);
+      const cleanDate = normalizeDateInput(item);
+
+      if (kind && cleanDate && !found[kind]) {
+        found[kind] = cleanDate;
+      }
+
+      if (item && typeof item === "object") {
+        lossqScanUniversalUploadDates(item, found);
+      }
+    });
+  }
+
+  return found;
+}
+
+function getUniversalUploadPolicyDates(...sources: any[]) {
+  const found = {
+    effective_date: "",
+    expiration_date: "",
+    valuation_date: "",
+  };
+
+  sources.forEach((source) => lossqScanUniversalUploadDates(source, found));
+
+  return found;
+}
+
+
 function getBestEvaluationDate(profileLike: any) {
   const explicitValuationDate = normalizeDateInput(
     profileLike?.valuation_date ||
@@ -2946,6 +3046,13 @@ async function saveExposureInputs() {
       primaryData?.profile?.customer_number
     );
 
+    const universalUploadPolicyDates = getUniversalUploadPolicyDates(
+      uploadResults,
+      primaryData,
+      mergedUploadProfile,
+      allUploadProfiles
+    );
+
     const primaryProfile = {
       ...mergedUploadProfile,
       account_number: mergedUploadProfile?.account_number || mergedAccountKey || "",
@@ -2955,6 +3062,61 @@ async function saveExposureInputs() {
         mergedAccountKey ||
         "",
       policy_number: mergedAccountKey || chooseSafePolicyNumber(mergedUploadProfile?.policy_number) || "",
+
+      effective_date:
+        mergedUploadProfile?.effective_date ||
+        mergedUploadProfile?.policy_effective_date ||
+        primaryData?.effective_date ||
+        primaryData?.policy_effective_date ||
+        primaryData?.account_profile?.effective_date ||
+        primaryData?.profile?.effective_date ||
+        universalUploadPolicyDates.effective_date ||
+        "",
+
+      policy_effective_date:
+        mergedUploadProfile?.policy_effective_date ||
+        mergedUploadProfile?.effective_date ||
+        universalUploadPolicyDates.effective_date ||
+        "",
+
+      expiration_date:
+        mergedUploadProfile?.expiration_date ||
+        mergedUploadProfile?.policy_expiration_date ||
+        primaryData?.expiration_date ||
+        primaryData?.policy_expiration_date ||
+        primaryData?.account_profile?.expiration_date ||
+        primaryData?.profile?.expiration_date ||
+        universalUploadPolicyDates.expiration_date ||
+        "",
+
+      policy_expiration_date:
+        mergedUploadProfile?.policy_expiration_date ||
+        mergedUploadProfile?.expiration_date ||
+        universalUploadPolicyDates.expiration_date ||
+        "",
+
+      valuation_date:
+        mergedUploadProfile?.valuation_date ||
+        mergedUploadProfile?.loss_run_valuation_date ||
+        primaryData?.valuation_date ||
+        primaryData?.loss_run_valuation_date ||
+        primaryData?.evaluation_date ||
+        primaryData?.account_profile?.valuation_date ||
+        primaryData?.profile?.valuation_date ||
+        universalUploadPolicyDates.valuation_date ||
+        "",
+
+      loss_run_valuation_date:
+        mergedUploadProfile?.loss_run_valuation_date ||
+        mergedUploadProfile?.valuation_date ||
+        universalUploadPolicyDates.valuation_date ||
+        "",
+
+      evaluation_date:
+        mergedUploadProfile?.evaluation_date ||
+        mergedUploadProfile?.valuation_date ||
+        universalUploadPolicyDates.valuation_date ||
+        "",
     };
     const uploadedFileNames = selectedFiles.map((file) => file.name).join(", ");
 
