@@ -1724,6 +1724,125 @@ def _lossq_universal_policy_claim_line_normalize(parsed):
 
 
 
+
+
+# LOSSQ_STRONGER_UNIVERSAL_STALE_CLAIM_REFRESH_V2
+def _lossq_universal_account_identifiers_from_upload(parsed):
+    """
+    Universal account identifiers discovered from the current upload.
+    No file/customer-specific logic.
+    """
+    identifiers = set()
+
+    wanted_keys = {
+        "accountnumber",
+        "accountpolicy",
+        "account",
+        "insured",
+        "namedinsured",
+        "businessname",
+        "companyname",
+        "customername",
+        "policynumber",
+        "mainpolicy",
+        "selectedpolicynumber",
+    }
+
+    def add(value):
+        clean = re.sub(r"\s+", " ", str(value or "").strip()).lower()
+        if clean and clean not in {"none", "null", "n/a", "-", "unknown"}:
+            identifiers.add(clean)
+
+    def walk(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                clean_key = re.sub(r"[^a-z0-9]+", "", str(key or "").lower())
+                if clean_key in wanted_keys and not isinstance(item, (dict, list)):
+                    add(item)
+                if isinstance(item, (dict, list)):
+                    walk(item)
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(parsed)
+    return identifiers
+
+
+def _lossq_stronger_delete_stale_claims_for_upload(db, current_user, parsed):
+    """
+    Stronger universal stale claim cleanup.
+
+    Deletes prior saved claims for the current organization when those claims match
+    the current upload's discovered policy/account identifiers. This prevents old
+    deleted/re-uploaded profile rows from remaining in the dashboard.
+    """
+    try:
+        org_id = None
+
+        if isinstance(current_user, dict):
+            org_id = current_user.get("organization_id") or current_user.get("org_id")
+        else:
+            org_id = getattr(current_user, "organization_id", None) or getattr(current_user, "org_id", None)
+
+        if not org_id:
+            return 0
+
+        policy_keys = _lossq_universal_policy_number_set_from_upload(parsed)
+        account_identifiers = _lossq_universal_account_identifiers_from_upload(parsed)
+
+        if not policy_keys and not account_identifiers:
+            return 0
+
+        existing_claims = (
+            db.query(Claim)
+            .filter(Claim.organization_id == org_id)
+            .all()
+        )
+
+        deleted_count = 0
+
+        for claim in existing_claims:
+            claim_policy_key = re.sub(
+                r"[^A-Z0-9]",
+                "",
+                str(getattr(claim, "policy_number", "") or "").upper(),
+            )
+
+            claim_blob = " ".join(
+                str(getattr(claim, attr, "") or "")
+                for attr in (
+                    "claim_number",
+                    "policy_number",
+                    "business_name",
+                    "insured_name",
+                    "description",
+                    "cause_of_loss",
+                    "line_of_business",
+                )
+                if hasattr(claim, attr)
+            ).lower()
+
+            policy_match = bool(claim_policy_key and claim_policy_key in policy_keys)
+            account_match = bool(
+                account_identifiers and any(identifier in claim_blob for identifier in account_identifiers)
+            )
+
+            # Delete old rows when they match either the uploaded policy set or the uploaded account.
+            if policy_match or account_match:
+                db.delete(claim)
+                deleted_count += 1
+
+        if deleted_count:
+            db.flush()
+
+        return deleted_count
+
+    except Exception:
+        return 0
+
+
+
 # LOSSQ_UNIVERSAL_STALE_CLAIM_REFRESH_ON_UPLOAD_V1
 def _lossq_universal_policy_number_set_from_upload(parsed):
     """

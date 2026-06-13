@@ -2962,7 +2962,43 @@ async function saveExposureInputs() {
   }
 
   async function uploadFiles() {
-  if (isUploading) return;
+  
+    // LOSSQ_CLEAR_STALE_CLAIM_CACHE_ON_UPLOAD_V1
+    try {
+      setClaims([]);
+      setSelectedClaimDetail(null);
+      setCachedCurrentUpload({});
+
+      if (typeof window !== "undefined") {
+        Object.keys(localStorage)
+          .filter((key) =>
+            key.toLowerCase().includes("lossq") &&
+            (
+              key.toLowerCase().includes("claim") ||
+              key.toLowerCase().includes("upload") ||
+              key.toLowerCase().includes("policy") ||
+              key.toLowerCase().includes("dashboard")
+            )
+          )
+          .forEach((key) => localStorage.removeItem(key));
+
+        Object.keys(sessionStorage)
+          .filter((key) =>
+            key.toLowerCase().includes("lossq") &&
+            (
+              key.toLowerCase().includes("claim") ||
+              key.toLowerCase().includes("upload") ||
+              key.toLowerCase().includes("policy") ||
+              key.toLowerCase().includes("dashboard")
+            )
+          )
+          .forEach((key) => sessionStorage.removeItem(key));
+      }
+    } catch (cacheClearError) {
+      console.warn("LossQ stale upload cache cleanup skipped", cacheClearError);
+    }
+
+if (isUploading) return;
   const selectedFiles = files ? Array.from(files) : [];
   if (selectedFiles.length === 0) {
     setMessage("Please select one or more PDF, Excel, or CSV files first.");
@@ -6789,9 +6825,9 @@ const trendNoteDisplay =
                             <span className="text-xs text-blue-300">
                               {claimAnalysisSort.key === key
                                 ? claimAnalysisSort.direction === "asc"
-                                  ? "??"
-                                  : "??"
-                                : "??"}
+                                  ? String.fromCharCode(9650)
+                                  : String.fromCharCode(9660)
+                                : String.fromCharCode(8597)}
                             </span>
                           </button>
                         </th>
