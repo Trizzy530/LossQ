@@ -6789,9 +6789,9 @@ const trendNoteDisplay =
                             <span className="text-xs text-blue-300">
                               {claimAnalysisSort.key === key
                                 ? claimAnalysisSort.direction === "asc"
-                                  ? "?"
-                                  : "?"
-                                : "?"}
+                                  ? "??"
+                                  : "??"
+                                : "??"}
                             </span>
                           </button>
                         </th>

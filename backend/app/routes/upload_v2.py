@@ -1722,6 +1722,101 @@ def _lossq_universal_policy_claim_line_normalize(parsed):
 
 
 
+
+
+# LOSSQ_UNIVERSAL_STALE_CLAIM_REFRESH_ON_UPLOAD_V1
+def _lossq_universal_policy_number_set_from_upload(parsed):
+    """
+    Builds a universal set of policy numbers from the current upload response.
+    No customer/file-specific logic.
+    """
+    policy_numbers = set()
+
+    def add_policy(value):
+        clean = re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+        if clean:
+            policy_numbers.add(clean)
+
+    def walk(value):
+        if isinstance(value, dict):
+            for key, item in value.items():
+                clean_key = re.sub(r"[^a-z0-9]+", "", str(key or "").lower())
+
+                if clean_key in {
+                    "policynumber",
+                    "policyno",
+                    "policynum",
+                    "policy",
+                    "mainpolicy",
+                    "selectedpolicynumber",
+                }:
+                    add_policy(item)
+
+                if isinstance(item, (dict, list)):
+                    walk(item)
+
+        elif isinstance(value, list):
+            for item in value:
+                walk(item)
+
+    walk(parsed)
+    return policy_numbers
+
+
+def _lossq_universal_delete_stale_claims_for_upload(db, current_user, parsed):
+    """
+    Deletes stale saved claim rows for the current organization/account policy set
+    before saving the newly uploaded normalized claims.
+
+    This prevents deleted/re-uploaded profiles from showing old claim rows.
+    It is universal and based only on organization_id + policy numbers discovered
+    from the uploaded file/response.
+    """
+    try:
+        org_id = None
+
+        if isinstance(current_user, dict):
+            org_id = current_user.get("organization_id") or current_user.get("org_id")
+        else:
+            org_id = getattr(current_user, "organization_id", None) or getattr(current_user, "org_id", None)
+
+        if not org_id:
+            return 0
+
+        policy_keys = _lossq_universal_policy_number_set_from_upload(parsed)
+
+        if not policy_keys:
+            return 0
+
+        existing_claims = (
+            db.query(Claim)
+            .filter(Claim.organization_id == org_id)
+            .all()
+        )
+
+        deleted_count = 0
+
+        for claim in existing_claims:
+            claim_policy_key = re.sub(
+                r"[^A-Z0-9]",
+                "",
+                str(getattr(claim, "policy_number", "") or "").upper(),
+            )
+
+            if claim_policy_key and claim_policy_key in policy_keys:
+                db.delete(claim)
+                deleted_count += 1
+
+        if deleted_count:
+            db.flush()
+
+        return deleted_count
+
+    except Exception:
+        return 0
+
+
+
 # LOSSQ_UNIVERSAL_POLICY_CLAIM_LINE_NORMALIZATION_V2
 def _lossq_policy_family_tokens(policy_number):
     """
