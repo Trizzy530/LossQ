@@ -1376,6 +1376,350 @@ def force_save_account_profile_v2(
 
 
 
+
+
+# LOSSQ_UNIVERSAL_POLICY_CLAIM_LINE_NORMALIZATION_V1
+def _lossq_clean_text_value(value):
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def _lossq_policy_key(value):
+    """
+    Normalizes policy numbers across OCR/PDF line wrapping.
+    Example:
+    BOP-2025-9274 18 -> BOP2025927418
+    GL-2025-92741 8 -> GL2025927418
+    """
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+
+def _lossq_is_generic_line(value):
+    clean = _lossq_clean_text_value(value).lower()
+    return clean in {
+        "",
+        "policy",
+        "policies",
+        "coverage",
+        "line",
+        "line of business",
+        "unknown",
+        "n/a",
+        "none",
+        "-",
+    }
+
+
+def _lossq_policy_line_value(policy):
+    if not isinstance(policy, dict):
+        return ""
+
+    for key in (
+        "line_of_business",
+        "policy_type",
+        "coverage",
+        "policy_type_coverage",
+        "policy_type / coverage",
+        "line",
+        "lob",
+        "business_line",
+    ):
+        value = _lossq_clean_text_value(policy.get(key))
+        if value and not _lossq_is_generic_line(value):
+            return value
+
+    return ""
+
+
+def _lossq_claim_line_value(claim):
+    if not isinstance(claim, dict):
+        return ""
+
+    for key in (
+        "line_of_business",
+        "line",
+        "coverage",
+        "policy_type",
+        "lob",
+        "business_line",
+        "type_of_loss",
+    ):
+        value = _lossq_clean_text_value(claim.get(key))
+        if value and not _lossq_is_generic_line(value):
+            return value
+
+    return ""
+
+
+def _lossq_policy_number_value(row):
+    if not isinstance(row, dict):
+        return ""
+
+    for key in (
+        "policy_number",
+        "policy",
+        "policy_no",
+        "policy_num",
+        "policy #",
+        "policy_number_display",
+    ):
+        value = _lossq_clean_text_value(row.get(key))
+        if value:
+            return value
+
+    return ""
+
+
+def _lossq_merge_policy_rows(existing, incoming):
+    """
+    Keep one row per policy number. Prefer the row with the most complete
+    fields and longest policy number. This prevents duplicate policies when
+    OCR/table extraction creates partial wrapped rows.
+    """
+    if not isinstance(existing, dict):
+        existing = {}
+    if not isinstance(incoming, dict):
+        incoming = {}
+
+    merged = dict(existing)
+
+    for key, value in incoming.items():
+        clean_value = _lossq_clean_text_value(value)
+        if clean_value and not _lossq_clean_text_value(merged.get(key)):
+            merged[key] = value
+
+    incoming_number = _lossq_policy_number_value(incoming)
+    existing_number = _lossq_policy_number_value(existing)
+
+    if len(_lossq_policy_key(incoming_number)) > len(_lossq_policy_key(existing_number)):
+        merged["policy_number"] = incoming_number
+
+    incoming_line = _lossq_policy_line_value(incoming)
+    existing_line = _lossq_policy_line_value(existing)
+
+    if incoming_line and _lossq_is_generic_line(existing_line):
+        merged["line_of_business"] = incoming_line
+        merged["policy_type"] = incoming_line
+        merged["coverage"] = incoming_line
+
+    return merged
+
+
+def _lossq_build_policy_map(policies):
+    policy_map = {}
+    ordered = []
+
+    for policy in policies or []:
+        if not isinstance(policy, dict):
+            continue
+
+        policy_number = _lossq_policy_number_value(policy)
+        policy_key = _lossq_policy_key(policy_number)
+
+        if not policy_key:
+            continue
+
+        normalized_policy = dict(policy)
+        normalized_policy["policy_number"] = policy_number
+
+        line_value = _lossq_policy_line_value(normalized_policy)
+        if line_value:
+            normalized_policy["line_of_business"] = line_value
+            normalized_policy["policy_type"] = line_value
+            normalized_policy["coverage"] = line_value
+
+        if policy_key in policy_map:
+            policy_map[policy_key] = _lossq_merge_policy_rows(policy_map[policy_key], normalized_policy)
+        else:
+            policy_map[policy_key] = normalized_policy
+            ordered.append(policy_key)
+
+    # Second pass: collapse partial OCR policy numbers into the complete version.
+    final_map = {}
+    final_order = []
+
+    for key in ordered:
+        policy = policy_map.get(key) or {}
+        best_key = key
+
+        for other_key in ordered:
+            if other_key == key:
+                continue
+            if len(other_key) > len(best_key) and (other_key.startswith(key) or key.startswith(other_key) or key in other_key or other_key in key):
+                best_key = other_key
+
+        if best_key in final_map:
+            final_map[best_key] = _lossq_merge_policy_rows(final_map[best_key], policy)
+        else:
+            final_map[best_key] = policy
+            final_order.append(best_key)
+
+    return final_map, final_order
+
+
+def _lossq_best_policy_match(policy_key, policy_map):
+    if not policy_key:
+        return ""
+
+    if policy_key in policy_map:
+        return policy_key
+
+    best_key = ""
+    best_score = 0
+
+    for candidate in policy_map.keys():
+        if not candidate:
+            continue
+
+        score = 0
+
+        if candidate.startswith(policy_key) or policy_key.startswith(candidate):
+            score = min(len(candidate), len(policy_key))
+
+        elif policy_key in candidate or candidate in policy_key:
+            score = min(len(candidate), len(policy_key)) - 1
+
+        if score > best_score:
+            best_score = score
+            best_key = candidate
+
+    return best_key
+
+
+def _lossq_find_lists_by_name(value, names, found=None):
+    if found is None:
+        found = []
+
+    if isinstance(value, dict):
+        for key, item in value.items():
+            clean_key = re.sub(r"[^a-z0-9]+", "", str(key or "").lower())
+
+            if clean_key in names and isinstance(item, list):
+                found.append(item)
+
+            if isinstance(item, (dict, list)):
+                _lossq_find_lists_by_name(item, names, found)
+
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, (dict, list)):
+                _lossq_find_lists_by_name(item, names, found)
+
+    return found
+
+
+def _lossq_set_lists_by_name(value, names, replacement):
+    if isinstance(value, dict):
+        for key, item in list(value.items()):
+            clean_key = re.sub(r"[^a-z0-9]+", "", str(key or "").lower())
+
+            if clean_key in names and isinstance(item, list):
+                value[key] = replacement
+
+            elif isinstance(item, (dict, list)):
+                _lossq_set_lists_by_name(item, names, replacement)
+
+    elif isinstance(value, list):
+        for item in value:
+            if isinstance(item, (dict, list)):
+                _lossq_set_lists_by_name(item, names, replacement)
+
+
+def _lossq_universal_policy_claim_line_normalize(parsed):
+    """
+    Universal policy/claim normalization.
+    No file-specific or customer-specific logic.
+
+    Fixes:
+    - duplicate policies caused by OCR/table partial policy numbers
+    - claim line_of_business falling back to generic "Policy"
+    - claims being grouped under the wrong policy coverage
+    """
+    if not isinstance(parsed, dict):
+        return parsed
+
+    policy_list_names = {
+        "policies",
+        "policyschedule",
+        "policy_schedule",
+        "policytable",
+        "policyrows",
+        "linesofbusiness",
+    }
+
+    claim_list_names = {
+        "claims",
+        "claimdetails",
+        "claim_detail",
+        "claimrows",
+        "claimtable",
+        "losses",
+        "lossruns",
+    }
+
+    policy_lists = _lossq_find_lists_by_name(parsed, policy_list_names)
+    claim_lists = _lossq_find_lists_by_name(parsed, claim_list_names)
+
+    all_policies = []
+    for policies in policy_lists:
+        for policy in policies:
+            if isinstance(policy, dict):
+                all_policies.append(policy)
+
+    policy_map, policy_order = _lossq_build_policy_map(all_policies)
+    deduped_policies = [policy_map[key] for key in policy_order if key in policy_map]
+
+    if deduped_policies:
+        parsed["policies"] = deduped_policies
+        if isinstance(parsed.get("profile"), dict):
+            parsed["profile"]["policies"] = deduped_policies
+        if isinstance(parsed.get("account_profile"), dict):
+            parsed["account_profile"]["policies"] = deduped_policies
+        _lossq_set_lists_by_name(parsed, policy_list_names, deduped_policies)
+
+    for claims in claim_lists:
+        if not isinstance(claims, list):
+            continue
+
+        for claim in claims:
+            if not isinstance(claim, dict):
+                continue
+
+            original_policy_number = _lossq_policy_number_value(claim)
+            original_policy_key = _lossq_policy_key(original_policy_number)
+            best_policy_key = _lossq_best_policy_match(original_policy_key, policy_map)
+            matched_policy = policy_map.get(best_policy_key) if best_policy_key else None
+
+            claim_line = _lossq_claim_line_value(claim)
+            matched_line = _lossq_policy_line_value(matched_policy) if isinstance(matched_policy, dict) else ""
+
+            # Fix partial policy numbers from OCR/table wrapping.
+            if isinstance(matched_policy, dict):
+                matched_policy_number = _lossq_policy_number_value(matched_policy)
+                if matched_policy_number:
+                    claim["policy_number"] = matched_policy_number
+                    claim["policy"] = matched_policy_number
+
+            # Only replace the claim line when it is missing/generic/wrongly parsed as just "Policy".
+            # If the claim row has a specific line, keep it.
+            final_line = claim_line or matched_line
+
+            if _lossq_is_generic_line(claim.get("line_of_business")) or _lossq_is_generic_line(claim.get("line")):
+                if final_line:
+                    claim["line_of_business"] = final_line
+                    claim["line"] = final_line
+
+            elif final_line and claim_line:
+                claim["line_of_business"] = claim_line
+                claim["line"] = claim_line
+
+            elif final_line:
+                claim["line_of_business"] = final_line
+                claim["line"] = final_line
+
+    return parsed
+
+
+
 # LOSSQ_UNIVERSAL_POLICY_DATE_HEADER_EXTRACTION_V1
 def _lossq_csv_flat_key(value):
     return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
