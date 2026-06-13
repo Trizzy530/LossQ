@@ -2102,19 +2102,19 @@ def _lossq_universal_policy_claim_line_normalize_v2(parsed):
 
             matched_key = ""
 
-            # 1. Prefer line-of-business match when the claim has a real line.
-            if claim_line and not _lossq_is_generic_line(claim_line):
-                claim_line_clean = re.sub(r"[^a-z0-9]+", "", claim_line.lower())
-                matched_key = line_to_policy_key.get(claim_line_clean, "")
-
-            # 2. Prefer policy-family token discovered from policy schedule and found in claim number.
-            # This fixes cases where OCR assigned every claim to the main policy number.
+            # 1. Prefer policy-family token discovered from policy schedule and found in claim number.
+            # This fixes stale saved rows where every claim was previously assigned to the main policy.
             if claim_number_upper:
                 for family_token, policy_key in family_to_policy_key.items():
                     token_pattern = r"(^|[^A-Z0-9])" + re.escape(family_token) + r"([^A-Z0-9]|$)"
                     if re.search(token_pattern, claim_number_upper):
                         matched_key = policy_key
                         break
+
+            # 2. Then use line-of-business match when the claim has a real line.
+            if not matched_key and claim_line and not _lossq_is_generic_line(claim_line):
+                claim_line_clean = re.sub(r"[^a-z0-9]+", "", claim_line.lower())
+                matched_key = line_to_policy_key.get(claim_line_clean, "")
 
             # 3. Fall back to exact or partial policy number matching.
             if not matched_key:

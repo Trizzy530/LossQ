@@ -368,6 +368,121 @@ function getUniversalUploadPolicyDates(...sources: any[]) {
 }
 
 
+
+// LOSSQ_UNIVERSAL_POLICY_SCHEDULE_CLEANUP_V1
+function lossqCleanPolicyKey(value: any) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function lossqPolicyFamilyTokens(policyNumber: any) {
+  return String(policyNumber || "")
+    .toUpperCase()
+    .split(/[^A-Z0-9]+/)
+    .filter((token) => /[A-Z]/.test(token) && token.length >= 2);
+}
+
+function lossqLooksLikeClaimRow(row: any) {
+  if (!row || typeof row !== "object") return false;
+
+  const claimNumber = String(
+    row?.claim_number ||
+      row?.claimNumber ||
+      row?.claim_no ||
+      row?.claim ||
+      row?.loss_number ||
+      ""
+  ).trim();
+
+  const status = String(row?.status || "").trim().toLowerCase();
+  const cause = String(row?.cause_of_loss || row?.loss_description || row?.description || "").trim();
+
+  return Boolean(
+    claimNumber ||
+      cause ||
+      ["open", "closed", "reopen", "reopened", "pending"].includes(status)
+  );
+}
+
+function lossqPolicyNumberFromRow(row: any) {
+  return String(
+    row?.policy_number ||
+      row?.policyNumber ||
+      row?.policy_no ||
+      row?.policy ||
+      row?.main_policy ||
+      ""
+  ).trim();
+}
+
+function lossqPolicyLineFromRow(row: any) {
+  return String(
+    row?.policy_type ||
+      row?.line_coverage ||
+      row?.line_of_business ||
+      row?.coverage ||
+      row?.line ||
+      row?.lob ||
+      ""
+  ).trim();
+}
+
+function lossqIsGenericPolicyLine(value: any) {
+  const clean = String(value || "").trim().toLowerCase();
+  return !clean || ["policy", "policies", "coverage", "line", "unknown", "n/a", "none", "-"].includes(clean);
+}
+
+function lossqCleanPolicyScheduleRows(rows: any[]) {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  const validRows = sourceRows.filter((row: any) => {
+    if (!row || typeof row !== "object") return false;
+    if (lossqLooksLikeClaimRow(row)) return false;
+
+    const policyNumber = lossqPolicyNumberFromRow(row);
+    const policyKey = lossqCleanPolicyKey(policyNumber);
+    const line = lossqPolicyLineFromRow(row);
+
+    return Boolean(policyKey && line && !lossqIsGenericPolicyLine(line));
+  });
+
+  const byKey: Record<string, any> = {};
+
+  validRows.forEach((row: any) => {
+    const policyNumber = lossqPolicyNumberFromRow(row);
+    const key = lossqCleanPolicyKey(policyNumber);
+    if (!key) return;
+
+    const existingKey = Object.keys(byKey).find(
+      (otherKey) =>
+        otherKey === key ||
+        otherKey.includes(key) ||
+        key.includes(otherKey)
+    );
+
+    const targetKey =
+      existingKey && existingKey.length >= key.length ? existingKey : key;
+
+    const existing = existingKey ? byKey[existingKey] : undefined;
+
+    const merged = {
+      ...(existing || {}),
+      ...row,
+      policy_number:
+        String(lossqPolicyNumberFromRow(existing || "")).length > String(policyNumber).length
+          ? lossqPolicyNumberFromRow(existing)
+          : policyNumber,
+    };
+
+    if (existingKey && targetKey !== existingKey) {
+      delete byKey[existingKey];
+    }
+
+    byKey[targetKey] = merged;
+  });
+
+  return Object.values(byKey);
+}
+
+
 function getBestEvaluationDate(profileLike: any) {
   const explicitValuationDate = normalizeDateInput(
     profileLike?.valuation_date ||
@@ -6956,12 +7071,12 @@ const trendNoteDisplay =
         .filter((item: any) => item.policyKey || item.line);
 
       const matchedPolicy =
-        policyCandidates.find((item: any) => item.policyKey && item.policyKey === claimPolicyKey) ||
         policyCandidates.find((item: any) =>
           item.tokens.some((token: string) =>
             new RegExp(`(^|[^A-Z0-9])${token}([^A-Z0-9]|$)`).test(claimNumberText)
           )
         ) ||
+        policyCandidates.find((item: any) => item.policyKey && item.policyKey === claimPolicyKey) ||
         policyCandidates.find((item: any) =>
           item.policyKey &&
           claimPolicyKey &&
