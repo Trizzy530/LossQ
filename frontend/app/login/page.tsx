@@ -94,6 +94,41 @@ function clearLossQAccountCacheBeforeLogin() {
 
 
 
+
+// LOSSQ_REGISTER_DROPDOWN_MULTISELECT_FIELDS_V1
+const LOSSQ_PRIMARY_LINE_OPTIONS = [
+  "Businessowners / Package",
+  "General Liability",
+  "Workers Compensation",
+  "Commercial Auto",
+  "Property",
+  "Umbrella / Excess",
+  "Cyber Liability",
+  "Professional Liability",
+  "EPLI",
+];
+
+const LOSSQ_AMS_CRM_OPTIONS = [
+  "Applied Epic",
+  "AMS360",
+  "HawkSoft",
+  "EZLynx",
+  "AgencyBloc",
+  "HubSpot",
+  "Salesforce",
+  "AgencyZoom",
+  "Other",
+  "None",
+];
+
+function toggleLossQPrimaryLine(current: string[], value: string) {
+  if (current.includes(value)) {
+    return current.filter((item) => item !== value);
+  }
+  return [...current, value];
+}
+
+
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [step, setStep] = useState(1);
@@ -108,7 +143,7 @@ export default function LoginPage() {
   const [companyType, setCompanyType] = useState("");
   const [phone, setPhone] = useState("");
   const [monthlyVolume, setMonthlyVolume] = useState("");
-  const [primaryLines, setPrimaryLines] = useState("");
+  const [primaryLines, setPrimaryLines] = useState<string[]>([]);
   const [amsSystem, setAmsSystem] = useState("");
   const [marketState, setMarketState] = useState("");
 
@@ -427,21 +462,32 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
               <option>100+</option>
             </select>
 
-            <input
-              value={primaryLines}
-              onChange={(e) => setPrimaryLines(e.target.value)}
-              placeholder="Primary Lines: Auto, GL, Workers Comp, Property"
-              className="w-full bg-slate-900 border border-blue-400/40 rounded-lg px-4 py-3 mb-4 outline-none focus:border-blue-500"
-            />
-
-            <input
-              value={amsSystem}
-              onChange={(e) => setAmsSystem(e.target.value)}
-              placeholder="AMS/CRM System Used"
-              className="w-full bg-slate-900 border border-blue-400/40 rounded-lg px-4 py-3 mb-4 outline-none focus:border-blue-500"
-            />
-
-            <input
+            <div className="rounded-xl border border-blue-400/50 bg-slate-900/70 p-4">
+                  <p className="mb-3 text-sm font-semibold text-slate-200">Primary Lines / Coverages</p>
+                  <div className="grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    {LOSSQ_PRIMARY_LINE_OPTIONS.map((line) => (
+                      <label key={line} className="flex items-center gap-2 rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-slate-200">
+                        <input
+                          type="checkbox"
+                          checked={primaryLines.includes(line)}
+                          onChange={() => setPrimaryLines(toggleLossQPrimaryLine(primaryLines, line))}
+                        />
+                        {line}
+                      </label>
+                    ))}
+                  </div>
+                </div>
+<select
+                  value={amsSystem}
+                  onChange={(e) => setAmsSystem(e.target.value)}
+                  className="w-full rounded-xl border border-blue-400/50 bg-slate-900/70 p-3 text-white"
+                >
+                  <option value="">AMS/CRM System Used</option>
+                  {LOSSQ_AMS_CRM_OPTIONS.map((system) => (
+                    <option key={system} value={system}>{system}</option>
+                  ))}
+                </select>
+<input
               value={marketState}
               onChange={(e) => setMarketState(e.target.value)}
               placeholder="Primary State / Market"

@@ -23,6 +23,12 @@ type Organization = {
   active_user_count?: number;
   remaining_users?: number;
   owner_user_id?: number | null;
+  account_role?: string;
+  company_type?: string;
+  monthly_volume?: string;
+  primary_lines?: string;
+  ams_system?: string;
+  market_state?: string;
 };
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
@@ -39,6 +45,18 @@ function displayName(user?: Partial<OrgUser> | null) {
   const fullName = `${user?.first_name || ""} ${user?.last_name || ""}`.trim();
   return fullName || user?.email || "-";
 }
+
+
+// LOSSQ_SETTINGS_BUSINESS_ROLE_DISPLAY_V1
+function businessRoleLabel(organization?: Organization | null, me?: OrgUser | null) {
+  return (
+    organization?.account_role ||
+    organization?.company_type ||
+    me?.role ||
+    "user"
+  );
+}
+
 
 function roleBadgeClass(role?: string) {
   const clean = String(role || "user").toLowerCase();
@@ -402,7 +420,7 @@ export default function SettingsPage() {
               <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Signed In As</div>
               <div className="mt-2 font-semibold break-all">{me?.email}</div>
               <div className="mt-3 inline-flex rounded-full border px-3 py-1 text-xs font-bold uppercase tracking-[0.16em] ${roleBadgeClass(me?.role)}">
-                {me?.role || "user"}
+                {businessRoleLabel(organization, me)}
               </div>
             </div>
 
