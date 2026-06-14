@@ -1,3 +1,4 @@
+# LOSSQ_ALLOW_SAVED_AGENCY_NAME_V1
 # LOSSQ_FIX_PDF_COVER_OVERLAY_CREATOR_V1
 # LOSSQ_FORCE_SAFE_REPORT_PDF_DB_CONTEXT_V3
 # LOSSQ_REPORT_PDF_BUILDER_CONTEXT_FIX_V2
@@ -6998,9 +6999,6 @@ def lossq_pdf_user_value(user, key, default=""):
 def lossq_pdf_clean_display(value):
     value = "" if value is None else str(value).strip()
     blocked_values = {
-        "lossq demo agency",
-        "demo agency",
-        "lossq demo",
         "demo",
         "agency not set",
         "not set",
