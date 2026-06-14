@@ -1,0 +1,7 @@
+# LossQ local backup files
+*.bak
+*.backup_*
+*.backup*
+*.pyc
+__pycache__/
+settings_inspection.txt

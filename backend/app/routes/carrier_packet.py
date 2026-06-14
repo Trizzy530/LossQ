@@ -44,7 +44,7 @@ def lossq_carrier_pdf_clean_display(value):
 
     blocked = {
         "agency not set",
-        "lossq demo agency",
+        "",
         "lossq user",
         "none",
         "null",
