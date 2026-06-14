@@ -1,7 +1,9 @@
+# LOSSQ_TEMP_UPLOAD_ERROR_TRACE_V1
 from __future__ import annotations
 
 import os
 import re
+import traceback
 from datetime import datetime
 from typing import Any, Dict, List
 
