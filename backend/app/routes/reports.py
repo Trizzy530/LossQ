@@ -9301,6 +9301,18 @@ def build_executive_pdf_response(ctx, policy_number=None, db=None, current_user=
     risk_level = clean(summary.get("renewal_risk_level") or summary.get("risk_level") or "Not Rated")
     renewal_score = summary.get("renewal_score")
 
+    # LOSSQ_INSERT_EXECUTIVE_COVER_LETTER_V1
+    lossq_add_pdf_cover_letter_page(
+        story,
+        styles,
+        ctx,
+        report_title="Executive Underwriting Report",
+        profile=profile,
+        policy_number=policy_number,
+        db=db,
+        current_user=current_user,
+    )
+
     executive_first_page(story, styles, profile, policy_number, creator, summary, metrics)
 
     story.append(PageBreak())
