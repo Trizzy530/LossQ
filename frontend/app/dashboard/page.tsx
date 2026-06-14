@@ -1664,91 +1664,6 @@ export default function DashboardPage() {
 
   
   
-// LOSSQ_CLAIM_ANALYSIS_FIELD_SEPARATION_V1
-function lossqCleanClaimStatus(value: any) {
-  const raw = String(value || "").trim();
-  const lower = raw.toLowerCase();
-
-  if (/\bclosed\b/i.test(raw)) return "Closed";
-  if (/\breopened\b/i.test(raw)) return "Reopened";
-  if (/\breopen\b/i.test(raw)) return "Reopened";
-  if (/\bpending\b/i.test(raw)) return "Pending";
-  if (/\bopen\b/i.test(raw)) return "Open";
-
-  return raw || "-";
-}
-
-function lossqLooksLikeCoverageText(value: any) {
-  const raw = String(value || "").toLowerCase();
-  return /\b(property|liability|workers?|compensation|commercial\s+auto|auto|umbrella|excess|cyber|cargo|marine|businessowners?|bop|package|general\s+liability|line\s+of\s+business|policy\s+schedule)\b/.test(raw);
-}
-
-function lossqCleanClaimNumberDisplay(value: any) {
-  const raw = String(value || "").replace(/\s+/g, " ").trim();
-
-  if (!raw) return "-";
-
-  // If OCR attached coverage words after the claim number, keep only the claim-number portion.
-  const coverageWordIndex = raw.search(/\b(property|liability|workers?|compensation|commercial\s+auto|auto|umbrella|excess|cyber|cargo|marine|businessowners?|policy|coverage|line)\b/i);
-
-  let candidate = coverageWordIndex > 0 ? raw.slice(0, coverageWordIndex).trim() : raw;
-
-  // Remove trailing separators left by OCR.
-  candidate = candidate.replace(/[-_\s]+$/g, "");
-
-  // Keep the first strong claim-like token when a row contains multiple values.
-  const strongToken = candidate.match(/[A-Z]{1,10}[-_\s]?[A-Z0-9]{0,10}[-_\s]?\d[A-Z0-9\-_\s]*/i);
-  if (strongToken) {
-    candidate = strongToken[0].replace(/\s+/g, "-").replace(/-+/g, "-").replace(/-$/g, "");
-  }
-
-  // A claim number should have at least one number. If not, do not show coverage/type as claim number.
-  if (!/\d/.test(candidate)) return "-";
-
-  return candidate || "-";
-}
-
-function lossqCleanLineDisplay(value: any, fallback?: any) {
-  let raw = String(value || fallback || "").replace(/\s+/g, " ").trim();
-
-  if (!raw) return "-";
-
-  // If status got attached to the line, remove it from the line field.
-  raw = raw.replace(/\b(open|closed|pending|reopened|reopen)\b/gi, "").replace(/\s+/g, " ").trim();
-
-  if (!raw) return "-";
-
-  return raw;
-}
-
-function lossqCleanClaimRowForDisplay(claim: any) {
-  const rawClaimNumber =
-    claim?.claim_number ||
-    claim?.claimNumber ||
-    claim?.claim_no ||
-    claim?.claim ||
-    claim?.loss_number ||
-    "";
-
-  const rawLine =
-    claim?.line_of_business ||
-    claim?.policy_type ||
-    claim?.line_coverage ||
-    claim?.coverage ||
-    claim?.claim_type ||
-    claim?.line ||
-    "";
-
-  const claimNumberDisplay = lossqCleanClaimNumberDisplay(rawClaimNumber);
-  const statusDisplay = lossqCleanClaimStatus(claim?.status || rawLine);
-  const lineDisplay = lossqCleanLineDisplay(rawLine);
-
-  return {
-    claimNumberDisplay,
-    lineDisplay,
-    statusDisplay,
-  };
-}
 
 
 // LOSSQ_CLAIM_ANALYSIS_SORTABLE_TABLE_V1
@@ -7579,12 +7494,6 @@ const trendNoteDisplay =
         claim?.policy ||
         claim?.policyNumber ||
         "-";
-
-      const claimDisplay = lossqCleanClaimRowForDisplay({
-        ...claim,
-        line_of_business: displayLine,
-      });
-
       return (
     <tr
       key={claim.id || claim.claim_number}
@@ -7596,12 +7505,12 @@ const trendNoteDisplay =
           onClick={() => openClaimRecord(claim)}
           className="text-left text-blue-300 hover:text-blue-200 underline"
         >
-          {claimDisplay.claimNumberDisplay !== "-" ? claimDisplay.claimNumberDisplay : "Unnamed Claim"}
+          {claim.claim_number || "Unnamed Claim"}
         </button>
       </td>
 
-      <td>{claimDisplay.lineDisplay}</td>
-      <td>{claimDisplay.statusDisplay}</td>
+      <td>{displayLine}</td>
+      <td>{claim.status || "-"}</td>
       <td>${Number(claim.paid_amount || claim.paid || 0).toLocaleString()}</td>
       <td>${Number(claim.reserve_amount || claim.reserve || 0).toLocaleString()}</td>
       <td>${Number(getClaimIncurred(claim)).toLocaleString()}</td>
@@ -7640,8 +7549,8 @@ const trendNoteDisplay =
     <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
       {[
         ["Policy", selectedClaimDetail.policy_number || "-"],
-        ["Line", lossqCleanLineDisplay(selectedClaimDetail.line_of_business || selectedClaimDetail.claim_type || selectedClaimDetail.coverage || selectedClaimDetail.policy_type || "-")],
-        ["Status", lossqCleanClaimStatus(selectedClaimDetail.status || "-")],
+        ["Line", selectedClaimDetail.line_of_business || selectedClaimDetail.claim_type || "-"],
+        ["Status", selectedClaimDetail.status || "-"],
         ["Total", `$${Number(getClaimIncurred(selectedClaimDetail)).toLocaleString()}`],
       ].map(([label, value]) => (
         <div key={label} className="rounded-xl border border-white/10 bg-slate-950/70 p-3">
