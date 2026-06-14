@@ -1467,6 +1467,245 @@ def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any], content: bytes | 
 
 
 
+
+
+# LOSSQ_EXTRACTION_ACCURACY_GATE_V1
+def _lossq_clean_for_quality(value):
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+def _lossq_quality_date_present(row, date_type):
+    if not isinstance(row, dict):
+        return False
+
+    if date_type == "effective":
+        keys = (
+            "effective_date",
+            "effectiveDate",
+            "effective",
+            "policy_effective_date",
+            "inception_date",
+            "start_date",
+            "period_start",
+        )
+    else:
+        keys = (
+            "expiration_date",
+            "expirationDate",
+            "expiration",
+            "expiry_date",
+            "policy_expiration_date",
+            "end_date",
+            "period_end",
+        )
+
+    for key in keys:
+        value = _lossq_clean_for_quality(row.get(key))
+        if value and value not in {"-", "Not Set", "N/A", "None", "null"}:
+            return True
+
+    return False
+
+def _lossq_policy_number_present(row):
+    if not isinstance(row, dict):
+        return False
+
+    for key in ("policy_number", "policy", "policy_no", "policy_num", "policy_number_display"):
+        value = _lossq_clean_for_quality(row.get(key))
+        if value and value not in {"-", "Not Set", "N/A", "None", "null"}:
+            return True
+
+    return False
+
+def _lossq_claim_number_present(row):
+    if not isinstance(row, dict):
+        return False
+
+    for key in ("claim_number", "claim", "claim_no", "claim_num"):
+        value = _lossq_clean_for_quality(row.get(key))
+        if value and value not in {"-", "Not Set", "N/A", "None", "null"}:
+            return True
+
+    return False
+
+def _lossq_claim_policy_present(row):
+    if not isinstance(row, dict):
+        return False
+
+    for key in ("policy_number", "policy", "policy_no", "policy_num"):
+        value = _lossq_clean_for_quality(row.get(key))
+        if value and value not in {"-", "Not Set", "N/A", "None", "null"}:
+            return True
+
+    return False
+
+def _lossq_money_value_present(row):
+    if not isinstance(row, dict):
+        return False
+
+    for key in (
+        "paid",
+        "paid_amount",
+        "reserve",
+        "reserve_amount",
+        "total_incurred",
+        "total_amount",
+        "total_net_loss",
+        "incurred",
+    ):
+        value = row.get(key)
+        if value is None:
+            continue
+
+        if isinstance(value, (int, float)) and value != 0:
+            return True
+
+        clean = _lossq_clean_for_quality(value)
+        if clean and clean not in {"-", "0", "$0", "$0.00", "Not Set", "N/A", "None", "null"}:
+            return True
+
+    return False
+
+def _lossq_get_policy_rows_for_quality(parsed_profile):
+    if not isinstance(parsed_profile, dict):
+        return []
+
+    rows = parsed_profile.get("policies") or parsed_profile.get("policy_schedule") or []
+    if not isinstance(rows, list):
+        return []
+
+    return [row for row in rows if isinstance(row, dict)]
+
+def _lossq_get_claim_rows_for_quality(parsed_profile, parsed_claims=None):
+    rows = parsed_claims if isinstance(parsed_claims, list) else None
+    if rows is None and isinstance(parsed_profile, dict):
+        rows = parsed_profile.get("claims") or parsed_profile.get("parsed_claims") or []
+
+    if not isinstance(rows, list):
+        return []
+
+    return [row for row in rows if isinstance(row, dict)]
+
+def _lossq_build_extraction_quality_gate(parsed_profile, parsed_claims=None):
+    """
+    Universal extraction QA.
+    This does not block uploads yet. It scores and warns so bad extractions do not look clean.
+    """
+    policies = _lossq_get_policy_rows_for_quality(parsed_profile)
+    claims = _lossq_get_claim_rows_for_quality(parsed_profile, parsed_claims)
+
+    policy_count = len(policies)
+    claim_count = len(claims)
+
+    missing_policy_numbers = [p for p in policies if not _lossq_policy_number_present(p)]
+    missing_effective_dates = [p for p in policies if not _lossq_quality_date_present(p, "effective")]
+    missing_expiration_dates = [p for p in policies if not _lossq_quality_date_present(p, "expiration")]
+
+    missing_claim_numbers = [c for c in claims if not _lossq_claim_number_present(c)]
+    missing_claim_policy_numbers = [c for c in claims if not _lossq_claim_policy_present(c)]
+    missing_claim_amounts = [c for c in claims if not _lossq_money_value_present(c)]
+
+    warnings = []
+    critical_issues = []
+
+    if policy_count == 0:
+        critical_issues.append("No policy schedule rows were extracted.")
+    if claim_count == 0:
+        warnings.append("No claim detail rows were extracted.")
+
+    if policy_count > 0 and missing_policy_numbers:
+        critical_issues.append(f"{len(missing_policy_numbers)} policy row(s) are missing policy numbers.")
+
+    if policy_count > 0 and missing_effective_dates:
+        warnings.append(f"{len(missing_effective_dates)} policy row(s) are missing effective dates.")
+
+    if policy_count > 0 and missing_expiration_dates:
+        warnings.append(f"{len(missing_expiration_dates)} policy row(s) are missing expiration dates.")
+
+    if claim_count > 0 and missing_claim_numbers:
+        critical_issues.append(f"{len(missing_claim_numbers)} claim row(s) are missing claim numbers.")
+
+    if claim_count > 0 and missing_claim_policy_numbers:
+        critical_issues.append(f"{len(missing_claim_policy_numbers)} claim row(s) are missing policy numbers.")
+
+    if claim_count > 0 and missing_claim_amounts:
+        warnings.append(f"{len(missing_claim_amounts)} claim row(s) are missing paid/reserve/total amounts.")
+
+    # Weighted quality score.
+    score = 100
+
+    if policy_count == 0:
+        score -= 35
+    if claim_count == 0:
+        score -= 15
+
+    if policy_count > 0:
+        score -= round((len(missing_policy_numbers) / policy_count) * 30)
+        score -= round((len(missing_effective_dates) / policy_count) * 15)
+        score -= round((len(missing_expiration_dates) / policy_count) * 15)
+
+    if claim_count > 0:
+        score -= round((len(missing_claim_numbers) / claim_count) * 20)
+        score -= round((len(missing_claim_policy_numbers) / claim_count) * 25)
+        score -= round((len(missing_claim_amounts) / claim_count) * 10)
+
+    score = max(0, min(100, int(score)))
+
+    if critical_issues or score < 70:
+        status = "review_required"
+    elif warnings or score < 90:
+        status = "needs_attention"
+    else:
+        status = "passed"
+
+    return {
+        "enabled": True,
+        "parser_gate": "LOSSQ_EXTRACTION_ACCURACY_GATE_V1",
+        "status": status,
+        "score": score,
+        "requires_review": status == "review_required",
+        "policy_count": policy_count,
+        "claim_count": claim_count,
+        "policies_missing_policy_numbers": len(missing_policy_numbers),
+        "policies_missing_effective_dates": len(missing_effective_dates),
+        "policies_missing_expiration_dates": len(missing_expiration_dates),
+        "claims_missing_claim_numbers": len(missing_claim_numbers),
+        "claims_missing_policy_numbers": len(missing_claim_policy_numbers),
+        "claims_missing_amounts": len(missing_claim_amounts),
+        "warnings": warnings,
+        "critical_issues": critical_issues,
+        "message": (
+            "Extraction passed quality checks."
+            if status == "passed"
+            else "Extraction completed, but LossQ recommends review before relying on this account."
+        ),
+    }
+
+def _lossq_apply_extraction_quality_gate(parsed_profile, parsed_claims=None):
+    if not isinstance(parsed_profile, dict):
+        return parsed_profile
+
+    quality = _lossq_build_extraction_quality_gate(parsed_profile, parsed_claims)
+
+    validation = parsed_profile.get("validation")
+    if not isinstance(validation, dict):
+        validation = {}
+
+    validation["extraction_quality"] = quality
+    validation["extraction_score"] = quality.get("score")
+    validation["extraction_status"] = quality.get("status")
+    validation["requires_review"] = quality.get("requires_review")
+    validation["extraction_warnings"] = quality.get("warnings", [])
+    validation["extraction_critical_issues"] = quality.get("critical_issues", [])
+
+    parsed_profile["validation"] = validation
+    parsed_profile["extraction_quality"] = quality
+    parsed_profile["requires_review"] = quality.get("requires_review")
+    parsed_profile["extraction_score"] = quality.get("score")
+    parsed_profile["extraction_status"] = quality.get("status")
+
+    return parsed_profile
+
+
 def force_save_account_profile_v2(
     db: Session,
     *,
@@ -3490,6 +3729,10 @@ async def save_uploaded_files_v2(
         parsed_profile["validation"]["policy_count"] = len(parsed_profile["policies"] or [])
         parsed_profile["validation"]["can_persist_policy"] = can_persist_policy
         parsed_profile["validation"]["debug_policy_number"] = debug_policy_number
+
+        # LOSSQ_APPLY_EXTRACTION_ACCURACY_GATE_V1
+        parsed_profile = _lossq_apply_extraction_quality_gate(parsed_profile, repaired_claims)
+
 
         latest_profile_data = parsed_profile
         latest_saved_profile = None
