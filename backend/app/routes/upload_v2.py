@@ -1180,6 +1180,33 @@ def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any], content: bytes | 
     # LOSSQ_UNIVERSAL_POLICY_DATE_HEADER_APPLY_V1
     # Generic loss-run date extraction. No customer/file-specific hardcoding.
     parsed = _lossq_csv_apply_policy_dates(parsed)
+    # LOSSQ_USE_MULTI_SECTION_CSV_PARSER_V1
+    try:
+        uploaded_name = str(getattr(file, "filename", "") or "").lower()
+        if uploaded_name.endswith(".csv"):
+            raw_csv_text = ""
+            try:
+                if "file_bytes" in locals():
+                    raw_csv_text = file_bytes.decode("utf-8-sig", errors="ignore")
+                elif "contents" in locals():
+                    raw_csv_text = contents.decode("utf-8-sig", errors="ignore")
+            except Exception:
+                raw_csv_text = ""
+
+            if raw_csv_text:
+                multi_section_parsed = _lossq_parse_multi_section_csv_text(raw_csv_text)
+                if (
+                    isinstance(multi_section_parsed, dict)
+                    and (
+                        multi_section_parsed.get("claims")
+                        or multi_section_parsed.get("policies")
+                        or multi_section_parsed.get("profile")
+                    )
+                ):
+                    parsed = multi_section_parsed
+    except Exception as csv_parser_error:
+        print("LossQ universal multi-section CSV parser skipped:", csv_parser_error)
+
     profile = dict(parsed.get("profile") or {})
 
     full_content_text = _fallback_extract_full_text_from_content(content)
@@ -1936,6 +1963,283 @@ def _lossq_universal_delete_stale_claims_for_upload(db, current_user, parsed):
 
 
 
+
+
+# LOSSQ_STRICT_UNIVERSAL_POLICY_SCHEDULE_GATE_V1
+def _lossq_strict_clean_key(value):
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _lossq_strict_text(value):
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def _lossq_strict_policy_key(value):
+    return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
+
+
+def _lossq_strict_is_date_like(value):
+    raw = str(value or "").strip()
+    return bool(
+        re.search(r"\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b", raw)
+        or re.search(r"\b\d{1,2}/\d{1,2}/(?:\d{2}|\d{4})\b", raw)
+    )
+
+
+def _lossq_strict_is_money_like(value):
+    raw = str(value or "").strip()
+    return bool(re.search(r"^\(?\$?\s*\d[\d,]*(?:\.\d+)?\)?$", raw))
+
+
+def _lossq_strict_policy_number(row):
+    if not isinstance(row, dict):
+        return ""
+
+    for key in (
+        "policy_number",
+        "policyNumber",
+        "policy_no",
+        "policy_num",
+        "policy",
+        "main_policy",
+    ):
+        value = _lossq_strict_text(row.get(key))
+        if value:
+            return value
+
+    return ""
+
+
+def _lossq_strict_policy_line(row):
+    if not isinstance(row, dict):
+        return ""
+
+    for key in (
+        "policy_type",
+        "line_of_business",
+        "line_coverage",
+        "coverage",
+        "line",
+        "lob",
+        "policy_type_coverage",
+    ):
+        value = _lossq_strict_text(row.get(key))
+        if value:
+            return value
+
+    return ""
+
+
+def _lossq_strict_is_generic_line(value):
+    clean = _lossq_strict_text(value).lower()
+    return clean in {
+        "",
+        "policy",
+        "policies",
+        "coverage",
+        "line",
+        "line of business",
+        "unknown",
+        "n/a",
+        "none",
+        "-",
+        "open",
+        "closed",
+        "pending",
+    }
+
+
+def _lossq_strict_row_has_claim_signals(row):
+    if not isinstance(row, dict):
+        return False
+
+    claim_signal_keys = {
+        "claimnumber",
+        "claimno",
+        "claimnum",
+        "claim",
+        "claimid",
+        "lossnumber",
+        "lossno",
+        "dateofloss",
+        "lossdate",
+        "causeofloss",
+        "description",
+        "lossdescription",
+        "paid",
+        "paidamount",
+        "reserve",
+        "reserveamount",
+        "status",
+    }
+
+    for key, value in row.items():
+        clean_key = _lossq_strict_clean_key(key)
+        clean_value = _lossq_strict_text(value).lower()
+
+        if clean_key in claim_signal_keys and _lossq_strict_text(value):
+            return True
+
+        if clean_key == "status" and clean_value in {"open", "closed", "pending", "reopened", "reopen"}:
+            return True
+
+    return False
+
+
+def _lossq_strict_policy_row_is_valid(row):
+    if not isinstance(row, dict):
+        return False
+
+    if _lossq_strict_row_has_claim_signals(row):
+        return False
+
+    policy_number = _lossq_strict_policy_number(row)
+    policy_key = _lossq_strict_policy_key(policy_number)
+    line = _lossq_strict_policy_line(row)
+
+    if not policy_key or len(policy_key) < 8:
+        return False
+
+    if not re.search(r"\d", policy_key):
+        return False
+
+    if _lossq_strict_is_generic_line(line):
+        return False
+
+    if _lossq_strict_is_date_like(line) or _lossq_strict_is_money_like(line):
+        return False
+
+    return True
+
+
+def _lossq_strict_merge_policy(existing, incoming):
+    if not isinstance(existing, dict):
+        existing = {}
+    if not isinstance(incoming, dict):
+        incoming = {}
+
+    merged = dict(existing)
+
+    for key, value in incoming.items():
+        if _lossq_strict_text(value) and not _lossq_strict_text(merged.get(key)):
+            merged[key] = value
+
+    incoming_number = _lossq_strict_policy_number(incoming)
+    existing_number = _lossq_strict_policy_number(existing)
+
+    if len(_lossq_strict_policy_key(incoming_number)) >= len(_lossq_strict_policy_key(existing_number)):
+        merged["policy_number"] = incoming_number
+
+    incoming_line = _lossq_strict_policy_line(incoming)
+    existing_line = _lossq_strict_policy_line(existing)
+
+    if incoming_line and (_lossq_strict_is_generic_line(existing_line) or len(incoming_line) > len(existing_line)):
+        merged["policy_type"] = incoming_line
+        merged["line_of_business"] = incoming_line
+        merged["coverage"] = incoming_line
+
+    return merged
+
+
+def _lossq_strict_clean_policy_schedule_rows(policies):
+    if not isinstance(policies, list):
+        return []
+
+    valid = []
+
+    for row in policies:
+        if _lossq_strict_policy_row_is_valid(row):
+            normalized = dict(row)
+            line = _lossq_strict_policy_line(normalized)
+            policy_number = _lossq_strict_policy_number(normalized)
+
+            normalized["policy_number"] = policy_number
+            normalized["policy_type"] = line
+            normalized["line_of_business"] = line
+            normalized["coverage"] = line
+
+            valid.append(normalized)
+
+    if not valid:
+        return []
+
+    keys = [_lossq_strict_policy_key(row.get("policy_number")) for row in valid]
+
+    # Drop partial OCR fragments when a fuller policy number exists.
+    filtered = []
+
+    for row in valid:
+        key = _lossq_strict_policy_key(row.get("policy_number"))
+
+        has_fuller_key = any(
+            other != key
+            and len(other) > len(key)
+            and (other.startswith(key) or key in other or other.endswith(key))
+            for other in keys
+        )
+
+        if has_fuller_key:
+            continue
+
+        filtered.append(row)
+
+    by_key = {}
+
+    for row in filtered:
+        key = _lossq_strict_policy_key(row.get("policy_number"))
+        if key in by_key:
+            by_key[key] = _lossq_strict_merge_policy(by_key[key], row)
+        else:
+            by_key[key] = row
+
+    return list(by_key.values())
+
+
+def _lossq_apply_strict_policy_schedule_gate(parsed):
+    """
+    Universal policy schedule gate.
+    Prevents claim rows, shifted rows, and partial OCR policy fragments
+    from becoming policy schedule rows.
+    """
+    if not isinstance(parsed, dict):
+        return parsed
+
+    candidate_lists = []
+
+    for key in ("policies", "policy_schedule", "policySchedule"):
+        if isinstance(parsed.get(key), list):
+            candidate_lists.append(parsed.get(key))
+
+    if isinstance(parsed.get("profile"), dict):
+        for key in ("policies", "policy_schedule", "policySchedule"):
+            if isinstance(parsed["profile"].get(key), list):
+                candidate_lists.append(parsed["profile"].get(key))
+
+    if isinstance(parsed.get("account_profile"), dict):
+        for key in ("policies", "policy_schedule", "policySchedule"):
+            if isinstance(parsed["account_profile"].get(key), list):
+                candidate_lists.append(parsed["account_profile"].get(key))
+
+    combined = []
+
+    for items in candidate_lists:
+        combined.extend([item for item in items if isinstance(item, dict)])
+
+    cleaned = _lossq_strict_clean_policy_schedule_rows(combined)
+
+    if cleaned:
+        parsed["policies"] = cleaned
+
+        if isinstance(parsed.get("profile"), dict):
+            parsed["profile"]["policies"] = cleaned
+
+        if isinstance(parsed.get("account_profile"), dict):
+            parsed["account_profile"]["policies"] = cleaned
+
+    return parsed
+
+
+
 # LOSSQ_UNIVERSAL_POLICY_CLAIM_LINE_NORMALIZATION_V2
 def _lossq_policy_family_tokens(policy_number):
     """
@@ -2356,6 +2660,278 @@ def _lossq_csv_apply_policy_dates(parsed):
 
     parsed["profile"] = profile
     parsed["account_profile"] = account_profile
+
+    return parsed
+
+
+
+
+
+# LOSSQ_UNIVERSAL_MULTI_SECTION_CSV_PARSER_V1
+def _lossq_clean_csv_key(value):
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+
+def _lossq_clean_csv_value(value):
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+
+def _lossq_parse_money(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return 0.0
+    negative = raw.startswith("(") and raw.endswith(")")
+    clean = re.sub(r"[^0-9.\-]", "", raw)
+    try:
+        amount = float(clean or 0)
+    except Exception:
+        amount = 0.0
+    return -amount if negative else amount
+
+
+def _lossq_normalize_csv_date(value):
+    raw = str(value or "").strip()
+    if not raw:
+        return ""
+
+    iso = re.search(r"\b((?:19|20)\d{2})[-/](\d{1,2})[-/](\d{1,2})\b", raw)
+    if iso:
+        yyyy, mm, dd = iso.groups()
+        return f"{yyyy}-{int(mm):02d}-{int(dd):02d}"
+
+    us = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", raw)
+    if us:
+        mm, dd, year = us.groups()
+        yyyy = int(year)
+        if yyyy < 100:
+            yyyy += 2000 if yyyy < 70 else 1900
+        return f"{yyyy}-{int(mm):02d}-{int(dd):02d}"
+
+    return raw
+
+
+def _lossq_parse_multi_section_csv_text(csv_text):
+    """
+    Universal multi-section CSV parser.
+    Supports CSVs with freeform title rows and sections such as:
+    - Account Profile
+    - Policy Schedule
+    - Claim Detail
+    - Loss Summary
+
+    No customer/file-specific logic.
+    """
+    import csv
+    import io
+
+    rows = list(csv.reader(io.StringIO(csv_text or "")))
+    parsed = {
+        "profile": {},
+        "account_profile": {},
+        "policies": [],
+        "claims": [],
+        "summary": {},
+        "validation": {
+            "parser": "universal_multi_section_csv",
+        },
+    }
+
+    section = ""
+    headers = []
+
+    profile_key_map = {
+        "namedinsured": "business_name",
+        "insured": "business_name",
+        "businessname": "business_name",
+        "companyname": "business_name",
+        "accountnumber": "account_number",
+        "accountpolicy": "account_number",
+        "dba": "dba",
+        "customername": "customer_name",
+        "customernumber": "customer_number",
+        "mailingaddress": "mailing_address",
+        "primaryoperations": "operations",
+        "operations": "operations",
+        "writingcarrier": "writing_carrier",
+        "carriername": "carrier_name",
+        "carrier": "carrier_name",
+        "agencyname": "agency_name",
+        "producingagency": "agency_name",
+        "effectivedate": "effective_date",
+        "policyeffectivedate": "effective_date",
+        "expirationdate": "expiration_date",
+        "policyexpirationdate": "expiration_date",
+        "evaluationdate": "evaluation_date",
+        "valuationdate": "valuation_date",
+        "asofdate": "valuation_date",
+    }
+
+    policy_key_map = {
+        "policytypecoverage": "policy_type",
+        "policytype": "policy_type",
+        "coverage": "coverage",
+        "lineofbusiness": "line_of_business",
+        "line": "line_of_business",
+        "policynumber": "policy_number",
+        "policy": "policy_number",
+        "writingcarrier": "carrier",
+        "carrier": "carrier",
+        "effective": "effective_date",
+        "effectivedate": "effective_date",
+        "policyeffectivedate": "effective_date",
+        "expiration": "expiration_date",
+        "expirationdate": "expiration_date",
+        "policyexpirationdate": "expiration_date",
+        "claims": "claims",
+        "claimcount": "claims",
+        "totalincurred": "total_incurred",
+    }
+
+    claim_key_map = {
+        "claimnumber": "claim_number",
+        "claim": "claim_number",
+        "claimno": "claim_number",
+        "policynumber": "policy_number",
+        "policy": "policy_number",
+        "lineofbusiness": "line_of_business",
+        "line": "line_of_business",
+        "coverage": "coverage",
+        "status": "status",
+        "dateofloss": "date_of_loss",
+        "lossdate": "date_of_loss",
+        "causeofloss": "cause_of_loss",
+        "description": "description",
+        "paid": "paid_amount",
+        "paidamount": "paid_amount",
+        "reserve": "reserve_amount",
+        "reserveamount": "reserve_amount",
+        "totalincurred": "total_incurred",
+        "incurred": "total_incurred",
+        "total": "total_incurred",
+        "flag": "flag",
+    }
+
+    section_names = {
+        "accountprofile": "profile",
+        "profile": "profile",
+        "policyschedule": "policies",
+        "policies": "policies",
+        "claimdetail": "claims",
+        "claimdetails": "claims",
+        "claims": "claims",
+        "losssummary": "summary",
+        "summary": "summary",
+    }
+
+    for raw_row in rows:
+        row = [_lossq_clean_csv_value(cell) for cell in raw_row]
+        row = row + [""] * max(0, 12 - len(row))
+
+        non_empty = [cell for cell in row if cell]
+
+        if not non_empty:
+            continue
+
+        first_key = _lossq_clean_csv_key(non_empty[0])
+
+        if len(non_empty) == 1 and first_key in section_names:
+            section = section_names[first_key]
+            headers = []
+            continue
+
+        if section == "profile":
+            key = _lossq_clean_csv_key(row[0])
+            value = row[1] if len(row) > 1 else ""
+
+            mapped_key = profile_key_map.get(key)
+            if mapped_key and value:
+                if mapped_key in {"effective_date", "expiration_date", "evaluation_date", "valuation_date"}:
+                    value = _lossq_normalize_csv_date(value)
+                parsed["profile"][mapped_key] = value
+                parsed["account_profile"][mapped_key] = value
+            continue
+
+        if section in {"policies", "claims"} and not headers:
+            headers = [_lossq_clean_csv_key(cell) for cell in row]
+            continue
+
+        if section == "policies":
+            item = {}
+            for idx, header in enumerate(headers):
+                mapped_key = policy_key_map.get(header)
+                if not mapped_key:
+                    continue
+                value = row[idx] if idx < len(row) else ""
+                if not value:
+                    continue
+
+                if mapped_key in {"effective_date", "expiration_date"}:
+                    value = _lossq_normalize_csv_date(value)
+                elif mapped_key in {"claims"}:
+                    try:
+                        value = int(float(str(value).replace(",", "")))
+                    except Exception:
+                        value = 0
+                elif mapped_key in {"total_incurred"}:
+                    value = _lossq_parse_money(value)
+
+                item[mapped_key] = value
+
+            policy_number = str(item.get("policy_number") or "").strip()
+            line = str(item.get("policy_type") or item.get("line_of_business") or item.get("coverage") or "").strip()
+
+            if policy_number and line:
+                item["line_of_business"] = line
+                item["policy_type"] = line
+                item["coverage"] = line
+                parsed["policies"].append(item)
+            continue
+
+        if section == "claims":
+            item = {}
+            for idx, header in enumerate(headers):
+                mapped_key = claim_key_map.get(header)
+                if not mapped_key:
+                    continue
+                value = row[idx] if idx < len(row) else ""
+                if value == "":
+                    continue
+
+                if mapped_key in {"date_of_loss"}:
+                    value = _lossq_normalize_csv_date(value)
+                elif mapped_key in {"paid_amount", "reserve_amount", "total_incurred"}:
+                    value = _lossq_parse_money(value)
+
+                item[mapped_key] = value
+
+            if item.get("claim_number") or item.get("cause_of_loss") or item.get("policy_number"):
+                if not item.get("total_incurred"):
+                    item["total_incurred"] = _lossq_parse_money(item.get("paid_amount")) + _lossq_parse_money(item.get("reserve_amount"))
+                parsed["claims"].append(item)
+            continue
+
+        if section == "summary":
+            key = _lossq_clean_csv_key(row[0])
+            value = row[1] if len(row) > 1 else ""
+            if key and value:
+                parsed["summary"][key] = value
+
+    # Carry account dates into policies when policy rows omit them.
+    profile = parsed.get("profile") or {}
+    for policy in parsed.get("policies") or []:
+        if not policy.get("effective_date"):
+            policy["effective_date"] = profile.get("effective_date") or ""
+        if not policy.get("expiration_date"):
+            policy["expiration_date"] = profile.get("expiration_date") or ""
+
+    # Normalize policies/claims using existing universal matcher if available.
+    try:
+        parsed = _lossq_universal_policy_claim_line_normalize_v2(parsed)
+    except Exception:
+        try:
+            parsed = _lossq_universal_policy_claim_line_normalize(parsed)
+        except Exception:
+            pass
 
     return parsed
 

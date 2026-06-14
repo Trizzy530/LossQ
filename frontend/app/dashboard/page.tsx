@@ -369,6 +369,126 @@ function getUniversalUploadPolicyDates(...sources: any[]) {
 
 
 
+
+// LOSSQ_STRICT_POLICY_SCHEDULE_DISPLAY_GATE_V1
+function lossqStrictPolicyKey(value: any) {
+  return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
+}
+
+function lossqStrictText(value: any) {
+  return String(value || "").replace(/\s+/g, " ").trim();
+}
+
+function lossqStrictPolicyNumber(row: any) {
+  return lossqStrictText(
+    row?.policy_number ||
+      row?.policyNumber ||
+      row?.policy_no ||
+      row?.policy ||
+      row?.main_policy ||
+      ""
+  );
+}
+
+function lossqStrictPolicyLine(row: any) {
+  return lossqStrictText(
+    row?.policy_type ||
+      row?.line_of_business ||
+      row?.line_coverage ||
+      row?.coverage ||
+      row?.line ||
+      row?.lob ||
+      ""
+  );
+}
+
+function lossqStrictIsGenericLine(value: any) {
+  const clean = lossqStrictText(value).toLowerCase();
+  return ["", "policy", "policies", "coverage", "line", "line of business", "unknown", "n/a", "none", "-", "open", "closed", "pending"].includes(clean);
+}
+
+function lossqStrictDateLike(value: any) {
+  const raw = lossqStrictText(value);
+  return /\b(?:19|20)\d{2}[-/]\d{1,2}[-/]\d{1,2}\b/.test(raw) || /\b\d{1,2}\/\d{1,2}\/(?:\d{2}|\d{4})\b/.test(raw);
+}
+
+function lossqStrictMoneyLike(value: any) {
+  return /^\(?\$?\s*\d[\d,]*(?:\.\d+)?\)?$/.test(lossqStrictText(value));
+}
+
+function lossqStrictLooksLikeClaimRow(row: any) {
+  if (!row || typeof row !== "object") return false;
+
+  const claimNumber = lossqStrictText(row?.claim_number || row?.claimNumber || row?.claim_no || row?.claim || row?.loss_number);
+  const status = lossqStrictText(row?.status).toLowerCase();
+  const cause = lossqStrictText(row?.cause_of_loss || row?.loss_description || row?.description);
+  const paid = lossqStrictText(row?.paid || row?.paid_amount);
+  const reserve = lossqStrictText(row?.reserve || row?.reserve_amount);
+
+  return Boolean(
+    claimNumber ||
+      cause ||
+      paid ||
+      reserve ||
+      ["open", "closed", "pending", "reopened", "reopen"].includes(status)
+  );
+}
+
+function lossqStrictPolicyRowValid(row: any) {
+  if (!row || typeof row !== "object") return false;
+  if (lossqStrictLooksLikeClaimRow(row)) return false;
+
+  const policyNumber = lossqStrictPolicyNumber(row);
+  const policyKey = lossqStrictPolicyKey(policyNumber);
+  const line = lossqStrictPolicyLine(row);
+
+  if (!policyKey || policyKey.length < 8) return false;
+  if (!/\d/.test(policyKey)) return false;
+  if (lossqStrictIsGenericLine(line)) return false;
+  if (lossqStrictDateLike(line) || lossqStrictMoneyLike(line)) return false;
+
+  return true;
+}
+
+function lossqStrictCleanPolicySchedule(rows: any[]) {
+  const sourceRows = Array.isArray(rows) ? rows : [];
+  const validRows = sourceRows.filter(lossqStrictPolicyRowValid);
+
+  const keys = validRows.map((row: any) => lossqStrictPolicyKey(lossqStrictPolicyNumber(row)));
+
+  const filteredRows = validRows.filter((row: any) => {
+    const key = lossqStrictPolicyKey(lossqStrictPolicyNumber(row));
+
+    return !keys.some(
+      (other: string) =>
+        other !== key &&
+        other.length > key.length &&
+        (other.startsWith(key) || key.includes(other) || other.includes(key))
+    );
+  });
+
+  const byKey: Record<string, any> = {};
+
+  filteredRows.forEach((row: any) => {
+    const key = lossqStrictPolicyKey(lossqStrictPolicyNumber(row));
+    const line = lossqStrictPolicyLine(row);
+
+    if (!key) return;
+
+    byKey[key] = {
+      ...(byKey[key] || {}),
+      ...row,
+      policy_number: lossqStrictPolicyNumber(row),
+      policy_type: line,
+      line_of_business: line,
+      coverage: line,
+    };
+  });
+
+  return Object.values(byKey);
+}
+
+
 // LOSSQ_UNIVERSAL_POLICY_SCHEDULE_CLEANUP_V1
 function lossqCleanPolicyKey(value: any) {
   return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
@@ -5643,7 +5763,7 @@ const trendNoteDisplay =
                         </thead>
 
                         <tbody>
-                          {policySchedule.map((policy: any, index: number) => {
+                          {lossqStrictCleanPolicySchedule(policySchedule).map((policy: any, index: number) => {
                             // LOSSQ_POLICY_SCHEDULE_TABLE_CLEAN_RENDER_V1
                             const policyNumber = normalizePolicyNumber(policy?.policy_number);
                             const stats = scheduleClaimStats[policyNumber];
@@ -6817,7 +6937,7 @@ const trendNoteDisplay =
                       </tr>
                     </thead>
                     <tbody>
-                      {policySchedule.map((policy: any, index: number) => {
+                      {lossqStrictCleanPolicySchedule(policySchedule).map((policy: any, index: number) => {
                         const policyNumber = normalizePolicyNumber(policy?.policy_number);
                         const stats = scheduleClaimStats[policyNumber];
                         return (
