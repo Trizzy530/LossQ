@@ -1173,6 +1173,175 @@ def _fallback_enrich_policy_schedule(raw_text: Any, policies: List[Dict[str, Any
 
 
 
+
+
+# LOSSQ_UNIVERSAL_POLICY_DATE_COLUMN_REPAIR_V1
+def _lossq_date_to_iso_safe(value):
+    raw = _clean(value)
+    if not raw:
+        return ""
+
+    raw = raw.replace("\\", "/").replace(".", "/").replace("-", "/")
+    raw = re.sub(r"\s+", "", raw)
+
+    # MM/DD/YYYY or M/D/YYYY
+    match = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", raw)
+    if match:
+        month, day, year = match.groups()
+        year = int(year)
+        if year < 100:
+            year += 2000 if year < 50 else 1900
+        try:
+            return f"{year:04d}-{int(month):02d}-{int(day):02d}"
+        except Exception:
+            return ""
+
+    # YYYY/MM/DD
+    match = re.fullmatch(r"(\d{4})/(\d{1,2})/(\d{1,2})", raw)
+    if match:
+        year, month, day = match.groups()
+        try:
+            return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+        except Exception:
+            return ""
+
+    return _clean(value)
+
+def _lossq_policy_row_any_date(row, kind):
+    if not isinstance(row, dict):
+        return ""
+
+    effective_keys = [
+        "effective_date", "effectiveDate", "effective", "eff", "eff_date",
+        "policy_effective_date", "policyEffectiveDate", "inception_date",
+        "start_date", "from_date", "policy_start", "period_start",
+    ]
+
+    expiration_keys = [
+        "expiration_date", "expirationDate", "expiration", "expiry_date",
+        "exp", "exp_date", "policy_expiration_date", "policyExpirationDate",
+        "end_date", "to_date", "policy_end", "period_end",
+    ]
+
+    keys = effective_keys if kind == "effective" else expiration_keys
+
+    for key in keys:
+        value = _lossq_date_to_iso_safe(row.get(key))
+        if value:
+            return value
+
+    return ""
+
+def _lossq_repair_policy_dates_from_raw_text(raw_text, policies):
+    """
+    Universal row-level date repair.
+    Finds the uploaded policy number in raw text, then uses the first two nearby dates
+    as effective/expiration if the row is missing them.
+    """
+    if not isinstance(policies, list):
+        return policies
+
+    lines = [re.sub(r"\s+", " ", str(x or "").strip()) for x in str(raw_text or "").replace("\r", "\n").splitlines()]
+    date_pattern = r"\d{1,2}[\/\-.]\d{1,2}[\/\-.]\d{2,4}|\d{4}[\/\-.]\d{1,2}[\/\-.]\d{1,2}"
+
+    for policy in policies:
+        if not isinstance(policy, dict):
+            continue
+
+        policy_number = _clean(
+            policy.get("policy_number")
+            or policy.get("policy")
+            or policy.get("policy_no")
+            or policy.get("policy_num")
+        ).upper()
+
+        if not policy_number:
+            continue
+
+        effective = _lossq_policy_row_any_date(policy, "effective")
+        expiration = _lossq_policy_row_any_date(policy, "expiration")
+
+        if not effective or not expiration:
+            for index, line in enumerate(lines):
+                if policy_number not in line.upper():
+                    continue
+
+                nearby = " ".join(lines[max(0, index - 2):min(len(lines), index + 3)])
+                dates = re.findall(date_pattern, nearby)
+
+                normalized_dates = []
+                for d in dates:
+                    nd = _lossq_date_to_iso_safe(d)
+                    if nd and nd not in normalized_dates:
+                        normalized_dates.append(nd)
+
+                if not effective and len(normalized_dates) >= 1:
+                    effective = normalized_dates[0]
+                if not expiration and len(normalized_dates) >= 2:
+                    expiration = normalized_dates[1]
+                break
+
+        if effective:
+            policy["effective_date"] = effective
+            policy["effective"] = effective
+            policy["effectiveDate"] = effective
+            policy["policy_effective_date"] = effective
+
+        if expiration:
+            policy["expiration_date"] = expiration
+            policy["expiration"] = expiration
+            policy["expirationDate"] = expiration
+            policy["policy_expiration_date"] = expiration
+            policy["expiry_date"] = expiration
+
+    return policies
+
+def _lossq_repair_all_policy_date_columns(parsed, raw_text=""):
+    """
+    Applies policy-date normalization to every known policy schedule location.
+    This prevents dates from disappearing in the dashboard/PDF because one parser
+    used a different key name than another parser.
+    """
+    if not isinstance(parsed, dict):
+        return parsed
+
+    containers = [parsed]
+
+    for key in ("profile", "account_profile"):
+        if isinstance(parsed.get(key), dict):
+            containers.append(parsed[key])
+
+    for container in containers:
+        for list_key in ("policies", "policy_schedule", "policySchedule", "policy_rows", "lines_of_business"):
+            rows = container.get(list_key)
+            if isinstance(rows, list):
+                repaired = _lossq_repair_policy_dates_from_raw_text(raw_text, rows)
+                container[list_key] = repaired
+
+    # Keep canonical top-level policy list synced.
+    if isinstance(parsed.get("profile"), dict) and isinstance(parsed["profile"].get("policies"), list):
+        parsed["policies"] = parsed["profile"]["policies"]
+
+    if isinstance(parsed.get("account_profile"), dict) and isinstance(parsed["account_profile"].get("policies"), list):
+        parsed["policy_schedule"] = parsed["account_profile"]["policies"]
+
+    # Extraction QA summary for future UI warnings / review.
+    policies = parsed.get("policies") if isinstance(parsed.get("policies"), list) else []
+    total_policies = len([p for p in policies if isinstance(p, dict)])
+    missing_effective = len([p for p in policies if isinstance(p, dict) and not _lossq_policy_row_any_date(p, "effective")])
+    missing_expiration = len([p for p in policies if isinstance(p, dict) and not _lossq_policy_row_any_date(p, "expiration")])
+
+    parsed["extraction_quality"] = {
+        **(parsed.get("extraction_quality") if isinstance(parsed.get("extraction_quality"), dict) else {}),
+        "policy_count": total_policies,
+        "policies_missing_effective_dates": missing_effective,
+        "policies_missing_expiration_dates": missing_expiration,
+        "policy_schedule_dates_complete": bool(total_policies and missing_effective == 0 and missing_expiration == 0),
+    }
+
+    return parsed
+
+
 def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any], content: bytes | None = None) -> Dict[str, Any]:
     if not isinstance(parsed, dict):
         return parsed
@@ -1287,6 +1456,13 @@ def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any], content: bytes | 
         )
 
     parsed["profile"] = profile
+
+    # LOSSQ_APPLY_UNIVERSAL_POLICY_DATE_COLUMN_REPAIR_V1
+    try:
+        parsed = _lossq_repair_all_policy_date_columns(parsed, raw_text)
+    except Exception:
+        pass
+
     return parsed
 
 
