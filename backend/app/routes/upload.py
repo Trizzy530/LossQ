@@ -12,6 +12,7 @@ from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
 import re
+from app.role_utils import require_permission
 from app.services.audit import record_audit_event
 from app.services.loss_run_pipeline import parse_loss_run_file
 from app.services.universal_profile import extract_universal_profile_from_text
