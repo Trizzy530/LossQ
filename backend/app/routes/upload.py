@@ -11,7 +11,8 @@ from app.database import SessionLocal
 from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
-from app.role_utils import require_permission
+from app.role_utils import re
+import csvquire_permission
 import re
 from app.services.audit import record_audit_event
 from app.services.loss_run_pipeline import parse_loss_run_file
@@ -264,6 +265,359 @@ def extract_exposure_inputs_from_raw_text(raw_text: str):
 
     return profile
 
+
+
+
+
+# LOSSQ_LIVE_SECTION_BASED_CSV_REPAIR_V1
+def _lossq_live_clean_cell(value):
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+def _lossq_live_money_to_float(value):
+    raw = _lossq_live_clean_cell(value)
+    if not raw:
+        return 0.0
+    raw = raw.replace("$", "").replace(",", "").replace("%", "").strip()
+    try:
+        return float(raw)
+    except Exception:
+        return 0.0
+
+def _lossq_live_date_to_iso(value):
+    raw = _lossq_live_clean_cell(value)
+    if not raw:
+        return ""
+
+    raw = raw.replace("\\", "/").replace(".", "/").replace("-", "/")
+    raw = re.sub(r"\s+", "", raw)
+
+    m = re.fullmatch(r"(\d{1,2})/(\d{1,2})/(\d{2,4})", raw)
+    if m:
+        month, day, year = m.groups()
+        year = int(year)
+        if year < 100:
+            year += 2000 if year < 50 else 1900
+        try:
+            return f"{year:04d}-{int(month):02d}-{int(day):02d}"
+        except Exception:
+            return ""
+
+    m = re.fullmatch(r"(\d{4})/(\d{1,2})/(\d{1,2})", raw)
+    if m:
+        year, month, day = m.groups()
+        try:
+            return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+        except Exception:
+            return ""
+
+    return raw
+
+def _lossq_live_is_policy_number(value):
+    raw = _lossq_live_clean_cell(value).upper()
+    if not raw:
+        return False
+    return bool(re.search(r"[A-Z]{2,10}-\d{4}-[A-Z0-9]+", raw))
+
+def _lossq_live_is_claim_number(value):
+    raw = _lossq_live_clean_cell(value).upper()
+    if not raw:
+        return False
+
+    blocked = {
+        "NOTE",
+        "NOTES",
+        "LOSS SUMMARY",
+        "METRIC",
+        "TOTAL CLAIMS",
+        "OPEN CLAIMS",
+        "CLOSED CLAIMS",
+        "TOTAL PAID",
+        "TOTAL RESERVE",
+        "TOTAL INCURRED",
+        "LARGEST LOSS",
+        "LITIGATED CLAIMS",
+        "CLAIMS WITH ATTORNEY INVOLVEMENT",
+        "UNDERWRITING NOTES",
+    }
+
+    if raw in blocked:
+        return False
+
+    return bool(re.search(r"[A-Z0-9]+-[A-Z0-9]+-\d{2,4}-\d{2,6}", raw))
+
+def _lossq_live_read_section_csv_rows(file_path):
+    rows = []
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            with open(file_path, "r", newline="", encoding=encoding) as f:
+                rows = [row for row in csv.reader(f)]
+            break
+        except Exception:
+            rows = []
+
+    cleaned = []
+    for row in rows:
+        cleaned.append([_lossq_live_clean_cell(cell) for cell in row])
+
+    return cleaned
+
+def _lossq_live_extract_section_based_csv(file_path):
+    rows = _lossq_live_read_section_csv_rows(file_path)
+
+    if not rows:
+        return [], {}
+
+    section_names = {
+        "account information": "account",
+        "policy schedule": "policies",
+        "exposure inputs": "exposures",
+        "claim detail": "claims",
+        "loss summary": "summary",
+        "underwriting notes": "notes",
+    }
+
+    current_section = ""
+    account = {}
+    exposures = {}
+    loss_summary = {}
+    policies = []
+    claims = []
+
+    policy_header_seen = False
+    claim_header_seen = False
+    exposure_header_seen = False
+    summary_header_seen = False
+
+    for row in rows:
+        nonempty = [cell for cell in row if _lossq_live_clean_cell(cell)]
+        if not nonempty:
+            continue
+
+        first = _lossq_live_clean_cell(nonempty[0])
+        first_lower = first.lower()
+
+        if first_lower in section_names:
+            current_section = section_names[first_lower]
+            policy_header_seen = False
+            claim_header_seen = False
+            exposure_header_seen = False
+            summary_header_seen = False
+            continue
+
+        if current_section == "account":
+            if len(nonempty) >= 2:
+                key = _lossq_live_clean_cell(nonempty[0]).lower()
+                value = _lossq_live_clean_cell(nonempty[1])
+
+                if key in {"carrier"}:
+                    account["carrier_name"] = value
+                    account["carrier"] = value
+                elif key in {"valuation date", "evaluation date"}:
+                    account["evaluation_date"] = _lossq_live_date_to_iso(value)
+                elif key in {"named insured", "insured", "business name"}:
+                    account["business_name"] = value
+                    account["insured_name"] = value
+                    account["named_insured"] = value
+                elif key in {"account number"}:
+                    account["account_number"] = value
+                    account["customer_number"] = value
+                elif key in {"producer / producing agency", "producer", "producing agency", "agency"}:
+                    account["agency_name"] = value
+                    account["producing_agency"] = value
+                    account["producer"] = value
+                elif key in {"producer number"}:
+                    account["producer_number"] = value
+                elif key in {"effective date"}:
+                    account["effective_date"] = _lossq_live_date_to_iso(value)
+                    account["effective"] = account["effective_date"]
+                elif key in {"expiration date"}:
+                    account["expiration_date"] = _lossq_live_date_to_iso(value)
+                    account["expiration"] = account["expiration_date"]
+                elif key in {"main policy number", "main policy", "policy number"}:
+                    account["policy_number"] = value
+                elif key in {"writing carrier"}:
+                    account["writing_carrier"] = value
+                    account["carrier_name"] = value or account.get("carrier_name", "")
+            continue
+
+        if current_section == "policies":
+            lower_row = [cell.lower() for cell in nonempty]
+            if "line of business" in lower_row and "policy number" in lower_row:
+                policy_header_seen = True
+                continue
+
+            if not policy_header_seen:
+                continue
+
+            # Expected columns:
+            # Line of Business, Policy Number, Effective Date, Expiration Date,
+            # Exposure Basis, Current Premium, Expiring Premium, Target Renewal Premium
+            if len(row) >= 4 and _lossq_live_is_policy_number(row[1]):
+                lob = _lossq_live_clean_cell(row[0])
+                policy_number = _lossq_live_clean_cell(row[1]).upper()
+                effective = _lossq_live_date_to_iso(row[2])
+                expiration = _lossq_live_date_to_iso(row[3])
+                exposure_basis = _lossq_live_clean_cell(row[4]) if len(row) > 4 else ""
+                current_premium = _lossq_live_clean_cell(row[5]) if len(row) > 5 else ""
+                expiring_premium = _lossq_live_clean_cell(row[6]) if len(row) > 6 else ""
+                target_renewal = _lossq_live_clean_cell(row[7]) if len(row) > 7 else ""
+
+                policy = {
+                    "line_of_business": lob,
+                    "policy_type": lob,
+                    "coverage": lob,
+                    "policy_number": policy_number,
+                    "carrier": account.get("writing_carrier") or account.get("carrier_name") or "",
+                    "effective_date": effective,
+                    "effective": effective,
+                    "effectiveDate": effective,
+                    "expiration_date": expiration,
+                    "expiration": expiration,
+                    "expirationDate": expiration,
+                    "exposure_basis": exposure_basis,
+                    "current_premium": current_premium,
+                    "premium": current_premium,
+                    "expiring_premium": expiring_premium,
+                    "target_renewal_premium": target_renewal,
+                }
+                policies.append(policy)
+            continue
+
+        if current_section == "exposures":
+            lower_row = [cell.lower() for cell in nonempty]
+            if "field" in lower_row and "value" in lower_row:
+                exposure_header_seen = True
+                continue
+
+            if not exposure_header_seen:
+                continue
+
+            if len(nonempty) >= 2:
+                exposures[_lossq_live_clean_cell(nonempty[0])] = _lossq_live_clean_cell(nonempty[1])
+            continue
+
+        if current_section == "claims":
+            lower_row = [cell.lower() for cell in nonempty]
+            if "claim number" in lower_row and "policy number" in lower_row:
+                claim_header_seen = True
+                continue
+
+            if not claim_header_seen:
+                continue
+
+            # Expected columns:
+            # Claim Number, Policy Number, Line of Business, Date of Loss,
+            # Status, Paid, Reserve, Total Incurred, Description
+            if len(row) >= 8 and _lossq_live_is_claim_number(row[0]) and _lossq_live_is_policy_number(row[1]):
+                claim_number = _lossq_live_clean_cell(row[0]).upper()
+                policy_number = _lossq_live_clean_cell(row[1]).upper()
+                lob = _lossq_live_clean_cell(row[2])
+                loss_date = _lossq_live_date_to_iso(row[3])
+                status = _lossq_live_clean_cell(row[4]).title() or "Open"
+                paid = _lossq_live_money_to_float(row[5])
+                reserve = _lossq_live_money_to_float(row[6])
+                total = _lossq_live_money_to_float(row[7])
+                description = _lossq_live_clean_cell(row[8]) if len(row) > 8 else ""
+
+                claim = {
+                    "claim_number": claim_number,
+                    "policy_number": policy_number,
+                    "policy": policy_number,
+                    "line_of_business": lob,
+                    "claim_type": lob,
+                    "date_of_loss": loss_date,
+                    "loss_date": loss_date,
+                    "status": status,
+                    "paid": paid,
+                    "paid_amount": paid,
+                    "reserve": reserve,
+                    "reserve_amount": reserve,
+                    "total_incurred": total,
+                    "total_amount": total,
+                    "total_net_loss": total,
+                    "description": description,
+                    "loss_description": description,
+                }
+                claims.append(claim)
+            continue
+
+        if current_section == "summary":
+            lower_row = [cell.lower() for cell in nonempty]
+            if "metric" in lower_row and "value" in lower_row:
+                summary_header_seen = True
+                continue
+
+            if not summary_header_seen:
+                continue
+
+            if len(nonempty) >= 2:
+                loss_summary[_lossq_live_clean_cell(nonempty[0])] = _lossq_live_clean_cell(nonempty[1])
+            continue
+
+    if policies:
+        account["policies"] = policies
+        account["policy_schedule"] = policies
+
+        # Prefer explicit main policy; otherwise use first policy.
+        if not _lossq_live_is_policy_number(account.get("policy_number")):
+            account["policy_number"] = policies[0].get("policy_number", "")
+
+        # Use matching policy dates for main policy.
+        main_policy = account.get("policy_number", "")
+        matched_main = next((p for p in policies if p.get("policy_number") == main_policy), policies[0])
+        account["effective_date"] = account.get("effective_date") or matched_main.get("effective_date", "")
+        account["expiration_date"] = account.get("expiration_date") or matched_main.get("expiration_date", "")
+        account["effective"] = account["effective_date"]
+        account["expiration"] = account["expiration_date"]
+
+    if exposures:
+        account["exposure_inputs"] = exposures
+        account["exposures"] = exposures
+        account["current_premium"] = exposures.get("Current Premium", "")
+        account["payroll"] = exposures.get("Payroll", "")
+        account["revenue"] = exposures.get("Revenue / Sales", "")
+        account["employee_count"] = exposures.get("Employee Count", "")
+        account["vehicle_count"] = exposures.get("Vehicle Count", "")
+        account["driver_count"] = exposures.get("Driver Count", "")
+        account["property_tiv"] = exposures.get("Property TIV", "")
+
+    if loss_summary:
+        account["loss_summary"] = loss_summary
+
+    if claims or policies or exposures:
+        account["lossq_section_based_csv_detected"] = True
+        account["extraction_status"] = "passed" if claims and policies else "needs_attention"
+        account["extraction_score"] = 95 if claims and policies else 75
+        account["requires_review"] = False if claims and policies else True
+
+    return claims, account
+
+def lossq_live_repair_section_csv_upload(file_path, parsed_claims, parsed_profile):
+    """
+    If the uploaded file is a section-based CSV, override the old row parser
+    so Notes, Loss Summary, Metric, and exposure rows do not become claims.
+    """
+    filename = str(file_path or "").lower()
+    if not filename.endswith(".csv"):
+        return parsed_claims, parsed_profile
+
+    section_claims, section_profile = _lossq_live_extract_section_based_csv(file_path)
+
+    if not section_claims and not section_profile:
+        return parsed_claims, parsed_profile
+
+    if not isinstance(parsed_profile, dict):
+        parsed_profile = {}
+
+    merged_profile = dict(parsed_profile)
+    merged_profile.update({k: v for k, v in section_profile.items() if v not in ("", None, [], {})})
+
+    if section_claims:
+        parsed_claims = section_claims
+        merged_profile["claims"] = section_claims
+        merged_profile["parsed_claims"] = section_claims
+
+    return parsed_claims, merged_profile
 
 
 def parse_file(file_path: str, filename: str):
@@ -1253,6 +1607,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             shutil.copyfileobj(file.file, buffer)
 
         parsed_claims, parsed_profile = parse_file(file_path, safe_upload_filename or safe_filename)
+
+            # LOSSQ_APPLY_LIVE_SECTION_BASED_CSV_REPAIR_V1
+            parsed_claims, parsed_profile = lossq_live_repair_section_csv_upload(
+                file_path,
+                parsed_claims,
+                parsed_profile,
+            )
 
         file_policy_number = clean_input_policy
         file_account_key_for_claims = ""
