@@ -8568,46 +8568,7 @@ def lossq_get_active_pdf_db():
 def lossq_get_active_pdf_user():
     return LOSSQ_ACTIVE_PDF_USER_CONTEXT
 
-def lossq_pdf_current_user_email(current_user=None):
-    user = current_user or lossq_get_active_pdf_user() or {}
-    email = lossq_pdf_clean_display(lossq_pdf_user_value(user, "email"))
-    return email or "-"
 
-def lossq_pdf_current_user_phone(current_user=None):
-    user = current_user or lossq_get_active_pdf_user() or {}
-    phone = (
-        lossq_pdf_clean_display(lossq_pdf_user_value(user, "phone"))
-        or lossq_pdf_clean_display(lossq_pdf_user_value(user, "phone_number"))
-        or lossq_pdf_clean_display(lossq_pdf_user_value(user, "mobile"))
-    )
-    return phone or "-"
-
-def lossq_pdf_best_agency_info(db=None, current_user=None):
-    db = db or lossq_get_active_pdf_db()
-    current_user = current_user or lossq_get_active_pdf_user() or {}
-    try:
-        info = lossq_pdf_current_user_agency_info(db, current_user) or {}
-    except Exception:
-        info = {}
-
-    agency_name = (
-        lossq_pdf_clean_display(info.get("agency_name"))
-        or lossq_pdf_clean_display(info.get("organization_name"))
-        or lossq_pdf_clean_display(info.get("name"))
-        or lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "agency_name"))
-        or lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "organization_name"))
-        or "-"
-    )
-
-    return {
-        "agency_name": agency_name,
-        "address": lossq_pdf_clean_display(info.get("address")) or "",
-        "city": lossq_pdf_clean_display(info.get("city")) or "",
-        "state": lossq_pdf_clean_display(info.get("state")) or "",
-        "zip": lossq_pdf_clean_display(info.get("zip")) or lossq_pdf_clean_display(info.get("postal_code")) or "",
-        "phone": lossq_pdf_clean_display(info.get("phone")) or lossq_pdf_current_user_phone(current_user),
-        "email": lossq_pdf_clean_display(info.get("email")) or lossq_pdf_current_user_email(current_user),
-    }
 
 def lossq_add_carrier_cover_letter_page(story, styles, ctx, profile=None, policy_number=None, db=None, current_user=None):
     from datetime import datetime
@@ -9156,6 +9117,156 @@ def lossq_report_normalize_ctx(ctx):
 
 
 
+
+
+# LOSSQ_PDF_AGENCY_PROFILE_FIELD_MAPPING_V1
+def lossq_pdf_get_any(obj, *keys):
+    if not obj:
+        return ""
+
+    for key in keys:
+        value = ""
+
+        try:
+            if isinstance(obj, dict):
+                value = obj.get(key)
+            else:
+                value = getattr(obj, key, "")
+        except Exception:
+            value = ""
+
+        value = lossq_pdf_clean_display(value)
+
+        if value:
+            return value
+
+    return ""
+
+def lossq_pdf_actual_user_name(current_user=None, agency=None):
+    current_user = current_user or lossq_get_active_pdf_user() or {}
+    agency = agency or {}
+
+    agency_contact = lossq_pdf_get_any(
+        agency,
+        "contact_name",
+        "agency_contact_name",
+        "primary_contact",
+        "producer_name",
+        "account_user_name",
+        "prepared_by",
+    )
+
+    if agency_contact:
+        return agency_contact
+
+    first = lossq_pdf_get_any(current_user, "first_name", "firstName", "given_name")
+    last = lossq_pdf_get_any(current_user, "last_name", "lastName", "family_name")
+
+    full = f"{first} {last}".strip()
+    if full:
+        return full
+
+    name = lossq_pdf_get_any(current_user, "name", "full_name", "display_name", "username")
+    if name and "@" not in name:
+        return name
+
+    return "Account User"
+
+def lossq_pdf_best_agency_info(db=None, current_user=None):
+    db = db or lossq_get_active_pdf_db()
+    current_user = current_user or lossq_get_active_pdf_user() or {}
+
+    info = {}
+    organization = None
+
+    org_id = (
+        lossq_pdf_get_any(current_user, "organization_id", "org_id")
+        or lossq_pdf_get_any(current_user, "organizationId", "orgId")
+    )
+
+    if db and org_id:
+        try:
+            organization = db.query(Organization).filter(Organization.id == int(org_id)).first()
+        except Exception:
+            organization = None
+
+    # Start with the existing helper if it works.
+    try:
+        existing = lossq_pdf_current_user_agency_info(db, current_user) or {}
+        if isinstance(existing, dict):
+            info.update(existing)
+    except Exception:
+        pass
+
+    agency_name = (
+        lossq_pdf_get_any(organization, "agency_name", "organization_name", "name", "company_name", "legal_name")
+        or lossq_pdf_get_any(info, "agency_name", "organization_name", "name", "company_name")
+        or lossq_pdf_get_any(current_user, "agency_name", "organization_name", "company_name")
+    )
+
+    contact_name = (
+        lossq_pdf_get_any(organization, "contact_name", "agency_contact_name", "primary_contact", "producer_name", "account_user_name")
+        or lossq_pdf_get_any(info, "contact_name", "agency_contact_name", "primary_contact", "producer_name", "account_user_name")
+        or lossq_pdf_actual_user_name(current_user, info)
+    )
+
+    email = (
+        lossq_pdf_get_any(organization, "agency_email", "contact_email", "email", "support_email")
+        or lossq_pdf_get_any(info, "agency_email", "contact_email", "email", "support_email")
+        or lossq_pdf_get_any(current_user, "email")
+    )
+
+    phone = (
+        lossq_pdf_get_any(organization, "agency_phone", "contact_phone", "phone", "phone_number", "mobile")
+        or lossq_pdf_get_any(info, "agency_phone", "contact_phone", "phone", "phone_number", "mobile")
+        or lossq_pdf_get_any(current_user, "phone", "phone_number", "mobile")
+    )
+
+    website = (
+        lossq_pdf_get_any(organization, "agency_website", "website", "url")
+        or lossq_pdf_get_any(info, "agency_website", "website", "url")
+    )
+
+    address = (
+        lossq_pdf_get_any(organization, "agency_address", "address", "street", "street_address", "address_line1")
+        or lossq_pdf_get_any(info, "agency_address", "address", "street", "street_address", "address_line1")
+    )
+
+    city = lossq_pdf_get_any(organization, "city", "agency_city") or lossq_pdf_get_any(info, "city", "agency_city")
+    state = lossq_pdf_get_any(organization, "state", "agency_state") or lossq_pdf_get_any(info, "state", "agency_state")
+    zip_code = (
+        lossq_pdf_get_any(organization, "zip", "zipcode", "postal_code", "agency_zip")
+        or lossq_pdf_get_any(info, "zip", "zipcode", "postal_code", "agency_zip")
+    )
+
+    license_number = (
+        lossq_pdf_get_any(organization, "license_number", "agency_license_number", "license", "producer_license")
+        or lossq_pdf_get_any(info, "license_number", "agency_license_number", "license", "producer_license")
+    )
+
+    return {
+        "agency_name": agency_name or "-",
+        "contact_name": contact_name or "Account User",
+        "email": email or "-",
+        "phone": phone or "-",
+        "website": website or "-",
+        "address": address or "-",
+        "city": city or "",
+        "state": state or "",
+        "zip": zip_code or "",
+        "license_number": license_number or "-",
+    }
+
+def lossq_pdf_current_user_email(current_user=None):
+    current_user = current_user or lossq_get_active_pdf_user() or {}
+    agency = lossq_pdf_best_agency_info(current_user=current_user)
+    return lossq_pdf_get_any(agency, "email") or lossq_pdf_get_any(current_user, "email") or "-"
+
+def lossq_pdf_current_user_phone(current_user=None):
+    current_user = current_user or lossq_get_active_pdf_user() or {}
+    agency = lossq_pdf_best_agency_info(current_user=current_user)
+    return lossq_pdf_get_any(agency, "phone") or lossq_pdf_get_any(current_user, "phone", "phone_number", "mobile") or "-"
+
 # LOSSQ_GENERAL_PDF_COVER_LETTER_PAGE_V1
 def lossq_add_pdf_cover_letter_page(story, styles, ctx, report_title="LossQ Report", profile=None, policy_number=None, db=None, current_user=None):
     from datetime import datetime
@@ -9171,14 +9282,16 @@ def lossq_add_pdf_cover_letter_page(story, styles, ctx, report_title="LossQ Repo
     except Exception:
         agency = {}
 
+    agency = lossq_pdf_best_agency_info(db, current_user)
     prepared_by = (
-        lossq_pdf_current_user_report_created_by(current_user)
+        agency.get("contact_name")
+        or lossq_pdf_actual_user_name(current_user, agency)
         or str(ctx.get("created_by") or "").strip()
         or str(ctx.get("report_created_by") or "").strip()
         or "Account User"
     )
 
-    prepared_email = lossq_pdf_current_user_email(current_user)
+    prepared_email = agency.get("email") or lossq_pdf_current_user_email(current_user)
 
     insured = (
         profile.get("insured")
@@ -9242,11 +9355,21 @@ def lossq_add_pdf_cover_letter_page(story, styles, ctx, report_title="LossQ Repo
     story.append(Spacer(1, 0.22 * inch))
     story.append(Paragraph("Agency / Account Contact Information", heading))
 
+    address_line = " ".join([x for x in [
+        agency.get("address") or "",
+        agency.get("city") or "",
+        agency.get("state") or "",
+        agency.get("zip") or "",
+    ] if x]).strip() or "-"
+
     rows = [
         ["Agency", agency_name],
-        ["Prepared By", prepared_by],
+        ["Agency Contact", prepared_by],
         ["Email", prepared_email],
         ["Phone", agency.get("phone") or "-"],
+        ["Website", agency.get("website") or "-"],
+        ["Address", address_line],
+        ["License Number", agency.get("license_number") or "-"],
         ["Insured", str(insured)],
         ["Writing Carrier", str(carrier)],
         ["Account / Policy", str(policy_number or account_number or "-")],
@@ -9277,8 +9400,8 @@ def lossq_add_pdf_cover_letter_page(story, styles, ctx, report_title="LossQ Repo
 
     story.append(Spacer(1, 0.28 * inch))
     story.append(Paragraph("Respectfully submitted,", normal))
-    story.append(Paragraph(prepared_by, normal))
-    story.append(Paragraph(prepared_email, normal))
+    story.append(Paragraph(prepared_by or "Account User", normal))
+    story.append(Paragraph(prepared_email or "-", normal))
 
     story.append(PageBreak())
 
