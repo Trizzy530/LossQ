@@ -7015,7 +7015,7 @@ def lossq_pdf_clean_display(value):
     return raw
 
 
-def lossq_pdf_current_user_agency_name(locals().get('db'), locals().get('current_user')):
+def lossq_pdf_current_user_agency_name(db, current_user):
     org_id = (
         lossq_pdf_user_value(current_user, "organization_id")
         or lossq_pdf_user_value(current_user, "org_id")
@@ -7046,7 +7046,7 @@ def lossq_pdf_current_user_agency_name(locals().get('db'), locals().get('current
     return agency_name or organization_name or user_agency_name or user_org_name or ""
 
 
-def lossq_pdf_current_user_report_created_by(locals().get('current_user')):
+def lossq_pdf_current_user_report_created_by(current_user):
     first_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "first_name"))
     last_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "last_name"))
     full_name = f"{first_name} {last_name}".strip()
@@ -7065,7 +7065,7 @@ def lossq_pdf_current_user_report_created_by(locals().get('current_user')):
     return "Account User"
 
 
-def lossq_pdf_current_user_agency_info(locals().get('db'), locals().get('current_user')):
+def lossq_pdf_current_user_agency_info(db, current_user):
     agency_name = lossq_pdf_current_user_agency_name(locals().get('db'), locals().get('current_user'))
     org_id = (
         lossq_pdf_user_value(current_user, "organization_id")
