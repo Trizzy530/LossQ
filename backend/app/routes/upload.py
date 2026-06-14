@@ -11,7 +11,7 @@ from app.database import SessionLocal
 from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
-from app.role_utils import re
+import re
 import csvquire_permission
 import re
 from app.services.audit import record_audit_event
