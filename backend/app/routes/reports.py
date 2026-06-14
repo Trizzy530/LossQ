@@ -1,3 +1,4 @@
+# LOSSQ_FORCE_SAFE_REPORT_PDF_DB_CONTEXT_V3
 # LOSSQ_REPORT_PDF_BUILDER_CONTEXT_FIX_V2
 # LOSSQ_REPORT_PACKET_DB_DEPENDENCY_FIX_V1
 from fastapi import APIRouter, Depends, Query, Body
@@ -7014,7 +7015,7 @@ def lossq_pdf_clean_display(value):
     return raw
 
 
-def lossq_pdf_current_user_agency_name(db, current_user):
+def lossq_pdf_current_user_agency_name(locals().get('db'), locals().get('current_user')):
     org_id = (
         lossq_pdf_user_value(current_user, "organization_id")
         or lossq_pdf_user_value(current_user, "org_id")
@@ -7045,7 +7046,7 @@ def lossq_pdf_current_user_agency_name(db, current_user):
     return agency_name or organization_name or user_agency_name or user_org_name or ""
 
 
-def lossq_pdf_current_user_report_created_by(current_user):
+def lossq_pdf_current_user_report_created_by(locals().get('current_user')):
     first_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "first_name"))
     last_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "last_name"))
     full_name = f"{first_name} {last_name}".strip()
@@ -7064,8 +7065,8 @@ def lossq_pdf_current_user_report_created_by(current_user):
     return "Account User"
 
 
-def lossq_pdf_current_user_agency_info(db, current_user):
-    agency_name = lossq_pdf_current_user_agency_name(db, current_user)
+def lossq_pdf_current_user_agency_info(locals().get('db'), locals().get('current_user')):
+    agency_name = lossq_pdf_current_user_agency_name(locals().get('db'), locals().get('current_user'))
     org_id = (
         lossq_pdf_user_value(current_user, "organization_id")
         or lossq_pdf_user_value(current_user, "org_id")
@@ -7183,7 +7184,7 @@ def get_creator(current_user: dict | None):
     if creator and "@" not in creator:
         return creator
 
-    return lossq_pdf_current_user_report_created_by(current_user) if "current_user" in locals() else "Account User"
+    return lossq_pdf_current_user_report_created_by(locals().get('current_user')) if "current_user" in locals() else "Account User"
 
 def get_logo_path():
     candidates = [
@@ -7669,9 +7670,9 @@ def make_doc(title: str):
     # LOSSQ_ATTACH_AGENCY_INFO_TO_PDF_DOC_V1
     try:
         _lossq_ctx = locals().get("ctx", {})
-        doc._agency_info = lossq_pdf_current_user_agency_info(db, current_user)
+        doc._agency_info = lossq_pdf_current_user_agency_info(locals().get('db'), locals().get('current_user'))
     except Exception:
-        doc._agency_info = lossq_pdf_current_user_agency_info(db, current_user)
+        doc._agency_info = lossq_pdf_current_user_agency_info(locals().get('db'), locals().get('current_user'))
     styles = getSampleStyleSheet()
     styles.add(
         ParagraphStyle(
@@ -8384,13 +8385,13 @@ def profile_rows(profile, policy_number, creator):
         ["Insured", clean(profile.get("business_name")) or "Selected Account"],
         ["Writing Carrier", clean(profile.get("writing_carrier")) or clean(profile.get("carrier_name")) or "-"],
         ["Carrier", clean(profile.get("carrier_name")) or "-"],
-        ["Producing Agency", lossq_pdf_current_user_agency_name(db, current_user)],
+        ["Producing Agency", lossq_pdf_current_user_agency_name(locals().get('db'), locals().get('current_user'))],
         ["Account / Policy", clean(policy_number) or clean(profile.get("policy_number")) or "-"],
         ["Account Number", clean(profile.get("account_number")) or clean(profile.get("customer_number")) or "-"],
         ["Effective Date", clean(profile.get("effective_date")) or "-"],
         ["Expiration Date", clean(profile.get("expiration_date")) or "-"],
         ["Evaluation Date", clean(profile.get("evaluation_date")) or datetime.utcnow().date().isoformat()],
-        ["Report Created By", lossq_pdf_current_user_report_created_by(current_user)],
+        ["Report Created By", lossq_pdf_current_user_report_created_by(locals().get('current_user'))],
     ]
 
 
@@ -8648,7 +8649,7 @@ def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=Non
         ["Dashboard Field", "Value"],
         ["Insured / Account", lossq_report_display(profile.get("business_name") or profile.get("insured") or profile.get("account_name"))],
         ["Writing Carrier", lossq_report_display(profile.get("writing_carrier") or profile.get("carrier_name"))],
-        ["Producing Agency", lossq_pdf_current_user_agency_name(db, current_user)],
+        ["Producing Agency", lossq_pdf_current_user_agency_name(locals().get('db'), locals().get('current_user'))],
         ["Account Number", lossq_report_display(profile.get("account_number") or profile.get("customer_number"))],
         ["Selected Policy / Account Key", lossq_report_display(effective_policy)],
         ["Policy Period", f"{lossq_report_display(profile.get('effective_date'))} to {lossq_report_display(profile.get('expiration_date'))}"],
