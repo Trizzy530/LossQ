@@ -372,6 +372,88 @@ function getUniversalUploadPolicyDates(...sources: any[]) {
 
 
 
+
+// LOSSQ_EXACT_UPLOAD_DATE_FORCE_MERGE_V1
+function lossqDateMergeValue(...values: any[]) {
+  for (const value of values) {
+    const clean = normalizeDateInput(value);
+    if (clean) return clean;
+  }
+  return "";
+}
+
+function lossqForceDatesOntoPolicyRows(rows: any[], dateSource: any) {
+  const sourceEffective = lossqDateMergeValue(
+    dateSource?.effective_date,
+    dateSource?.policy_effective_date,
+    dateSource?.["Policy Effective Date"],
+    dateSource?.["Effective Date"]
+  );
+
+  const sourceExpiration = lossqDateMergeValue(
+    dateSource?.expiration_date,
+    dateSource?.policy_expiration_date,
+    dateSource?.["Policy Expiration Date"],
+    dateSource?.["Expiration Date"]
+  );
+
+  const sourceValuation = lossqDateMergeValue(
+    dateSource?.valuation_date,
+    dateSource?.evaluation_date,
+    dateSource?.loss_run_valuation_date,
+    dateSource?.["Valuation Date"],
+    dateSource?.["Evaluation Date"],
+    dateSource?.["As Of Date"],
+    dateSource?.["Report Date"]
+  );
+
+  return (Array.isArray(rows) ? rows : []).map((row: any) => {
+    const rowEffective = lossqDateMergeValue(
+      row?.effective_date,
+      row?.policy_effective_date,
+      row?.effectiveDate,
+      row?.effective,
+      row?.["Policy Effective Date"],
+      row?.["Effective Date"],
+      sourceEffective
+    );
+
+    const rowExpiration = lossqDateMergeValue(
+      row?.expiration_date,
+      row?.policy_expiration_date,
+      row?.expirationDate,
+      row?.expiration,
+      row?.expiry_date,
+      row?.["Policy Expiration Date"],
+      row?.["Expiration Date"],
+      sourceExpiration
+    );
+
+    const rowValuation = lossqDateMergeValue(
+      row?.valuation_date,
+      row?.evaluation_date,
+      row?.loss_run_valuation_date,
+      row?.["Valuation Date"],
+      row?.["Evaluation Date"],
+      row?.["As Of Date"],
+      row?.["Report Date"],
+      sourceValuation
+    );
+
+    return {
+      ...(row || {}),
+      effective_date: rowEffective,
+      policy_effective_date: rowEffective,
+      expiration_date: rowExpiration,
+      policy_expiration_date: rowExpiration,
+      valuation_date: rowValuation,
+      evaluation_date: rowValuation,
+      loss_run_valuation_date: rowValuation,
+    };
+  });
+}
+
+
 // LOSSQ_UNIVERSAL_EVALUATION_DATE_DISPLAY_V1
 function lossqAnyEvaluationDate(row: any) {
   return normalizeDateInput(
@@ -3505,7 +3587,39 @@ if (isUploading) return;
             ...(primaryProfile || {}),
             ...((allUploadProfiles || []).reduce((acc: any, item: any) => ({ ...acc, ...(item || {}) }), {})),
           },
-          policies: combinedPolicies,
+          policies: lossqForceDatesOntoPolicyRows(combinedPolicies, {
+            effective_date:
+              mergedUploadProfile?.effective_date ||
+              mergedUploadProfile?.policy_effective_date ||
+              universalUploadPolicyDates.effective_date ||
+              "",
+            policy_effective_date:
+              mergedUploadProfile?.policy_effective_date ||
+              mergedUploadProfile?.effective_date ||
+              universalUploadPolicyDates.effective_date ||
+              "",
+            expiration_date:
+              mergedUploadProfile?.expiration_date ||
+              mergedUploadProfile?.policy_expiration_date ||
+              universalUploadPolicyDates.expiration_date ||
+              "",
+            policy_expiration_date:
+              mergedUploadProfile?.policy_expiration_date ||
+              mergedUploadProfile?.expiration_date ||
+              universalUploadPolicyDates.expiration_date ||
+              "",
+            valuation_date:
+              mergedUploadProfile?.valuation_date ||
+              mergedUploadProfile?.evaluation_date ||
+              mergedUploadProfile?.loss_run_valuation_date ||
+              universalUploadPolicyDates.valuation_date ||
+              "",
+            evaluation_date:
+              mergedUploadProfile?.evaluation_date ||
+              mergedUploadProfile?.valuation_date ||
+              universalUploadPolicyDates.valuation_date ||
+              "",
+          }),
           claims: combinedClaims,
           saved_claim_rows: uploadResults.flatMap((item) =>
             firstNonEmptyArray(item?.saved_claim_rows, item?.claims, item?.parsed_claims)
@@ -3537,12 +3651,49 @@ if (isUploading) return;
         )
       );
 
+      const uploadDateSource = getUniversalUploadPolicyDates(
+        uploadResults,
+        primaryData,
+        primaryProfile,
+        allUploadProfiles,
+        combinedClaims
+      );
+
       const fallbackPolicies = claimPolicyNumbers.map((policyNumber) => ({
         policy_type: "Uploaded Loss Run",
         policy_number: policyNumber,
         carrier: primaryProfile?.carrier_name || primaryProfile?.writing_carrier || "",
-        effective_date: primaryProfile?.effective_date || "",
-        expiration_date: primaryProfile?.expiration_date || "",
+        effective_date:
+          primaryProfile?.effective_date ||
+          primaryProfile?.policy_effective_date ||
+          uploadDateSource.effective_date ||
+          "",
+        policy_effective_date:
+          primaryProfile?.policy_effective_date ||
+          primaryProfile?.effective_date ||
+          uploadDateSource.effective_date ||
+          "",
+        expiration_date:
+          primaryProfile?.expiration_date ||
+          primaryProfile?.policy_expiration_date ||
+          uploadDateSource.expiration_date ||
+          "",
+        policy_expiration_date:
+          primaryProfile?.policy_expiration_date ||
+          primaryProfile?.expiration_date ||
+          uploadDateSource.expiration_date ||
+          "",
+        valuation_date:
+          primaryProfile?.valuation_date ||
+          primaryProfile?.evaluation_date ||
+          primaryProfile?.loss_run_valuation_date ||
+          uploadDateSource.valuation_date ||
+          "",
+        evaluation_date:
+          primaryProfile?.evaluation_date ||
+          primaryProfile?.valuation_date ||
+          uploadDateSource.valuation_date ||
+          "",
       }));
 
       const uploadRawText =
@@ -3632,9 +3783,9 @@ if (isUploading) return;
 
 
       const safeUploadedProfilePolicy = chooseSafePolicyNumber(
-        uploadedProfile?.account_number,
-        uploadedProfile?.customer_number,
-        uploadedProfile?.policy_number,
+        mergedUploadProfile?.account_number,
+        mergedUploadProfile?.customer_number,
+        mergedUploadProfile?.policy_number,
         primaryData?.account_profile?.account_number,
         primaryData?.account_profile?.customer_number,
         primaryData?.selected_policy_number,
@@ -3650,15 +3801,15 @@ if (isUploading) return;
 
       // LOSSQ_UPLOAD_PROFILE_FINAL_NORMALIZATION
       const safeMainAccountKey = chooseSafePolicyNumber(
-        uploadedProfile?.account_number,
-        uploadedProfile?.customer_number,
+        mergedUploadProfile?.account_number,
+        mergedUploadProfile?.customer_number,
         primaryProfile?.account_number,
         primaryProfile?.customer_number,
         primaryData?.account_number,
         primaryData?.customer_number,
         primaryData?.account_profile?.account_number,
         primaryData?.account_profile?.customer_number,
-        uploadedProfile?.policy_number
+        mergedUploadProfile?.policy_number
       );
 
       if (safeMainAccountKey) {
@@ -3694,9 +3845,9 @@ setLazyLoadedTools,
         uploadedProfile,
         ...getCachedProfiles().filter((item: any) => {
           const uploadedKeys = [
-            uploadedProfile?.policy_number,
-            uploadedProfile?.account_number,
-            uploadedProfile?.customer_number,
+            mergedUploadProfile?.policy_number,
+            mergedUploadProfile?.account_number,
+            mergedUploadProfile?.customer_number,
           ]
             .map((key: any) => normalizePolicyNumber(key))
             .filter(Boolean);
@@ -3752,6 +3903,52 @@ setLazyLoadedTools,
     );
 
 
+
+    // LOSSQ_FORCE_COMBINED_POLICY_DATES_V1
+    const forcedUploadDates = getUniversalUploadPolicyDates(
+      uploadResults,
+      primaryData,
+      primaryProfile,
+      allUploadProfiles,
+      combinedPolicies,
+      combinedClaims
+    );
+
+    const forcedDateSource = {
+      effective_date:
+        mergedUploadProfile?.effective_date ||
+        mergedUploadProfile?.policy_effective_date ||
+        forcedUploadDates.effective_date ||
+        "",
+      policy_effective_date:
+        mergedUploadProfile?.policy_effective_date ||
+        mergedUploadProfile?.effective_date ||
+        forcedUploadDates.effective_date ||
+        "",
+      expiration_date:
+        mergedUploadProfile?.expiration_date ||
+        mergedUploadProfile?.policy_expiration_date ||
+        forcedUploadDates.expiration_date ||
+        "",
+      policy_expiration_date:
+        mergedUploadProfile?.policy_expiration_date ||
+        mergedUploadProfile?.expiration_date ||
+        forcedUploadDates.expiration_date ||
+        "",
+      valuation_date:
+        mergedUploadProfile?.valuation_date ||
+        mergedUploadProfile?.evaluation_date ||
+        mergedUploadProfile?.loss_run_valuation_date ||
+        forcedUploadDates.valuation_date ||
+        "",
+      evaluation_date:
+        mergedUploadProfile?.evaluation_date ||
+        mergedUploadProfile?.valuation_date ||
+        forcedUploadDates.valuation_date ||
+        "",
+    };
+
+    const dateForcedPolicies = lossqForceDatesOntoPolicyRows(combinedPolicies, forcedDateSource);
 
     const currentUploadSnapshot = {
       uploaded_at: new Date().toISOString(),
@@ -5843,15 +6040,19 @@ const trendNoteDisplay =
                               displayProfile?.carrier_name || displayProfile?.writing_carrier
                             );
 
-                            const rowEffectiveDate = cleanScheduleDate(
-                              policy?.effective_date || policy?.effectiveDate || policy?.effective,
-                              displayProfile?.effective_date
-                            );
+                            const rowEffectiveDate =
+                              lossqAnyEffectiveDate(policy) ||
+                              lossqAnyEffectiveDate(displayProfile) ||
+                              lossqAnyEffectiveDate(profile) ||
+                              lossqFirstPolicyEffectiveDate(policySchedule) ||
+                              "-";
 
-                            const rowExpirationDate = cleanScheduleDate(
-                              policy?.expiration_date || policy?.expirationDate || policy?.expiration,
-                              displayProfile?.expiration_date
-                            );
+                            const rowExpirationDate =
+                              lossqAnyExpirationDate(policy) ||
+                              lossqAnyExpirationDate(displayProfile) ||
+                              lossqAnyExpirationDate(profile) ||
+                              lossqFirstPolicyExpirationDate(policySchedule) ||
+                              "-";
 
                             return (
                               <tr
@@ -5927,16 +6128,17 @@ const trendNoteDisplay =
                         "Carrier Not Set";
 
                       const effectiveDate =
-                        pol?.effective_date ||
-                        pol?.policy_effective_date ||
-                        profile?.effective_date ||
+                        lossqAnyEffectiveDate(pol) ||
+                        lossqAnyEffectiveDate(displayProfile) ||
+                        lossqAnyEffectiveDate(profile) ||
+                        lossqFirstPolicyEffectiveDate(policySchedule) ||
                         "Not Set";
 
                       const expirationDate =
-                        pol?.expiration_date ||
-                        pol?.policy_expiration_date ||
-                        pol?.expiry_date ||
-                        profile?.expiration_date ||
+                        lossqAnyExpirationDate(pol) ||
+                        lossqAnyExpirationDate(displayProfile) ||
+                        lossqAnyExpirationDate(profile) ||
+                        lossqFirstPolicyExpirationDate(policySchedule) ||
                         "Not Set";
 
                       const policyClaimCount = claims.filter((claim: any) => {

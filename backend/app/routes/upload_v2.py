@@ -1207,6 +1207,12 @@ def _apply_raw_text_fallback_if_needed(parsed: Dict[str, Any], content: bytes | 
     except Exception as csv_parser_error:
         print("LossQ universal multi-section CSV parser skipped:", csv_parser_error)
 
+    # LOSSQ_FORCE_DATE_CARRY_FORWARD_BEFORE_PROFILE_SAVE_V1
+    try:
+        parsed = _lossq_apply_policy_date_carry_forward(parsed)
+    except Exception as date_carry_error:
+        print("LossQ date carry-forward skipped:", date_carry_error)
+
     profile = dict(parsed.get("profile") or {})
 
     full_content_text = _fallback_extract_full_text_from_content(content)
