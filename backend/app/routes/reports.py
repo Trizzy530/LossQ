@@ -7016,6 +7016,8 @@ def lossq_pdf_clean_display(value):
 
 
 def lossq_pdf_current_user_agency_name(db, current_user):
+    db = db or lossq_get_active_pdf_db()
+    current_user = current_user or lossq_get_active_pdf_user() or {}
     org_id = (
         lossq_pdf_user_value(current_user, "organization_id")
         or lossq_pdf_user_value(current_user, "org_id")
@@ -7047,6 +7049,7 @@ def lossq_pdf_current_user_agency_name(db, current_user):
 
 
 def lossq_pdf_current_user_report_created_by(current_user):
+    current_user = current_user or lossq_get_active_pdf_user() or {}
     first_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "first_name"))
     last_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "last_name"))
     full_name = f"{first_name} {last_name}".strip()
@@ -7066,6 +7069,8 @@ def lossq_pdf_current_user_report_created_by(current_user):
 
 
 def lossq_pdf_current_user_agency_info(db, current_user):
+    db = db or lossq_get_active_pdf_db()
+    current_user = current_user or lossq_get_active_pdf_user() or {}
     agency_name = lossq_pdf_current_user_agency_name(locals().get('db'), locals().get('current_user'))
     org_id = (
         lossq_pdf_user_value(current_user, "organization_id")
@@ -8392,6 +8397,7 @@ def profile_rows(profile, policy_number, creator):
         ["Expiration Date", clean(profile.get("expiration_date")) or "-"],
         ["Evaluation Date", clean(profile.get("evaluation_date")) or datetime.utcnow().date().isoformat()],
         ["Report Created By", lossq_pdf_current_user_report_created_by(locals().get('current_user'))],
+        ["Report Contact Email", lossq_pdf_current_user_email(locals().get('current_user'))],
     ]
 
 
@@ -8523,6 +8529,170 @@ def executive_first_page(story, styles, profile, policy_number, creator, summary
     )
 
 
+
+
+
+
+# LOSSQ_PDF_COVER_LETTER_USER_CONTACT_V1
+LOSSQ_ACTIVE_PDF_DB_CONTEXT = None
+LOSSQ_ACTIVE_PDF_USER_CONTEXT = None
+
+def lossq_set_active_pdf_context(db=None, current_user=None):
+    global LOSSQ_ACTIVE_PDF_DB_CONTEXT, LOSSQ_ACTIVE_PDF_USER_CONTEXT
+    LOSSQ_ACTIVE_PDF_DB_CONTEXT = db
+    LOSSQ_ACTIVE_PDF_USER_CONTEXT = current_user
+
+def lossq_get_active_pdf_db():
+    return LOSSQ_ACTIVE_PDF_DB_CONTEXT
+
+def lossq_get_active_pdf_user():
+    return LOSSQ_ACTIVE_PDF_USER_CONTEXT
+
+def lossq_pdf_current_user_email(current_user=None):
+    user = current_user or lossq_get_active_pdf_user() or {}
+    email = lossq_pdf_clean_display(lossq_pdf_user_value(user, "email"))
+    return email or "-"
+
+def lossq_pdf_current_user_phone(current_user=None):
+    user = current_user or lossq_get_active_pdf_user() or {}
+    phone = (
+        lossq_pdf_clean_display(lossq_pdf_user_value(user, "phone"))
+        or lossq_pdf_clean_display(lossq_pdf_user_value(user, "phone_number"))
+        or lossq_pdf_clean_display(lossq_pdf_user_value(user, "mobile"))
+    )
+    return phone or "-"
+
+def lossq_pdf_best_agency_info(db=None, current_user=None):
+    db = db or lossq_get_active_pdf_db()
+    current_user = current_user or lossq_get_active_pdf_user() or {}
+    try:
+        info = lossq_pdf_current_user_agency_info(db, current_user) or {}
+    except Exception:
+        info = {}
+
+    agency_name = (
+        lossq_pdf_clean_display(info.get("agency_name"))
+        or lossq_pdf_clean_display(info.get("organization_name"))
+        or lossq_pdf_clean_display(info.get("name"))
+        or lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "agency_name"))
+        or lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "organization_name"))
+        or "-"
+    )
+
+    return {
+        "agency_name": agency_name,
+        "address": lossq_pdf_clean_display(info.get("address")) or "",
+        "city": lossq_pdf_clean_display(info.get("city")) or "",
+        "state": lossq_pdf_clean_display(info.get("state")) or "",
+        "zip": lossq_pdf_clean_display(info.get("zip")) or lossq_pdf_clean_display(info.get("postal_code")) or "",
+        "phone": lossq_pdf_clean_display(info.get("phone")) or lossq_pdf_current_user_phone(current_user),
+        "email": lossq_pdf_clean_display(info.get("email")) or lossq_pdf_current_user_email(current_user),
+    }
+
+def lossq_add_carrier_cover_letter_page(story, styles, ctx, profile=None, policy_number=None, db=None, current_user=None):
+    from datetime import datetime
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+
+    profile = profile or {}
+    current_user = current_user or lossq_get_active_pdf_user() or {}
+    agency = lossq_pdf_best_agency_info(db, current_user)
+
+    prepared_by = lossq_pdf_current_user_report_created_by(current_user)
+    prepared_email = lossq_pdf_current_user_email(current_user)
+
+    insured = (
+        profile.get("insured")
+        or profile.get("business_name")
+        or profile.get("insured_name")
+        or profile.get("company_name")
+        or "Selected Account"
+    )
+
+    carrier = (
+        profile.get("writing_carrier")
+        or profile.get("carrier")
+        or profile.get("carrier_name")
+        or "-"
+    )
+
+    account_number = (
+        profile.get("account_number")
+        or profile.get("customer_number")
+        or profile.get("policy_number")
+        or policy_number
+        or "-"
+    )
+
+    normal = styles.get("Normal")
+    title = styles.get("Title")
+    heading = styles.get("Heading2")
+
+    story.append(Paragraph("LOSSQ", title))
+    story.append(Paragraph("AI Underwriting Platform", normal))
+    story.append(Spacer(1, 0.18 * inch))
+
+    story.append(Paragraph("Carrier Submission Cover Letter", title))
+    story.append(Spacer(1, 0.15 * inch))
+
+    story.append(Paragraph(f"Date: {datetime.utcnow().strftime('%m/%d/%Y')}", normal))
+    story.append(Spacer(1, 0.18 * inch))
+
+    story.append(Paragraph("Dear Underwriting Team,", normal))
+    story.append(Spacer(1, 0.12 * inch))
+
+    story.append(Paragraph(
+        f"Please accept this carrier submission package for {insured}. "
+        "This packet was prepared through LossQ and includes account profile details, "
+        "claim activity, underwriting intelligence, renewal risk indicators, and broker strategy notes "
+        "based on the available loss run and account data.",
+        normal,
+    ))
+
+    story.append(Spacer(1, 0.22 * inch))
+    story.append(Paragraph("Submitting Agency Information", heading))
+
+    agency_rows = [
+        ["Agency", agency.get("agency_name") or "-"],
+        ["Prepared By", prepared_by or "-"],
+        ["Email", prepared_email or "-"],
+        ["Phone", agency.get("phone") or "-"],
+        ["Insured", str(insured)],
+        ["Writing Carrier", str(carrier)],
+        ["Account / Policy", str(policy_number or account_number or "-")],
+        ["Account Number", str(account_number or "-")],
+    ]
+
+    table = Table(agency_rows, colWidths=[1.7 * inch, 5.6 * inch])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f1f5f9")),
+        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#0f172a")),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(table)
+
+    story.append(Spacer(1, 0.25 * inch))
+    story.append(Paragraph(
+        "Please contact the submitting agency representative listed above if additional loss control, "
+        "payroll, operations, reserve, litigation, or underwriting documentation is needed.",
+        normal,
+    ))
+
+    story.append(Spacer(1, 0.28 * inch))
+    story.append(Paragraph("Respectfully submitted,", normal))
+    story.append(Paragraph(prepared_by or "-", normal))
+    story.append(Paragraph(prepared_email or "-", normal))
+
+    story.append(PageBreak())
 
 
 # LOSSQ_DASHBOARD_PARITY_PACKET_PDFS_V1
@@ -8965,6 +9135,7 @@ def lossq_report_normalize_ctx(ctx):
 
 
 def build_executive_pdf_response(ctx, policy_number=None, db=None, current_user=None):
+    lossq_set_active_pdf_context(db=db, current_user=current_user)
     ctx = lossq_report_normalize_ctx(ctx)
     profile = ctx["profile"]
     metrics = ctx["metrics"]
@@ -9196,6 +9367,7 @@ def executive_report_pdf(
 
 
 def build_carrier_packet_pdf_response(ctx, policy_number=None, db=None, current_user=None):
+    lossq_set_active_pdf_context(db=db, current_user=current_user)
     ctx = lossq_report_normalize_ctx(ctx)
     profile = ctx["profile"]
     metrics = ctx["metrics"]
@@ -9211,6 +9383,7 @@ def build_carrier_packet_pdf_response(ctx, policy_number=None, db=None, current_
     risk_level = clean(summary.get("renewal_risk_level") or "Not Rated")
     renewal_score = summary.get("renewal_score")
 
+    lossq_add_carrier_cover_letter_page(story, styles, ctx, profile=profile, policy_number=policy_number, db=db, current_user=current_user)
     cover(story, styles, "Carrier Submission Packet", profile, policy_number, creator)
     story.append(Spacer(1, 0.18 * inch))
     story.append(risk_banner(renewal_score, risk_level, styles))
