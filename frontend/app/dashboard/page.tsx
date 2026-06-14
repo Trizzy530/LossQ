@@ -1652,6 +1652,141 @@ function clearLossQDashboardTenantCache() {
 }
 
 
+
+
+// LOSSQ_EXTRACTION_REVIEW_BANNER_V1
+function lossqExtractionQualityFromProfile(profile: any) {
+  const quality =
+    profile?.extraction_quality ||
+    profile?.validation?.extraction_quality ||
+    profile?.validation?.quality ||
+    null;
+
+  const score =
+    quality?.score ??
+    profile?.extraction_score ??
+    profile?.validation?.extraction_score ??
+    null;
+
+  const status =
+    quality?.status ||
+    profile?.extraction_status ||
+    profile?.validation?.extraction_status ||
+    "";
+
+  const warnings =
+    quality?.warnings ||
+    profile?.validation?.extraction_warnings ||
+    [];
+
+  const criticalIssues =
+    quality?.critical_issues ||
+    profile?.validation?.extraction_critical_issues ||
+    [];
+
+  const requiresReview =
+    Boolean(
+      quality?.requires_review ||
+      profile?.requires_review ||
+      profile?.validation?.requires_review ||
+      status === "review_required"
+    );
+
+  return {
+    quality,
+    score,
+    status,
+    warnings: Array.isArray(warnings) ? warnings : [],
+    criticalIssues: Array.isArray(criticalIssues) ? criticalIssues : [],
+    requiresReview,
+  };
+}
+
+function LossQExtractionReviewBanner({ profile }: { profile: any }) {
+  const { score, status, warnings, criticalIssues, requiresReview } =
+    lossqExtractionQualityFromProfile(profile);
+
+  if (
+    score === null &&
+    !status &&
+    warnings.length === 0 &&
+    criticalIssues.length === 0
+  ) {
+    return null;
+  }
+
+  const isCritical = requiresReview || status === "review_required";
+  const isWarning = !isCritical && (status === "needs_attention" || warnings.length > 0);
+
+  const title = isCritical
+    ? "Review Required Before Relying on This Extraction"
+    : isWarning
+      ? "Extraction Needs Attention"
+      : "Extraction Passed Quality Checks";
+
+  const scoreLabel = score === null || score === undefined ? "Not scored" : `${score}/100`;
+
+  const boxClass = isCritical
+    ? "border-red-400/40 bg-red-500/10 text-red-100"
+    : isWarning
+      ? "border-amber-400/40 bg-amber-500/10 text-amber-100"
+      : "border-emerald-400/40 bg-emerald-500/10 text-emerald-100";
+
+  return (
+    <div className={`mb-6 rounded-2xl border p-5 shadow-xl ${boxClass}`}>
+      <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+        <div>
+          <p className="text-sm font-bold uppercase tracking-[0.2em] opacity-80">
+            LossQ Extraction QA
+          </p>
+          <h3 className="mt-1 text-xl font-black">{title}</h3>
+          <p className="mt-2 text-sm opacity-90">
+            Extraction score: <span className="font-bold">{scoreLabel}</span>
+          </p>
+        </div>
+
+        <div className="rounded-xl border border-white/10 bg-black/20 px-4 py-3 text-sm font-bold">
+          Status: {status ? String(status).replaceAll("_", " ").toUpperCase() : "CHECKED"}
+        </div>
+      </div>
+
+      {(criticalIssues.length > 0 || warnings.length > 0) && (
+        <div className="mt-4 grid gap-3 md:grid-cols-2">
+          {criticalIssues.length > 0 && (
+            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+              <p className="mb-2 text-sm font-bold">Critical Issues</p>
+              <ul className="list-disc space-y-1 pl-5 text-sm">
+                {criticalIssues.map((item: string, index: number) => (
+                  <li key={`critical-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+
+          {warnings.length > 0 && (
+            <div className="rounded-xl border border-white/10 bg-black/20 p-4">
+              <p className="mb-2 text-sm font-bold">Warnings</p>
+              <ul className="list-disc space-y-1 pl-5 text-sm">
+                {warnings.map((item: string, index: number) => (
+                  <li key={`warning-${index}`}>{item}</li>
+                ))}
+              </ul>
+            </div>
+          )}
+        </div>
+      )}
+
+      {isCritical && (
+        <p className="mt-4 text-sm font-semibold opacity-90">
+          Do not submit this account to a carrier until policy dates, policy numbers,
+          claim numbers, and claim totals are reviewed.
+        </p>
+      )}
+    </div>
+  );
+}
+
+
 export default function DashboardPage() {
 
   useEffect(() => {
@@ -5668,7 +5803,9 @@ const trendNoteDisplay =
   if (dashboardError) {
     return (
       <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
-        <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,#1d4ed855,transparent_35%),radial-gradient(circle_at_bottom_right,#0ea5e955,transparent_30%)]" />
+        {/* LOSSQ_EXTRACTION_REVIEW_BANNER_RENDER_V1 */}
+        <LossQExtractionReviewBanner profile={Array.isArray(profiles) && profiles.length > 0 ? profiles[0] : null} />
+<div className="absolute inset-0 bg-[radial-gradient(circle_at_top,#1d4ed855,transparent_35%),radial-gradient(circle_at_bottom_right,#0ea5e955,transparent_30%)]" />
         <div className="relative bg-white/10 backdrop-blur-xl border border-red-400/40 rounded-3xl p-10 max-w-lg w-full text-center shadow-2xl">
           <h1 className="text-3xl font-bold mb-4 text-red-300">Dashboard Error</h1>
           <p className="text-slate-300 mb-6">{dashboardError}</p>
