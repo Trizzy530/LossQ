@@ -194,6 +194,15 @@ def ensure_security_columns(db: Session):
     db.commit()
 
 
+
+
+# LOSSQ_REGISTER_ABORTED_TRANSACTION_REPAIR_V1
+def lossq_safe_db_rollback(db):
+    try:
+        db.rollback()
+    except Exception:
+        pass
+
 def create_token(data: dict, minutes: int):
     to_encode = data.copy()
     expire = datetime.utcnow() + timedelta(minutes=minutes)
@@ -405,6 +414,10 @@ def register_user(data: RegisterRequest, request: Request, db: Session = Depends
     organization = db.query(Organization).filter(Organization.name == organization_name).first()
 
     if not organization:
+    # LOSSQ_REGISTER_CLEAN_DB_SESSION_BEFORE_ORG_INSERT_V1
+    lossq_safe_db_rollback(db)
+
+
         organization = Organization(name=organization_name, user_limit=5)
         db.add(organization)
 
