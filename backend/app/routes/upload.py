@@ -16,6 +16,7 @@ import re
 from app.services.audit import record_audit_event
 from app.services.loss_run_pipeline import parse_loss_run_file
 from app.services.universal_profile import extract_universal_profile_from_text
+import traceback
 
 try:
     from app.services.excel_parser_service import parse_claims_from_excel
@@ -545,8 +546,8 @@ def ensure_claim_timeline_columns(db: Session):
 
         db.commit()
     except Exception as e:
-        # LOSSQ_UPLOAD_ERROR_REDACTED_V1
-        print("LOSSQ_UPLOAD_ERROR_REDACTED")
+        # LOSSQ_UPLOAD_ERROR_TRACE_V1
+        print("LOSSQ_UPLOAD_ERROR_TRACE:", traceback.format_exc())
         db.rollback()
         print(f"Claim timeline column check failed: {e}")
 
@@ -613,7 +614,7 @@ def ensure_account_profile_columns(db: Session):
 
         db.commit()
     except Exception as e:
-        print("LOSSQ_UPLOAD_ERROR_REDACTED")
+        print("LOSSQ_UPLOAD_ERROR_TRACE:", traceback.format_exc())
         db.rollback()
         print(f"Account profile column check failed: {e}")
 
@@ -1156,7 +1157,7 @@ async def upload_loss_run(
     except HTTPException:
         raise
     except Exception as e:
-        print("LOSSQ_UPLOAD_ERROR_REDACTED")
+        print("LOSSQ_UPLOAD_ERROR_TRACE:", traceback.format_exc())
         raise HTTPException(
             status_code=500,
             detail={
@@ -1186,7 +1187,7 @@ async def upload_multiple_loss_runs(
     except HTTPException:
         raise
     except Exception as e:
-        print("LOSSQ_UPLOAD_ERROR_REDACTED")
+        print("LOSSQ_UPLOAD_ERROR_TRACE:", traceback.format_exc())
         raise HTTPException(
             status_code=500,
             detail={
@@ -1481,7 +1482,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             db.refresh(profile)
             account_profile_id = getattr(profile, "id", None)
         except Exception:
-            print("LOSSQ_UPLOAD_ERROR_REDACTED")
+            print("LOSSQ_UPLOAD_ERROR_TRACE:", traceback.format_exc())
             account_profile_id = getattr(profile, "id", None)
 
     profile_response = dict(profile_data or {})
