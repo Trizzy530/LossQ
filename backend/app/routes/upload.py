@@ -1608,12 +1608,12 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         parsed_claims, parsed_profile = parse_file(file_path, safe_upload_filename or safe_filename)
 
-            # LOSSQ_APPLY_LIVE_SECTION_BASED_CSV_REPAIR_V1
-            parsed_claims, parsed_profile = lossq_live_repair_section_csv_upload(
-                file_path,
-                parsed_claims,
-                parsed_profile,
-            )
+        # LOSSQ_APPLY_LIVE_SECTION_BASED_CSV_REPAIR_V1
+        parsed_claims, parsed_profile = lossq_live_repair_section_csv_upload(
+            file_path,
+            parsed_claims,
+            parsed_profile,
+        )
 
         file_policy_number = clean_input_policy
         file_account_key_for_claims = ""
