@@ -1,3 +1,4 @@
+# LOSSQ_FIX_PDF_COVER_OVERLAY_CREATOR_V1
 # LOSSQ_FORCE_SAFE_REPORT_PDF_DB_CONTEXT_V3
 # LOSSQ_REPORT_PDF_BUILDER_CONTEXT_FIX_V2
 # LOSSQ_REPORT_PACKET_DB_DEPENDENCY_FIX_V1
@@ -6995,6 +6996,20 @@ def lossq_pdf_user_value(user, key, default=""):
 
 
 def lossq_pdf_clean_display(value):
+    value = "" if value is None else str(value).strip()
+    blocked_values = {
+        "lossq demo agency",
+        "demo agency",
+        "lossq demo",
+        "demo",
+        "agency not set",
+        "not set",
+        "none",
+        "null",
+    }
+    if value.lower().strip() in blocked_values:
+        return ""
+
     raw = str(value or "").strip()
     if not raw:
         return ""
@@ -7789,6 +7804,11 @@ def logo_flowable(width=6.85 * inch):
 
 
 def draw_header_footer(canvas, doc, report_title: str, prepared_by: str):
+    # LOSSQ_DISABLE_FLOATING_AGENCY_OVERLAY_V1
+    try:
+        doc._agency_info = {}
+    except Exception:
+        pass
     canvas.saveState()
 
     # LOSSQ_DRAW_FULL_AGENCY_INFO_ON_PDF_V1
@@ -8396,7 +8416,7 @@ def profile_rows(profile, policy_number, creator):
         ["Effective Date", clean(profile.get("effective_date")) or "-"],
         ["Expiration Date", clean(profile.get("expiration_date")) or "-"],
         ["Evaluation Date", clean(profile.get("evaluation_date")) or datetime.utcnow().date().isoformat()],
-        ["Report Created By", lossq_pdf_current_user_report_created_by(locals().get('current_user'))],
+        ["Report Created By", creator],
         ["Report Contact Email", lossq_pdf_current_user_email(locals().get('current_user'))],
     ]
 
@@ -9134,6 +9154,135 @@ def lossq_report_normalize_ctx(ctx):
     return ctx
 
 
+
+
+# LOSSQ_GENERAL_PDF_COVER_LETTER_PAGE_V1
+def lossq_add_pdf_cover_letter_page(story, styles, ctx, report_title="LossQ Report", profile=None, policy_number=None, db=None, current_user=None):
+    from datetime import datetime
+    from reportlab.platypus import Paragraph, Spacer, Table, TableStyle, PageBreak
+    from reportlab.lib import colors
+    from reportlab.lib.units import inch
+
+    profile = profile or {}
+    current_user = current_user or lossq_get_active_pdf_user() or {}
+
+    try:
+        agency = lossq_pdf_best_agency_info(db, current_user)
+    except Exception:
+        agency = {}
+
+    prepared_by = (
+        lossq_pdf_current_user_report_created_by(current_user)
+        or str(ctx.get("created_by") or "").strip()
+        or str(ctx.get("report_created_by") or "").strip()
+        or "Account User"
+    )
+
+    prepared_email = lossq_pdf_current_user_email(current_user)
+
+    insured = (
+        profile.get("insured")
+        or profile.get("business_name")
+        or profile.get("insured_name")
+        or profile.get("company_name")
+        or ctx.get("insured")
+        or ctx.get("business_name")
+        or "Selected Account"
+    )
+
+    carrier = (
+        profile.get("writing_carrier")
+        or profile.get("carrier")
+        or profile.get("carrier_name")
+        or ctx.get("writing_carrier")
+        or ctx.get("carrier")
+        or "-"
+    )
+
+    account_number = (
+        profile.get("account_number")
+        or profile.get("customer_number")
+        or profile.get("policy_number")
+        or ctx.get("account_number")
+        or ctx.get("customer_number")
+        or policy_number
+        or "-"
+    )
+
+    agency_name = (
+        agency.get("agency_name")
+        or ctx.get("agency_name")
+        or ctx.get("producing_agency")
+        or "-"
+    )
+
+    normal = styles.get("Normal")
+    title = styles.get("Title")
+    heading = styles.get("Heading2")
+
+    story.append(Paragraph("LOSSQ", title))
+    story.append(Paragraph("AI Underwriting Platform", normal))
+    story.append(Spacer(1, 0.20 * inch))
+
+    story.append(Paragraph(report_title + " Cover Letter", title))
+    story.append(Spacer(1, 0.15 * inch))
+    story.append(Paragraph(f"Date: {datetime.utcnow().strftime('%m/%d/%Y')}", normal))
+    story.append(Spacer(1, 0.18 * inch))
+
+    story.append(Paragraph("Dear Underwriting Team,", normal))
+    story.append(Spacer(1, 0.12 * inch))
+
+    story.append(Paragraph(
+        f"Please accept this {report_title.lower()} for {insured}. "
+        "This report was prepared through LossQ and includes account details, claim activity, "
+        "underwriting intelligence, renewal risk indicators, and broker strategy notes based on available account data.",
+        normal,
+    ))
+
+    story.append(Spacer(1, 0.22 * inch))
+    story.append(Paragraph("Agency / Account Contact Information", heading))
+
+    rows = [
+        ["Agency", agency_name],
+        ["Prepared By", prepared_by],
+        ["Email", prepared_email],
+        ["Phone", agency.get("phone") or "-"],
+        ["Insured", str(insured)],
+        ["Writing Carrier", str(carrier)],
+        ["Account / Policy", str(policy_number or account_number or "-")],
+        ["Account Number", str(account_number or "-")],
+    ]
+
+    table = Table(rows, colWidths=[1.7 * inch, 5.6 * inch])
+    table.setStyle(TableStyle([
+        ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#f1f5f9")),
+        ("TEXTCOLOR", (0, 0), (0, -1), colors.HexColor("#0f172a")),
+        ("FONTNAME", (0, 0), (0, -1), "Helvetica-Bold"),
+        ("FONTNAME", (1, 0), (1, -1), "Helvetica"),
+        ("FONTSIZE", (0, 0), (-1, -1), 9),
+        ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#cbd5e1")),
+        ("VALIGN", (0, 0), (-1, -1), "TOP"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 8),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+        ("TOPPADDING", (0, 0), (-1, -1), 6),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 6),
+    ]))
+    story.append(table)
+
+    story.append(Spacer(1, 0.25 * inch))
+    story.append(Paragraph(
+        "Please contact the listed account representative if additional loss-control, payroll, operations, reserve, litigation, or underwriting documentation is needed.",
+        normal,
+    ))
+
+    story.append(Spacer(1, 0.28 * inch))
+    story.append(Paragraph("Respectfully submitted,", normal))
+    story.append(Paragraph(prepared_by, normal))
+    story.append(Paragraph(prepared_email, normal))
+
+    story.append(PageBreak())
+
+
 def build_executive_pdf_response(ctx, policy_number=None, db=None, current_user=None):
     lossq_set_active_pdf_context(db=db, current_user=current_user)
     ctx = lossq_report_normalize_ctx(ctx)
@@ -9384,6 +9533,7 @@ def build_carrier_packet_pdf_response(ctx, policy_number=None, db=None, current_
     renewal_score = summary.get("renewal_score")
 
     lossq_add_carrier_cover_letter_page(story, styles, ctx, profile=profile, policy_number=policy_number, db=db, current_user=current_user)
+    lossq_add_pdf_cover_letter_page(story, styles, ctx, report_title="Carrier Submission Packet", profile=profile, policy_number=policy_number, db=db, current_user=current_user)
     cover(story, styles, "Carrier Submission Packet", profile, policy_number, creator)
     story.append(Spacer(1, 0.18 * inch))
     story.append(risk_banner(renewal_score, risk_level, styles))
