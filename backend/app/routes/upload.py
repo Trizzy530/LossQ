@@ -655,10 +655,13 @@ def parse_file(file_path: str, filename: str):
         return claims, profile
 
     if lower_name.endswith(".csv") or lower_name.endswith(".xlsx"):
+        # LOSSQ_SECTION_CSV_PRIORITY_V1
+        section_claims, section_profile = _lossq_live_extract_section_based_csv(file_path)
+        if section_claims or section_profile.get("account_number") or section_profile.get("business_name"):
+            return section_claims, section_profile
         if parse_claims_from_excel:
             claims = parse_claims_from_excel(file_path)
             return claims, {}
-
         return [], {}
 
     return [], {}
