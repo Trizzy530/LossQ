@@ -452,6 +452,8 @@ def lossq_save_register_intake_fields(db, organization_id, data):
 
 @router.post("/register")
 def register_user(data: RegisterRequest, request: Request, db: Session = Depends(get_db)):
+    # LOSSQ_PUBLIC_REGISTER_ADMIN_NOT_OWNER_V1
+    # Public customer registration creates an organization admin, not an owner.
     clean_email = data.email.strip().lower()
     organization_name = data.organization_name.strip()
 
@@ -473,7 +475,7 @@ def register_user(data: RegisterRequest, request: Request, db: Session = Depends
 
         db.commit()
         db.refresh(organization)
-        new_role = "owner"
+        new_role = "admin"
     else:
         existing_org_users = db.query(User).filter(User.organization_id == organization.id).count()
         if existing_org_users > 0:
@@ -481,7 +483,7 @@ def register_user(data: RegisterRequest, request: Request, db: Session = Depends
                 status_code=403,
                 detail="This organization already exists. Ask the owner or admin to invite you.",
             )
-        new_role = "owner"
+        new_role = "admin"
 
     new_user = User(
         email=clean_email,
