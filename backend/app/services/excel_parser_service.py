@@ -1,4 +1,5 @@
 import re
+import csv
 import pandas as pd
 
 
@@ -339,12 +340,52 @@ def parse_raw_sheet(raw_df):
     return claims
 
 
+
+
+# LOSSQ_RAGGED_SECTION_CSV_READER_V1
+def lossq_read_ragged_csv(file_path):
+    """
+    Reads section-based / ragged CSV files where different rows have different
+    column counts. This prevents pandas ParserError on loss-run worksheets with
+    account sections, policy schedule tables, exposure inputs, claim detail tables,
+    and summaries in one CSV.
+    """
+    rows = []
+
+    encodings = ["utf-8-sig", "utf-8", "latin-1"]
+
+    last_error = None
+    for encoding in encodings:
+        try:
+            with open(file_path, "r", newline="", encoding=encoding) as f:
+                reader = csv.reader(f)
+                rows = [list(row) for row in reader]
+            break
+        except Exception as exc:
+            last_error = exc
+            rows = []
+
+    if not rows and last_error:
+        raise last_error
+
+    max_cols = max((len(row) for row in rows), default=0)
+
+    normalized_rows = []
+    for row in rows:
+        clean_row = ["" if value is None else value for value in row]
+        if len(clean_row) < max_cols:
+            clean_row = clean_row + [""] * (max_cols - len(clean_row))
+        normalized_rows.append(clean_row)
+
+    return pd.DataFrame(normalized_rows, dtype=object)
+
+
 def parse_claims_from_excel(file_path):
     all_claims = []
     lower = str(file_path or "").lower()
 
     if lower.endswith(".csv"):
-        raw_df = pd.read_csv(file_path, header=None, dtype=object)
+        raw_df = lossq_read_ragged_csv(file_path)
         all_claims.extend(parse_raw_sheet(raw_df))
     else:
         sheets = pd.read_excel(file_path, sheet_name=None, header=None, dtype=object)
