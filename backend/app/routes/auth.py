@@ -414,49 +414,11 @@ def register_user(data: RegisterRequest, request: Request, db: Session = Depends
     organization = db.query(Organization).filter(Organization.name == organization_name).first()
 
     if not organization:
-    # LOSSQ_REGISTER_CLEAN_DB_SESSION_BEFORE_ORG_INSERT_V1
-    lossq_safe_db_rollback(db)
-
+        # LOSSQ_REGISTER_CLEAN_DB_SESSION_BEFORE_ORG_INSERT_V1
+        lossq_safe_db_rollback(db)
 
         organization = Organization(name=organization_name, user_limit=5)
         db.add(organization)
-
-    # LOSSQ_REGISTER_SAVE_BUSINESS_ROLE_INTAKE_SQL_V2
-    try:
-        business_role = str(getattr(data, "account_role", "") or getattr(data, "role", "") or "").strip()
-        company_type_value = str(getattr(data, "company_type", "") or "").strip()
-        monthly_volume_value = str(getattr(data, "monthly_volume", "") or "").strip()
-        primary_lines_value = getattr(data, "primary_lines", "") or ""
-        if isinstance(primary_lines_value, list):
-            primary_lines_value = ", ".join([str(x).strip() for x in primary_lines_value if str(x).strip()])
-        else:
-            primary_lines_value = str(primary_lines_value or "").strip()
-        ams_system_value = str(getattr(data, "ams_system", "") or "").strip()
-        market_state_value = str(getattr(data, "market_state", "") or "").strip()
-
-        db.execute(
-            text("""
-                UPDATE organizations
-                SET account_role = :account_role,
-                    company_type = :company_type,
-                    monthly_volume = :monthly_volume,
-                    primary_lines = :primary_lines,
-                    ams_system = :ams_system,
-                    market_state = :market_state
-                WHERE id = :organization_id
-            """),
-            {
-                "account_role": business_role,
-                "company_type": company_type_value,
-                "monthly_volume": monthly_volume_value,
-                "primary_lines": primary_lines_value,
-                "ams_system": ams_system_value,
-                "market_state": market_state_value,
-                "organization_id": organization.id,
-            },
-        )
-    except Exception:
-        pass
 
         db.commit()
         db.refresh(organization)
@@ -485,6 +447,11 @@ def register_user(data: RegisterRequest, request: Request, db: Session = Depends
     db.add(new_user)
     db.commit()
     db.refresh(new_user)
+
+
+    # LOSSQ_SAFE_REGISTER_INTAKE_SAVE_CALL_V3
+    lossq_save_register_intake_fields(db, organization.id, data)
+
 
     if new_role == "owner":
         organization.owner_user_id = new_user.id
