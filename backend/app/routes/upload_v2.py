@@ -41,7 +41,7 @@ PLACEHOLDER_VALUES = {
     "writing carrier",
     "writing carrier not set",
     "writing carrier not detected",
-    "agency not set",
+    "",
     "policy",
     "not set",
     "none",
@@ -1336,7 +1336,7 @@ def force_save_account_profile_v2(
         if agency_name:
             profile.agency_name = agency_name
         elif _is_placeholder(getattr(profile, "agency_name", "")):
-            profile.agency_name = "Agency Not Set"
+            profile.agency_name = ""
 
         profile.policy_number = policy_number
 
@@ -1420,8 +1420,7 @@ def _lossq_policy_key(value):
     """
     Normalizes policy numbers across OCR/PDF line wrapping.
     Example:
-    BOP-2025-9274 18 -> BOP2025927418
-    GL-2025-92741 8 -> GL2025927418
+
     """
     return re.sub(r"[^A-Z0-9]", "", str(value or "").upper())
 

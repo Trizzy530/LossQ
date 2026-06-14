@@ -53,7 +53,6 @@ class TrustedHostGuardMiddleware(BaseHTTPMiddleware):
 class SimpleRateLimitMiddleware(BaseHTTPMiddleware):
     # LOSSQ_RATE_LIMIT_HARDENING_V1
     # Route-specific in-memory rate limits.
-    # This protects login, registration, password reset, demo upload, real upload,
     # and platform admin routes without slowing down normal dashboard reads.
 
     def __init__(self, app, limit: int = 120, window_seconds: int = 60):
@@ -75,8 +74,6 @@ class SimpleRateLimitMiddleware(BaseHTTPMiddleware):
             # Real uploads and upload-v2.
             ("/upload", int(os.getenv("RATE_LIMIT_UPLOAD", "20")), 300),
 
-            # Public demo upload.
-            ("/demo/analyze", int(os.getenv("RATE_LIMIT_DEMO_UPLOAD", "10")), 300),
 
             # Platform admin.
             ("/platform-admin", int(os.getenv("RATE_LIMIT_PLATFORM_ADMIN", "60")), 60),

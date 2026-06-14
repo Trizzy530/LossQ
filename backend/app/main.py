@@ -15,7 +15,6 @@ from app.routes import (
     reports,
     admin,
     analytics,
-    demo,
     copilot,
     renewal,
     account_profile,
@@ -58,14 +57,10 @@ app.add_middleware(SecurityHeadersMiddleware)
 app.add_middleware(TrustedHostGuardMiddleware)
 app.add_middleware(SimpleRateLimitMiddleware)
 
-
-
-
 def lossq_origin_allowed(origin: str | None) -> bool:
     if not origin:
         return False
     return origin.rstrip("/") in ALLOWED_LOSSQ_ORIGINS
-
 
 def lossq_emergency_cors_headers(origin: str | None) -> dict:
     if not lossq_origin_allowed(origin):
@@ -114,7 +109,7 @@ app.include_router(upload_history.router)
 app.include_router(reports.router)
 app.include_router(admin.router)
 app.include_router(analytics.router)
-app.include_router(demo.router)
+
 app.include_router(copilot.router)
 app.include_router(renewal.router)
 app.include_router(account_profile.router)
@@ -126,11 +121,9 @@ app.include_router(audit_logs.router)
 app.include_router(audit_logs.compat_router)
 app.include_router(billing.router)
 
-
 @app.get("/version")
 def version():
     return {"version": "billing-stripe-v1"}
-
 
 @app.get("/")
 def root():

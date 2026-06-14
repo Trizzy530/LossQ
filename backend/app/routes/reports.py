@@ -6879,14 +6879,14 @@ def claim_attr(claim, *names, default=""):
 
 def agency_display_line_from_info(agency_info: dict | None):
     agency_info = pdf_agency_name_only(agency_info)
-    return agency_info.get("agency_name") or "Agency Not Set"
+    return agency_info.get("agency_name") or ""
 
 
 def force_agency_value(existing_value, agency_info: dict | None):
     clean = str(existing_value or "").strip()
 
     if clean and clean.lower() not in {
-        "agency not set",
+        "",
         "not set",
         "n/a",
         "none",
@@ -6909,20 +6909,20 @@ def pdf_agency_name_only(agency_info: dict | None):
     ).strip()
 
     return {
-        "agency_name": agency_name or "Agency Not Set",
+        "agency_name": agency_name or "",
     }
 
 
 def agency_display_line_from_info(agency_info: dict | None):
     agency_info = pdf_agency_name_only(agency_info)
-    return agency_info.get("agency_name") or "Agency Not Set"
+    return agency_info.get("agency_name") or ""
 
 
 def force_agency_value(existing_value, agency_info: dict | None):
     clean = str(existing_value or "").strip()
 
     if clean and clean.lower() not in {
-        "agency not set",
+        "",
         "not set",
         "n/a",
         "none",
@@ -6997,7 +6997,7 @@ def lossq_pdf_clean_display(value):
         return ""
 
     blocked = {
-        "agency not set",
+        "",
         "",
         "lossq user",
         "none",
@@ -7040,7 +7040,7 @@ def lossq_pdf_current_user_agency_name(db, current_user):
     user_agency_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "agency_name"))
     user_org_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "organization_name"))
 
-    return agency_name or organization_name or user_agency_name or user_org_name or "Agency Not Set"
+    return agency_name or organization_name or user_agency_name or user_org_name or ""
 
 
 def lossq_pdf_current_user_report_created_by(current_user):

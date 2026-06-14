@@ -14,7 +14,7 @@ class AccountProfile(Base):
     carrier_name = Column(String, default="Carrier Not Set")
     writing_carrier = Column(String, default="Carrier Not Set")
 
-    agency_name = Column(String, default="Agency Not Set")
+    agency_name = Column(String, default="")
     account_number = Column(String, index=True, default="Account Not Set")
     customer_number = Column(String, default="Customer Not Set")
     producer_number = Column(String, default="Producer Not Set")

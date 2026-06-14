@@ -94,7 +94,7 @@ def looks_like_carrier_name(value: str) -> bool:
         "mutual",
         "casualty",
         "western",
-        "harbor",
+        
         "builders",
         "atlantic",
         "continental",

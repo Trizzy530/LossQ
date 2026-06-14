@@ -5,3 +5,11 @@
 *.pyc
 __pycache__/
 settings_inspection.txt
+# Local backups and generated files
+_patch_*.py
+_repair_*.py
+_clean_*.py
+_remove_*.py
+*_patch_*.py
+.next/
+node_modules/

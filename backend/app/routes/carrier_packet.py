@@ -43,7 +43,7 @@ def lossq_carrier_pdf_clean_display(value):
         return ""
 
     blocked = {
-        "agency not set",
+        "",
         "",
         "lossq user",
         "none",
@@ -85,7 +85,7 @@ def lossq_carrier_pdf_current_user_agency_name(db, current_user):
     return (
         lossq_carrier_pdf_clean_display(lossq_carrier_pdf_user_value(current_user, "agency_name"))
         or lossq_carrier_pdf_clean_display(lossq_carrier_pdf_user_value(current_user, "organization_name"))
-        or "Agency Not Set"
+        or ""
     )
 
 
