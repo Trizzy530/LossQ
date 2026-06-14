@@ -1968,6 +1968,7 @@ def _lossq_universal_delete_stale_claims_for_upload(db, current_user, parsed):
 
 
 # LOSSQ_UNIVERSAL_POLICY_DATE_CARRY_FORWARD_V1
+# LOSSQ_UNIVERSAL_EVALUATION_DATE_CARRY_FORWARD_V1
 def _lossq_any_policy_effective_date(row):
     if not isinstance(row, dict):
         return ""
@@ -2098,6 +2099,13 @@ def _lossq_apply_policy_date_carry_forward(parsed):
             if row_expiration:
                 policy["expiration_date"] = row_expiration
                 policy["policy_expiration_date"] = row_expiration
+
+            row_valuation = _lossq_any_valuation_date(policy) or valuation
+
+            if row_valuation:
+                policy["valuation_date"] = row_valuation
+                policy["evaluation_date"] = row_valuation
+                policy["loss_run_valuation_date"] = row_valuation
 
     return parsed
 

@@ -371,6 +371,31 @@ function getUniversalUploadPolicyDates(...sources: any[]) {
 
 
 
+
+// LOSSQ_UNIVERSAL_EVALUATION_DATE_DISPLAY_V1
+function lossqAnyEvaluationDate(row: any) {
+  return normalizeDateInput(
+    row?.evaluation_date ||
+      row?.valuation_date ||
+      row?.loss_run_valuation_date ||
+      row?.valuationDate ||
+      row?.["Evaluation Date"] ||
+      row?.["Valuation Date"] ||
+      row?.["As Of Date"] ||
+      row?.["Report Date"] ||
+      row?.as_of_date ||
+      row?.report_date ||
+      ""
+  );
+}
+
+function lossqFirstPolicyEvaluationDate(rows: any[]) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => lossqAnyEvaluationDate(row))
+    .find(Boolean) || "";
+}
+
+
 // LOSSQ_UNIVERSAL_DATE_DISPLAY_REPAIR_V1
 function lossqAnyEffectiveDate(row: any) {
   return normalizeDateInput(
@@ -6074,7 +6099,7 @@ const trendNoteDisplay =
                   <Input label="Policy Number" value={profile?.policy_number || ""} onChange={(v) => setProfile({ ...profile, policy_number: v })} />
                   <Input label="Effective Date" value={profile?.effective_date || ""} onChange={(v) => setProfile({ ...profile, effective_date: v })} />
                   <Input label="Expiration Date" value={profile?.expiration_date || ""} onChange={(v) => setProfile({ ...profile, expiration_date: v })} />
-                  <Input label="Evaluation Date" value={getBestEvaluationDate(profile) || ""} onChange={(v) => setProfile({ ...profile, evaluation_date: v })} />
+                  <Input label="Evaluation Date" value={getBestEvaluationDate(profile) || lossqAnyEvaluationDate(displayProfile) || lossqFirstPolicyEvaluationDate(policySchedule) || ""} onChange={(v) => setProfile({ ...profile, evaluation_date: v })} />
                 </div>
               </section>
             </>
