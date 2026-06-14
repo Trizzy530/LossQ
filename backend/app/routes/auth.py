@@ -399,6 +399,57 @@ def public_registration_role(requested_role=None):
     return "user"
 
 
+
+
+# LOSSQ_SAFE_REGISTER_INTAKE_SAVE_HELPER_V4
+def lossq_save_register_intake_fields(db, organization_id, data):
+    """
+    Saves registration business-intake fields onto the organization.
+    This is business profile metadata only, not permission-role logic.
+    Never blocks account registration.
+    """
+    if not db or not organization_id or not data:
+        return
+
+    try:
+        primary_lines_value = getattr(data, "primary_lines", "") or ""
+
+        if isinstance(primary_lines_value, list):
+            primary_lines_value = ", ".join(
+                [str(x).strip() for x in primary_lines_value if str(x).strip()]
+            )
+        else:
+            primary_lines_value = str(primary_lines_value or "").strip()
+
+        db.execute(
+            text("""
+                UPDATE organizations
+                SET account_role = :account_role,
+                    company_type = :company_type,
+                    monthly_volume = :monthly_volume,
+                    primary_lines = :primary_lines,
+                    ams_system = :ams_system,
+                    market_state = :market_state
+                WHERE id = :organization_id
+            """),
+            {
+                "account_role": str(getattr(data, "account_role", "") or getattr(data, "role", "") or "").strip(),
+                "company_type": str(getattr(data, "company_type", "") or "").strip(),
+                "monthly_volume": str(getattr(data, "monthly_volume", "") or "").strip(),
+                "primary_lines": primary_lines_value,
+                "ams_system": str(getattr(data, "ams_system", "") or "").strip(),
+                "market_state": str(getattr(data, "market_state", "") or "").strip(),
+                "organization_id": organization_id,
+            },
+        )
+        db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+
+
 @router.post("/register")
 def register_user(data: RegisterRequest, request: Request, db: Session = Depends(get_db)):
     clean_email = data.email.strip().lower()
