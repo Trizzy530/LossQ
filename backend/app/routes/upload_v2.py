@@ -1965,6 +1965,144 @@ def _lossq_universal_delete_stale_claims_for_upload(db, current_user, parsed):
 
 
 
+
+
+# LOSSQ_UNIVERSAL_POLICY_DATE_CARRY_FORWARD_V1
+def _lossq_any_policy_effective_date(row):
+    if not isinstance(row, dict):
+        return ""
+
+    for key in (
+        "effective_date",
+        "policy_effective_date",
+        "policyEffectiveDate",
+        "Policy Effective Date",
+        "Effective Date",
+        "effective",
+        "eff_date",
+        "inception_date",
+        "policy_period_start",
+    ):
+        value = _lossq_strict_text(row.get(key))
+        if value:
+            return _lossq_normalize_csv_date(value) if "_lossq_normalize_csv_date" in globals() else value
+
+    return ""
+
+
+def _lossq_any_policy_expiration_date(row):
+    if not isinstance(row, dict):
+        return ""
+
+    for key in (
+        "expiration_date",
+        "policy_expiration_date",
+        "policyExpirationDate",
+        "Policy Expiration Date",
+        "Expiration Date",
+        "expiration",
+        "expiry_date",
+        "exp_date",
+        "policy_period_end",
+    ):
+        value = _lossq_strict_text(row.get(key))
+        if value:
+            return _lossq_normalize_csv_date(value) if "_lossq_normalize_csv_date" in globals() else value
+
+    return ""
+
+
+def _lossq_any_valuation_date(row):
+    if not isinstance(row, dict):
+        return ""
+
+    for key in (
+        "valuation_date",
+        "evaluation_date",
+        "loss_run_valuation_date",
+        "valuationDate",
+        "Evaluation Date",
+        "Valuation Date",
+        "As Of Date",
+        "Report Date",
+    ):
+        value = _lossq_strict_text(row.get(key))
+        if value:
+            return _lossq_normalize_csv_date(value) if "_lossq_normalize_csv_date" in globals() else value
+
+    return ""
+
+
+def _lossq_apply_policy_date_carry_forward(parsed):
+    if not isinstance(parsed, dict):
+        return parsed
+
+    profile = parsed.get("profile") if isinstance(parsed.get("profile"), dict) else {}
+    account_profile = parsed.get("account_profile") if isinstance(parsed.get("account_profile"), dict) else {}
+
+    effective = (
+        _lossq_any_policy_effective_date(profile)
+        or _lossq_any_policy_effective_date(account_profile)
+        or _lossq_strict_text(parsed.get("effective_date"))
+        or _lossq_strict_text(parsed.get("policy_effective_date"))
+    )
+
+    expiration = (
+        _lossq_any_policy_expiration_date(profile)
+        or _lossq_any_policy_expiration_date(account_profile)
+        or _lossq_strict_text(parsed.get("expiration_date"))
+        or _lossq_strict_text(parsed.get("policy_expiration_date"))
+    )
+
+    valuation = (
+        _lossq_any_valuation_date(profile)
+        or _lossq_any_valuation_date(account_profile)
+        or _lossq_strict_text(parsed.get("valuation_date"))
+        or _lossq_strict_text(parsed.get("evaluation_date"))
+    )
+
+    if effective:
+        profile["effective_date"] = effective
+        profile["policy_effective_date"] = effective
+        account_profile["effective_date"] = effective
+        account_profile["policy_effective_date"] = effective
+
+    if expiration:
+        profile["expiration_date"] = expiration
+        profile["policy_expiration_date"] = expiration
+        account_profile["expiration_date"] = expiration
+        account_profile["policy_expiration_date"] = expiration
+
+    if valuation:
+        profile["valuation_date"] = valuation
+        profile["evaluation_date"] = valuation
+        account_profile["valuation_date"] = valuation
+        account_profile["evaluation_date"] = valuation
+
+    parsed["profile"] = profile
+    parsed["account_profile"] = account_profile
+
+    policies = parsed.get("policies")
+    if isinstance(policies, list):
+        for policy in policies:
+            if not isinstance(policy, dict):
+                continue
+
+            row_effective = _lossq_any_policy_effective_date(policy) or effective
+            row_expiration = _lossq_any_policy_expiration_date(policy) or expiration
+
+            if row_effective:
+                policy["effective_date"] = row_effective
+                policy["policy_effective_date"] = row_effective
+
+            if row_expiration:
+                policy["expiration_date"] = row_expiration
+                policy["policy_expiration_date"] = row_expiration
+
+    return parsed
+
+
+
 # LOSSQ_STRICT_UNIVERSAL_POLICY_SCHEDULE_GATE_V1
 def _lossq_strict_clean_key(value):
     return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())

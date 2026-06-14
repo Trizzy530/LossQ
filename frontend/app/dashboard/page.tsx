@@ -370,6 +370,51 @@ function getUniversalUploadPolicyDates(...sources: any[]) {
 
 
 
+
+// LOSSQ_UNIVERSAL_DATE_DISPLAY_REPAIR_V1
+function lossqAnyEffectiveDate(row: any) {
+  return normalizeDateInput(
+    row?.effective_date ||
+      row?.policy_effective_date ||
+      row?.policyEffectiveDate ||
+      row?.["Policy Effective Date"] ||
+      row?.["Effective Date"] ||
+      row?.effective ||
+      row?.eff_date ||
+      row?.inception_date ||
+      row?.policy_period_start ||
+      ""
+  );
+}
+
+function lossqAnyExpirationDate(row: any) {
+  return normalizeDateInput(
+    row?.expiration_date ||
+      row?.policy_expiration_date ||
+      row?.policyExpirationDate ||
+      row?.["Policy Expiration Date"] ||
+      row?.["Expiration Date"] ||
+      row?.expiration ||
+      row?.expiry_date ||
+      row?.exp_date ||
+      row?.policy_period_end ||
+      ""
+  );
+}
+
+function lossqFirstPolicyEffectiveDate(rows: any[]) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => lossqAnyEffectiveDate(row))
+    .find(Boolean) || "";
+}
+
+function lossqFirstPolicyExpirationDate(rows: any[]) {
+  return (Array.isArray(rows) ? rows : [])
+    .map((row) => lossqAnyExpirationDate(row))
+    .find(Boolean) || "";
+}
+
+
 // LOSSQ_STRICT_POLICY_SCHEDULE_DISPLAY_GATE_V1
 function lossqStrictPolicyKey(value: any) {
   return String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
