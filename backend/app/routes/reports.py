@@ -1,3 +1,4 @@
+# LOSSQ_REPORT_PDF_BUILDER_CONTEXT_FIX_V2
 # LOSSQ_REPORT_PACKET_DB_DEPENDENCY_FIX_V1
 from fastapi import APIRouter, Depends, Query, Body
 from fastapi.responses import StreamingResponse
@@ -8593,7 +8594,7 @@ def lossq_report_market_rows(appetite, carrier_match):
     return rows
 
 
-def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=None, report_kind="executive"):
+def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=None, report_kind="executive", db=None, current_user=None):
     """
     Makes Executive Reports and Carrier Packets mirror the dashboard intelligence.
     Uses posted dashboard payload first when available, then backend rebuilt context.
@@ -8962,7 +8963,7 @@ def lossq_report_normalize_ctx(ctx):
     return ctx
 
 
-def build_executive_pdf_response(ctx, policy_number=None):
+def build_executive_pdf_response(ctx, policy_number=None, db=None, current_user=None):
     ctx = lossq_report_normalize_ctx(ctx)
     profile = ctx["profile"]
     metrics = ctx["metrics"]
@@ -9089,7 +9090,7 @@ def executive_report_pdf_post(
         },
     )
 
-    return build_executive_pdf_response(ctx, effective_policy)
+    return build_executive_pdf_response(ctx, effective_policy, db=db, current_user=current_user)
 
 
 @router.post("/carrier-packet-pdf")
@@ -9146,7 +9147,7 @@ def carrier_packet_pdf_post(
         },
     )
 
-    return build_carrier_packet_pdf_response(ctx, effective_policy)
+    return build_carrier_packet_pdf_response(ctx, effective_policy, db=db, current_user=current_user)
 
 
 @router.get("/executive-report-pdf")
@@ -9189,11 +9190,11 @@ def executive_report_pdf(
         },
     )
 
-    return build_executive_pdf_response(ctx, policy_number)
+    return build_executive_pdf_response(ctx, policy_number, db=db, current_user=current_user)
 
 
 
-def build_carrier_packet_pdf_response(ctx, policy_number=None):
+def build_carrier_packet_pdf_response(ctx, policy_number=None, db=None, current_user=None):
     ctx = lossq_report_normalize_ctx(ctx)
     profile = ctx["profile"]
     metrics = ctx["metrics"]
@@ -9272,7 +9273,7 @@ def build_carrier_packet_pdf_response(ctx, policy_number=None):
 
     story.append(Spacer(1, 10))
     try:
-        lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number, report_kind="carrier")
+        lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number, report_kind="carrier", db=db, current_user=current_user)
     except Exception as exc:
         try:
             story.append(heading("Dashboard Intelligence Detail", styles))
@@ -9330,7 +9331,7 @@ def carrier_packet_pdf(
         },
     )
 
-    return build_carrier_packet_pdf_response(ctx, policy_number)
+    return build_carrier_packet_pdf_response(ctx, policy_number, db=db, current_user=current_user)
 
 
 
