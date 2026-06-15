@@ -2037,6 +2037,18 @@ function lossqEvaluationAlert(profileLike: any, policyRows: any[] = []) {
   const expirationRaw = lossqBestPolicyExpirationDateRaw(profileLike, policyRows);
   const daysUntilExpiration = lossqDaysUntilDate(expirationRaw);
 
+  // LOSSQ_MISSING_POLICY_DATES_ALERT_V1
+  // Policy lifecycle must be known before a loss run can be considered current.
+  if (!expirationRaw || daysUntilExpiration === null) {
+    return {
+      status: "Policy Dates Missing",
+      label: "Policy Dates Missing",
+      tone: "red",
+      message: "Policy effective/expiration dates could not be verified. Request a complete loss run with policy period before submitting to carriers.",
+      detail: "Policy effective/expiration dates could not be verified. Request a complete loss run with policy period before submitting to carriers.",
+    };
+  }
+
   // Policy lifecycle comes first. A current valuation date does not make an expired policy current.
   if (daysUntilExpiration !== null && daysUntilExpiration < 0) {
     const expiredDays = Math.abs(daysUntilExpiration);
