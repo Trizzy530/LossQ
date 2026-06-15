@@ -1932,6 +1932,137 @@ function lossqHumanUploadError(error: any): string {
 }
 
 
+
+
+// LOSSQ_EVALUATION_DATE_ALERT_BADGE_V1
+// LOSSQ_EVALUATION_DATE_ALERT_RENDER_V1
+function lossqParseDateForAge(value: unknown): Date | null {
+  const raw = lossqCleanText(value);
+  if (!raw || raw === "-" || raw.toLowerCase() === "not set") return null;
+
+  const normalized = raw.replace(/\\/g, "/").replace(/\./g, "/").replace(/-/g, "/").trim();
+
+  const mdy = normalized.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (mdy) {
+    const month = Number(mdy[1]);
+    const day = Number(mdy[2]);
+    let year = Number(mdy[3]);
+    if (year < 100) year += year < 50 ? 2000 : 1900;
+    const date = new Date(year, month - 1, day);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const ymd = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (ymd) {
+    const year = Number(ymd[1]);
+    const month = Number(ymd[2]);
+    const day = Number(ymd[3]);
+    const date = new Date(year, month - 1, day);
+    return Number.isNaN(date.getTime()) ? null : date;
+  }
+
+  const fallback = new Date(raw);
+  return Number.isNaN(fallback.getTime()) ? null : fallback;
+}
+
+function lossqEvaluationDateRaw(profileLike: any, policyRows: any[] = []): string {
+  return lossqFirstValue(
+    profileLike?.evaluation_date,
+    profileLike?.valuation_date,
+    profileLike?.loss_run_valuation_date,
+    profileLike?.as_of_date,
+    profileLike?.report_date,
+    profileLike?.["Evaluation Date"],
+    profileLike?.["Valuation Date"],
+    profileLike?.["As Of Date"],
+    profileLike?.["Report Date"],
+    lossqFirstPolicyEvaluationDate(policyRows)
+  );
+}
+
+function lossqEvaluationDateAgeDays(profileLike: any, policyRows: any[] = []): number | null {
+  const raw = lossqEvaluationDateRaw(profileLike, policyRows);
+  const parsed = lossqParseDateForAge(raw);
+  if (!parsed) return null;
+
+  const today = new Date();
+  const start = new Date(parsed.getFullYear(), parsed.getMonth(), parsed.getDate()).getTime();
+  const end = new Date(today.getFullYear(), today.getMonth(), today.getDate()).getTime();
+
+  return Math.floor((end - start) / (1000 * 60 * 60 * 24));
+}
+
+function lossqEvaluationAlert(profileLike: any, policyRows: any[] = []) {
+  const raw = lossqEvaluationDateRaw(profileLike, policyRows);
+  const ageDays = lossqEvaluationDateAgeDays(profileLike, policyRows);
+
+  if (!raw || ageDays === null) {
+    return {
+      label: "Missing Evaluation Date",
+      detail: "No loss run valuation date found. Request a current loss run before submitting.",
+      tone: "red",
+      ageDays: null,
+    };
+  }
+
+  if (ageDays <= 30) {
+    return {
+      label: "Current",
+      detail: `Loss run valuation date is ${ageDays} day(s) old.`,
+      tone: "green",
+      ageDays,
+    };
+  }
+
+  if (ageDays <= 60) {
+    return {
+      label: "Needs Refresh Soon",
+      detail: `Loss run valuation date is ${ageDays} day(s) old. Consider requesting an updated loss run soon.`,
+      tone: "yellow",
+      ageDays,
+    };
+  }
+
+  if (ageDays <= 90) {
+    return {
+      label: "Refresh Recommended",
+      detail: `Loss run valuation date is ${ageDays} day(s) old. Request an updated loss run before marketing.`,
+      tone: "orange",
+      ageDays,
+    };
+  }
+
+  return {
+    label: "Outdated Loss Run",
+    detail: `Loss run valuation date is ${ageDays} day(s) old. Request an updated loss run before submitting to carriers.`,
+    tone: "red",
+    ageDays,
+  };
+}
+
+function EvaluationDateAlertBadge({ profileLike, policyRows }: { profileLike: any; policyRows: any[] }) {
+  const alert = lossqEvaluationAlert(profileLike, policyRows);
+
+  const toneClass =
+    alert.tone === "green"
+      ? "border-emerald-400/30 bg-emerald-500/10 text-emerald-200"
+      : alert.tone === "yellow"
+      ? "border-yellow-400/30 bg-yellow-500/10 text-yellow-100"
+      : alert.tone === "orange"
+      ? "border-orange-400/30 bg-orange-500/10 text-orange-100"
+      : "border-red-400/30 bg-red-500/10 text-red-100";
+
+  return (
+    <div className={`mt-5 rounded-2xl border px-4 py-3 ${toneClass}`}>
+      <div className="flex flex-col gap-1 md:flex-row md:items-center md:justify-between">
+        <p className="text-sm font-bold">{alert.label}</p>
+        <p className="text-xs opacity-90">{alert.detail}</p>
+      </div>
+    </div>
+  );
+}
+
+
 // LOSSQ_FRONTEND_DATE_LOCKDOWN_V1
 // LOSSQ_FRONTEND_TARGETED_DATE_DISPLAY_V1
 // LOSSQ_EXACT_ACCOUNT_POLICY_DATE_UI_V1
@@ -6365,6 +6496,8 @@ const trendNoteDisplay =
                   <ProfileDetail label="Expiration Date" value={lossqExpirationDateFromObject(displayProfile)} />
                   <ProfileDetail label="Evaluation Date" value={getBestEvaluationDate(displayProfile) || lossqAnyEvaluationDate(displayProfile) || lossqFirstPolicyEvaluationDate(policySchedule) || "Not set"} />
                 </div>
+
+                <EvaluationDateAlertBadge profileLike={displayProfile} policyRows={policySchedule} />
 
                 {policySchedule.length > 0 && (
                   <div className="mt-8 rounded-3xl border border-white/10 bg-slate-950/50 p-5">
