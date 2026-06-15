@@ -1992,6 +1992,107 @@ def lossq_section_csv_apply_profile_date_repair(file_path, parsed_profile):
 
 
 
+
+
+# LOSSQ_MESSY_CSV_LABEL_VALUE_VALIDATION_V1
+def lossq_csv_is_header_or_label_value(value):
+    clean = lossq_section_csv_clean(value)
+    key = lossq_section_csv_key(clean)
+
+    if not clean:
+        return True
+
+    label_keys = {
+        "section",
+        "field",
+        "value",
+        "policy",
+        "policynumber",
+        "policytype",
+        "policytypecoverage",
+        "lineofbusiness",
+        "coverage",
+        "carrier",
+        "carriername",
+        "writingcarrier",
+        "effective",
+        "effectivedate",
+        "policyeffectivedate",
+        "expiration",
+        "expirationdate",
+        "policyexpirationdate",
+        "expiry",
+        "expirydate",
+        "annualpremium",
+        "currentpremium",
+        "premium",
+        "exposure",
+        "exposurebasis",
+        "exposurevalue",
+        "claims",
+        "claimcount",
+        "totalincurred",
+        "claimdetail",
+        "losssummary",
+        "accountprofile",
+        "policy schedule",
+        "policyschedule",
+        "producer",
+        "producingagency",
+        "agency",
+        "agencyname",
+        "broker",
+        "brokerage",
+        "adjuster",
+        "claimhandler",
+        "examiner",
+        "downloadedby",
+        "createdby",
+    }
+
+    return key in {lossq_section_csv_key(item) for item in label_keys}
+
+
+def lossq_csv_valid_profile_date_value(value):
+    clean = lossq_section_csv_clean(value)
+    if lossq_csv_is_header_or_label_value(clean):
+        return False
+
+    if re.match(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$", clean):
+        return True
+
+    if re.match(r"^\d{4}[/-]\d{1,2}[/-]\d{1,2}$", clean):
+        return True
+
+    return False
+
+
+def lossq_csv_valid_profile_text_value(value):
+    clean = lossq_section_csv_clean(value)
+    if lossq_csv_is_header_or_label_value(clean):
+        return False
+
+    if re.match(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$", clean):
+        return False
+
+    if re.match(r"^\d{4}[/-]\d{1,2}[/-]\d{1,2}$", clean):
+        return False
+
+    return True
+
+
+def lossq_profile_date_or_blank(value):
+    clean = lossq_section_csv_clean(value)
+
+    if re.match(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$", clean):
+        return lossq_section_csv_date(clean)
+
+    if re.match(r"^\d{4}[/-]\d{1,2}[/-]\d{1,2}$", clean):
+        return lossq_section_csv_date(clean)
+
+    return ""
+
+
 # LOSSQ_MESSY_CSV_LABEL_PAIR_PROFILE_REPAIR_V1
 def lossq_csv_label_pair_profile_repair(file_path, parsed_profile):
     """
@@ -2026,43 +2127,43 @@ def lossq_csv_label_pair_profile_repair(file_path, parsed_profile):
         if not value:
             return
 
-        if field in {"namedinsured", "insured", "businessname", "accountname"}:
+        if field in {"namedinsured", "insured", "businessname", "accountname"} and lossq_csv_valid_profile_text_value(value):
             account_info["business_name"] = value
             account_info["named_insured"] = value
             account_info["insured"] = value
 
-        elif field in {"dba"}:
+        elif field in {"dba"} and lossq_csv_valid_profile_text_value(value):
             account_info["dba"] = value
 
-        elif field in {"carrier", "carriername", "insurancecarrier"} and lossq_section_csv_valid_carrier(value):
+        elif field in {"carrier", "carriername", "insurancecarrier"} and lossq_section_csv_valid_carrier(value) and lossq_csv_valid_profile_text_value(value):
             account_info["carrier_name"] = value
 
-        elif field in {"writingcarrier", "underwritingcarrier"} and lossq_section_csv_valid_carrier(value):
+        elif field in {"writingcarrier", "underwritingcarrier"} and lossq_section_csv_valid_carrier(value) and lossq_csv_valid_profile_text_value(value):
             account_info["writing_carrier"] = value
 
-        elif field in {"producingagency", "producer", "agency", "agencyname", "broker", "brokerage"}:
+        elif field in {"producingagency", "producer", "agency", "agencyname", "broker", "brokerage"} and lossq_csv_valid_profile_text_value(value):
             account_info["agency_name"] = value
             account_info["producer"] = value
             account_info["producing_agency"] = value
 
-        elif field in {"accountnumber", "customernumber", "accountid"}:
+        elif field in {"accountnumber", "customernumber", "accountid"} and lossq_csv_valid_profile_text_value(value):
             account_info["account_number"] = value
             account_info["customer_number"] = value
 
-        elif field in {"mainpolicy", "mainpolicynumber", "policynumber"}:
+        elif field in {"mainpolicy", "mainpolicynumber", "policynumber"} and lossq_csv_valid_profile_text_value(value):
             account_info["policy_number"] = value
 
-        elif field in {"policyeffectivedate", "effectivedate", "effective"}:
+        elif field in {"policyeffectivedate", "effectivedate", "effective"} and lossq_csv_valid_profile_date_value(value):
             fixed = lossq_section_csv_date(value)
             account_info["effective_date"] = fixed
             account_info["policy_effective_date"] = fixed
 
-        elif field in {"policyexpirationdate", "expirationdate", "expirydate", "expiration", "expiry"}:
+        elif field in {"policyexpirationdate", "expirationdate", "expirydate", "expiration", "expiry"} and lossq_csv_valid_profile_date_value(value):
             fixed = lossq_section_csv_date(value)
             account_info["expiration_date"] = fixed
             account_info["policy_expiration_date"] = fixed
 
-        elif field in {"evaluationdate", "valuationdate", "valuedasof", "asofdate", "reportdate", "lossrunvaluationdate"}:
+        elif field in {"evaluationdate", "valuationdate", "valuedasof", "asofdate", "reportdate", "lossrunvaluationdate"} and lossq_csv_valid_profile_date_value(value):
             fixed = lossq_section_csv_date(value)
             account_info["evaluation_date"] = fixed
             account_info["valuation_date"] = fixed
@@ -2511,6 +2612,12 @@ def lossq_global_profile_cleanup(parsed_profile):
 
         parsed_profile["policies"] = cleaned_policies
         parsed_profile["policy_schedule"] = cleaned_policies
+
+    # LOSSQ_GLOBAL_PROFILE_DATE_VALUE_CLEANUP_V1
+    parsed_profile["effective_date"] = lossq_profile_date_or_blank(parsed_profile.get("effective_date"))
+    parsed_profile["policy_effective_date"] = lossq_profile_date_or_blank(parsed_profile.get("policy_effective_date") or parsed_profile.get("effective_date"))
+    parsed_profile["expiration_date"] = lossq_profile_date_or_blank(parsed_profile.get("expiration_date"))
+    parsed_profile["policy_expiration_date"] = lossq_profile_date_or_blank(parsed_profile.get("policy_expiration_date") or parsed_profile.get("expiration_date"))
 
     # If the file has no policy dates, do not let a fallback "today" evaluation date make it appear current.
     if not lossq_profile_has_policy_dates(parsed_profile):
