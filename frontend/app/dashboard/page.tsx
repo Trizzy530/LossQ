@@ -1933,6 +1933,9 @@ function lossqHumanUploadError(error: any): string {
 
 
 // LOSSQ_FRONTEND_DATE_LOCKDOWN_V1
+// LOSSQ_FRONTEND_TARGETED_DATE_DISPLAY_V1
+// LOSSQ_EXACT_ACCOUNT_POLICY_DATE_UI_V1
+// LOSSQ_POLICY_SCHEDULE_LINE_HELPER_UI_V1
 function lossqFirstValue(...values: unknown[]): string {
   for (const value of values) {
     const cleaned = lossqCleanText(value);
@@ -6357,8 +6360,8 @@ const trendNoteDisplay =
                   />
                   <ProfileDetail label="Producing Agency" value={displayProfile?.agency_name || "-"} />
                   <ProfileDetail label="Main Policy" value={mainPolicyNumber || "-"} />
-                  <ProfileDetail label="Effective Date" value={displayProfile?.effective_date || "-"} />
-                  <ProfileDetail label="Expiration Date" value={displayProfile?.expiration_date || "-"} />
+                  <ProfileDetail label="Effective Date" value={lossqEffectiveDateFromObject(displayProfile)} />
+                  <ProfileDetail label="Expiration Date" value={lossqExpirationDateFromObject(displayProfile)} />
                 </div>
 
                 {policySchedule.length > 0 && (
@@ -6419,17 +6422,10 @@ const trendNoteDisplay =
                                 className="border-b border-white/10"
                               >
                                 <td className="py-3 pr-4 text-white">
-                                  {cleanScheduleText(
-                                    policy?.policy_type ||
-                                      policy?.line_coverage ||
-                                      policy?.line_of_business ||
-                                      policy?.coverage ||
-                                      policy?.lob ||
-                                      "Needs Review"
-                                  )}
+                                  {lossqLineOfBusinessFromObject(policy)}
                                 </td>
                                 <td className="py-3 pr-4 font-semibold text-blue-200">
-                                  {policy?.policy_number || "-"}
+                                  {lossqPolicyNumberFromObject(policy)}
                                 </td>
                                 <td className="py-3 pr-4">{rowCarrier}</td>
                                 <td className="py-3 pr-4">{rowEffectiveDate}</td>
@@ -7574,10 +7570,10 @@ const trendNoteDisplay =
                         return (
                           <tr key={policy?.policy_number || index} className="border-b border-white/10">
                             <td className="py-3 pr-4 text-white">
-                              {policy?.policy_type || policy?.line_coverage || policy?.line_of_business || policy?.coverage || "Policy"}
+                              {lossqLineOfBusinessFromObject(policy)}
                             </td>
                             <td className="py-3 pr-4 font-semibold text-blue-200">
-                              {policy?.policy_number || "-"}
+                              {lossqPolicyNumberFromObject(policy)}
                             </td>
                             <td className="py-3 pr-4">
                               {stats?.count ?? policy?.claim_count ?? "-"}
