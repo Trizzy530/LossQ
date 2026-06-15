@@ -2174,6 +2174,126 @@ def lossq_pdf_profile_repair(file_path, parsed_profile):
     return parsed_profile
 
 
+
+
+# LOSSQ_GLOBAL_PROFILE_CLEANUP_V1
+def lossq_global_profile_bad_text(value):
+    clean = lossq_section_csv_clean(value)
+    low = clean.lower()
+
+    if not clean:
+        return True
+
+    bad_values = {
+        "effective",
+        "effective date",
+        "expiration",
+        "expiration date",
+        "expiry",
+        "expiry date",
+        "policy",
+        "policy number",
+        "carrier",
+        "writing carrier",
+        "insured",
+        "named insured",
+        "producer",
+        "agency",
+        "not set",
+        "none",
+        "null",
+        "-",
+    }
+
+    if low in bad_values:
+        return True
+
+    if re.match(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$", clean):
+        return True
+
+    if re.match(r"^\d{4}[/-]\d{1,2}[/-]\d{1,2}$", clean):
+        return True
+
+    return False
+
+
+def lossq_profile_has_policy_dates(profile):
+    profile = profile or {}
+
+    if profile.get("effective_date") and profile.get("expiration_date"):
+        return True
+
+    policies = profile.get("policies") or profile.get("policy_schedule") or []
+    if isinstance(policies, list):
+        for policy in policies:
+            if not isinstance(policy, dict):
+                continue
+            if (
+                policy.get("effective_date")
+                or policy.get("policy_effective_date")
+                or policy.get("Effective Date")
+            ) and (
+                policy.get("expiration_date")
+                or policy.get("policy_expiration_date")
+                or policy.get("Expiration Date")
+            ):
+                return True
+
+    return False
+
+
+def lossq_global_profile_cleanup(parsed_profile):
+    parsed_profile = parsed_profile or {}
+
+    # Clean impossible carrier values.
+    for key in ["carrier_name", "writing_carrier", "carrier"]:
+        if lossq_global_profile_bad_text(parsed_profile.get(key)):
+            parsed_profile[key] = ""
+
+    # Backfill carrier from writing carrier if one is real.
+    if not parsed_profile.get("carrier_name") and not lossq_global_profile_bad_text(parsed_profile.get("writing_carrier")):
+        parsed_profile["carrier_name"] = parsed_profile.get("writing_carrier")
+
+    if not parsed_profile.get("writing_carrier") and not lossq_global_profile_bad_text(parsed_profile.get("carrier_name")):
+        parsed_profile["writing_carrier"] = parsed_profile.get("carrier_name")
+
+    policies = parsed_profile.get("policies") or parsed_profile.get("policy_schedule") or []
+    cleaned_policies = []
+
+    if isinstance(policies, list):
+        for policy in policies:
+            if not isinstance(policy, dict):
+                continue
+
+            item = dict(policy)
+
+            for key in ["carrier", "carrier_name", "writing_carrier"]:
+                if lossq_global_profile_bad_text(item.get(key)):
+                    item[key] = ""
+
+            if not item.get("carrier") and parsed_profile.get("carrier_name"):
+                item["carrier"] = parsed_profile.get("carrier_name")
+
+            if not item.get("carrier_name") and parsed_profile.get("carrier_name"):
+                item["carrier_name"] = parsed_profile.get("carrier_name")
+
+            if not item.get("writing_carrier") and parsed_profile.get("writing_carrier"):
+                item["writing_carrier"] = parsed_profile.get("writing_carrier")
+
+            cleaned_policies.append(item)
+
+        parsed_profile["policies"] = cleaned_policies
+        parsed_profile["policy_schedule"] = cleaned_policies
+
+    # If the file has no policy dates, do not let a fallback "today" evaluation date make it appear current.
+    if not lossq_profile_has_policy_dates(parsed_profile):
+        parsed_profile["evaluation_date"] = ""
+        parsed_profile["valuation_date"] = ""
+        parsed_profile["loss_run_valuation_date"] = ""
+
+    return parsed_profile
+
+
 async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
     ensure_account_profile_columns(db)
@@ -2201,6 +2321,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             parsed_claims, parsed_profile = parse_file(file_path, safe_upload_filename or safe_filename)
             parsed_profile = lossq_section_csv_apply_profile_date_repair(file_path, parsed_profile)
             parsed_profile = lossq_pdf_profile_repair(file_path, parsed_profile)
+            parsed_profile = lossq_global_profile_cleanup(parsed_profile)
+            parsed_profile = lossq_global_profile_cleanup(parsed_profile)
         except Exception as exc:
             raise HTTPException(
                 status_code=400,
