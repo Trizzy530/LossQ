@@ -1935,6 +1935,7 @@ function lossqHumanUploadError(error: any): string {
 // LOSSQ_FRONTEND_DATE_LOCKDOWN_V1
 // LOSSQ_FRONTEND_TARGETED_DATE_DISPLAY_V1
 // LOSSQ_EXACT_ACCOUNT_POLICY_DATE_UI_V1
+// LOSSQ_ACCOUNT_SNAPSHOT_EVALUATION_DATE_V1
 // LOSSQ_POLICY_SCHEDULE_LINE_HELPER_UI_V1
 function lossqFirstValue(...values: unknown[]): string {
   for (const value of values) {
@@ -6362,6 +6363,7 @@ const trendNoteDisplay =
                   <ProfileDetail label="Main Policy" value={mainPolicyNumber || "-"} />
                   <ProfileDetail label="Effective Date" value={lossqEffectiveDateFromObject(displayProfile)} />
                   <ProfileDetail label="Expiration Date" value={lossqExpirationDateFromObject(displayProfile)} />
+                  <ProfileDetail label="Evaluation Date" value={getBestEvaluationDate(displayProfile) || lossqAnyEvaluationDate(displayProfile) || lossqFirstPolicyEvaluationDate(policySchedule) || "Not set"} />
                 </div>
 
                 {policySchedule.length > 0 && (
