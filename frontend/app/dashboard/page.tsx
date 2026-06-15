@@ -1787,6 +1787,151 @@ function LossQExtractionReviewBanner({ profile }: { profile: any }) {
 }
 
 
+
+
+// LOSSQ_FRONTEND_BETA_GUARDRAILS_V1
+function lossqCleanText(value: unknown): string {
+  return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function lossqUpper(value: unknown): string {
+  return lossqCleanText(value).toUpperCase();
+}
+
+function lossqLooksLikeRealClaim(value: unknown): boolean {
+  const claimNumber = lossqUpper(value);
+
+  if (!claimNumber) return false;
+
+  const blockedExact = new Set([
+    "NOTE",
+    "NOTES",
+    "METRIC",
+    "VALUE",
+    "FIELD",
+    "LOSS SUMMARY",
+    "UNDERWRITING NOTES",
+    "TOTAL CLAIMS",
+    "OPEN CLAIMS",
+    "CLOSED CLAIMS",
+    "TOTAL PAID",
+    "TOTAL RESERVE",
+    "TOTAL INCURRED",
+    "LARGEST LOSS",
+    "LOSS RATIO",
+    "CURRENT PREMIUM",
+    "EXPIRING PREMIUM",
+    "TARGET RENEWAL PREMIUM",
+    "PAYROLL",
+    "REVENUE / SALES",
+    "EMPLOYEE COUNT",
+    "VEHICLE COUNT",
+    "DRIVER COUNT",
+    "PROPERTY TIV",
+    "POLICY SCHEDULE",
+    "EXPOSURE INPUTS",
+    "ACCOUNT INFORMATION",
+  ]);
+
+  if (blockedExact.has(claimNumber)) return false;
+
+  const blockedContains = [
+    "FICTIONAL TEST",
+    "DESIGNED TO TEST",
+    "NOT AFFILIATED",
+    "LOSS SUMMARY",
+    "UNDERWRITING NOTES",
+    "EXPOSURE INPUTS",
+    "POLICY SCHEDULE",
+    "ACCOUNT INFORMATION",
+  ];
+
+  if (blockedContains.some((item) => claimNumber.includes(item))) return false;
+
+  if (!/\d/.test(claimNumber)) return false;
+
+  return /[A-Z0-9]+[-_][A-Z0-9]+[-_]\d{2,4}[-_]\d{2,6}/.test(claimNumber)
+    || /(CLM|CLAIM|GL|WC|AUTO|AU|PROP|PR|CY|BOP|UMB)/.test(claimNumber);
+}
+
+function lossqClaimNumberFromRow(row: any): string {
+  return lossqCleanText(
+    row?.claim_number
+    ?? row?.claimNumber
+    ?? row?.claim_no
+    ?? row?.claim
+    ?? row?.claim_id
+    ?? ""
+  );
+}
+
+// LOSSQ_FRONTEND_CLAIM_FILTER_ACTIVE_V1
+function lossqFilterRealClaims<T = any>(rows: T[]): T[] {
+  if (!Array.isArray(rows)) return [];
+
+  return rows.filter((row: any) => {
+    const claimNumber = lossqClaimNumberFromRow(row);
+    return lossqLooksLikeRealClaim(claimNumber);
+  });
+}
+
+function lossqDateValue(...values: unknown[]): string {
+  for (const value of values) {
+    const raw = lossqCleanText(value);
+    if (!raw || raw === "-" || raw.toLowerCase() === "not set") continue;
+    return raw;
+  }
+  return "";
+}
+
+function lossqFormatDateSafe(...values: unknown[]): string {
+  const raw = lossqDateValue(...values);
+  if (!raw) return "Not set";
+
+  const normalized = raw.replace(/\\/g, "/").replace(/\./g, "/").replace(/-/g, "/").trim();
+
+  const mdy = normalized.match(/^(\d{1,2})\/(\d{1,2})\/(\d{2,4})$/);
+  if (mdy) {
+    const month = Number(mdy[1]);
+    const day = Number(mdy[2]);
+    let year = Number(mdy[3]);
+    if (year < 100) year += year < 50 ? 2000 : 1900;
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${year}`;
+    }
+  }
+
+  const ymd = normalized.match(/^(\d{4})\/(\d{1,2})\/(\d{1,2})$/);
+  if (ymd) {
+    const year = Number(ymd[1]);
+    const month = Number(ymd[2]);
+    const day = Number(ymd[3]);
+    if (month >= 1 && month <= 12 && day >= 1 && day <= 31) {
+      return `${String(month).padStart(2, "0")}/${String(day).padStart(2, "0")}/${year}`;
+    }
+  }
+
+  return raw;
+}
+
+function lossqHumanUploadError(error: any): string {
+  const detail = error?.detail ?? error?.message ?? error;
+
+  if (typeof detail === "object" && detail !== null) {
+    const message = detail.message || detail.error || detail.stage;
+    if (message) return String(message);
+  }
+
+  const text = lossqCleanText(detail);
+
+  if (!text || text.toLowerCase().includes("failed to fetch")) {
+    return "Upload failed before completion. The backend may be redeploying, offline, or rejected the file. Check that /docs loads, then try again.";
+  }
+
+  return text;
+}
+
+
 export default function DashboardPage() {
 
   useEffect(() => {
@@ -2435,7 +2580,7 @@ function normalizeProfileName(item: any) {
       raw_text_preview: "",
     });
 
-    setClaims([]);
+    setClaims(lossqFilterRealClaims([]));
     setSummary({});
     setDecision({});
     setCarrierAppetite({});
@@ -2751,20 +2896,20 @@ if (activeProfile?.policy_number) {
         // 3. Older cache only when no current upload is active.
         // 4. Empty array. Never fall back to unrelated organization-wide claims.
         if (currentUploadApplies) {
-        if (myVersion === loadVersionRef.current) setClaims(dedupeClaims(currentUploadMatches));
+        if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(dedupeClaims(currentUploadMatches)));
         } else if (serverMatches.length > 0) {
-        if (myVersion === loadVersionRef.current) setClaims(dedupeClaims(serverMatches));
+        if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(dedupeClaims(serverMatches)));
         } else if (cachedMatches.length > 0) {
-        if (myVersion === loadVersionRef.current) setClaims(dedupeClaims(cachedMatches));
+        if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(dedupeClaims(cachedMatches)));
         } else {
-          if (myVersion === loadVersionRef.current) setClaims([]);
+          if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims([]));
         }
       } else {
         const currentUpload = getCachedCurrentUpload();
         const currentUploadClaims = Array.isArray(currentUpload?.claims)
           ? currentUpload.claims
           : [];
-        if (myVersion === loadVersionRef.current) setClaims(currentUploadClaims.length > 0 ? currentUploadClaims : []);
+        if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(currentUploadClaims.length > 0 ? currentUploadClaims : []));
       }
 
       // LOSSQ_TRUE_LAZY_LOADING_V1
@@ -2775,7 +2920,7 @@ if (activeProfile?.policy_number) {
     } catch {
       console.log("CATCH BLOCK HIT:", arguments[0] || "unknown error");
       setDashboardError("Dashboard could not load. Confirm backend is running.");
-      if (myVersion === loadVersionRef.current) setClaims([]);
+      if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims([]));
       setSummary({});
       setDecision({});
       setCarrierAppetite({});
@@ -2943,7 +3088,7 @@ setLazyLoadedTools,
 
     // Clear stale dashboard state immediately so the previous profile's claims
     // cannot remain visible while the new account is loading.
-    setClaims([]);
+    setClaims(lossqFilterRealClaims([]));
     setSelectedClaimDetail(null);
     clearCachedSelectedClaim();
     clearCachedCurrentUpload();
@@ -3490,7 +3635,7 @@ async function saveExposureInputs() {
   
     // LOSSQ_CLEAR_STALE_CLAIM_CACHE_ON_UPLOAD_V1
     try {
-      setClaims([]);
+      setClaims(lossqFilterRealClaims([]));
       setSelectedClaimDetail(null);
       setCachedCurrentUpload({});
 
@@ -4007,7 +4152,7 @@ setLazyLoadedTools,
 
     // Show the freshly parsed claim rows immediately. loadDashboard may fetch
     // /claims/, but /claims/ can be limited/stale, so we re-apply combinedClaims below.
-    setClaims(dedupeClaims(combinedClaims));
+    setClaims(lossqFilterRealClaims(dedupeClaims(combinedClaims)));
 
     const uploadedPolicyNumber = chooseSafePolicyNumber(
       primaryProfile?.account_number,
@@ -4116,7 +4261,7 @@ setLazyLoadedTools,
     // Keep the current upload authoritative after dashboard reload.
     // This prevents a stale /claims/ or old upload cache response from replacing the freshly parsed rows.
     if (combinedClaims.length > 0) {
-      setClaims(dedupeClaims(combinedClaims));
+      setClaims(lossqFilterRealClaims(dedupeClaims(combinedClaims)));
     }
 
     setActiveTool("overview");
