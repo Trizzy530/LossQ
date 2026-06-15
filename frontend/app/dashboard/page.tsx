@@ -2160,6 +2160,84 @@ function EvaluationDateAlertBadge({ profileLike, policyRows }: { profileLike: an
 
 
 
+
+
+// LOSSQ_SAFE_CARRIER_DISPLAY_V1
+function lossqBadCarrierDisplayValue(value: any): boolean {
+  const clean = lossqCleanText(value).toLowerCase();
+
+  if (!clean) return true;
+
+  const badValues = new Set([
+    "effective",
+    "effective date",
+    "expiration",
+    "expiration date",
+    "expiry",
+    "expiry date",
+    "policy",
+    "policy number",
+    "carrier",
+    "writing carrier",
+    "insured",
+    "named insured",
+    "producer",
+    "agency",
+    "not set",
+    "none",
+    "null",
+    "-",
+  ]);
+
+  if (badValues.has(clean)) return true;
+
+  if (/^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(clean)) return true;
+  if (/^\d{4}[/-]\d{1,2}[/-]\d{1,2}$/.test(clean)) return true;
+
+  return false;
+}
+
+function lossqSafeCarrierDisplay(profileLike: any): string {
+  const values = [
+    profileLike?.carrier_name,
+    profileLike?.writing_carrier,
+    profileLike?.carrier,
+    profileLike?.insurance_carrier,
+    profileLike?.underwriting_carrier,
+    profileLike?.["Carrier"],
+    profileLike?.["Writing Carrier"],
+  ];
+
+  for (const value of values) {
+    if (!lossqBadCarrierDisplayValue(value)) {
+      return lossqCleanText(value);
+    }
+  }
+
+  return "-";
+}
+
+function lossqSafeWritingCarrierDisplay(profileLike: any): string {
+  const values = [
+    profileLike?.writing_carrier,
+    profileLike?.carrier_name,
+    profileLike?.carrier,
+    profileLike?.insurance_carrier,
+    profileLike?.underwriting_carrier,
+    profileLike?.["Writing Carrier"],
+    profileLike?.["Carrier"],
+  ];
+
+  for (const value of values) {
+    if (!lossqBadCarrierDisplayValue(value)) {
+      return lossqCleanText(value);
+    }
+  }
+
+  return "-";
+}
+
+
 // LOSSQ_PRODUCING_AGENCY_DISPLAY_HELPER_V1
 // LOSSQ_PRODUCING_AGENCY_DISPLAY_UI_V1
 function lossqProducingAgencyFromObject(obj: any): string {
@@ -6665,7 +6743,7 @@ const trendNoteDisplay =
                     label="Writing Carrier"
                     value={displayProfile?.writing_carrier || displayProfile?.carrier_name || "-"}
                   />
-                  <ProfileDetail label="Carrier" value={displayProfile?.carrier_name || "-"} />
+                  <ProfileDetail label="Carrier" value={lossqSafeCarrierDisplay(displayProfile)} />
                   <ProfileDetail
                     label="Account Number"
                     value={displayProfile?.account_number || displayProfile?.customer_number || "-"}
@@ -7588,7 +7666,7 @@ const trendNoteDisplay =
 
       <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mt-5">
         <ProfileDetail label="Insured" value={displayProfile?.business_name || "-"} />
-        <ProfileDetail label="Carrier" value={displayProfile?.carrier_name || "-"} />
+        <ProfileDetail label="Carrier" value={lossqSafeCarrierDisplay(displayProfile)} />
         <ProfileDetail label="Policy" value={displayProfile?.policy_number || "-"} />
       </div>
     </div>
