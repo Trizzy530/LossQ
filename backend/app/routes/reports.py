@@ -7467,19 +7467,9 @@ def report_claims_for_policies(db: Session, current_user: dict, policy_numbers):
 
 
 def merge_report_claims(primary, fallback):
-    merged = []
-    seen = set()
-    for claim in list(primary or []) + list(fallback or []):
-        key = (
-            normalize_report_policy(getattr(claim, "claim_number", "")),
-            normalize_report_policy(getattr(claim, "policy_number", "")),
-            getattr(claim, "id", None),
-        )
-        if key in seen:
-            continue
-        seen.add(key)
-        merged.append(claim)
-    return merged
+    # LOSSQ_MERGE_REPORT_CLAIMS_DEDUPE_V1
+    return lossq_report_dedupe_claims(list(primary or []) + list(fallback or []))
+
 
 def report_payload_dict(payload):
     return payload if isinstance(payload, dict) else {}
@@ -8572,6 +8562,156 @@ def lossq_get_active_pdf_db():
 def lossq_get_active_pdf_user():
     return LOSSQ_ACTIVE_PDF_USER_CONTEXT
 
+
+
+
+
+# LOSSQ_REPORT_DEDUPE_AND_INTELLIGENCE_LOCK_V1
+def lossq_report_claim_key(claim):
+    try:
+        getter = claim.get if isinstance(claim, dict) else lambda key, default=None: getattr(claim, key, default)
+
+        claim_number = normalize_report_policy(
+            getter("claim_number", "")
+            or getter("claimNumber", "")
+            or getter("claim_no", "")
+            or getter("claim_id", "")
+        )
+        policy_number = normalize_report_policy(
+            getter("policy_number", "")
+            or getter("policyNumber", "")
+            or getter("policy_no", "")
+            or getter("policy", "")
+        )
+        date_of_loss = str(
+            getter("date_of_loss", "")
+            or getter("loss_date", "")
+            or getter("dateOfLoss", "")
+        ).strip()
+        total = str(
+            getter("total_incurred", "")
+            or getter("incurred", "")
+            or getter("total", "")
+        ).strip()
+
+        if claim_number and policy_number:
+            return f"{claim_number}|{policy_number}"
+
+        return f"{claim_number}|{policy_number}|{date_of_loss}|{total}"
+    except Exception:
+        return str(id(claim))
+
+
+def lossq_report_dedupe_claims(claims):
+    deduped = []
+    seen = set()
+
+    for claim in claims or []:
+        key = lossq_report_claim_key(claim)
+        if key in seen:
+            continue
+        seen.add(key)
+        deduped.append(claim)
+
+    return deduped
+
+
+def lossq_report_money_value(value):
+    try:
+        if value is None:
+            return 0.0
+        clean = re.sub(r"[^0-9.\-]", "", str(value))
+        if clean in {"", "-", ".", "-."}:
+            return 0.0
+        return float(clean)
+    except Exception:
+        return 0.0
+
+
+def lossq_report_claim_value(claim, *keys):
+    for key in keys:
+        try:
+            if isinstance(claim, dict):
+                value = claim.get(key)
+            else:
+                value = getattr(claim, key, None)
+            if value not in [None, ""]:
+                return value
+        except Exception:
+            pass
+    return ""
+
+
+def lossq_report_claim_status(claim):
+    return str(lossq_report_claim_value(claim, "status", "claim_status", "claimStatus") or "").lower()
+
+
+def lossq_rebuild_report_intelligence_from_claims(ctx):
+    """
+    Rebuild narrative intelligence from the exact deduped current-account claims.
+    This prevents report cards showing 8 claims while narrative sections show 16.
+    """
+    ctx = ctx or {}
+    claims = lossq_report_dedupe_claims(ctx.get("claims") or [])
+    ctx["claims"] = claims
+
+    total_claims = len(claims)
+    open_claims = sum(1 for claim in claims if "open" in lossq_report_claim_status(claim))
+    total_paid = sum(lossq_report_money_value(lossq_report_claim_value(claim, "paid", "paid_amount", "total_paid")) for claim in claims)
+    total_reserve = sum(lossq_report_money_value(lossq_report_claim_value(claim, "reserve", "reserve_amount", "outstanding_reserve")) for claim in claims)
+    total_incurred = sum(lossq_report_money_value(lossq_report_claim_value(claim, "total_incurred", "incurred", "total")) for claim in claims)
+
+    summary = ctx.get("summary") or {}
+    if isinstance(summary, dict):
+        summary["claim_count"] = total_claims
+        summary["total_claims"] = total_claims
+        summary["open_claims"] = open_claims
+        summary["total_paid"] = total_paid
+        summary["total_reserve"] = total_reserve
+        summary["total_incurred"] = total_incurred
+        summary["renewal_drivers"] = [
+            f"{total_claims} account-specific claim(s) identified.",
+            f"Total incurred losses are ${total_incurred:,.2f}.",
+            f"{open_claims} open claim(s) create renewal uncertainty.",
+            f"Outstanding reserves total ${total_reserve:,.2f}.",
+        ]
+        ctx["summary"] = summary
+
+    decision = ctx.get("decision") or {}
+    if isinstance(decision, dict):
+        decision["claims_used"] = total_claims
+        decision["total_claims"] = total_claims
+        decision["open_claims"] = open_claims
+        decision["total_incurred"] = total_incurred
+        decision["total_reserve"] = total_reserve
+        decision["renewal_drivers"] = summary.get("renewal_drivers", [])
+        ctx["decision"] = decision
+
+    appetite = ctx.get("appetite") or {}
+    if isinstance(appetite, dict):
+        appetite["claims_used"] = total_claims
+        appetite["total_claims"] = total_claims
+        appetite["open_claims"] = open_claims
+        appetite["total_incurred"] = total_incurred
+        ctx["appetite"] = appetite
+
+    carrier_match = ctx.get("carrier_match") or {}
+    if isinstance(carrier_match, dict):
+        carrier_match["claims_used"] = total_claims
+        carrier_match["total_claims"] = total_claims
+        carrier_match["open_claims"] = open_claims
+        carrier_match["total_incurred"] = total_incurred
+        ctx["carrier_match"] = carrier_match
+
+    forecast = ctx.get("forecast") or {}
+    if isinstance(forecast, dict):
+        forecast["claims_used"] = total_claims
+        forecast["total_claims"] = total_claims
+        forecast["open_claims"] = open_claims
+        forecast["total_incurred"] = total_incurred
+        ctx["forecast"] = forecast
+
+    return ctx
 
 
 def lossq_add_carrier_cover_letter_page(story, styles, ctx, profile=None, policy_number=None, db=None, current_user=None):
@@ -9672,7 +9812,9 @@ def build_carrier_packet_pdf_response(ctx, policy_number=None, db=None, current_
     renewal_score = summary.get("renewal_score")
 
     lossq_add_carrier_cover_letter_page(story, styles, ctx, profile=profile, policy_number=policy_number, db=db, current_user=current_user)
-    lossq_add_pdf_cover_letter_page(story, styles, ctx, report_title="Carrier Submission Packet", profile=profile, policy_number=policy_number, db=db, current_user=current_user)
+    # LOSSQ_SINGLE_CARRIER_PACKET_COVER_LETTER_V1
+        # Skipped generic PDF cover letter for carrier packet to avoid duplicate cover pages.
+        # The branded carrier packet cover letter remains.
     cover(story, styles, "Carrier Submission Packet", profile, policy_number, creator)
     story.append(Spacer(1, 0.18 * inch))
     story.append(risk_banner(renewal_score, risk_level, styles))
