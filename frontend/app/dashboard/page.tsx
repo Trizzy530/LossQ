@@ -1992,53 +1992,136 @@ function lossqEvaluationDateAgeDays(profileLike: any, policyRows: any[] = []): n
   return Math.floor((end - start) / (1000 * 60 * 60 * 24));
 }
 
+function lossqBestPolicyExpirationDateRaw(profileLike: any, policyRows: any[] = []): any {
+  const profileDate = lossqFirstValue(
+    profileLike?.expiration_date,
+    profileLike?.policy_expiration_date,
+    profileLike?.expiry_date,
+    profileLike?.["Expiration Date"],
+    profileLike?.["Policy Expiration Date"]
+  );
+
+  if (profileDate) return profileDate;
+
+  const rows = Array.isArray(policyRows) ? policyRows : [];
+  for (const row of rows) {
+    const rowDate = lossqFirstValue(
+      row?.expiration_date,
+      row?.policy_expiration_date,
+      row?.expiry_date,
+      row?.expiration,
+      row?.["Expiration Date"],
+      row?.["Policy Expiration Date"]
+    );
+
+    if (rowDate) return rowDate;
+  }
+
+  return "";
+}
+
+function lossqDaysUntilDate(value: any): number | null {
+  const parsed = lossqParseDateForAge(value);
+  if (!parsed) return null;
+
+  const today = new Date();
+  const todayUtc = Date.UTC(today.getFullYear(), today.getMonth(), today.getDate());
+  const targetUtc = Date.UTC(parsed.getFullYear(), parsed.getMonth(), parsed.getDate());
+
+  return Math.floor((targetUtc - todayUtc) / 86400000);
+}
+
+// LOSSQ_POLICY_EXPIRATION_ALERT_PRIORITY_V1
+// LOSSQ_ALERT_RETURN_SHAPE_FIX_V1
 function lossqEvaluationAlert(profileLike: any, policyRows: any[] = []) {
+  const expirationRaw = lossqBestPolicyExpirationDateRaw(profileLike, policyRows);
+  const daysUntilExpiration = lossqDaysUntilDate(expirationRaw);
+
+  // Policy lifecycle comes first. A current valuation date does not make an expired policy current.
+  if (daysUntilExpiration !== null && daysUntilExpiration < 0) {
+    const expiredDays = Math.abs(daysUntilExpiration);
+
+    return {
+      status: "Policy Expired / Renewal Overdue",
+      label: "Policy Expired / Renewal Overdue",
+      tone: "red",
+      message: `Policy expired ${expiredDays} day(s) ago. Request updated renewal loss runs before submitting to carriers.`,
+      detail: `Policy expired ${expiredDays} day(s) ago. Request updated renewal loss runs before submitting to carriers.`,
+    };
+  }
+
+  if (daysUntilExpiration !== null && daysUntilExpiration <= 30) {
+    return {
+      status: "Renewal Urgent",
+      label: "Renewal Urgent",
+      tone: "orange",
+      message: `Policy expires in ${daysUntilExpiration} day(s). Request updated loss runs immediately before marketing.`,
+      detail: `Policy expires in ${daysUntilExpiration} day(s). Request updated loss runs immediately before marketing.`,
+    };
+  }
+
+  if (daysUntilExpiration !== null && daysUntilExpiration <= 90) {
+    return {
+      status: "Renewal Window",
+      label: "Renewal Window",
+      tone: "orange",
+      message: `Policy expires in ${daysUntilExpiration} day(s). Updated loss runs should be requested for renewal marketing.`,
+      detail: `Policy expires in ${daysUntilExpiration} day(s). Updated loss runs should be requested for renewal marketing.`,
+    };
+  }
+
   const raw = lossqEvaluationDateRaw(profileLike, policyRows);
   const ageDays = lossqEvaluationDateAgeDays(profileLike, policyRows);
 
   if (!raw || ageDays === null) {
     return {
-      label: "Missing Evaluation Date",
-      detail: "No loss run valuation date found. Request a current loss run before submitting.",
+      status: "Evaluation Date Missing",
+      label: "Evaluation Date Missing",
       tone: "red",
-      ageDays: null,
+      message: "Loss run valuation/evaluation date is missing. Request updated loss runs before submitting to carriers.",
+      detail: "Loss run valuation/evaluation date is missing. Request updated loss runs before submitting to carriers.",
     };
   }
 
   if (ageDays <= 30) {
     return {
+      status: "Current",
       label: "Current",
-      detail: `Loss run valuation date is ${ageDays} day(s) old.`,
       tone: "green",
-      ageDays,
+      message: `Loss run valuation date is ${ageDays} day(s) old.`,
+      detail: `Loss run valuation date is ${ageDays} day(s) old.`,
     };
   }
 
   if (ageDays <= 60) {
     return {
+      status: "Needs Refresh Soon",
       label: "Needs Refresh Soon",
-      detail: `Loss run valuation date is ${ageDays} day(s) old. Consider requesting an updated loss run soon.`,
       tone: "yellow",
-      ageDays,
+      message: `Loss run valuation date is ${ageDays} day(s) old. Consider requesting an updated loss run before marketing.`,
+      detail: `Loss run valuation date is ${ageDays} day(s) old. Consider requesting an updated loss run before marketing.`,
     };
   }
 
   if (ageDays <= 90) {
     return {
+      status: "Refresh Recommended",
       label: "Refresh Recommended",
-      detail: `Loss run valuation date is ${ageDays} day(s) old. Request an updated loss run before marketing.`,
       tone: "orange",
-      ageDays,
+      message: `Loss run valuation date is ${ageDays} day(s) old. Request an updated loss run before marketing.`,
+      detail: `Loss run valuation date is ${ageDays} day(s) old. Request an updated loss run before marketing.`,
     };
   }
 
   return {
+    status: "Outdated Loss Run",
     label: "Outdated Loss Run",
-    detail: `Loss run valuation date is ${ageDays} day(s) old. Request an updated loss run before submitting to carriers.`,
     tone: "red",
-    ageDays,
+    message: `Loss run valuation date is ${ageDays} day(s) old. Request an updated loss run before submitting to carriers.`,
+    detail: `Loss run valuation date is ${ageDays} day(s) old. Request an updated loss run before submitting to carriers.`,
   };
 }
+
 
 function EvaluationDateAlertBadge({ profileLike, policyRows }: { profileLike: any; policyRows: any[] }) {
   const alert = lossqEvaluationAlert(profileLike, policyRows);
