@@ -1792,6 +1792,7 @@ def lossq_beta_purge_prior_upload_data(db, current_user, policy_keys):
 
 
 # LOSSQ_SECTION_CSV_PROFILE_DATE_REPAIR_V1
+# LOSSQ_PRODUCING_AGENCY_EXTRACTION_V1
 def lossq_section_csv_clean(value):
     return re.sub(r"\s+", " ", str(value or "").strip())
 
@@ -1891,6 +1892,10 @@ def lossq_section_csv_apply_profile_date_repair(file_path, parsed_profile):
             elif field in {"namedinsured", "insured", "businessname"}:
                 account_info["business_name"] = value
                 account_info["named_insured"] = value
+            elif field in {"producer", "producingagency", "agency", "agencyname", "broker", "brokerage"}:
+                account_info["agency_name"] = value
+                account_info["producer"] = value
+                account_info["producing_agency"] = value
             elif field in {"accountnumber", "customernumber"}:
                 account_info["account_number"] = value
                 account_info["customer_number"] = value

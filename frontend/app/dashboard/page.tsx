@@ -2063,6 +2063,26 @@ function EvaluationDateAlertBadge({ profileLike, policyRows }: { profileLike: an
 }
 
 
+
+
+// LOSSQ_PRODUCING_AGENCY_DISPLAY_HELPER_V1
+// LOSSQ_PRODUCING_AGENCY_DISPLAY_UI_V1
+function lossqProducingAgencyFromObject(obj: any): string {
+  return lossqFirstValue(
+    obj?.agency_name,
+    obj?.producing_agency,
+    obj?.producer,
+    obj?.agency,
+    obj?.agencyName,
+    obj?.broker,
+    obj?.brokerage,
+    obj?.["Producing Agency"],
+    obj?.["Producer"],
+    obj?.["Agency Name"]
+  ) || "Agency Not Set";
+}
+
+
 // LOSSQ_FRONTEND_DATE_LOCKDOWN_V1
 // LOSSQ_FRONTEND_TARGETED_DATE_DISPLAY_V1
 // LOSSQ_EXACT_ACCOUNT_POLICY_DATE_UI_V1
@@ -6490,7 +6510,7 @@ const trendNoteDisplay =
                     label="Account Number"
                     value={displayProfile?.account_number || displayProfile?.customer_number || "-"}
                   />
-                  <ProfileDetail label="Producing Agency" value={displayProfile?.agency_name || "-"} />
+                  <ProfileDetail label="Producing Agency" value={lossqProducingAgencyFromObject(displayProfile)} />
                   <ProfileDetail label="Main Policy" value={mainPolicyNumber || "-"} />
                   <ProfileDetail label="Effective Date" value={lossqEffectiveDateFromObject(displayProfile)} />
                   <ProfileDetail label="Expiration Date" value={lossqExpirationDateFromObject(displayProfile)} />
