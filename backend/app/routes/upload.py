@@ -1789,6 +1789,200 @@ def lossq_beta_purge_prior_upload_data(db, current_user, policy_keys):
     return result
 
 
+
+
+# LOSSQ_SECTION_CSV_PROFILE_DATE_REPAIR_V1
+def lossq_section_csv_clean(value):
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+def lossq_section_csv_key(value):
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").lower())
+
+def lossq_section_csv_date(value):
+    raw = lossq_section_csv_clean(value)
+    if not raw:
+        return ""
+
+    m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$", raw)
+    if m:
+        month, day, year = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if year < 100:
+            year += 2000 if year < 50 else 1900
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return f"{month:02d}/{day:02d}/{year}"
+
+    m = re.match(r"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$", raw)
+    if m:
+        year, month, day = int(m.group(1)), int(m.group(2)), int(m.group(3))
+        if 1 <= month <= 12 and 1 <= day <= 31:
+            return f"{month:02d}/{day:02d}/{year}"
+
+    return raw
+
+def lossq_section_csv_valid_carrier(value):
+    text_value = lossq_section_csv_clean(value)
+    low = text_value.lower()
+
+    if not text_value:
+        return False
+
+    bad_exact = {
+        "carrier",
+        "writing carrier",
+        "effective date",
+        "expiration date",
+        "valuation date",
+        "evaluation date",
+        "as of date",
+        "policy number",
+        "main policy",
+        "account number",
+        "producer",
+        "named insured",
+    }
+
+    if low in bad_exact:
+        return False
+
+    if re.match(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$", text_value):
+        return False
+
+    return True
+
+def lossq_section_csv_apply_profile_date_repair(file_path, parsed_profile):
+    """
+    Universal repair for section-based CSV loss runs.
+
+    It reads Account Information and Policy Schedule sections directly from the CSV,
+    then merges dates/carrier/account/policies into parsed_profile before saving.
+    """
+    parsed_profile = parsed_profile or {}
+
+    try:
+        import csv as _csv
+
+        with open(file_path, "r", encoding="utf-8-sig", newline="") as f:
+            rows = [row for row in _csv.reader(f)]
+    except Exception:
+        return parsed_profile
+
+    account_info = {}
+    policies = []
+    current_header = []
+
+    for raw_row in rows:
+        row = [lossq_section_csv_clean(cell) for cell in raw_row]
+        if not any(row):
+            continue
+
+        first = row[0].strip()
+        first_key = lossq_section_csv_key(first)
+
+        # Three-column Account Information rows:
+        # Section, Field, Value
+        if first_key == "accountinformation" and len(row) >= 3:
+            field = lossq_section_csv_key(row[1])
+            value = row[2]
+
+            if field in {"carrier", "carriercarriername"} and lossq_section_csv_valid_carrier(value):
+                account_info["carrier_name"] = value
+            elif field in {"writingcarrier"} and lossq_section_csv_valid_carrier(value):
+                account_info["writing_carrier"] = value
+            elif field in {"namedinsured", "insured", "businessname"}:
+                account_info["business_name"] = value
+                account_info["named_insured"] = value
+            elif field in {"accountnumber", "customernumber"}:
+                account_info["account_number"] = value
+                account_info["customer_number"] = value
+            elif field in {"mainpolicy", "mainpolicynumber", "policynumber"}:
+                account_info["policy_number"] = value
+            elif field in {"effectivedate", "policyeffectivedate", "effective"}:
+                account_info["effective_date"] = lossq_section_csv_date(value)
+                account_info["policy_effective_date"] = lossq_section_csv_date(value)
+            elif field in {"expirationdate", "expirydate", "policyexpirationdate", "expiration"}:
+                account_info["expiration_date"] = lossq_section_csv_date(value)
+                account_info["policy_expiration_date"] = lossq_section_csv_date(value)
+            elif field in {"valuationdate", "evaluationdate", "asofdate", "reportdate"}:
+                fixed_date = lossq_section_csv_date(value)
+                account_info["valuation_date"] = fixed_date
+                account_info["evaluation_date"] = fixed_date
+                account_info["loss_run_valuation_date"] = fixed_date
+
+            continue
+
+        # Header rows.
+        if first_key == "section" and len(row) > 1:
+            current_header = row
+            continue
+
+        # Policy Schedule rows that follow:
+        # Section, Policy Number, Line of Business, Carrier, Effective Date, Expiration Date...
+        if first_key == "policyschedule" and current_header:
+            mapped = {}
+            for idx, header_name in enumerate(current_header):
+                if idx >= len(row):
+                    continue
+                key = lossq_section_csv_key(header_name)
+                value = row[idx]
+
+                if key == "policynumber":
+                    mapped["policy_number"] = value
+                elif key in {"lineofbusiness", "policytype", "coverage", "linecoverage"}:
+                    mapped["line_of_business"] = value
+                    mapped["policy_type"] = value
+                    mapped["coverage"] = value
+                elif key in {"carrier", "carriername", "writingcarrier"} and lossq_section_csv_valid_carrier(value):
+                    mapped["carrier"] = value
+                    mapped["carrier_name"] = value
+                elif key in {"effectivedate", "policyeffectivedate", "effective"}:
+                    mapped["effective_date"] = lossq_section_csv_date(value)
+                    mapped["policy_effective_date"] = lossq_section_csv_date(value)
+                elif key in {"expirationdate", "expirydate", "policyexpirationdate", "expiration"}:
+                    mapped["expiration_date"] = lossq_section_csv_date(value)
+                    mapped["policy_expiration_date"] = lossq_section_csv_date(value)
+                elif key in {"currentpremium", "premium"}:
+                    mapped["current_premium"] = value
+                elif key in {"exposurebasis"}:
+                    mapped["exposure_basis"] = value
+                elif key in {"exposurevalue"}:
+                    mapped["exposure_value"] = value
+                elif key == "state":
+                    mapped["state"] = value
+
+            if mapped.get("policy_number"):
+                policies.append(mapped)
+
+    for key, value in account_info.items():
+        if value:
+            parsed_profile[key] = value
+
+    if policies:
+        parsed_profile["policies"] = policies
+        parsed_profile["policy_schedule"] = policies
+
+        if not parsed_profile.get("policy_number"):
+            parsed_profile["policy_number"] = policies[0].get("policy_number", "")
+
+        if not parsed_profile.get("effective_date"):
+            parsed_profile["effective_date"] = policies[0].get("effective_date", "")
+            parsed_profile["policy_effective_date"] = policies[0].get("effective_date", "")
+
+        if not parsed_profile.get("expiration_date"):
+            parsed_profile["expiration_date"] = policies[0].get("expiration_date", "")
+            parsed_profile["policy_expiration_date"] = policies[0].get("expiration_date", "")
+
+        if not parsed_profile.get("carrier_name"):
+            for policy in policies:
+                if lossq_section_csv_valid_carrier(policy.get("carrier_name")):
+                    parsed_profile["carrier_name"] = policy.get("carrier_name")
+                    break
+
+        if not parsed_profile.get("writing_carrier"):
+            parsed_profile["writing_carrier"] = parsed_profile.get("carrier_name", "")
+
+    return parsed_profile
+
+
 async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
     ensure_account_profile_columns(db)
@@ -1814,6 +2008,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         try:
             parsed_claims, parsed_profile = parse_file(file_path, safe_upload_filename or safe_filename)
+            parsed_profile = lossq_section_csv_apply_profile_date_repair(file_path, parsed_profile)
         except Exception as exc:
             raise HTTPException(
                 status_code=400,
