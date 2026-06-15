@@ -7422,11 +7422,17 @@ def find_report_profile(db: Session, current_user: dict, requested_policy: str |
             exact_matches.sort(key=lambda item: report_profile_score(item, requested), reverse=True)
             return exact_matches[0]
 
+        # LOSSQ_REPORT_CURRENT_ACCOUNT_ONLY_BACKEND_V1
+        # Do not fall back to another real profile when a specific policy/account was requested.
+        if existing and requested in report_policy_numbers_from_profile(existing):
+            return existing
+        return {}
+
     # If the engine gave a real saved-looking profile, use it only after DB exact matching.
     if existing and report_profile_has_real_account_data(existing):
         return existing
 
-    # If no exact match is available, do not keep a placeholder. Use the best real saved profile.
+    # If no requested policy exists, use the best real saved profile as a fallback.
     real_profiles = [profile for profile in profiles if report_profile_has_real_account_data(profile)]
     if real_profiles:
         real_profiles.sort(key=lambda item: report_profile_score(item, requested), reverse=True)

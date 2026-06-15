@@ -4555,11 +4555,58 @@ async function downloadPdf(url: string, filename: string, init?: RequestInit) {
   window.URL.revokeObjectURL(objectUrl);
 }
 
+
+
+// LOSSQ_REPORT_CURRENT_ACCOUNT_ONLY_FRONTEND_V1
+function lossqReportPolicyNumbersFromProfile(profileLike: any): string[] {
+  const values: string[] = [];
+
+  const add = (value: any) => {
+    const normalized = normalizePolicyNumber(value);
+    if (normalized && !values.includes(normalized)) values.push(normalized);
+  };
+
+  add(profileLike?.policy_number);
+  add(profileLike?.account_number);
+  add(profileLike?.customer_number);
+
+  const policies = Array.isArray(profileLike?.policies) ? profileLike.policies : [];
+  policies.forEach((policy: any) => {
+    add(policy?.policy_number);
+    add(policy?.policyNumber);
+    add(policy?.policy_no);
+    add(policy?.policy);
+  });
+
+  return values;
+}
+
+function lossqFilterReportClaimsToCurrentAccount(rows: any[], policyNumbers: string[]): any[] {
+  const policySet = new Set((policyNumbers || []).map((item) => normalizePolicyNumber(item)).filter(Boolean));
+  if (policySet.size === 0) return [];
+
+  return lossqFilterRealClaims(Array.isArray(rows) ? rows : []).filter((claim: any) => {
+    const claimPolicy = normalizePolicyNumber(
+      claim?.policy_number ||
+      claim?.policyNumber ||
+      claim?.policy_no ||
+      claim?.policy ||
+      claim?.profile_policy_number ||
+      claim?.selected_policy_number ||
+      claim?.account_number ||
+      claim?.customer_number
+    );
+    return claimPolicy && policySet.has(claimPolicy);
+  });
+}
+
+
 function buildReportQuery() {
   const params = new URLSearchParams();
 
-  if (profile?.id) {
-    params.set("profile_id", String(profile.id));
+  const reportProfileId = profile?.id || displayProfile?.id || activeProfileRef.current?.id;
+  if (reportProfileId) {
+    params.set("profile_id", String(reportProfileId));
   }
 
   if (profile?.policy_number) {
@@ -4620,8 +4667,26 @@ function buildReportPayload() {
   const policyNumbersForReport =
     activePolicyNumbers.length > 0 ? activePolicyNumbers : claimPolicyNumbers;
 
+  // LOSSQ_REPORT_PAYLOAD_SCOPE_FIX_V1
+  const safeCurrentReportProfile =
+    displayProfile ||
+    profile ||
+    activeProfileRef.current ||
+    currentUpload?.profile ||
+    cachedUpload?.profile ||
+    {};
+
+  const safeCurrentReportPolicyNumbers = Array.from(
+    new Set([
+      ...lossqReportPolicyNumbersFromProfile(safeCurrentReportProfile),
+      ...lossqReportPolicyNumbersFromProfile(profile),
+      ...lossqReportPolicyNumbersFromProfile(activeProfileRef.current),
+      ...(Array.isArray(activePolicyNumbers) ? activePolicyNumbers : []),
+    ].map((item) => normalizePolicyNumber(item)).filter(Boolean))
+  );
+
   return {
-    profile: displayProfile || profile || currentUpload?.profile || cachedUpload?.profile || {},
+    profile: safeCurrentReportProfile,
     claims: reportClaims,
     summary: effectiveSummary || summary || {},
     decision: effectiveDecision || decision || {},
@@ -4629,7 +4694,7 @@ function buildReportPayload() {
     carrier_match: effectiveCarrierMatch || carrierMatch || {},
     premium_forecast: effectivePremiumForecast || premiumForecast || {},
     submission_readiness: effectiveSubmissionReadiness || submissionReadiness || {},
-    policy_numbers_used: policyNumbersForReport,
+    policy_numbers_used: safeCurrentReportPolicyNumbers.length > 0 ? safeCurrentReportPolicyNumbers : policyNumbersForReport,
     profile_id: profile?.id || displayProfile?.id || null,
   };
 }
