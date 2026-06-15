@@ -2045,37 +2045,71 @@ def lossq_pdf_profile_extract_date_after_label(raw_text, labels):
 
 def lossq_pdf_profile_extract_policy_period(raw_text):
     text_value = str(raw_text or "")
+    if not text_value:
+        return "", ""
 
-    # Common formats:
-    # Policy Period: 03/01/2025 - 03/01/2026
-    # Effective: 03/01/2025 Expiration: 03/01/2026
-    # 03/01/2025 to 03/01/2026
+    compact = re.sub(r"[ \t]+", " ", text_value)
+    compact = re.sub(r"\r\n|\r", "\n", compact)
+
+    # LOSSQ_UNIVERSAL_PDF_POLICY_PERIOD_EXTRACTION_V2
+    # Universal policy period patterns commonly found in carrier loss runs.
     patterns = [
-        r"policy\s*period\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*(?:-|to|through|thru)\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
-        r"effective\s*(?:date)?\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}).{0,60}?expir(?:ation|y)?\s*(?:date)?\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
-        r"from\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*(?:to|through|thru|-)\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+        r"policy\s*period\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})\s*(?:-|to|through|thru|until)\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})",
+        r"policy\s*term\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})\s*(?:-|to|through|thru|until)\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})",
+        r"coverage\s*period\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})\s*(?:-|to|through|thru|until)\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})",
+        r"effective\s*(?:date)?\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}).{0,160}?expir(?:ation|y)?\s*(?:date)?\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})",
+        r"\beff\.?\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}).{0,160}?\bexp\.?\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})",
+        r"\bfrom\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})\s*(?:-|to|through|thru|until)\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})",
     ]
 
     for pattern in patterns:
-        match = re.search(pattern, text_value, flags=re.IGNORECASE | re.DOTALL)
+        match = re.search(pattern, compact, flags=re.IGNORECASE | re.DOTALL)
         if match:
-            return lossq_section_csv_date(match.group(1)), lossq_section_csv_date(match.group(2))
+            first = lossq_section_csv_date(match.group(1))
+            second = lossq_section_csv_date(match.group(2))
+            if first and second and first != second:
+                return first, second
+
+    # Fallback: find two dates near policy/term/effective/expiration wording.
+    lines = [line.strip() for line in compact.split("\n") if line.strip()]
+    date_pattern = r"(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})"
+
+    for idx, line in enumerate(lines):
+        window = " ".join(lines[max(0, idx - 3): min(len(lines), idx + 4)])
+        low = window.lower()
+
+        if not any(term in low for term in ["policy", "period", "effective", "expiration", "expiry", "coverage", "term", "eff", "exp"]):
+            continue
+
+        dates = re.findall(date_pattern, window)
+        cleaned_dates = []
+        for d in dates:
+            fixed = lossq_section_csv_date(d)
+            if fixed and fixed not in cleaned_dates:
+                cleaned_dates.append(fixed)
+
+        if len(cleaned_dates) >= 2:
+            return cleaned_dates[0], cleaned_dates[1]
 
     effective = lossq_pdf_profile_extract_date_after_label(
-        text_value,
+        compact,
         [
             r"effective\s*date",
             r"policy\s*effective\s*date",
+            r"coverage\s*effective\s*date",
+            r"\beff\.?",
             r"effective",
         ],
     )
 
     expiration = lossq_pdf_profile_extract_date_after_label(
-        text_value,
+        compact,
         [
             r"expiration\s*date",
             r"expiry\s*date",
             r"policy\s*expiration\s*date",
+            r"coverage\s*expiration\s*date",
+            r"\bexp\.?",
             r"expiration",
             r"expiry",
         ],
@@ -2103,11 +2137,6 @@ def lossq_pdf_profile_extract_evaluation_date(raw_text):
 def lossq_pdf_profile_repair(file_path, parsed_profile):
     parsed_profile = parsed_profile or {}
 
-    # Only run the PDF raw-text cleanup for PDF-like uploads.
-    filename = str(file_path or "").lower()
-    if not filename.endswith(".pdf"):
-        return parsed_profile
-
     raw_text = (
         parsed_profile.get("raw_text")
         or parsed_profile.get("raw_text_preview")
@@ -2115,6 +2144,11 @@ def lossq_pdf_profile_repair(file_path, parsed_profile):
         or parsed_profile.get("ocr_text")
         or ""
     )
+
+    # LOSSQ_PDF_RAW_TEXT_REPAIR_RUNS_ON_RAW_TEXT_V1
+    # Run this repair whenever extracted raw text exists. Temp upload paths may not preserve .pdf extension.
+    if not raw_text:
+        return parsed_profile
 
     # Clean fake carrier values.
     for key in ["carrier_name", "writing_carrier", "carrier"]:
