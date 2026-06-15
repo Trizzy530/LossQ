@@ -1932,6 +1932,80 @@ function lossqHumanUploadError(error: any): string {
 }
 
 
+// LOSSQ_FRONTEND_DATE_LOCKDOWN_V1
+function lossqFirstValue(...values: unknown[]): string {
+  for (const value of values) {
+    const cleaned = lossqCleanText(value);
+    if (
+      cleaned &&
+      cleaned !== "-" &&
+      cleaned.toLowerCase() !== "not set" &&
+      cleaned.toLowerCase() !== "none" &&
+      cleaned.toLowerCase() !== "null" &&
+      cleaned.toLowerCase() !== "undefined"
+    ) {
+      return cleaned;
+    }
+  }
+  return "";
+}
+
+function lossqEffectiveDateFromObject(obj: any): string {
+  return lossqFormatDateSafe(
+    obj?.effective_date,
+    obj?.effectiveDate,
+    obj?.effective,
+    obj?.policy_effective_date,
+    obj?.policyEffectiveDate,
+    obj?.policy_effective,
+    obj?.start_date,
+    obj?.startDate
+  );
+}
+
+function lossqExpirationDateFromObject(obj: any): string {
+  return lossqFormatDateSafe(
+    obj?.expiration_date,
+    obj?.expirationDate,
+    obj?.expiration,
+    obj?.expiry_date,
+    obj?.expiryDate,
+    obj?.policy_expiration_date,
+    obj?.policyExpirationDate,
+    obj?.policy_expiration,
+    obj?.end_date,
+    obj?.endDate
+  );
+}
+
+function lossqDateText(value: unknown): string {
+  const formatted = lossqFormatDateSafe(value);
+  return formatted || "Not set";
+}
+
+function lossqPolicyNumberFromObject(obj: any): string {
+  return lossqFirstValue(
+    obj?.policy_number,
+    obj?.policyNumber,
+    obj?.policy_no,
+    obj?.policy,
+    obj?.number
+  ) || "Policy Not Set";
+}
+
+function lossqLineOfBusinessFromObject(obj: any): string {
+  return lossqFirstValue(
+    obj?.line_of_business,
+    obj?.lineOfBusiness,
+    obj?.policy_type,
+    obj?.policyType,
+    obj?.coverage,
+    obj?.lob
+  ) || "Line Not Set";
+}
+
+
+
 export default function DashboardPage() {
 
   useEffect(() => {
