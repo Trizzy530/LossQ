@@ -1,7 +1,7 @@
 import csv
 from fastapi import HTTPException, APIRouter, UploadFile, File, Depends, Form
 from sqlalchemy.orm import Session
-from sqlalchemy import text, inspect
+from sqlalchemy import text, inspect, func
 import shutil
 import os
 import json
@@ -1586,6 +1586,209 @@ async def debug_loss_run_parser(
     }
 
 
+
+
+# LOSSQ_BETA_UPLOAD_GUARDRAILS_V1
+def lossq_beta_clean_text(value):
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+def lossq_beta_norm_key(value):
+    return lossq_beta_clean_text(value).upper()
+
+def lossq_beta_valid_policy_key(value):
+    key = lossq_beta_norm_key(value)
+    if not key:
+        return False
+    bad = {
+        "POLICY NOT SET",
+        "NOT SET",
+        "UNKNOWN",
+        "N/A",
+        "NONE",
+        "LOSS SUMMARY",
+        "METRIC",
+        "TOTAL CLAIMS",
+        "NOTE",
+        "NOTES",
+    }
+    if key in bad:
+        return False
+    return bool(re.search(r"[A-Z]{2,10}[-_ ]?\d{4}[-_ ][A-Z0-9]+", key)) or bool(re.search(r"[A-Z]{2,10}-\d+", key))
+
+def lossq_beta_valid_claim_number(value):
+    key = lossq_beta_norm_key(value)
+    if not key:
+        return False
+
+    blocked_exact = {
+        "NOTE",
+        "NOTES",
+        "METRIC",
+        "VALUE",
+        "FIELD",
+        "LOSS SUMMARY",
+        "UNDERWRITING NOTES",
+        "TOTAL CLAIMS",
+        "OPEN CLAIMS",
+        "CLOSED CLAIMS",
+        "TOTAL PAID",
+        "TOTAL RESERVE",
+        "TOTAL INCURRED",
+        "LARGEST LOSS",
+        "LOSS RATIO",
+        "CURRENT PREMIUM",
+        "EXPIRING PREMIUM",
+        "TARGET RENEWAL PREMIUM",
+        "PAYROLL",
+        "REVENUE / SALES",
+        "EMPLOYEE COUNT",
+        "VEHICLE COUNT",
+        "DRIVER COUNT",
+        "PROPERTY TIV",
+    }
+    if key in blocked_exact:
+        return False
+
+    blocked_contains = [
+        "FICTIONAL TEST",
+        "DESIGNED TO TEST",
+        "NOT AFFILIATED",
+        "LOSS SUMMARY",
+        "UNDERWRITING NOTES",
+        "EXPOSURE INPUTS",
+        "POLICY SCHEDULE",
+        "ACCOUNT INFORMATION",
+    ]
+    if any(item in key for item in blocked_contains):
+        return False
+
+    # Real claim numbers almost always include digits and enough structure.
+    if not re.search(r"\d", key):
+        return False
+
+    return bool(re.search(r"[A-Z0-9]+[-_][A-Z0-9]+[-_]\d{2,4}[-_]\d{2,6}", key)) or bool(re.search(r"CLM|CLAIM|GL|WC|AUTO|AU|PROP|PR|CY|BOP|UMB", key))
+
+def lossq_beta_filter_claim_rows(parsed_claims):
+    clean_claims = []
+    removed_rows = []
+
+    for item in parsed_claims or []:
+        if not isinstance(item, dict):
+            removed_rows.append({"reason": "not_dict", "row": str(item)[:160]})
+            continue
+
+        claim_number = (
+            item.get("claim_number")
+            or item.get("claim_no")
+            or item.get("claim")
+            or item.get("claim_id")
+            or ""
+        )
+        policy_number = (
+            item.get("policy_number")
+            or item.get("policy")
+            or item.get("policy_no")
+            or ""
+        )
+
+        description = (
+            item.get("description")
+            or item.get("loss_description")
+            or item.get("claim_description")
+            or ""
+        )
+
+        if not lossq_beta_valid_claim_number(claim_number):
+            removed_rows.append({
+                "reason": "invalid_claim_number",
+                "claim_number": lossq_beta_clean_text(claim_number),
+                "description": lossq_beta_clean_text(description)[:120],
+            })
+            continue
+
+        # Keep claim if policy is valid or parser will fallback later.
+        if policy_number and not lossq_beta_valid_policy_key(policy_number):
+            removed_rows.append({
+                "reason": "invalid_policy_number",
+                "claim_number": lossq_beta_clean_text(claim_number),
+                "policy_number": lossq_beta_clean_text(policy_number),
+            })
+            continue
+
+        clean_claims.append(item)
+
+    return clean_claims, removed_rows
+
+def lossq_beta_collect_upload_policy_keys(parsed_profile, parsed_claims, fallback_policy_number=""):
+    keys = set()
+
+    def add(value):
+        value = lossq_beta_norm_key(value)
+        if lossq_beta_valid_policy_key(value):
+            keys.add(value)
+
+    if isinstance(parsed_profile, dict):
+        for name in ["policy_number", "account_number", "customer_number", "main_policy_number"]:
+            add(parsed_profile.get(name))
+
+        policies = parsed_profile.get("policies") or parsed_profile.get("policy_schedule") or []
+        if isinstance(policies, list):
+            for policy in policies:
+                if isinstance(policy, dict):
+                    add(policy.get("policy_number") or policy.get("policy") or policy.get("policy_no"))
+
+    for claim in parsed_claims or []:
+        if isinstance(claim, dict):
+            add(claim.get("policy_number") or claim.get("policy") or claim.get("policy_no"))
+
+    add(fallback_policy_number)
+
+    return sorted(keys)
+
+def lossq_beta_purge_prior_upload_data(db, current_user, policy_keys):
+    result = {
+        "policy_keys": policy_keys or [],
+        "deleted_claims": 0,
+        "deleted_upload_history": 0,
+    }
+
+    if not db or not current_user or not policy_keys:
+        return result
+
+    org_id = current_user.get("organization_id") if isinstance(current_user, dict) else None
+    if not org_id:
+        return result
+
+    upper_keys = [lossq_beta_norm_key(key) for key in policy_keys if lossq_beta_valid_policy_key(key)]
+    if not upper_keys:
+        return result
+
+    try:
+        deleted_claims = (
+            db.query(Claim)
+            .filter(Claim.organization_id == org_id)
+            .filter(func.upper(func.trim(Claim.policy_number)).in_(upper_keys))
+            .delete(synchronize_session=False)
+        )
+        result["deleted_claims"] = int(deleted_claims or 0)
+    except Exception as exc:
+        result["claim_purge_warning"] = str(exc)[:200]
+
+    try:
+        if "UploadHistory" in globals():
+            deleted_uploads = (
+                db.query(UploadHistory)
+                .filter(UploadHistory.organization_id == org_id)
+                .filter(func.upper(func.trim(UploadHistory.policy_number)).in_(upper_keys))
+                .delete(synchronize_session=False)
+            )
+            result["deleted_upload_history"] = int(deleted_uploads or 0)
+    except Exception as exc:
+        result["upload_history_purge_warning"] = str(exc)[:200]
+
+    return result
+
+
 async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
     ensure_account_profile_columns(db)
@@ -1609,7 +1812,17 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         with open(file_path, "wb") as buffer:
             shutil.copyfileobj(file.file, buffer)
 
-        parsed_claims, parsed_profile = parse_file(file_path, safe_upload_filename or safe_filename)
+        try:
+            parsed_claims, parsed_profile = parse_file(file_path, safe_upload_filename or safe_filename)
+        except Exception as exc:
+            raise HTTPException(
+                status_code=400,
+                detail={
+                    "message": "Loss run could not be parsed cleanly. Please upload a valid PDF, Excel, or CSV loss run.",
+                    "error": str(exc)[:300],
+                    "stage": "parse_file",
+                },
+            )
 
         # LOSSQ_APPLY_LIVE_SECTION_BASED_CSV_REPAIR_V1
         parsed_claims, parsed_profile = lossq_live_repair_section_csv_upload(
@@ -1622,6 +1835,19 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         file_account_key_for_claims = ""
 
         claim_policy_number = ""
+        # LOSSQ_BETA_FILTER_AND_PURGE_BEFORE_SAVE_V1
+        parsed_claims, lossq_beta_removed_rows = lossq_beta_filter_claim_rows(parsed_claims)
+        lossq_beta_policy_keys = lossq_beta_collect_upload_policy_keys(
+            parsed_profile,
+            parsed_claims,
+            file_policy_number,
+        )
+        lossq_beta_cleanup = lossq_beta_purge_prior_upload_data(
+            db,
+            current_user,
+            lossq_beta_policy_keys,
+        )
+
         for claim_data in parsed_claims:
             claim_policy = clean_profile_value(claim_data.get("policy_number"))
             if claim_policy:
