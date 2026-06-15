@@ -1988,6 +1988,192 @@ def lossq_section_csv_apply_profile_date_repair(file_path, parsed_profile):
     return parsed_profile
 
 
+
+
+# LOSSQ_PDF_PROFILE_CLEANUP_V1
+def lossq_pdf_profile_bad_value(value):
+    clean = lossq_section_csv_clean(value)
+    low = clean.lower()
+
+    if not clean:
+        return True
+
+    bad = {
+        "effective",
+        "effective date",
+        "expiration",
+        "expiration date",
+        "expiry",
+        "expiry date",
+        "policy",
+        "policy number",
+        "carrier",
+        "writing carrier",
+        "insured",
+        "named insured",
+        "producer",
+        "agency",
+        "not set",
+        "-",
+    }
+
+    if low in bad:
+        return True
+
+    if re.match(r"^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$", clean):
+        return True
+
+    if re.match(r"^\d{4}[/-]\d{1,2}[/-]\d{1,2}$", clean):
+        return True
+
+    return False
+
+
+def lossq_pdf_profile_extract_date_after_label(raw_text, labels):
+    text_value = str(raw_text or "")
+    if not text_value:
+        return ""
+
+    for label in labels:
+        pattern = rf"{label}\s*[:#-]?\s*(\d{{1,2}}[/-]\d{{1,2}}[/-]\d{{2,4}}|\d{{4}}[/-]\d{{1,2}}[/-]\d{{1,2}})"
+        match = re.search(pattern, text_value, flags=re.IGNORECASE)
+        if match:
+            return lossq_section_csv_date(match.group(1))
+
+    return ""
+
+
+def lossq_pdf_profile_extract_policy_period(raw_text):
+    text_value = str(raw_text or "")
+
+    # Common formats:
+    # Policy Period: 03/01/2025 - 03/01/2026
+    # Effective: 03/01/2025 Expiration: 03/01/2026
+    # 03/01/2025 to 03/01/2026
+    patterns = [
+        r"policy\s*period\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*(?:-|to|through|thru)\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+        r"effective\s*(?:date)?\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4}).{0,60}?expir(?:ation|y)?\s*(?:date)?\s*[:#-]?\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+        r"from\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*(?:to|through|thru|-)\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, text_value, flags=re.IGNORECASE | re.DOTALL)
+        if match:
+            return lossq_section_csv_date(match.group(1)), lossq_section_csv_date(match.group(2))
+
+    effective = lossq_pdf_profile_extract_date_after_label(
+        text_value,
+        [
+            r"effective\s*date",
+            r"policy\s*effective\s*date",
+            r"effective",
+        ],
+    )
+
+    expiration = lossq_pdf_profile_extract_date_after_label(
+        text_value,
+        [
+            r"expiration\s*date",
+            r"expiry\s*date",
+            r"policy\s*expiration\s*date",
+            r"expiration",
+            r"expiry",
+        ],
+    )
+
+    return effective, expiration
+
+
+def lossq_pdf_profile_extract_evaluation_date(raw_text):
+    text_value = str(raw_text or "")
+
+    return lossq_pdf_profile_extract_date_after_label(
+        text_value,
+        [
+            r"valuation\s*date",
+            r"evaluation\s*date",
+            r"loss\s*run\s*valuation\s*date",
+            r"loss\s*run\s*date",
+            r"as\s*of\s*date",
+            r"report\s*date",
+        ],
+    )
+
+
+def lossq_pdf_profile_repair(file_path, parsed_profile):
+    parsed_profile = parsed_profile or {}
+
+    # Only run the PDF raw-text cleanup for PDF-like uploads.
+    filename = str(file_path or "").lower()
+    if not filename.endswith(".pdf"):
+        return parsed_profile
+
+    raw_text = (
+        parsed_profile.get("raw_text")
+        or parsed_profile.get("raw_text_preview")
+        or parsed_profile.get("text")
+        or parsed_profile.get("ocr_text")
+        or ""
+    )
+
+    # Clean fake carrier values.
+    for key in ["carrier_name", "writing_carrier", "carrier"]:
+        if lossq_pdf_profile_bad_value(parsed_profile.get(key)):
+            parsed_profile[key] = ""
+
+    # Never use today's date as evaluation date unless the document actually supplied it.
+    extracted_eval = lossq_pdf_profile_extract_evaluation_date(raw_text)
+    if extracted_eval:
+        parsed_profile["evaluation_date"] = extracted_eval
+        parsed_profile["valuation_date"] = extracted_eval
+        parsed_profile["loss_run_valuation_date"] = extracted_eval
+    else:
+        # If a parser supplied today's date as a fallback, remove it so frontend can warn accurately.
+        parsed_profile["evaluation_date"] = parsed_profile.get("evaluation_date") or ""
+        parsed_profile["valuation_date"] = parsed_profile.get("valuation_date") or ""
+        parsed_profile["loss_run_valuation_date"] = parsed_profile.get("loss_run_valuation_date") or ""
+
+    effective, expiration = lossq_pdf_profile_extract_policy_period(raw_text)
+
+    if effective and not parsed_profile.get("effective_date"):
+        parsed_profile["effective_date"] = effective
+        parsed_profile["policy_effective_date"] = effective
+
+    if expiration and not parsed_profile.get("expiration_date"):
+        parsed_profile["expiration_date"] = expiration
+        parsed_profile["policy_expiration_date"] = expiration
+
+    # If profile dates exist but policy schedule rows are missing dates/carrier, fill the schedule rows.
+    policies = parsed_profile.get("policies") or parsed_profile.get("policy_schedule") or []
+    if isinstance(policies, list):
+        cleaned_policies = []
+        for policy in policies:
+            if not isinstance(policy, dict):
+                continue
+
+            next_policy = dict(policy)
+
+            if lossq_pdf_profile_bad_value(next_policy.get("carrier")):
+                next_policy["carrier"] = parsed_profile.get("carrier_name") or parsed_profile.get("writing_carrier") or ""
+            if lossq_pdf_profile_bad_value(next_policy.get("carrier_name")):
+                next_policy["carrier_name"] = parsed_profile.get("carrier_name") or parsed_profile.get("writing_carrier") or ""
+
+            if not next_policy.get("effective_date") and parsed_profile.get("effective_date"):
+                next_policy["effective_date"] = parsed_profile.get("effective_date")
+                next_policy["policy_effective_date"] = parsed_profile.get("effective_date")
+
+            if not next_policy.get("expiration_date") and parsed_profile.get("expiration_date"):
+                next_policy["expiration_date"] = parsed_profile.get("expiration_date")
+                next_policy["policy_expiration_date"] = parsed_profile.get("expiration_date")
+
+            cleaned_policies.append(next_policy)
+
+        parsed_profile["policies"] = cleaned_policies
+        parsed_profile["policy_schedule"] = cleaned_policies
+
+    return parsed_profile
+
+
 async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
     ensure_account_profile_columns(db)
@@ -2014,6 +2200,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         try:
             parsed_claims, parsed_profile = parse_file(file_path, safe_upload_filename or safe_filename)
             parsed_profile = lossq_section_csv_apply_profile_date_repair(file_path, parsed_profile)
+            parsed_profile = lossq_pdf_profile_repair(file_path, parsed_profile)
         except Exception as exc:
             raise HTTPException(
                 status_code=400,
