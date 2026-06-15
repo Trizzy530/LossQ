@@ -1886,9 +1886,9 @@ def lossq_section_csv_apply_profile_date_repair(file_path, parsed_profile):
             value = row[2]
 
             if field in {"carrier", "carriercarriername"} and lossq_section_csv_valid_carrier(value):
-                account_info["carrier_name"] = value
+                lossq_set_once(account_info, "carrier_name", value)
             elif field in {"writingcarrier"} and lossq_section_csv_valid_carrier(value):
-                account_info["writing_carrier"] = value
+                lossq_set_once(account_info, "writing_carrier", value)
             elif field in {"namedinsured", "insured", "businessname"}:
                 account_info["business_name"] = value
                 account_info["named_insured"] = value
@@ -1900,7 +1900,7 @@ def lossq_section_csv_apply_profile_date_repair(file_path, parsed_profile):
                 account_info["account_number"] = value
                 account_info["customer_number"] = value
             elif field in {"mainpolicy", "mainpolicynumber", "policynumber"}:
-                account_info["policy_number"] = value
+                lossq_set_once(account_info, "policy_number", value)
             elif field in {"effectivedate", "policyeffectivedate", "effective"}:
                 account_info["effective_date"] = lossq_section_csv_date(value)
                 account_info["policy_effective_date"] = lossq_section_csv_date(value)
@@ -1992,6 +1992,19 @@ def lossq_section_csv_apply_profile_date_repair(file_path, parsed_profile):
 
 
 
+
+
+
+
+# LOSSQ_PROFILE_FIRST_VALID_VALUE_WINS_V1
+def lossq_set_once(target, key, value):
+    value = lossq_section_csv_clean(value)
+    if not value:
+        return
+
+    current = lossq_section_csv_clean(target.get(key))
+    if not current:
+        target[key] = value
 
 
 # LOSSQ_MESSY_CSV_LABEL_VALUE_VALIDATION_V1
@@ -2128,30 +2141,30 @@ def lossq_csv_label_pair_profile_repair(file_path, parsed_profile):
             return
 
         if field in {"namedinsured", "insured", "businessname", "accountname"} and lossq_csv_valid_profile_text_value(value):
-            account_info["business_name"] = value
-            account_info["named_insured"] = value
-            account_info["insured"] = value
+            lossq_set_once(account_info, "business_name", value)
+            lossq_set_once(account_info, "named_insured", value)
+            lossq_set_once(account_info, "insured", value)
 
         elif field in {"dba"} and lossq_csv_valid_profile_text_value(value):
-            account_info["dba"] = value
+            lossq_set_once(account_info, "dba", value)
 
         elif field in {"carrier", "carriername", "insurancecarrier"} and lossq_section_csv_valid_carrier(value) and lossq_csv_valid_profile_text_value(value):
-            account_info["carrier_name"] = value
+            lossq_set_once(account_info, "carrier_name", value)
 
         elif field in {"writingcarrier", "underwritingcarrier"} and lossq_section_csv_valid_carrier(value) and lossq_csv_valid_profile_text_value(value):
-            account_info["writing_carrier"] = value
+            lossq_set_once(account_info, "writing_carrier", value)
 
         elif field in {"producingagency", "producer", "agency", "agencyname", "broker", "brokerage"} and lossq_csv_valid_profile_text_value(value):
-            account_info["agency_name"] = value
-            account_info["producer"] = value
-            account_info["producing_agency"] = value
+            lossq_set_once(account_info, "agency_name", value)
+            lossq_set_once(account_info, "producer", value)
+            lossq_set_once(account_info, "producing_agency", value)
 
         elif field in {"accountnumber", "customernumber", "accountid"} and lossq_csv_valid_profile_text_value(value):
-            account_info["account_number"] = value
-            account_info["customer_number"] = value
+            lossq_set_once(account_info, "account_number", value)
+            lossq_set_once(account_info, "customer_number", value)
 
         elif field in {"mainpolicy", "mainpolicynumber", "policynumber"} and lossq_csv_valid_profile_text_value(value):
-            account_info["policy_number"] = value
+            lossq_set_once(account_info, "policy_number", value)
 
         elif field in {"policyeffectivedate", "effectivedate", "effective"} and lossq_csv_valid_profile_date_value(value):
             fixed = lossq_section_csv_date(value)
@@ -2169,9 +2182,22 @@ def lossq_csv_label_pair_profile_repair(file_path, parsed_profile):
             account_info["valuation_date"] = fixed
             account_info["loss_run_valuation_date"] = fixed
 
-    # Read label/value pairs anywhere in the first part of the file.
+    # LOSSQ_MESSY_CSV_PROFILE_SCAN_STOPS_BEFORE_CLAIMS_V1
+    # Read label/value pairs only from account/profile area. Claim detail rows may include
+    # producers, adjusters, examiners, or claim handlers that are not the producing agency.
     for row in rows[:80]:
         clean_row = [lossq_section_csv_clean(cell) for cell in row]
+        row_key_text = " ".join(lossq_section_csv_key(cell) for cell in clean_row)
+
+        if any(stop_key in row_key_text for stop_key in [
+            "claimdetail",
+            "claimnumber",
+            "dateofloss",
+            "losssummary",
+            "trailingexportnoise",
+            "underwritingnotes",
+        ]):
+            break
 
         for idx in range(0, len(clean_row) - 1):
             label = clean_row[idx]
