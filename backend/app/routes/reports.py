@@ -1,3 +1,5 @@
+
+# LOSSQ_REMOVE_DUPLICATE_CARRIER_PACKET_GENERIC_COVER_V1
 # LOSSQ_ALLOW_SAVED_AGENCY_NAME_V1
 # LOSSQ_FIX_PDF_COVER_OVERLAY_CREATOR_V1
 # LOSSQ_FORCE_SAFE_REPORT_PDF_DB_CONTEXT_V3
@@ -8566,6 +8568,103 @@ def lossq_get_active_pdf_user():
 
 
 
+
+
+# LOSSQ_REPORT_OPEN_CLOSED_CLAIM_ORDER_V1
+def lossq_report_status_value(claim):
+    try:
+        if isinstance(claim, dict):
+            return str(
+                claim.get("status")
+                or claim.get("claim_status")
+                or claim.get("claimStatus")
+                or ""
+            ).strip().lower()
+
+        return str(
+            getattr(claim, "status", None)
+            or getattr(claim, "claim_status", None)
+            or ""
+        ).strip().lower()
+    except Exception:
+        return ""
+
+
+def lossq_report_claim_number_value(claim):
+    try:
+        if isinstance(claim, dict):
+            return str(
+                claim.get("claim_number")
+                or claim.get("claimNumber")
+                or claim.get("claim_no")
+                or claim.get("claim_id")
+                or ""
+            ).strip()
+
+        return str(
+            getattr(claim, "claim_number", None)
+            or getattr(claim, "claim_no", None)
+            or getattr(claim, "claim_id", None)
+            or ""
+        ).strip()
+    except Exception:
+        return ""
+
+
+def lossq_report_total_value_for_sort(claim):
+    try:
+        if isinstance(claim, dict):
+            value = (
+                claim.get("total_incurred")
+                or claim.get("incurred")
+                or claim.get("total")
+                or 0
+            )
+        else:
+            value = (
+                getattr(claim, "total_incurred", None)
+                or getattr(claim, "incurred", None)
+                or getattr(claim, "total", None)
+                or 0
+            )
+
+        clean = re.sub(r"[^0-9.\-]", "", str(value))
+        return float(clean or 0)
+    except Exception:
+        return 0.0
+
+
+def lossq_report_claim_open_closed_rank(claim):
+    status = lossq_report_status_value(claim)
+
+    if "open" in status or "reopen" in status:
+        return 0
+
+    if any(word in status for word in ["pending", "active", "reserve"]):
+        return 1
+
+    if any(word in status for word in ["closed", "close", "settled"]):
+        return 2
+
+    return 1
+
+
+def lossq_report_order_claims_open_first(claims):
+    """
+    Universal PDF ordering:
+    open claims first, then pending/unknown, then closed claims together.
+    Within each group, larger total incurred appears first.
+    """
+    return sorted(
+        list(claims or []),
+        key=lambda claim: (
+            lossq_report_claim_open_closed_rank(claim),
+            -lossq_report_total_value_for_sort(claim),
+            lossq_report_claim_number_value(claim),
+        ),
+    )
+
+
 # LOSSQ_REPORT_DEDUPE_AND_INTELLIGENCE_LOCK_V1
 def lossq_report_claim_key(claim):
     try:
@@ -8652,8 +8751,8 @@ def lossq_rebuild_report_intelligence_from_claims(ctx):
     This prevents report cards showing 8 claims while narrative sections show 16.
     """
     ctx = ctx or {}
-    claims = lossq_report_dedupe_claims(ctx.get("claims") or [])
-    ctx["claims"] = claims
+    claims = lossq_report_order_claims_open_first(lossq_report_dedupe_claims(ctx.get("claims") or []))
+    ctx["claims"] = lossq_report_order_claims_open_first(claims)
 
     total_claims = len(claims)
     open_claims = sum(1 for claim in claims if "open" in lossq_report_claim_status(claim))
@@ -8897,6 +8996,7 @@ def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=Non
     """
     profile = ctx.get("profile") or {}
     claims = ctx.get("claims") or []
+    claims = lossq_report_order_claims_open_first(claims)  # LOSSQ_REPORT_CLAIM_TABLE_OPEN_FIRST_V1
     metrics = ctx.get("metrics") or {}
     quality = ctx.get("quality") or ctx.get("data_quality") or {}
     intelligence = ctx.get("intelligence") or ctx.get("summary") or {}
@@ -9228,10 +9328,10 @@ def lossq_report_recalculate_metrics(claims):
 def lossq_report_normalize_ctx(ctx):
     ctx = dict(ctx or {})
 
-    claims = lossq_report_dedupe_claims(ctx.get("claims") or [])
+    claims = lossq_report_order_claims_open_first(lossq_report_dedupe_claims(ctx.get("claims") or []))
     metrics = lossq_report_recalculate_metrics(claims)
 
-    ctx["claims"] = claims
+    ctx["claims"] = lossq_report_order_claims_open_first(claims)
     ctx["metrics"] = metrics
 
     # Keep engine sections aligned with deduped metrics so PDFs do not double totals.
