@@ -373,44 +373,75 @@ def ask_copilot(
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
-    org_id = current_org_id(current_user)
+    # LOSSQ_COPILOT_NO_500_GUARD_V1
+    try:
+        org_id = current_org_id(current_user)
 
-    if not org_id:
+        if not org_id:
+            return {
+                "answer": "I could not verify the organization context for this user.",
+                "policy_number": request.policy_number,
+                "claims_used": 0,
+                "policy_numbers_used": [],
+            }
+
+        policy_numbers = resolve_policy_numbers(db, current_user, request)
+
+        claims = []
+        if policy_numbers:
+            claims = (
+                db.query(Claim)
+                .filter(Claim.organization_id == org_id)
+                .filter(func.upper(func.trim(Claim.policy_number)).in_(policy_numbers))
+                .all()
+            )
+
+        if not claims:
+            claims = visible_claim_objects(request)
+
+        saved_profile = find_saved_profile(db, current_user, request)
+        profile = profile_to_dict(saved_profile)
+
+        if not profile and isinstance(request.profile, dict):
+            profile = request.profile
+
+        if not isinstance(profile, dict):
+            profile = {}
+
+        selected_policy = (
+            request.policy_number
+            or request.account_number
+            or profile.get("policy_number")
+            or "Selected account"
+        )
+
+        answer = build_detailed_answer(
+            request.question,
+            claims,
+            profile,
+            selected_policy,
+            policy_numbers,
+        )
+
         return {
-            "answer": "I could not verify the organization context for this user.",
-            "policy_number": request.policy_number,
-            "claims_used": 0,
+            "answer": answer,
+            "policy_number": selected_policy,
+            "policy_numbers_used": policy_numbers,
+            "claims_used": len(claims or []),
         }
 
-    policy_numbers = resolve_policy_numbers(db, current_user, request)
+    except Exception as exc:
+        print("LOSSQ_COPILOT_ERROR_START")
+        print(traceback.format_exc())
+        print("LOSSQ_COPILOT_ERROR_END")
 
-    query = db.query(Claim).filter(Claim.organization_id == org_id)
-
-    if policy_numbers:
-        query = query.filter(func.upper(func.trim(Claim.policy_number)).in_(policy_numbers))
-        claims = query.all()
-    else:
-        claims = []
-
-    if not claims:
-        claims = visible_claim_objects(request)
-
-    saved_profile = find_saved_profile(db, current_user, request)
-    profile = profile_to_dict(saved_profile) or request.profile or {}
-
-    selected_policy = request.policy_number or request.account_number or profile.get("policy_number") or "Selected account"
-
-    answer = build_detailed_answer(
-        request.question,
-        claims,
-        profile,
-        selected_policy,
-        policy_numbers,
-    )
-
-    return {
-        "answer": answer,
-        "policy_number": selected_policy,
-        "policy_numbers_used": policy_numbers,
-        "claims_used": len(claims or []),
-    }
+        return {
+            "answer": (
+                "Copilot hit a backend issue while reviewing this account, but the backend stayed online. "
+                "Please retry after refreshing the account. The error has been logged for repair."
+            ),
+            "policy_number": request.policy_number or request.account_number or "Selected account",
+            "policy_numbers_used": request.policy_numbers or [],
+            "claims_used": 0,
+            "error": str(exc),
+        }
