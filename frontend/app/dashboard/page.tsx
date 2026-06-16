@@ -5561,29 +5561,60 @@ const lastUploadPolicySet = new Set(
     .filter(Boolean)
 );
 
-const visibleClaims =
-  blankWorkspaceMode
-    ? []
-    : filteredVisibleClaims.length > 0
-    ? filteredVisibleClaims
-    : currentUploadMatches.length > 0
-    ? currentUploadMatches
-    : activePolicyNumbers.some((policyNumber) => lastUploadPolicySet.has(policyNumber))
-    ? lastUploadClaims
-    : [];
 
+// LOSSQ_HAS_VALIDATED_CLAIM_DATA_HELPER_V1
 function hasValidatedClaimData(claim: any) {
   if (!claim || typeof claim !== "object") return false;
 
-  const hasClaimNumber = Boolean(getClaimNumberValue(claim));
-  const hasPolicy = Boolean(getClaimPolicyNumber(claim));
-  const hasAmount =
-    getClaimIncurred(claim) > 0 ||
-    toMoneyNumber(claim?.paid_amount || claim?.paid || claim?.paid_loss) > 0 ||
-    toMoneyNumber(claim?.reserve_amount || claim?.reserve || claim?.outstanding_reserve) > 0;
+  const claimNumber = String(
+    claim.claim_number ||
+    claim.claimNumber ||
+    claim.number ||
+    ""
+  ).trim();
 
-  return hasClaimNumber && hasPolicy && hasAmount;
+  const policyNumber = String(
+    claim.policy_number ||
+    claim.policyNumber ||
+    claim.policy_no ||
+    claim.policyNo ||
+    ""
+  ).trim();
+
+  const totalIncurred = Number(
+    claim.total_incurred ??
+    claim.totalIncurred ??
+    claim.incurred ??
+    0
+  );
+
+  const paidAmount = Number(
+    claim.paid_amount ??
+    claim.paidAmount ??
+    claim.paid ??
+    0
+  );
+
+  const reserveAmount = Number(
+    claim.reserve_amount ??
+    claim.reserveAmount ??
+    claim.reserve ??
+    0
+  );
+
+  return Boolean(
+    claimNumber ||
+    policyNumber ||
+    totalIncurred > 0 ||
+    paidAmount > 0 ||
+    reserveAmount > 0
+  );
 }
+
+// LOSSQ_VISIBLE_CLAIMS_BACKEND_ONLY_V1
+// Claims Analysis must display backend /claims rows only.
+// Do not fall back to current upload or last upload cache because those can carry stale policy/line values.
+const visibleClaims = blankWorkspaceMode ? [] : filteredVisibleClaims;
 
 const validatedVisibleClaims = visibleClaims.filter((claim: any) => hasValidatedClaimData(claim));
 const intelligenceClaims = validatedVisibleClaims.length > 0 ? validatedVisibleClaims : visibleClaims;
