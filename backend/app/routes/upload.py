@@ -3076,6 +3076,67 @@ def lossq_pdf_profile_repair(file_path, parsed_profile):
 
 
 
+
+# LOSSQ_FINAL_PROFILE_DATES_FROM_POLICIES_V1
+def lossq_final_profile_dates_from_policies(parsed_profile):
+    """
+    Final universal profile repair:
+    If account-level effective/expiration dates are missing, use the first valid
+    effective/expiration dates from parsed policy schedule rows.
+    """
+    parsed_profile = parsed_profile or {}
+
+    try:
+        policy_rows = (
+            parsed_profile.get("policies")
+            or parsed_profile.get("policy_schedule")
+            or parsed_profile.get("policySchedule")
+            or []
+        )
+
+        if not isinstance(policy_rows, list):
+            return parsed_profile
+
+        for policy in policy_rows:
+            if not isinstance(policy, dict):
+                continue
+
+            effective = (
+                policy.get("effective_date")
+                or policy.get("policy_effective_date")
+                or policy.get("effective")
+                or policy.get("policyEffectiveDate")
+            )
+
+            expiration = (
+                policy.get("expiration_date")
+                or policy.get("policy_expiration_date")
+                or policy.get("expiration")
+                or policy.get("expiry_date")
+                or policy.get("policyExpirationDate")
+            )
+
+            fixed_effective = lossq_profile_date_or_blank(effective)
+            fixed_expiration = lossq_profile_date_or_blank(expiration)
+
+            if fixed_effective and not parsed_profile.get("effective_date"):
+                parsed_profile["effective_date"] = fixed_effective
+                parsed_profile["policy_effective_date"] = fixed_effective
+
+            if fixed_expiration and not parsed_profile.get("expiration_date"):
+                parsed_profile["expiration_date"] = fixed_expiration
+                parsed_profile["policy_expiration_date"] = fixed_expiration
+
+            if parsed_profile.get("effective_date") and parsed_profile.get("expiration_date"):
+                break
+
+        return parsed_profile
+    except Exception as exc:
+        print("LOSSQ_FINAL_PROFILE_DATES_FROM_POLICIES_ERROR:", str(exc)[:200])
+        return parsed_profile
+
+
+
 # LOSSQ_GLOBAL_PROFILE_CLEANUP_V1
 def lossq_global_profile_bad_text(value):
     clean = lossq_section_csv_clean(value)
@@ -3258,6 +3319,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         upload_agency_name = lossq_header_agency_from_csv(file_path) or lossq_universal_agency_from_csv(file_path)
         if upload_agency_name:
             print("LOSSQ_AGENCY_SELECTED_FROM_UPLOAD:", upload_agency_name)
+
+        # LOSSQ_FINAL_PROFILE_DATES_FROM_POLICIES_V1
+        parsed_profile = lossq_final_profile_dates_from_policies(parsed_profile)
         if upload_agency_name:
             parsed_profile = parsed_profile or {}
             parsed_profile["agency_name"] = upload_agency_name
