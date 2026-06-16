@@ -3244,17 +3244,18 @@ if (activeProfile?.policy_number) {
           ? []
           : cachedUploadClaims.filter((claim: any) => claimMatchesPolicySet(claim, policySet));
 
+        // LOSSQ_SERVER_CLAIMS_FIRST_AFTER_UPLOAD_V1
         // Priority:
-        // 1. Current upload response for this selected policy/account.
-        // 2. Backend server matches for the selected policy/account.
+        // 1. Backend server matches for the selected policy/account.
+        // 2. Current upload cache only if server has not caught up yet.
         // 3. Older cache only when no current upload is active.
         // 4. Empty array. Never fall back to unrelated organization-wide claims.
-        if (currentUploadApplies) {
-        if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(dedupeClaims(currentUploadMatches)));
-        } else if (serverMatches.length > 0) {
-        if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(dedupeClaims(serverMatches)));
+        if (serverMatches.length > 0) {
+          if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(dedupeClaims(serverMatches)));
+        } else if (currentUploadApplies) {
+          if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(dedupeClaims(currentUploadMatches)));
         } else if (cachedMatches.length > 0) {
-        if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(dedupeClaims(cachedMatches)));
+          if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(dedupeClaims(cachedMatches)));
         } else {
           if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims([]));
         }
