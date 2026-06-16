@@ -222,6 +222,29 @@ def get_claims(
         query = query.filter(func.upper(func.trim(Claim.claim_number)) == normalized_claim)
 
     claims = query.order_by(Claim.id.desc()).all()
+
+    # LOSSQ_DEBUG_CLAIMS_API_ROWS_V1
+    try:
+        print("LOSSQ_DEBUG_CLAIMS_API_ROWS:", {
+            "policy_number": policy_number,
+            "policy_numbers": policy_numbers,
+            "returned": len(claims),
+            "rows": [
+                {
+                    "claim_number": getattr(claim, "claim_number", None),
+                    "policy_number": getattr(claim, "policy_number", None),
+                    "line_of_business": getattr(claim, "line_of_business", None),
+                    "claim_type": getattr(claim, "claim_type", None),
+                    "paid_amount": getattr(claim, "paid_amount", None),
+                    "reserve_amount": getattr(claim, "reserve_amount", None),
+                    "total_incurred": getattr(claim, "total_incurred", None),
+                }
+                for claim in claims[:25]
+            ],
+        })
+    except Exception as exc:
+        print("LOSSQ_DEBUG_CLAIMS_API_ROWS_ERROR:", str(exc)[:200])
+
     return [claim_to_dict(claim) for claim in claims]
 
 
