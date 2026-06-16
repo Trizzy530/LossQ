@@ -135,6 +135,8 @@ export default function LoginPage() {
 
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
+  // LOSSQ_PASSWORD_VIEWER_EXACT_V1
+  const [showPassword, setShowPassword] = useState(false);
   const [acceptedTerms, setAcceptedTerms] = useState(false);
 
   const [organizationName, setOrganizationName] = useState("");
@@ -370,13 +372,23 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
               className="w-full bg-slate-900 border border-blue-400/40 rounded-lg px-4 py-3 mb-4 outline-none focus:border-blue-500"
             />
 
-            <input
-              type="password"
+            <div className="relative">
+              <input
+              type={showPassword ? "text" : "password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Password"
-              className="w-full bg-slate-900 border border-blue-400/40 rounded-lg px-4 py-3 mb-6 outline-none focus:border-blue-500"
+              className="w-full bg-slate-900 border border-blue-400/40 rounded-lg px-4 py-3 mb-6 outline-none focus:border-blue-500 pr-16"
             />
+              <button
+                type="button"
+                onClick={() => setShowPassword((current) => !current)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-300 hover:text-white"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
           </>
         )}
 
@@ -404,13 +416,23 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
               className="w-full bg-slate-900 border border-blue-400/40 rounded-lg px-4 py-3 mb-4 outline-none focus:border-blue-500"
             />
 
-            <input
-              type="password"
+            <div className="relative">
+              <input
+              type={showPassword ? "text" : "password"}
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Password"
-              className="w-full bg-slate-900 border border-blue-400/40 rounded-lg px-4 py-3 mb-6 outline-none focus:border-blue-500"
+              className="w-full bg-slate-900 border border-blue-400/40 rounded-lg px-4 py-3 mb-6 outline-none focus:border-blue-500 pr-16"
             />
+              <button
+                type="button"
+                onClick={() => setShowPassword((current) => !current)}
+                className="absolute right-3 top-1/2 -translate-y-1/2 text-xs font-bold text-slate-300 hover:text-white"
+                aria-label={showPassword ? "Hide password" : "Show password"}
+              >
+                {showPassword ? "Hide" : "Show"}
+              </button>
+            </div>
           </>
         )}
 
