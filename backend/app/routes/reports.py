@@ -8500,8 +8500,15 @@ def compact_flag_value(value):
 
 
 def top_claim_rows(claims, max_rows=15):
+    # LOSSQ_TOP_CLAIM_ROWS_OPEN_FIRST_FINAL_V1
     rows = [["Claim #", "Line", "Status", "Paid", "Reserve", "Total", "Policy", "Flag"]]
-    sorted_claims = sorted(claims, key=lambda c: money(getattr(c, "total_incurred", 0)), reverse=True)[:max_rows]
+
+    # Claim tables must show all open claims first, then pending/unknown, then closed claims.
+    # Within each group, larger total incurred appears first.
+    sorted_claims = lossq_report_order_claims_open_first(
+        lossq_report_dedupe_claims(claims or [])
+    )[:max_rows]
+
     if not sorted_claims:
         rows.append(["No claims", "-", "-", "$0", "$0", "$0", "-", "-"])
         return rows
