@@ -8256,20 +8256,22 @@ const trendNoteDisplay =
         );
 
       const originalClaimLine =
-        claim?.line_of_business || claim?.line || claim?.coverage || claim?.lob || "";
+        claim?.line_of_business || claim?.claim_type || claim?.line || claim?.coverage || claim?.lob || "";
 
+      // LOSSQ_CLAIM_TABLE_ROW_FIRST_DISPLAY_V1
       const displayLine =
-        matchedPolicy?.line && !isGenericLine(matchedPolicy.line)
-          ? matchedPolicy.line
-          : !isGenericLine(originalClaimLine)
-            ? originalClaimLine
+        !isGenericLine(originalClaimLine)
+          ? originalClaimLine
+          : matchedPolicy?.line && !isGenericLine(matchedPolicy.line)
+            ? matchedPolicy.line
             : "-";
 
       const displayPolicyNumber =
-        matchedPolicy?.policyNumber ||
         claim?.policy_number ||
-        claim?.policy ||
         claim?.policyNumber ||
+        claim?.policy_no ||
+        claim?.policy ||
+        matchedPolicy?.policyNumber ||
         "-";
       return (
     <tr
@@ -8637,6 +8639,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
