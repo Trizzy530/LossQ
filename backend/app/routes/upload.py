@@ -2006,7 +2006,35 @@ def lossq_beta_valid_claim_number(value):
     if not re.search(r"\d", key):
         return False
 
-    return bool(re.search(r"[A-Z0-9]+[-_][A-Z0-9]+[-_]\d{2,4}[-_]\d{2,6}", key)) or bool(re.search(r"CLM|CLAIM|GL|WC|AUTO|AU|PROP|PR|CY|BOP|UMB", key))
+    # LOSSQ_UNIVERSAL_CLAIM_NUMBER_FILTER_V1
+    # Universal commercial claim numbers may have 3 or 4+ segments:
+    # PCS-EPLI-250119, PCS-DO-250124, HFS-CP-250038, OBR-CY-250048, etc.
+    universal_line_tokens = (
+        "CLM", "CLAIM",
+        "GL", "WC", "AUTO", "AU",
+        "PROP", "PR", "CP", "BOP",
+        "CY", "CYBER",
+        "UMB", "EXCESS",
+        "EPLI", "EPL",
+        "DO", "DNO", "D&O",
+        "EO", "E&O", "PL",
+        "IM", "CRIME", "FID", "FIDUCIARY",
+        "CARGO", "MTC",
+    )
+
+    if any(token in key for token in universal_line_tokens):
+        return True
+
+    # Accept structured alphanumeric claim IDs with at least one separator and at least one digit.
+    if re.search(r"[A-Z0-9]{2,}[-_][A-Z0-9]{2,}[-_][A-Z0-9]{2,}", key):
+        return True
+
+    # Accept carrier-style claim numbers that are mostly alphanumeric and long enough.
+    compact = re.sub(r"[^A-Z0-9]", "", key)
+    if len(compact) >= 6 and re.search(r"\d", compact) and re.search(r"[A-Z]", compact):
+        return True
+
+    return False
 
 def lossq_beta_filter_claim_rows(parsed_claims):
     clean_claims = []
@@ -3054,6 +3082,11 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         claim_policy_number = ""
         # LOSSQ_BETA_FILTER_AND_PURGE_BEFORE_SAVE_V1
         parsed_claims, lossq_beta_removed_rows = lossq_beta_filter_claim_rows(parsed_claims)
+
+        # LOSSQ_UNIVERSAL_CLAIM_NUMBER_FILTER_V1
+        if lossq_beta_removed_rows:
+            print("LOSSQ_BETA_FILTER_REMOVED_ROWS:", lossq_beta_removed_rows[:10])
+
         lossq_beta_policy_keys = lossq_beta_collect_upload_policy_keys(
             parsed_profile,
             parsed_claims,
