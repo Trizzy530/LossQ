@@ -1214,6 +1214,7 @@ function clearCachedCurrentUpload() {
   localStorage.removeItem(CURRENT_UPLOAD_CACHE_KEY);
 }
 
+// LOSSQ_STRICT_SELECTED_PROFILE_CLAIMS_V1
 function claimMatchesPolicySet(claim: any, policySet: Set<string>) {
   if (!policySet || policySet.size === 0) return false;
 
@@ -3173,6 +3174,8 @@ if (activeProfile?.policy_number) {
         setCachedSelectedPolicy(policyNumber);
       }
 
+// LOSSQ_FIX_MISSING_HASPOLICY_IF_V1
+      if (hasPolicy) {
       /*
         Always fetch all organization claims here.
         The dashboard filters locally through visibleClaims so account policies
@@ -3182,89 +3185,38 @@ if (activeProfile?.policy_number) {
       // LOSSQ_ACCOUNT_AWARE_CLAIMS_RELOAD_V1
       // Include account/customer keys in the server request.
       // Without this, upload can show 19 claims from cache, but refresh/login only reloads child policy claims.
-      const claimReloadKeys = [
+      // LOSSQ_SELECTED_PROFILE_ONLY_CLAIM_RELOAD_V1
+      // Use the active loaded profile only. Do not merge old profile/ref/cached policy lists.
+      const selectedClaimsProfile: any = activeProfile || {};
+      const claimReloadKeys: string[] = [
         policyNumber,
         requestedPolicyNumber,
-        activeProfile?.policy_number,
-        activeProfile?.account_number,
-        activeProfile?.customer_number,
-        profile?.policy_number,
-        profile?.account_number,
-        profile?.customer_number,
-        ...(activeProfileRef.current?.policies || []).map((p: any) => p?.policy_number),
-        ...(activeProfile?.policies || []).map((p: any) => p?.policy_number),
-        ...(profile?.policies || []).map((p: any) => p?.policy_number),
-        ...getCachedProfiles()
-          .filter((p: any) =>
-            normalizePolicyNumber(p?.policy_number) === normalizePolicyNumber(policyNumber) ||
-            normalizePolicyNumber(p?.account_number) === normalizePolicyNumber(policyNumber) ||
-            normalizePolicyNumber(p?.customer_number) === normalizePolicyNumber(policyNumber) ||
-            normalizePolicyNumber(p?.policy_number) === normalizePolicyNumber(requestedPolicyNumber) ||
-            normalizePolicyNumber(p?.account_number) === normalizePolicyNumber(requestedPolicyNumber) ||
-            normalizePolicyNumber(p?.customer_number) === normalizePolicyNumber(requestedPolicyNumber) ||
-            (p?.policies || []).some((pol: any) =>
-              normalizePolicyNumber(pol?.policy_number) === normalizePolicyNumber(policyNumber) ||
-              normalizePolicyNumber(pol?.policy_number) === normalizePolicyNumber(requestedPolicyNumber)
-            )
-          )
-          .flatMap((p: any) => [
-            p?.policy_number,
-            p?.account_number,
-            p?.customer_number,
-            ...(p?.policies || []).map((pol: any) => pol?.policy_number),
-          ]),
+        selectedClaimsProfile?.policy_number,
+        selectedClaimsProfile?.account_number,
+        selectedClaimsProfile?.customer_number,
+        ...(selectedClaimsProfile?.policies || []).map((p: any) => p?.policy_number),
       ]
         .map((item: any) => normalizePolicyNumber(item))
-        .filter(Boolean);
+        .filter((item: string) => Boolean(item));
 
-      const uniqueClaimReloadKeys = [...new Set(claimReloadKeys)];
-      const claimsQuery = uniqueClaimReloadKeys.length
-        ? `?policy_numbers=${uniqueClaimReloadKeys.map((item) => encodeURIComponent(item)).join(",")}`
-        : "";
+      const uniqueClaimReloadKeys: string[] = Array.from(new Set<string>(claimReloadKeys));
+      const policySet = new Set<string>(uniqueClaimReloadKeys);
 
-      const claimsRes = await fetch(`${API}/claims/${claimsQuery}`, {
-        headers: authHeaders(),
+      // LOSSQ_RESTORE_SELECTED_PROFILE_SERVER_CLAIMS_FETCH_V1
+      const claimsUrl =
+        uniqueClaimReloadKeys.length > 0
+          ? `${API}/claims/?policy_numbers=${encodeURIComponent(uniqueClaimReloadKeys.join(","))}`
+          : `${API}/claims/`;
+
+      const claimsResponse = await fetch(claimsUrl, {
+        headers: {
+          Authorization: `Bearer ${localStorage.getItem("lossq_token") || ""}`,
+        },
       });
 
-      if (claimsRes.status === 401 || claimsRes.status === 403) {
-        clearSession();
-        router.replace("/login?expired=1");
-        return;
-      }
+      const serverClaims: any[] = claimsResponse.ok ? await claimsResponse.json() : [];
 
-      if (claimsRes.ok) {
-        const claimsData = await safeJson(claimsRes);
-        const serverClaims = Array.isArray(claimsData)
-          ? claimsData
-          : Array.isArray(claimsData?.claims)
-          ? claimsData.claims
-          : [];
-
-        const cachedUploadForPolicy = getCachedCurrentUpload();
-        const policySet = new Set(
-          [
-            policyNumber,
-            activeProfile?.policy_number,
-            activeProfile?.account_number,
-            activeProfile?.customer_number,
-            ...firstNonEmptyArray(activeProfile?.policies, profile?.policies).map(
-              (item: any) => item?.policy_number
-            ),
-            // Also include all policies from cached profiles matching this account
-            ...getCachedProfiles()
-              .filter((p: any) =>
-                normalizePolicyNumber(p?.policy_number) === normalizePolicyNumber(policyNumber) ||
-                normalizePolicyNumber(p?.account_number) === normalizePolicyNumber(policyNumber) ||
-                (p?.policies || []).some((pol: any) => normalizePolicyNumber(pol?.policy_number) === normalizePolicyNumber(policyNumber))
-              )
-              .flatMap((p: any) => (p?.policies || []).map((pol: any) => pol?.policy_number))
-          ]
-            .map((item: any) => normalizePolicyNumber(item))
-            .filter(Boolean)
-        );
-
-
-        const serverMatches = policySet.size > 0
+      const serverMatches = policySet.size > 0
           ? serverClaims.filter((claim: any) => claimMatchesPolicySet(claim, policySet))
           : serverClaims;
 
@@ -8690,6 +8642,8 @@ function ChartCard({
     </div>
   );
 }
+
+
 
 
 
