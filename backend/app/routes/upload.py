@@ -268,6 +268,85 @@ def lossq_preserve_row_policy_before_save(normalized: dict, raw_claim: dict, fal
 
 # LOSSQ_CLEAN_STANDARD_CSV_ROW_POLICY_OVERRIDE_V1
 
+
+# LOSSQ_AGENCY_HEADER_FIRST_EXTRACTION_V1
+def lossq_header_agency_from_csv(file_path):
+    """
+    Extract Producing Agency / Agency / Producer / Broker from clean CSV column values.
+    This prevents reading the next header cell such as Policy Number as the agency.
+    """
+    try:
+        if not str(file_path or "").lower().endswith(".csv"):
+            return ""
+
+        import csv
+        import re
+
+        def clean(value):
+            return re.sub(r"\s+", " ", str(value or "").strip())
+
+        def key(value):
+            return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+        agency_keys = {
+            "producingagency",
+            "agency",
+            "agencyname",
+            "producer",
+            "broker",
+            "brokerage",
+            "producingbroker",
+            "brokeragency",
+        }
+
+        bad_values = {
+            "policy number",
+            "policy no",
+            "policy type",
+            "coverage",
+            "line",
+            "line of business",
+            "effective date",
+            "expiration date",
+            "claim number",
+            "claim no",
+            "status",
+            "paid",
+            "reserve",
+            "total incurred",
+            "carrier",
+            "writing carrier",
+            "account name",
+            "named insured",
+            "insured",
+        }
+
+        with open(file_path, "r", encoding="utf-8-sig", errors="ignore", newline="") as handle:
+            reader = csv.DictReader(handle)
+
+            if not reader.fieldnames:
+                return ""
+
+            agency_fields = [
+                field for field in reader.fieldnames
+                if key(field) in agency_keys
+            ]
+
+            if not agency_fields:
+                return ""
+
+            for row in reader:
+                for field in agency_fields:
+                    value = clean((row or {}).get(field, ""))
+                    if value and value.lower() not in bad_values and key(value) not in agency_keys:
+                        return value
+
+        return ""
+    except Exception as exc:
+        print("LOSSQ_AGENCY_HEADER_FIRST_EXTRACTION_ERROR:", str(exc)[:200])
+        return ""
+
+
 # LOSSQ_UNIVERSAL_PRODUCING_AGENCY_EXTRACTION_V1
 def lossq_universal_agency_from_csv(file_path):
     """
@@ -3137,7 +3216,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         )
 
         # LOSSQ_UNIVERSAL_PRODUCING_AGENCY_EXTRACTION_V1
-        upload_agency_name = lossq_universal_agency_from_csv(file_path)
+        upload_agency_name = lossq_header_agency_from_csv(file_path) or lossq_universal_agency_from_csv(file_path)
+        if upload_agency_name:
+            print("LOSSQ_AGENCY_SELECTED_FROM_UPLOAD:", upload_agency_name)
         if upload_agency_name:
             parsed_profile = parsed_profile or {}
             parsed_profile["agency_name"] = upload_agency_name
