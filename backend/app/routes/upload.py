@@ -2825,6 +2825,47 @@ def lossq_csv_label_pair_profile_repair(file_path, parsed_profile):
 
         break
 
+    # LOSSQ_DATES_AFTER_POLICY_SCHEDULE_PARSE_V1
+    # Policy schedule rows are parsed above. Now copy the first valid policy
+    # effective/expiration dates back to the account profile if missing.
+    try:
+        if policies:
+            for policy_row in policies:
+                if not isinstance(policy_row, dict):
+                    continue
+
+                effective = (
+                    policy_row.get("effective_date")
+                    or policy_row.get("policy_effective_date")
+                    or policy_row.get("effective")
+                )
+                expiration = (
+                    policy_row.get("expiration_date")
+                    or policy_row.get("policy_expiration_date")
+                    or policy_row.get("expiration")
+                    or policy_row.get("expiry_date")
+                )
+
+                fixed_effective = lossq_profile_date_or_blank(effective)
+                fixed_expiration = lossq_profile_date_or_blank(expiration)
+
+                if fixed_effective and not account_info.get("effective_date"):
+                    account_info["effective_date"] = fixed_effective
+                    account_info["policy_effective_date"] = fixed_effective
+
+                if fixed_expiration and not account_info.get("expiration_date"):
+                    account_info["expiration_date"] = fixed_expiration
+                    account_info["policy_expiration_date"] = fixed_expiration
+
+                if account_info.get("effective_date") and account_info.get("expiration_date"):
+                    print("LOSSQ_DATES_AFTER_POLICY_SCHEDULE_PARSE:", {
+                        "effective_date": account_info.get("effective_date"),
+                        "expiration_date": account_info.get("expiration_date"),
+                    })
+                    break
+    except Exception as exc:
+        print("LOSSQ_DATES_AFTER_POLICY_SCHEDULE_PARSE_ERROR:", str(exc)[:200])
+
     for key, value in account_info.items():
         if value:
             parsed_profile[key] = value
