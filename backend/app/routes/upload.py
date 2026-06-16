@@ -3218,6 +3218,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         file_saved = 0
         file_duplicates = 0
 
+        # LOSSQ_CANONICAL_INSERT_ONLY_SAVE_LOOP_V1
         for claim_data in parsed_claims:
             normalized = normalize_claim_data(
                 raw=claim_data,
@@ -3225,77 +3226,75 @@ async def save_uploaded_files(files, policy_number, db, current_user):
                 current_user=current_user,
             )
 
-            # LOSSQ_ROW_LEVEL_POLICY_SAVE_PRESERVATION_V1
             normalized = lossq_preserve_row_policy_before_save(
                 normalized=normalized,
                 raw_claim=claim_data,
                 fallback_policy_number=file_policy_number,
             )
 
-            claim_number = str(normalized.get("claim_number") or "").strip().upper()
-            # LOSSQ_MOVE_ROW_POLICY_BEFORE_POLICY_VALUE_V1
-            # Apply row-level policy, line, status, and claim values BEFORE duplicate checks and save.
             normalized = lossq_apply_row_values_at_final_save(
                 normalized=normalized,
                 raw_claim=claim_data,
             )
 
-            # LOSSQ_DUPLICATE_ROW_POLICY_UPDATE_FIX_V1
-            claim_number = str(normalized.get("claim_number") or claim_number or "").strip().upper()
-
-            policy_value = str(
-                normalized.get("policy_number") or file_policy_number
-            ).strip()
+            claim_number = str(normalized.get("claim_number") or "").strip().upper()
+            policy_value = str(normalized.get("policy_number") or file_policy_number or "").strip().upper()
 
             normalized["claim_number"] = claim_number
             normalized["policy_number"] = policy_value
 
             if not claim_number or claim_number == "UNKNOWN":
-                print("Skipping claim without valid claim number")
+                print("LOSSQ_CANONICAL_SAVE_SKIPPED_NO_CLAIM_NUMBER:", claim_data)
                 continue
 
-            duplicate_query = db.query(Claim).filter(
-                Claim.organization_id == current_user["organization_id"],
-                Claim.claim_number == claim_number,
-                Claim.policy_number == policy_value,
-            )
-
-            existing_claim = duplicate_query.first()
-
-            if existing_claim:
-                # LOSSQ_DUPLICATE_ROW_POLICY_UPDATE_FIX_V1
-                # Existing duplicate rows must keep the row-level policy number, not the account/main policy.
-                if policy_value and not is_bad_policy_key_for_upload(policy_value):
-                    existing_claim.policy_number = policy_value
-
-                if normalized.get("line_of_business"):
-                    existing_claim.line_of_business = normalized.get("line_of_business")
-
-                if normalized.get("claim_type"):
-                    existing_claim.claim_type = normalized.get("claim_type")
-
-                if normalized.get("cause_of_loss"):
-                    existing_claim.cause_of_loss = normalized.get("cause_of_loss")
-
-                if normalized.get("status"):
-                    existing_claim.status = normalized.get("status")
-
-                if normalized.get("paid_amount") is not None:
-                    existing_claim.paid_amount = normalized.get("paid_amount")
-
-                if normalized.get("reserve_amount") is not None:
-                    existing_claim.reserve_amount = normalized.get("reserve_amount")
-
-                if normalized.get("total_incurred") is not None:
-                    existing_claim.total_incurred = normalized.get("total_incurred")
-
-                file_duplicates += 1
-                total_duplicates_skipped += 1
+            if not policy_value or is_bad_policy_key_for_upload(policy_value):
+                print("LOSSQ_CANONICAL_SAVE_SKIPPED_BAD_POLICY:", {"claim_number": claim_number, "policy": policy_value})
                 continue
 
-            db.add(Claim(**lossq_filter_claim_model_fields(normalized)))
+            # Normalize fallback line fields so the frontend does not show all rows as one line.
+            if not normalized.get("line_of_business") and normalized.get("claim_type"):
+                normalized["line_of_business"] = normalized.get("claim_type")
+
+            if not normalized.get("claim_type") and normalized.get("line_of_business"):
+                normalized["claim_type"] = normalized.get("line_of_business")
+
+            # Safe total fallback: if total is blank/zero but paid/reserve exist, use paid + reserve.
+            try:
+                paid_value = float(normalized.get("paid_amount") or 0)
+            except Exception:
+                paid_value = 0.0
+
+            try:
+                reserve_value = float(normalized.get("reserve_amount") or 0)
+            except Exception:
+                reserve_value = 0.0
+
+            try:
+                total_value = float(normalized.get("total_incurred") or 0)
+            except Exception:
+                total_value = 0.0
+
+            if total_value <= 0 and (paid_value or reserve_value):
+                normalized["total_incurred"] = paid_value + reserve_value
+
+            clean_claim_payload = lossq_filter_claim_model_fields(normalized)
+
+            db.add(Claim(**clean_claim_payload))
             file_saved += 1
             total_saved += 1
+
+            print(
+                "LOSSQ_CANONICAL_CLAIM_SAVED:",
+                {
+                    "claim_number": clean_claim_payload.get("claim_number"),
+                    "policy_number": clean_claim_payload.get("policy_number"),
+                    "line_of_business": clean_claim_payload.get("line_of_business"),
+                    "status": clean_claim_payload.get("status"),
+                    "paid": clean_claim_payload.get("paid_amount"),
+                    "reserve": clean_claim_payload.get("reserve_amount"),
+                    "total": clean_claim_payload.get("total_incurred"),
+                },
+            )
 
         upload_record = UploadHistory(
             filename=safe_upload_filename,
