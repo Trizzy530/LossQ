@@ -3133,6 +3133,16 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             )
 
             claim_number = str(normalized.get("claim_number") or "").strip().upper()
+            # LOSSQ_MOVE_ROW_POLICY_BEFORE_POLICY_VALUE_V1
+            # Apply row-level policy, line, status, and claim values BEFORE duplicate checks and save.
+            normalized = lossq_apply_row_values_at_final_save(
+                normalized=normalized,
+                raw_claim=claim_data,
+            )
+
+            # LOSSQ_DUPLICATE_ROW_POLICY_UPDATE_FIX_V1
+            claim_number = str(normalized.get("claim_number") or claim_number or "").strip().upper()
+
             policy_value = str(
                 normalized.get("policy_number") or file_policy_number
             ).strip()
@@ -3153,22 +3163,10 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             existing_claim = duplicate_query.first()
 
             if existing_claim:
-                # LOSSQ_REHOME_DUPLICATE_CLAIMS_TO_ACCOUNT_KEY
-                # If the claim already exists from an earlier upload, re-home it to the corrected
-                # account/profile key so it survives logout/login and appears under the right profile.
-                safe_profile_data = locals().get("profile_data", {}) or {}
-
-                corrected_policy_key = (
-                    file_account_key_for_claims
-                    or safe_profile_data.get("account_number")
-                    or safe_profile_data.get("customer_number")
-                    or safe_profile_data.get("policy_number")
-                    or policy_number
-                    or policy_value
-                )
-
-                if corrected_policy_key and not is_bad_policy_key_for_upload(corrected_policy_key):
-                    existing_claim.policy_number = corrected_policy_key
+                # LOSSQ_DUPLICATE_ROW_POLICY_UPDATE_FIX_V1
+                # Existing duplicate rows must keep the row-level policy number, not the account/main policy.
+                if policy_value and not is_bad_policy_key_for_upload(policy_value):
+                    existing_claim.policy_number = policy_value
 
                 if normalized.get("line_of_business"):
                     existing_claim.line_of_business = normalized.get("line_of_business")
@@ -3194,12 +3192,6 @@ async def save_uploaded_files(files, policy_number, db, current_user):
                 file_duplicates += 1
                 total_duplicates_skipped += 1
                 continue
-
-            # LOSSQ_FINAL_ROW_POLICY_SAVE_FIX_V1
-            normalized = lossq_apply_row_values_at_final_save(
-                normalized=normalized,
-                raw_claim=claim_data,
-            )
 
             db.add(Claim(**lossq_filter_claim_model_fields(normalized)))
             file_saved += 1
