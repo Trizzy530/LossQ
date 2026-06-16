@@ -3148,6 +3148,73 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         all_parsed_claims.extend(parsed_claims)
 
+        # LOSSQ_CANONICAL_UPLOAD_CLAIM_PURGE_V1
+        # Before saving this upload, remove stale rows tied to the same uploaded claim numbers
+        # or policy numbers. This prevents old bad rows from surviving after parser repairs.
+        upload_claim_numbers = []
+        upload_policy_keys = []
+
+        for purge_claim in parsed_claims or []:
+            if not isinstance(purge_claim, dict):
+                continue
+
+            purge_claim_number = str(
+                purge_claim.get("claim_number")
+                or purge_claim.get("Claim Number")
+                or purge_claim.get("claim_no")
+                or purge_claim.get("Claim No")
+                or ""
+            ).strip().upper()
+
+            purge_policy_number = str(
+                purge_claim.get("policy_number")
+                or purge_claim.get("Policy Number")
+                or purge_claim.get("policy_no")
+                or purge_claim.get("Policy No")
+                or purge_claim.get("policy")
+                or ""
+            ).strip().upper()
+
+            if purge_claim_number and purge_claim_number != "UNKNOWN":
+                upload_claim_numbers.append(purge_claim_number)
+
+            if purge_policy_number and not is_bad_policy_key_for_upload(purge_policy_number):
+                upload_policy_keys.append(purge_policy_number)
+
+        upload_claim_numbers = sorted(set(upload_claim_numbers))
+        upload_policy_keys = sorted(set(upload_policy_keys))
+
+        purged_by_claim_number = 0
+        purged_by_policy_number = 0
+
+        if upload_claim_numbers:
+            purged_by_claim_number = (
+                db.query(Claim)
+                .filter(Claim.organization_id == current_user["organization_id"])
+                .filter(func.upper(func.trim(Claim.claim_number)).in_(upload_claim_numbers))
+                .delete(synchronize_session=False)
+            )
+
+        if upload_policy_keys:
+            purged_by_policy_number = (
+                db.query(Claim)
+                .filter(Claim.organization_id == current_user["organization_id"])
+                .filter(func.upper(func.trim(Claim.policy_number)).in_(upload_policy_keys))
+                .delete(synchronize_session=False)
+            )
+
+        if purged_by_claim_number or purged_by_policy_number:
+            db.flush()
+            print(
+                "LOSSQ_CANONICAL_UPLOAD_CLAIM_PURGE:",
+                {
+                    "claim_numbers": len(upload_claim_numbers),
+                    "policy_keys": len(upload_policy_keys),
+                    "deleted_by_claim_number": int(purged_by_claim_number or 0),
+                    "deleted_by_policy_number": int(purged_by_policy_number or 0),
+                },
+            )
+
         file_saved = 0
         file_duplicates = 0
 
