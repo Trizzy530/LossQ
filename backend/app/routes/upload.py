@@ -395,6 +395,99 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
     return clean_claims, profile
 
 
+
+# LOSSQ_FINAL_ROW_POLICY_SAVE_FIX_V1
+def lossq_apply_row_values_at_final_save(normalized: dict, raw_claim: dict):
+    """
+    Final safety layer before Claim(**normalized).
+    Row-level claim values must win over account/main-policy values.
+    This prevents all claims from being saved under the first/main policy.
+    """
+    if not isinstance(normalized, dict):
+        normalized = {}
+
+    if not isinstance(raw_claim, dict):
+        return normalized
+
+    def clean(value):
+        return clean_profile_value(value)
+
+    def get_any(*names):
+        lower_map = {str(k or "").strip().lower(): v for k, v in raw_claim.items()}
+        for name in names:
+            key = str(name or "").strip().lower()
+            if key in lower_map:
+                value = clean(lower_map.get(key))
+                if value:
+                    return value
+        return ""
+
+    row_policy_number = get_any(
+        "policy_number",
+        "policy number",
+        "policy no",
+        "policy_no",
+        "policy",
+        "main policy",
+        "account number",
+    )
+
+    row_policy_type = get_any(
+        "policy_type",
+        "policy type",
+        "line_of_business",
+        "line of business",
+        "coverage",
+        "coverage line",
+        "claim_type",
+        "claim type",
+        "line",
+        "lob",
+    )
+
+    row_status = get_any(
+        "status",
+        "claim status",
+        "claim_status",
+    )
+
+    row_claim_number = get_any(
+        "claim_number",
+        "claim number",
+        "claim #",
+        "claim no",
+        "claim_no",
+    )
+
+    row_paid = get_any("paid_amount", "paid", "paid amount", "total paid")
+    row_reserve = get_any("reserve_amount", "reserve", "reserve amount", "outstanding reserve")
+    row_total = get_any("total_incurred", "total incurred", "incurred", "total")
+
+    if row_policy_number and not is_bad_policy_key_for_upload(row_policy_number):
+        normalized["policy_number"] = row_policy_number
+
+    if row_policy_type:
+        normalized["line_of_business"] = row_policy_type
+        normalized["claim_type"] = row_policy_type
+
+    if row_status:
+        normalized["status"] = row_status
+
+    if row_claim_number:
+        normalized["claim_number"] = row_claim_number
+
+    if row_paid:
+        normalized["paid_amount"] = row_paid
+
+    if row_reserve:
+        normalized["reserve_amount"] = row_reserve
+
+    if row_total:
+        normalized["total_incurred"] = row_total
+
+    return normalized
+
+
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
 UPLOAD_DIR = "uploads"
@@ -3101,6 +3194,12 @@ async def save_uploaded_files(files, policy_number, db, current_user):
                 file_duplicates += 1
                 total_duplicates_skipped += 1
                 continue
+
+            # LOSSQ_FINAL_ROW_POLICY_SAVE_FIX_V1
+            normalized = lossq_apply_row_values_at_final_save(
+                normalized=normalized,
+                raw_claim=claim_data,
+            )
 
             db.add(Claim(**lossq_filter_claim_model_fields(normalized)))
             file_saved += 1
