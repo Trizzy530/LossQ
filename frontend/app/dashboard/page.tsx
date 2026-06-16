@@ -5189,7 +5189,59 @@ async function exportCarrierLossRun() {
     setMessage("Renewal memo copied.");
   }
 
-  async function askCopilot(questionOverride?: string) {
+  
+
+// LOSSQ_COPILOT_ACCOUNT_POLICY_SET_PAYLOAD_V1
+function lossqCopilotPolicyNumbersFromProfile(profileLike: any): string[] {
+  const values = [
+    profileLike?.policy_number,
+    profileLike?.account_number,
+    profileLike?.customer_number,
+    ...(Array.isArray(profileLike?.policies)
+      ? profileLike.policies.map((item: any) => item?.policy_number)
+      : []),
+    ...(Array.isArray(profileLike?.policy_schedule)
+      ? profileLike.policy_schedule.map((item: any) => item?.policy_number)
+      : []),
+  ];
+
+  return Array.from(
+    new Set(
+      values
+        .map((item) => normalizePolicyNumber(item))
+        .filter((item) => item && item !== "POLICY NOT SET" && item !== "NOT SET")
+    )
+  );
+}
+
+
+
+
+// LOSSQ_COPILOT_ACCOUNT_POLICY_SET_PAYLOAD_SAFE_V2
+function lossqCopilotPolicyNumbersFromProfileSafe(profileLike: any): string[] {
+  const values = [
+    profileLike?.policy_number,
+    profileLike?.account_number,
+    profileLike?.customer_number,
+    ...(Array.isArray(profileLike?.policies)
+      ? profileLike.policies.map((item: any) => item?.policy_number)
+      : []),
+    ...(Array.isArray(profileLike?.policy_schedule)
+      ? profileLike.policy_schedule.map((item: any) => item?.policy_number)
+      : []),
+  ];
+
+  return Array.from(
+    new Set(
+      values
+        .map((item) => normalizePolicyNumber(item))
+        .filter((item) => item && item !== "POLICY NOT SET" && item !== "NOT SET")
+    )
+  );
+}
+
+
+async function askCopilot(questionOverride?: string) {
     const question = questionOverride || copilotQuestion;
 
     if (!question.trim()) {
@@ -5207,7 +5259,35 @@ async function exportCarrierLossRun() {
 
     setCopilotOpen(true);
     setCopilotLoading(true);
-    setCopilotAnswer(`Thinking about policy ${profile.policy_number}...`);
+    // LOSSQ_COPILOT_MISSING_VARIABLES_FIX_V1
+    const copilotProfile =
+      displayProfile ||
+      activeProfileRef.current ||
+      profile ||
+      {};
+
+    const copilotPolicyNumbers = Array.from(
+      new Set([
+        ...lossqCopilotPolicyNumbersFromProfileSafe(copilotProfile),
+        ...lossqCopilotPolicyNumbersFromProfileSafe(activeProfileRef.current),
+        ...lossqCopilotPolicyNumbersFromProfileSafe(profile),
+        ...(Array.isArray(policySchedule)
+          ? policySchedule.map((item: any) => normalizePolicyNumber(item?.policy_number))
+          : []),
+      ].filter(Boolean))
+    );
+
+    const copilotPrimaryPolicy =
+      normalizePolicyNumber(copilotProfile?.policy_number) ||
+      normalizePolicyNumber(copilotProfile?.account_number) ||
+      normalizePolicyNumber(profile?.policy_number) ||
+      normalizePolicyNumber(profile?.account_number) ||
+      getCachedSelectedPolicy() ||
+      "";
+
+    const copilotVisibleClaims = Array.isArray(claims) ? claims : [];
+
+    setCopilotAnswer(`Thinking about account ${getAccountDisplayName(copilotProfile) || copilotPrimaryPolicy || "selected account"}...`);
 
     try {
       const res = await fetch(`${API}/copilot/ask`, {
@@ -5218,7 +5298,12 @@ async function exportCarrierLossRun() {
         },
         body: JSON.stringify({
           question,
-          policy_number: profile.policy_number,
+          policy_number: copilotPrimaryPolicy,
+            account_number: copilotProfile?.account_number || copilotProfile?.customer_number || "",
+            profile_id: copilotProfile?.id || profile?.id || null,
+            policy_numbers: copilotPolicyNumbers,
+            visible_claims: copilotVisibleClaims,
+            profile: copilotProfile,
         }),
       });
 
@@ -5236,7 +5321,7 @@ async function exportCarrierLossRun() {
       }
 
       setCopilotAnswer(
-        `Policy analyzed: ${data?.policy_number || profile.policy_number}\nClaims used: ${
+        `Policy analyzed: ${data?.policy_number || copilotPrimaryPolicy}\nClaims used: ${
           data?.claims_used ?? visibleClaims.length
         }\n\n${data?.answer || "No answer returned."}`
       );

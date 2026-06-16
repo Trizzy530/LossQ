@@ -3,9 +3,11 @@ from dotenv import load_dotenv
 from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy.orm import Session
+from sqlalchemy import func
 
 from app.database import SessionLocal
 from app.models.claim import Claim
+from app.models.account_profile import AccountProfile
 from app.auth_utils import get_current_user
 from app.routes.summary import build_underwriting_intelligence
 
@@ -17,6 +19,11 @@ router = APIRouter(prefix="/copilot", tags=["Copilot"])
 class CopilotRequest(BaseModel):
     question: str
     policy_number: str | None = None
+    account_number: str | None = None
+    profile_id: int | None = None
+    policy_numbers: list[str] | None = None
+    visible_claims: list[dict] | None = None
+    profile: dict | None = None
 
 
 def get_db():
@@ -107,20 +114,171 @@ def fallback_answer(question, claims, intelligence, policy_number):
     )
 
 
+
+
+# LOSSQ_COPILOT_ACCOUNT_POLICY_SET_V1
+def lossq_copilot_norm(value):
+    return str(value or "").strip().upper()
+
+
+def lossq_copilot_profile_policy_numbers(profile):
+    numbers = []
+
+    if isinstance(profile, dict):
+        for key in ["policy_number", "account_number", "customer_number"]:
+            value = lossq_copilot_norm(profile.get(key))
+            if value:
+                numbers.append(value)
+
+        for row in profile.get("policies") or profile.get("policy_schedule") or []:
+            if isinstance(row, dict):
+                value = lossq_copilot_norm(row.get("policy_number") or row.get("policy"))
+                if value:
+                    numbers.append(value)
+
+    return list(dict.fromkeys([n for n in numbers if n]))
+
+
+def lossq_copilot_find_profile(db, current_user, request):
+    org_id = current_user.get("organization_id")
+    if not org_id:
+        return None
+
+    if getattr(request, "profile_id", None):
+        try:
+            profile = (
+                db.query(AccountProfile)
+                .filter(AccountProfile.organization_id == org_id)
+                .filter(AccountProfile.id == int(request.profile_id))
+                .first()
+            )
+            if profile:
+                return profile
+        except Exception:
+            pass
+
+    selected_keys = [
+        lossq_copilot_norm(getattr(request, "policy_number", None)),
+        lossq_copilot_norm(getattr(request, "account_number", None)),
+    ]
+
+    selected_keys = [item for item in selected_keys if item]
+
+    if not selected_keys:
+        return None
+
+    profiles = (
+        db.query(AccountProfile)
+        .filter(AccountProfile.organization_id == org_id)
+        .order_by(AccountProfile.id.desc())
+        .all()
+    )
+
+    for profile in profiles:
+        profile_dict = {
+            "policy_number": getattr(profile, "policy_number", None),
+            "account_number": getattr(profile, "account_number", None),
+            "customer_number": getattr(profile, "customer_number", None),
+            "policies": getattr(profile, "policies", None) or [],
+        }
+
+        profile_numbers = lossq_copilot_profile_policy_numbers(profile_dict)
+
+        if any(key in profile_numbers for key in selected_keys):
+            return profile
+
+    return None
+
+
+def lossq_copilot_resolve_policy_numbers(db, current_user, request):
+    numbers = []
+
+    for value in getattr(request, "policy_numbers", None) or []:
+        normalized = lossq_copilot_norm(value)
+        if normalized:
+            numbers.append(normalized)
+
+    for value in [
+        getattr(request, "policy_number", None),
+        getattr(request, "account_number", None),
+    ]:
+        normalized = lossq_copilot_norm(value)
+        if normalized:
+            numbers.append(normalized)
+
+    if isinstance(getattr(request, "profile", None), dict):
+        numbers.extend(lossq_copilot_profile_policy_numbers(request.profile))
+
+    saved_profile = lossq_copilot_find_profile(db, current_user, request)
+    if saved_profile:
+        saved_profile_dict = {
+            "policy_number": getattr(saved_profile, "policy_number", None),
+            "account_number": getattr(saved_profile, "account_number", None),
+            "customer_number": getattr(saved_profile, "customer_number", None),
+            "policies": getattr(saved_profile, "policies", None) or [],
+        }
+        numbers.extend(lossq_copilot_profile_policy_numbers(saved_profile_dict))
+
+    # Only use real policy numbers for claim filtering. Account numbers are kept for display only.
+    real_policy_numbers = [
+        item for item in list(dict.fromkeys(numbers))
+        if item and item not in {"-", "NOT SET", "POLICY NOT SET"} and ("-" in item)
+    ]
+
+    return real_policy_numbers
+
+
+def lossq_copilot_visible_claim_objects(request):
+    rows = getattr(request, "visible_claims", None) or []
+    claim_objs = []
+
+    class VisibleClaim:
+        pass
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        obj = VisibleClaim()
+        for key, value in row.items():
+            setattr(obj, key, value)
+
+        # normalize common frontend keys
+        if not hasattr(obj, "paid_amount"):
+            setattr(obj, "paid_amount", row.get("paid") or row.get("paid_amount") or 0)
+        if not hasattr(obj, "reserve_amount"):
+            setattr(obj, "reserve_amount", row.get("reserve") or row.get("reserve_amount") or 0)
+        if not hasattr(obj, "total_incurred"):
+            setattr(obj, "total_incurred", row.get("total") or row.get("incurred") or row.get("total_incurred") or 0)
+
+        claim_objs.append(obj)
+
+    return claim_objs
+
+
+
 @router.post("/ask")
 def ask_copilot(
     request: CopilotRequest,
     db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
+    # LOSSQ_COPILOT_ACCOUNT_AWARE_CLAIM_QUERY_V1
+    policy_numbers = lossq_copilot_resolve_policy_numbers(db, current_user, request)
+
     query = db.query(Claim).filter(
         Claim.organization_id == current_user["organization_id"]
     )
 
-    if request.policy_number:
-        query = query.filter(Claim.policy_number == request.policy_number)
+    if policy_numbers:
+        query = query.filter(func.upper(func.trim(Claim.policy_number)).in_(policy_numbers))
+        claims = query.all()
+    else:
+        claims = []
 
-    claims = query.all()
+    # If dashboard already has the correct visible claims, use them as safe fallback.
+    if not claims:
+        claims = lossq_copilot_visible_claim_objects(request)
 
     intelligence = build_underwriting_intelligence(claims)
 
@@ -137,6 +295,7 @@ def ask_copilot(
             "mode": "rule_based",
             "policy_number": request.policy_number,
             "claims_used": len(claims),
+            "policy_numbers_used": policy_numbers,
         }
 
     try:
@@ -144,7 +303,7 @@ def ask_copilot(
 
         client = OpenAI(api_key=api_key)
 
-        selected_policy = request.policy_number or "All organization claims"
+        selected_policy = request.policy_number or request.account_number or "Selected account"
 
         prompt = f"""
 You are LossQ, an AI underwriting copilot for commercial insurance brokers.
@@ -209,6 +368,7 @@ Broker question:
             "mode": "openai",
             "policy_number": request.policy_number,
             "claims_used": len(claims),
+            "policy_numbers_used": policy_numbers,
         }
 
     except Exception:
