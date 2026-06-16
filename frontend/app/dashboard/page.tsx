@@ -3220,51 +3220,16 @@ if (activeProfile?.policy_number) {
           ? serverClaims.filter((claim: any) => claimMatchesPolicySet(claim, policySet))
           : serverClaims;
 
-        const currentUpload = getCachedCurrentUpload();
-        const currentUploadPolicies = new Set(
-          (Array.isArray(currentUpload?.policy_numbers) ? currentUpload.policy_numbers : [])
-            .map((item: any) => normalizePolicyNumber(item))
-            .filter(Boolean)
-        );
-        const currentUploadClaims = Array.isArray(currentUpload?.claims)
-          ? currentUpload.claims
-          : [];
-        const currentUploadMatches = currentUploadClaims.filter((claim: any) =>
-          claimMatchesPolicySet(claim, policySet)
-        );
-        const currentUploadApplies =
-          currentUploadMatches.length > 0 &&
-          Array.from(policySet).some((policy) => currentUploadPolicies.has(policy));
-
-        const cachedUpload = getCachedLastUploadReview();
-        const cachedUploadClaims = Array.isArray(cachedUpload?.claims)
-          ? cachedUpload.claims
-          : [];
-        const cachedMatches = currentUploadApplies
-          ? []
-          : cachedUploadClaims.filter((claim: any) => claimMatchesPolicySet(claim, policySet));
-
-        // LOSSQ_SERVER_CLAIMS_FIRST_AFTER_UPLOAD_V1
-        // Priority:
-        // 1. Backend server matches for the selected policy/account.
-        // 2. Current upload cache only if server has not caught up yet.
-        // 3. Older cache only when no current upload is active.
-        // 4. Empty array. Never fall back to unrelated organization-wide claims.
-        if (serverMatches.length > 0) {
-          if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(dedupeClaims(serverMatches)));
-        } else if (currentUploadApplies) {
-          if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(dedupeClaims(currentUploadMatches)));
-        } else if (cachedMatches.length > 0) {
-          if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(dedupeClaims(cachedMatches)));
-        } else {
-          if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims([]));
+        // LOSSQ_BACKEND_ONLY_LOAD_DASHBOARD_CLAIMS_V1
+        // Backend /claims is the only source of truth for Claims Analysis rows.
+        // Do not fall back to current upload cache or last upload cache because those can carry stale policy/line values.
+        if (myVersion === loadVersionRef.current) {
+          setClaims(lossqFilterRealClaims(dedupeClaims(serverMatches)));
         }
       } else {
-        const currentUpload = getCachedCurrentUpload();
-        const currentUploadClaims = Array.isArray(currentUpload?.claims)
-          ? currentUpload.claims
-          : [];
-        if (myVersion === loadVersionRef.current) setClaims(lossqFilterRealClaims(currentUploadClaims.length > 0 ? currentUploadClaims : []));
+        if (myVersion === loadVersionRef.current) {
+          setClaims(lossqFilterRealClaims([]));
+        }
       }
 
       // LOSSQ_TRUE_LAZY_LOADING_V1
