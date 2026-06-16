@@ -2715,6 +2715,45 @@ def lossq_csv_label_pair_profile_repair(file_path, parsed_profile):
 
             put_profile(label, value)
 
+
+    # LOSSQ_PROFILE_DATES_FROM_POLICY_SCHEDULE_V1
+    # If the account-level dates were not captured from label/value rows,
+    # use the first valid policy schedule effective/expiration dates.
+    try:
+        schedule_rows = account_info.get("policies") or account_info.get("policy_schedule") or []
+        if isinstance(schedule_rows, list):
+            for policy_row in schedule_rows:
+                if not isinstance(policy_row, dict):
+                    continue
+
+                effective = (
+                    policy_row.get("effective_date")
+                    or policy_row.get("policy_effective_date")
+                    or policy_row.get("effective")
+                )
+                expiration = (
+                    policy_row.get("expiration_date")
+                    or policy_row.get("policy_expiration_date")
+                    or policy_row.get("expiration")
+                    or policy_row.get("expiry_date")
+                )
+
+                if effective and not account_info.get("effective_date"):
+                    fixed_effective = lossq_section_csv_date(effective)
+                    account_info["effective_date"] = fixed_effective
+                    account_info["policy_effective_date"] = fixed_effective
+
+                if expiration and not account_info.get("expiration_date"):
+                    fixed_expiration = lossq_section_csv_date(expiration)
+                    account_info["expiration_date"] = fixed_expiration
+                    account_info["policy_expiration_date"] = fixed_expiration
+
+                if account_info.get("effective_date") and account_info.get("expiration_date"):
+                    break
+    except Exception as exc:
+        print("LOSSQ_PROFILE_DATES_FROM_POLICY_SCHEDULE_ERROR:", str(exc)[:200])
+
+
     # Parse policy schedule tables with columns like:
     # Policy Type / Coverage, Policy Number, Carrier, Effective, Expiration...
     for idx, raw_row in enumerate(rows):
