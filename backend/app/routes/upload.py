@@ -205,6 +205,66 @@ def lossq_filter_claim_model_fields(data: dict):
 
     return cleaned
 
+
+# LOSSQ_ROW_LEVEL_POLICY_SAVE_PRESERVATION_V1
+def lossq_preserve_row_policy_before_save(normalized: dict, raw_claim: dict, fallback_policy_number: str = ""):
+    """
+    Preserve each claim row's own policy number and policy type/line before Claim(**normalized).
+    This prevents account/main policy from overwriting every claim row.
+    """
+    if not isinstance(normalized, dict):
+        normalized = {}
+
+    if not isinstance(raw_claim, dict):
+        raw_claim = {}
+
+    def clean(value):
+        return clean_profile_value(value)
+
+    row_policy = (
+        clean(raw_claim.get("policy_number"))
+        or clean(raw_claim.get("Policy Number"))
+        or clean(raw_claim.get("policy_no"))
+        or clean(raw_claim.get("Policy No"))
+        or clean(raw_claim.get("policy"))
+        or clean(raw_claim.get("Policy"))
+    )
+
+    row_line = (
+        clean(raw_claim.get("policy_type"))
+        or clean(raw_claim.get("Policy Type"))
+        or clean(raw_claim.get("line_of_business"))
+        or clean(raw_claim.get("Line of Business"))
+        or clean(raw_claim.get("claim_type"))
+        or clean(raw_claim.get("Coverage"))
+        or clean(raw_claim.get("coverage"))
+        or clean(raw_claim.get("Line"))
+        or clean(raw_claim.get("line"))
+    )
+
+    row_status = (
+        clean(raw_claim.get("status"))
+        or clean(raw_claim.get("Status"))
+        or clean(raw_claim.get("claim_status"))
+        or clean(raw_claim.get("Claim Status"))
+    )
+
+    if row_policy and not is_bad_policy_key_for_upload(row_policy):
+        normalized["policy_number"] = row_policy
+    elif not clean(normalized.get("policy_number")):
+        fallback = clean(fallback_policy_number)
+        if fallback and not is_bad_policy_key_for_upload(fallback):
+            normalized["policy_number"] = fallback
+
+    if row_line:
+        normalized["line_of_business"] = row_line
+        normalized["claim_type"] = row_line
+
+    if row_status:
+        normalized["status"] = row_status
+
+    return normalized
+
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
 UPLOAD_DIR = "uploads"
@@ -2833,6 +2893,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
                 raw=claim_data,
                 fallback_policy_number=file_policy_number,
                 current_user=current_user,
+            )
+
+            # LOSSQ_ROW_LEVEL_POLICY_SAVE_PRESERVATION_V1
+            normalized = lossq_preserve_row_policy_before_save(
+                normalized=normalized,
+                raw_claim=claim_data,
+                fallback_policy_number=file_policy_number,
             )
 
             claim_number = str(normalized.get("claim_number") or "").strip().upper()
