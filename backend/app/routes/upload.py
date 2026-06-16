@@ -265,6 +265,136 @@ def lossq_preserve_row_policy_before_save(normalized: dict, raw_claim: dict, fal
 
     return normalized
 
+
+# LOSSQ_CLEAN_STANDARD_CSV_ROW_POLICY_OVERRIDE_V1
+def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_profile=None):
+    """
+    Universal clean-tabular CSV reader.
+    If a CSV has claim-level headers like Claim Number, Policy Number, Policy Type, Status,
+    use the row data directly so the main/account policy does not overwrite every claim.
+    """
+    parsed_claims = parsed_claims or []
+    parsed_profile = parsed_profile or {}
+
+    if not str(file_path or "").lower().endswith(".csv"):
+        return parsed_claims, parsed_profile
+
+    rows = []
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            with open(file_path, "r", newline="", encoding=encoding) as f:
+                rows = list(csv.DictReader(f))
+            break
+        except Exception:
+            rows = []
+
+    if not rows:
+        return parsed_claims, parsed_profile
+
+    def clean(value):
+        return clean_profile_value(value)
+
+    def get(row, *names):
+        lower_map = {str(k or "").strip().lower(): v for k, v in row.items()}
+        for name in names:
+            key = str(name or "").strip().lower()
+            if key in lower_map:
+                value = clean(lower_map.get(key))
+                if value:
+                    return value
+        return ""
+
+    first = rows[0] or {}
+    has_claim_number = any(str(k or "").strip().lower() == "claim number" for k in first.keys())
+    has_policy_number = any(str(k or "").strip().lower() == "policy number" for k in first.keys())
+
+    if not has_claim_number or not has_policy_number:
+        return parsed_claims, parsed_profile
+
+    clean_claims = []
+    policies = []
+    seen_policies = set()
+
+    for row in rows:
+        claim_number = get(row, "Claim Number", "Claim #", "Claim No", "claim_number")
+        policy_number = get(row, "Policy Number", "Policy No", "policy_number", "policy")
+        policy_type = get(row, "Policy Type", "Line of Business", "Coverage", "line_of_business", "claim_type")
+        status = get(row, "Status", "Claim Status", "claim_status")
+
+        if not claim_number or not policy_number:
+            continue
+
+        claim = {
+            "business_name": get(row, "Account Name", "Named Insured", "Insured", "Business Name"),
+            "named_insured": get(row, "Account Name", "Named Insured", "Insured", "Business Name"),
+            "carrier_name": get(row, "Carrier", "Writing Carrier", "carrier_name"),
+            "writing_carrier": get(row, "Carrier", "Writing Carrier", "carrier_name"),
+            "producing_agency": get(row, "Producing Agency", "Agency", "Broker"),
+            "policy_number": policy_number,
+            "policy_type": policy_type,
+            "line_of_business": policy_type,
+            "claim_type": policy_type,
+            "effective_date": get(row, "Effective Date", "Policy Effective Date"),
+            "expiration_date": get(row, "Expiration Date", "Policy Expiration Date"),
+            "evaluation_date": get(row, "Evaluation Date", "Valuation Date", "As Of Date"),
+            "claim_number": claim_number,
+            "date_of_loss": get(row, "Date of Loss", "Loss Date"),
+            "date_reported": get(row, "Date Reported", "Reported Date"),
+            "date_closed": get(row, "Date Closed", "Closed Date"),
+            "status": status,
+            "cause_of_loss": get(row, "Cause of Loss", "Loss Cause", "Description"),
+            "description": get(row, "Description", "Loss Description", "Cause of Loss"),
+            "claimant_name": get(row, "Claimant", "Claimant Name"),
+            "paid_amount": get(row, "Paid", "Paid Amount", "Total Paid"),
+            "reserve_amount": get(row, "Reserve", "Reserve Amount", "Outstanding Reserve"),
+            "total_incurred": get(row, "Total Incurred", "Incurred", "Total"),
+            "litigation": get(row, "Litigation", "Attorney Involvement", "Litigated"),
+        }
+
+        clean_claims.append(claim)
+
+        if policy_number and policy_number.upper() not in seen_policies:
+            seen_policies.add(policy_number.upper())
+            policies.append({
+                "policy_number": policy_number,
+                "policy_type": policy_type,
+                "line_of_business": policy_type,
+                "effective_date": claim.get("effective_date"),
+                "expiration_date": claim.get("expiration_date"),
+                "carrier_name": claim.get("carrier_name"),
+            })
+
+    if len(clean_claims) < len(parsed_claims or []):
+        return parsed_claims, parsed_profile
+
+    profile = dict(parsed_profile or {})
+    first_claim = clean_claims[0] if clean_claims else {}
+
+    for key in [
+        "business_name",
+        "named_insured",
+        "carrier_name",
+        "writing_carrier",
+        "producing_agency",
+        "effective_date",
+        "expiration_date",
+        "evaluation_date",
+    ]:
+        if first_claim.get(key):
+            profile[key] = first_claim.get(key)
+
+    if policies:
+        profile["policies"] = policies
+        profile["policy_schedule"] = policies
+        profile["policy_number"] = policies[0].get("policy_number")
+        profile["account_number"] = policies[0].get("policy_number")
+        profile["policy_count"] = len(policies)
+
+    print(f"LOSSQ_CLEAN_STANDARD_CSV_OVERRIDE_APPLIED: claims={len(clean_claims)} policies={len(policies)}")
+
+    return clean_claims, profile
+
+
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
 UPLOAD_DIR = "uploads"
@@ -2813,6 +2943,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         # LOSSQ_APPLY_LIVE_SECTION_BASED_CSV_REPAIR_V1
         parsed_claims, parsed_profile = lossq_live_repair_section_csv_upload(
+            file_path,
+            parsed_claims,
+            parsed_profile,
+        )
+
+        # LOSSQ_CLEAN_STANDARD_CSV_ROW_POLICY_OVERRIDE_V1
+        parsed_claims, parsed_profile = lossq_clean_standard_csv_override(
             file_path,
             parsed_claims,
             parsed_profile,
