@@ -4601,10 +4601,10 @@ setLazyLoadedTools,
       saved_claim_rows: combinedClaims,
       validation: primaryData?.validation || primaryProfile?.validation || {},
     };
-
-    if (combinedClaims.length > 0) {
-      setCachedCurrentUpload(currentUploadSnapshot);
-    }
+    // LOSSQ_BACKEND_TRUTH_AFTER_UPLOAD_V1
+    // Do not cache upload claim rows here. Reload from backend DB after upload.
+    clearCachedCurrentUpload();
+    clearCachedLastUploadReview();
 
     if (uploadedPolicyNumber) {
       setCachedSelectedPolicy(uploadedPolicyNumber);
@@ -4612,12 +4612,8 @@ setLazyLoadedTools,
     } else {
       await loadDashboard();
     }
-
-    // Keep the current upload authoritative after dashboard reload.
-    // This prevents a stale /claims/ or old upload cache response from replacing the freshly parsed rows.
-    if (combinedClaims.length > 0) {
-      setClaims(lossqFilterRealClaims(dedupeClaims(combinedClaims)));
-    }
+    // LOSSQ_BACKEND_TRUTH_AFTER_UPLOAD_V1
+    // Do not overwrite backend-loaded claims with upload response rows.
 
     setActiveTool("overview");
 
