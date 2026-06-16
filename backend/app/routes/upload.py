@@ -156,6 +156,55 @@ async def validate_upload_file_security(file):
     return filename
 
 
+
+# LOSSQ_FILTER_CLAIM_MODEL_FIELDS_BEFORE_SAVE_V1
+def lossq_filter_claim_model_fields(data: dict):
+    """Keep only fields that exist on the Claim SQLAlchemy model before Claim(**data)."""
+    if not isinstance(data, dict):
+        return {}
+
+    try:
+        allowed_fields = set(Claim.__table__.columns.keys())
+    except Exception:
+        allowed_fields = {
+            "id",
+            "organization_id",
+            "account_profile_id",
+            "claim_number",
+            "policy_number",
+            "carrier_name",
+            "line_of_business",
+            "claim_type",
+            "status",
+            "date_of_loss",
+            "date_reported",
+            "date_closed",
+            "paid_amount",
+            "reserve_amount",
+            "total_incurred",
+            "description",
+            "claimant_name",
+            "litigation",
+            "fraud_flag",
+            "risk_flag",
+            "created_at",
+            "updated_at",
+        }
+
+    cleaned = {}
+    removed = {}
+
+    for key, value in data.items():
+        if key in allowed_fields:
+            cleaned[key] = value
+        else:
+            removed[key] = value
+
+    if removed:
+        print("LOSSQ_CLAIM_FIELD_FILTER_REMOVED:", sorted(list(removed.keys())))
+
+    return cleaned
+
 router = APIRouter(prefix="/upload", tags=["Upload"])
 
 UPLOAD_DIR = "uploads"
@@ -2849,7 +2898,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
                 total_duplicates_skipped += 1
                 continue
 
-            db.add(Claim(**normalized))
+            db.add(Claim(**lossq_filter_claim_model_fields(normalized)))
             file_saved += 1
             total_saved += 1
 
