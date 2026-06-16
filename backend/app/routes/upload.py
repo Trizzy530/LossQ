@@ -267,6 +267,66 @@ def lossq_preserve_row_policy_before_save(normalized: dict, raw_claim: dict, fal
 
 
 # LOSSQ_CLEAN_STANDARD_CSV_ROW_POLICY_OVERRIDE_V1
+
+# LOSSQ_UNIVERSAL_PRODUCING_AGENCY_EXTRACTION_V1
+def lossq_universal_agency_from_csv(file_path):
+    """
+    Extract producing agency/broker/producer from common CSV layouts:
+    - Clean tabular columns: Producing Agency, Agency, Producer, Broker
+    - Label-pair rows: Agency, Summit Table Risk Advisors
+    - Messy section rows: Producing Agency / Broker / Brokerage
+    """
+    try:
+        if not str(file_path or "").lower().endswith(".csv"):
+            return ""
+
+        import csv
+        import re
+
+        def clean(value):
+            return re.sub(r"\s+", " ", str(value or "").strip())
+
+        def key(value):
+            return re.sub(r"[^a-z0-9]", "", str(value or "").lower())
+
+        agency_keys = {
+            "producingagency",
+            "agency",
+            "agencyname",
+            "producer",
+            "broker",
+            "brokerage",
+            "producingbroker",
+            "brokeragency",
+        }
+
+        with open(file_path, "r", encoding="utf-8-sig", errors="ignore", newline="") as handle:
+            rows = list(csv.reader(handle))
+
+        for row in rows[:80]:
+            cleaned_row = [clean(cell) for cell in row]
+
+            for idx, cell in enumerate(cleaned_row):
+                if key(cell) in agency_keys:
+                    for value in cleaned_row[idx + 1:]:
+                        value_key = key(value)
+                        if value and value_key not in agency_keys:
+                            return value
+
+        # Header-style extraction.
+        with open(file_path, "r", encoding="utf-8-sig", errors="ignore", newline="") as handle:
+            reader = csv.DictReader(handle)
+            for row in reader:
+                for name, value in (row or {}).items():
+                    if key(name) in agency_keys and clean(value):
+                        return clean(value)
+
+        return ""
+    except Exception as exc:
+        print("LOSSQ_UNIVERSAL_AGENCY_EXTRACTION_ERROR:", str(exc)[:200])
+        return ""
+
+
 def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_profile=None):
     """
     Universal clean-tabular CSV reader.
@@ -3075,6 +3135,14 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             parsed_claims,
             parsed_profile,
         )
+
+        # LOSSQ_UNIVERSAL_PRODUCING_AGENCY_EXTRACTION_V1
+        upload_agency_name = lossq_universal_agency_from_csv(file_path)
+        if upload_agency_name:
+            parsed_profile = parsed_profile or {}
+            parsed_profile["agency_name"] = upload_agency_name
+            parsed_profile["producing_agency"] = upload_agency_name
+            parsed_profile["producer"] = upload_agency_name
 
         file_policy_number = clean_input_policy
         file_account_key_for_claims = ""

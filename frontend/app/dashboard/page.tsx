@@ -4258,10 +4258,10 @@ if (isUploading) return;
               universalUploadPolicyDates.valuation_date ||
               "",
           }),
-          claims: combinedClaims,
-          saved_claim_rows: uploadResults.flatMap((item) =>
-            firstNonEmptyArray(item?.saved_claim_rows, item?.claims, item?.parsed_claims)
-          ),
+          // LOSSQ_BACKEND_TRUTH_CLAIM_ROWS_V2
+          // Do not cache upload response claim rows. Backend /claims is authoritative.
+          claims: [],
+          saved_claim_rows: [],
           validation: primaryData?.validation || primaryProfile?.validation || {},
           saved_claims: totalSavedClaims,
           raw_response: uploadResults.length === 1 ? primaryData : uploadResults,
@@ -4506,8 +4506,7 @@ setLazyLoadedTools,
     }
 
     // Show the freshly parsed claim rows immediately. loadDashboard may fetch
-    // /claims/, but /claims/ can be limited/stale, so we re-apply combinedClaims below.
-    setClaims(lossqFilterRealClaims(dedupeClaims(combinedClaims)));
+    // LOSSQ_BACKEND_TRUTH_CLAIM_ROWS_V2: do not overwrite backend claims with upload response rows.
 
     const uploadedPolicyNumber = chooseSafePolicyNumber(
       primaryProfile?.account_number,
@@ -4608,7 +4607,10 @@ setLazyLoadedTools,
 
     if (uploadedPolicyNumber) {
       setCachedSelectedPolicy(uploadedPolicyNumber);
-      await loadDashboard(uploadedPolicyNumber);
+      // LOSSQ_CLEAR_UPLOAD_CLAIM_CACHE_BEFORE_RELOAD_V2
+    clearCachedCurrentUpload();
+    clearCachedLastUploadReview();
+    await loadDashboard(uploadedPolicyNumber);
     } else {
       await loadDashboard();
     }
