@@ -18,6 +18,7 @@ from app.services.loss_run_pipeline import parse_loss_run_file
 from app.services.universal_profile import extract_universal_profile_from_text
 import traceback
 from app.role_utils import require_permission
+from app.services.row_policy_preservation import preserve_row_policy_fields
 
 try:
     from app.services.excel_parser_service import parse_claims_from_excel
@@ -1045,7 +1046,7 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
     open_days = days_between(date_reported or date_of_loss, date_closed)
     claim_age = days_between(date_of_loss, None)
 
-    return {
+    normalized = {
         "claim_number": pick(raw, ["claim_number", "claim_no", "claim_id"], "Unknown"),
         "policy_id": raw.get("policy_id"),
         "policy_number": final_policy_number,
@@ -1078,6 +1079,13 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
         "uploaded_by_user_id": current_user["user_id"],
         "uploaded_at": datetime.now().isoformat(),
     }
+
+    # LOSSQ_NORMALIZE_ROW_POLICY_PRESERVATION_V1
+    return preserve_row_policy_fields(
+        raw=raw,
+        normalized=normalized,
+        fallback_policy_number=fallback_policy_number,
+    )
 
 
 def extract_profile_data(
