@@ -2866,6 +2866,55 @@ def lossq_csv_label_pair_profile_repair(file_path, parsed_profile):
     except Exception as exc:
         print("LOSSQ_DATES_AFTER_POLICY_SCHEDULE_PARSE_ERROR:", str(exc)[:200])
 
+
+    # LOSSQ_FINAL_CSV_ACCOUNT_DATES_AFTER_POLICY_PARSE_V2
+    # Policy schedule rows have already been parsed into `policies`.
+    # If account-level effective/expiration dates are blank, copy the first valid
+    # policy schedule dates back onto the account profile before final merge/save.
+    try:
+        if policies:
+            for policy_row in policies:
+                if not isinstance(policy_row, dict):
+                    continue
+
+                effective = (
+                    policy_row.get("effective_date")
+                    or policy_row.get("policy_effective_date")
+                    or policy_row.get("effective")
+                    or policy_row.get("Effective Date")
+                    or policy_row.get("Policy Effective Date")
+                )
+
+                expiration = (
+                    policy_row.get("expiration_date")
+                    or policy_row.get("policy_expiration_date")
+                    or policy_row.get("expiration")
+                    or policy_row.get("expiry_date")
+                    or policy_row.get("Expiration Date")
+                    or policy_row.get("Policy Expiration Date")
+                )
+
+                fixed_effective = lossq_profile_date_or_blank(effective)
+                fixed_expiration = lossq_profile_date_or_blank(expiration)
+
+                if fixed_effective and not account_info.get("effective_date"):
+                    account_info["effective_date"] = fixed_effective
+                    account_info["policy_effective_date"] = fixed_effective
+
+                if fixed_expiration and not account_info.get("expiration_date"):
+                    account_info["expiration_date"] = fixed_expiration
+                    account_info["policy_expiration_date"] = fixed_expiration
+
+                if account_info.get("effective_date") and account_info.get("expiration_date"):
+                    print("LOSSQ_FINAL_CSV_ACCOUNT_DATES_AFTER_POLICY_PARSE:", {
+                        "effective_date": account_info.get("effective_date"),
+                        "expiration_date": account_info.get("expiration_date"),
+                    })
+                    break
+    except Exception as exc:
+        print("LOSSQ_FINAL_CSV_ACCOUNT_DATES_AFTER_POLICY_PARSE_ERROR:", str(exc)[:200])
+
+
     for key, value in account_info.items():
         if value:
             parsed_profile[key] = value
