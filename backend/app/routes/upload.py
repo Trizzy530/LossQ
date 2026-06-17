@@ -911,6 +911,18 @@ def _lossq_live_extract_section_based_csv(file_path):
                     account["business_name"] = value
                     account["insured_name"] = value
                     account["named_insured"] = value
+                elif key in {"account"}:
+                    # LOSSQ_ACCOUNT_LABEL_BUSINESS_NAME_V1
+                    raw_account_value = str(value or "").strip()
+                    upper_account_value = raw_account_value.upper()
+                    looks_like_id = _lossq_live_is_policy_number(raw_account_value) or bool(re.search(r"\b[A-Z0-9]{2,}[-_][A-Z0-9]{2,}", upper_account_value))
+                    if not looks_like_id:
+                        account["business_name"] = raw_account_value
+                        account["insured_name"] = raw_account_value
+                        account["named_insured"] = raw_account_value
+                    else:
+                        account["account_number"] = raw_account_value
+                        account["customer_number"] = raw_account_value
                 elif key in {"account number"}:
                     account["account_number"] = value
                     account["customer_number"] = value
@@ -934,46 +946,74 @@ def _lossq_live_extract_section_based_csv(file_path):
             continue
 
         if current_section == "policies":
-            lower_row = [cell.lower() for cell in nonempty]
-            if "line of business" in lower_row and "policy number" in lower_row:
+            # LOSSQ_UNIVERSAL_POLICY_SCHEDULE_HEADER_MAP_V1
+            def _policy_header_key(v):
+                return " ".join(_lossq_live_clean_cell(v).lower().replace("/", " ").replace("_", " ").replace("#", "number").split())
+
+            lower_row = [_policy_header_key(cell) for cell in nonempty]
+
+            policy_header_aliases = {"policy number", "policy no", "policy num", "policy id", "policy"}
+            line_header_aliases = {"line of business", "line", "coverage line", "coverage", "policy type", "lob"}
+            effective_header_aliases = {"effective date", "effective", "eff date", "eff", "policy effective", "policy effective date", "period start", "period from", "term start"}
+            expiration_header_aliases = {"expiration date", "expiration", "exp date", "exp", "expiry date", "policy expiration", "policy expiration date", "period end", "period to", "term end"}
+            carrier_header_aliases = {"carrier", "writing carrier", "insurer", "company"}
+            premium_header_aliases = {"premium", "annual premium", "current premium", "written premium"}
+            exposure_basis_aliases = {"exposure basis", "basis", "exposure"}
+            expiring_premium_aliases = {"expiring premium", "prior premium", "current term premium"}
+            target_renewal_aliases = {"target renewal premium", "target premium", "renewal premium"}
+
+            if any(h in policy_header_aliases for h in lower_row) and any(h in line_header_aliases for h in lower_row):
                 policy_header_seen = True
+                policy_header_map = {h: idx for idx, h in enumerate(lower_row)}
                 continue
 
             if not policy_header_seen:
                 continue
 
-            # Expected columns:
-            # Line of Business, Policy Number, Effective Date, Expiration Date,
-            # Exposure Basis, Current Premium, Expiring Premium, Target Renewal Premium
-            if len(row) >= 4 and _lossq_live_is_policy_number(row[1]):
-                lob = _lossq_live_clean_cell(row[0])
-                policy_number = _lossq_live_clean_cell(row[1]).upper()
-                effective = _lossq_live_date_to_iso(row[2])
-                expiration = _lossq_live_date_to_iso(row[3])
-                exposure_basis = _lossq_live_clean_cell(row[4]) if len(row) > 4 else ""
-                current_premium = _lossq_live_clean_cell(row[5]) if len(row) > 5 else ""
-                expiring_premium = _lossq_live_clean_cell(row[6]) if len(row) > 6 else ""
-                target_renewal = _lossq_live_clean_cell(row[7]) if len(row) > 7 else ""
+            header_map = locals().get("policy_header_map", {})
 
-                policy = {
-                    "line_of_business": lob,
-                    "policy_type": lob,
-                    "coverage": lob,
-                    "policy_number": policy_number,
-                    "carrier": account.get("writing_carrier") or account.get("carrier_name") or "",
-                    "effective_date": effective,
-                    "effective": effective,
-                    "effectiveDate": effective,
-                    "expiration_date": expiration,
-                    "expiration": expiration,
-                    "expirationDate": expiration,
-                    "exposure_basis": exposure_basis,
-                    "current_premium": current_premium,
-                    "premium": current_premium,
-                    "expiring_premium": expiring_premium,
-                    "target_renewal_premium": target_renewal,
-                }
-                policies.append(policy)
+            def _get_by_alias(row_values, aliases, fallback_index=None):
+                for alias in aliases:
+                    if alias in header_map:
+                        idx = header_map[alias]
+                        return _lossq_live_clean_cell(row_values[idx]) if idx < len(row_values) else ""
+                if fallback_index is not None and fallback_index < len(row_values):
+                    return _lossq_live_clean_cell(row_values[fallback_index])
+                return ""
+
+            policy_number = _get_by_alias(row, policy_header_aliases, 1).upper()
+            if not _lossq_live_is_policy_number(policy_number):
+                continue
+
+            lob = _get_by_alias(row, line_header_aliases, 0)
+            effective = _lossq_live_date_to_iso(_get_by_alias(row, effective_header_aliases, 2))
+            expiration = _lossq_live_date_to_iso(_get_by_alias(row, expiration_header_aliases, 3))
+            carrier = _get_by_alias(row, carrier_header_aliases, None) or account.get("writing_carrier") or account.get("carrier_name") or ""
+            exposure_basis = _get_by_alias(row, exposure_basis_aliases, 4)
+            current_premium = _get_by_alias(row, premium_header_aliases, 5)
+            expiring_premium = _get_by_alias(row, expiring_premium_aliases, 6)
+            target_renewal = _get_by_alias(row, target_renewal_aliases, 7)
+
+            policy = {
+                "line_of_business": lob,
+                "policy_type": lob,
+                "coverage": lob,
+                "policy_number": policy_number,
+                "carrier": carrier,
+                "carrier_name": carrier,
+                "effective_date": effective,
+                "effective": effective,
+                "effectiveDate": effective,
+                "expiration_date": expiration,
+                "expiration": expiration,
+                "expirationDate": expiration,
+                "exposure_basis": exposure_basis,
+                "current_premium": current_premium,
+                "premium": current_premium,
+                "expiring_premium": expiring_premium,
+                "target_renewal_premium": target_renewal,
+            }
+            policies.append(policy)
             continue
 
         if current_section == "exposures":
