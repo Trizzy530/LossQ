@@ -1,4 +1,4 @@
-// LOSSQ_CORRECT_PROJECT_REDEPLOY_20260611210133
+﻿// LOSSQ_CORRECT_PROJECT_REDEPLOY_20260611210133
 "use client";
 
 // LOSSQ_MANUAL_EXPOSURE_INPUTS_FRONTEND_REDEPLOY_V2
@@ -1852,7 +1852,7 @@ function lossqLooksLikeRealClaim(value: unknown): boolean {
   if (!/\d/.test(claimNumber)) return false;
 
   return /[A-Z0-9]+[-_][A-Z0-9]+[-_]\d{2,4}[-_]\d{2,6}/.test(claimNumber)
-    || /(CLM|CLAIM|GL|WC|AUTO|AU|PROP|PR|CP|CPL|PROPERTY|CY|BOP|UMB|CARGO|MTC|EPLI|DO|DNO)/.test(claimNumber);
+    || /(CLM|CLAIM|GL|WC|AUTO|AU|PROP|PR|CP|CPL|PROPERTY|CY|BOP|UMB|CARGO|MTC|EPLI|DO|DNO|LIAB|LIQUOR)/.test(claimNumber);
 }
 
 function lossqClaimNumberFromRow(row: any): string {
@@ -8641,6 +8641,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
