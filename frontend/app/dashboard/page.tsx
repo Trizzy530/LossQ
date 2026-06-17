@@ -3216,9 +3216,11 @@ if (activeProfile?.policy_number) {
 
       const serverClaims: any[] = claimsResponse.ok ? await claimsResponse.json() : [];
 
-      const serverMatches = policySet.size > 0
-          ? serverClaims.filter((claim: any) => claimMatchesPolicySet(claim, policySet))
-          : serverClaims;
+      // LOSSQ_TRUST_BACKEND_CLAIMS_RESPONSE_V1
+      // The backend /claims endpoint already filters by the selected account/policy keys.
+      // Do not re-filter locally with claimMatchesPolicySet because it can drop valid child-policy
+      // rows such as FPS-CARGO-2025-8804 after parser cleanup.
+      const serverMatches = serverClaims;
 
         // LOSSQ_BACKEND_ONLY_LOAD_DASHBOARD_CLAIMS_V1
         // Backend /claims is the only source of truth for Claims Analysis rows.
