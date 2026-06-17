@@ -1159,6 +1159,22 @@ def _lossq_live_extract_section_based_csv(file_path):
         account["requires_review"] = False if claims and policies else True
 
     print("LOSSQ_SECTION_CSV_RETURN_COUNTS:", {"claims": len(claims), "policies": len(policies), "exposures": len(exposures)})
+    # LOSSQ_FINAL_PRE_SECTION_ACCOUNT_PROFILE_FALLBACK_V1
+    # Final universal fallback for carrier CSVs that place account fields before formal sections.
+    if not account.get("business_name"):
+        for raw_row in rows[:25]:
+            cells = [_lossq_live_clean_cell(c) for c in raw_row if _lossq_live_clean_cell(c)]
+            if len(cells) < 2:
+                continue
+            raw_key = cells[0].lower().replace(".", "").strip()
+            raw_value = cells[1].strip()
+            if raw_key in {"account", "account name", "insured", "named insured", "business name"}:
+                account["business_name"] = raw_value
+                account["insured_name"] = raw_value
+                account["named_insured"] = raw_value
+                print("LOSSQ_FINAL_ACCOUNT_NAME_FROM_PRE_SECTION:", raw_value)
+                break
+
     return claims, account
 
 
@@ -4298,6 +4314,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
 
 
 
