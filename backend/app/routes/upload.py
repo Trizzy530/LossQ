@@ -1226,9 +1226,17 @@ def lossq_live_repair_section_csv_upload(file_path, parsed_claims, parsed_profil
         return parsed_claims, parsed_profile
 
     section_claims, section_profile = _lossq_live_extract_section_based_csv(file_path)
-
-    if not section_claims and not section_profile:
-        return parsed_claims, parsed_profile
+    # LOSSQ_SECTION_CSV_EMPTY_CLAIMS_FALLBACK_V1
+    # If section extraction produced zero claims, use universal header fallback.
+    if not section_claims:
+        fallback_claims, fallback_profile = _lossq_header_fallback_parse_section_csv(file_path)
+        if fallback_claims or fallback_profile:
+            print("LOSSQ_SECTION_CSV_USING_HEADER_FALLBACK:", {"claims": len(fallback_claims), "profile_keys": list(fallback_profile.keys())})
+            section_claims = fallback_claims or section_claims
+            if fallback_profile:
+                section_profile.update({k: v for k, v in fallback_profile.items() if v not in ("", None, [], {})})
+        elif not section_profile:
+            return parsed_claims, parsed_profile
 
     if not isinstance(parsed_profile, dict):
         parsed_profile = {}
