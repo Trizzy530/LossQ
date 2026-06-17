@@ -2220,8 +2220,7 @@ def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
         policy_number=policy_number,
         effective_date=profile_data.get("effective_date") or "Not Set",
         expiration_date=profile_data.get("expiration_date") or "Not Set",
-        evaluation_date=profile_data.get("evaluation_date")
-        or datetime.now().date().isoformat(),
+        evaluation_date=profile_data.get("evaluation_date") or "",
         policies=policies_json,
         validation=validation_json,
         raw_text_preview=profile_data.get("raw_text_preview") or "",
