@@ -3232,6 +3232,114 @@ def lossq_pdf_profile_repair(file_path, parsed_profile):
 
 
 
+
+# LOSSQ_CLEAN_PROFILE_POLICY_SCHEDULE_ROWS_V1
+def lossq_clean_profile_policy_schedule_rows(parsed_profile, parsed_claims=None):
+    """
+    Remove fake policy schedule rows created from claim-table text.
+    Keeps real policy numbers like FPS-GL-2025-8801, but removes claim-looking
+    or partial rows like GL-250012, GL-2025, WC-2025-8802, CARGO-250052.
+    """
+    try:
+        import re
+
+        parsed_profile = parsed_profile or {}
+        parsed_claims = parsed_claims or []
+
+        policies = parsed_profile.get("policies") or parsed_profile.get("policy_schedule") or []
+        if not isinstance(policies, list):
+            return parsed_profile
+
+        claim_numbers = set()
+        claim_policy_numbers = set()
+
+        for claim in parsed_claims:
+            if not isinstance(claim, dict):
+                continue
+
+            claim_number = str(
+                claim.get("claim_number")
+                or claim.get("Claim Number")
+                or claim.get("claim_no")
+                or ""
+            ).strip().upper()
+
+            policy_number = str(
+                claim.get("policy_number")
+                or claim.get("Policy Number")
+                or claim.get("policy_no")
+                or ""
+            ).strip().upper()
+
+            if claim_number:
+                claim_numbers.add(claim_number)
+            if policy_number:
+                claim_policy_numbers.add(policy_number)
+
+        def clean(value):
+            return str(value or "").strip().upper()
+
+        def looks_like_claim_number(value):
+            value = clean(value)
+            if not value:
+                return True
+
+            if value in claim_numbers:
+                return True
+
+            # Examples: GL-250012, WC-250026, BOP-250039, CARGO-250052, UMB-250067
+            if re.match(r"^(GL|WC|BOP|AUTO|AU|CARGO|MTC|UMB|CY|CP|PROP|EPLI|DO|DNO)-\d{5,7}$", value):
+                return True
+
+            # Examples: GL-2025, WC-2025, BOP-2025, UMB-2025
+            if re.match(r"^(GL|WC|BOP|AUTO|AU|CARGO|MTC|UMB|CY|CP|PROP|EPLI|DO|DNO)-20\d{2}$", value):
+                return True
+
+            # Examples: GL-2025-8801 or WC-2025-8802 can be claim/table fragments when
+            # the same upload already has stronger real policies like FPS-GL-2025-8801.
+            has_prefixed_real_policy = any(
+                real_policy.endswith("-" + value) or real_policy.endswith(value)
+                for real_policy in claim_policy_numbers
+                if real_policy and real_policy != value
+            )
+            if has_prefixed_real_policy:
+                return True
+
+            return False
+
+        cleaned_policies = []
+        removed_policies = []
+
+        for policy in policies:
+            if not isinstance(policy, dict):
+                continue
+
+            policy_number = clean(
+                policy.get("policy_number")
+                or policy.get("Policy Number")
+                or policy.get("policy")
+                or policy.get("policy_no")
+            )
+
+            if looks_like_claim_number(policy_number):
+                removed_policies.append(policy_number)
+                continue
+
+            cleaned_policies.append(policy)
+
+        parsed_profile["policies"] = cleaned_policies
+        parsed_profile["policy_schedule"] = cleaned_policies
+
+        if removed_policies:
+            print("LOSSQ_CLEAN_PROFILE_POLICY_SCHEDULE_REMOVED:", removed_policies[:25])
+
+        return parsed_profile
+    except Exception as exc:
+        print("LOSSQ_CLEAN_PROFILE_POLICY_SCHEDULE_ERROR:", str(exc)[:200])
+        return parsed_profile
+
+
+
 # LOSSQ_FINAL_PROFILE_DATES_FROM_POLICIES_V1
 def lossq_final_profile_dates_from_policies(parsed_profile):
     """
@@ -3474,6 +3582,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         upload_agency_name = lossq_header_agency_from_csv(file_path) or lossq_universal_agency_from_csv(file_path)
         if upload_agency_name:
             print("LOSSQ_AGENCY_SELECTED_FROM_UPLOAD:", upload_agency_name)
+
+        # LOSSQ_CLEAN_PROFILE_POLICY_SCHEDULE_ROWS_V1
+        parsed_profile = lossq_clean_profile_policy_schedule_rows(parsed_profile, parsed_claims)
 
         # LOSSQ_FINAL_PROFILE_DATES_FROM_POLICIES_V1
         parsed_profile = lossq_final_profile_dates_from_policies(parsed_profile)
