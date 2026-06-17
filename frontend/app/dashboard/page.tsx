@@ -6782,8 +6782,8 @@ const trendNoteDisplay =
                   />
                   <ProfileDetail label="Producing Agency" value={lossqProducingAgencyFromObject(displayProfile)} />
                   <ProfileDetail label="Main Policy" value={mainPolicyNumber || "-"} />
-                  <ProfileDetail label="Effective Date" value={lossqEffectiveDateFromObject(displayProfile)} />
-                  <ProfileDetail label="Expiration Date" value={lossqExpirationDateFromObject(displayProfile)} />
+                  <ProfileDetail label="Effective Date" value={lossqEffectiveDateFromObject(displayProfile) || lossqFirstPolicyEffectiveDate(policySchedule) || "Not set"} />
+                  <ProfileDetail label="Expiration Date" value={lossqExpirationDateFromObject(displayProfile) || lossqFirstPolicyExpirationDate(policySchedule) || "Not set"} />
                   <ProfileDetail label="Evaluation Date" value={getBestEvaluationDate(displayProfile) || lossqAnyEvaluationDate(displayProfile) || lossqFirstPolicyEvaluationDate(policySchedule) || "Not set"} />
                 </div>
 
