@@ -3233,6 +3233,128 @@ def lossq_pdf_profile_repair(file_path, parsed_profile):
 
 
 
+
+# LOSSQ_LINE_OF_BUSINESS_FROM_POLICY_PREFIX_V1
+def lossq_line_of_business_from_policy_prefix(value):
+    """
+    Universal line-of-business correction from policy/claim prefixes.
+    Prevents CARGO, BOP, and UMB rows from being displayed as generic Commercial Auto or GL.
+    """
+    try:
+        import re
+
+        token = str(value or "").upper().strip()
+        if not token:
+            return ""
+
+        # Match full tokens only, not random letters inside company names.
+        parts = set(re.split(r"[^A-Z0-9]+", token))
+
+        if "CARGO" in parts or "MTC" in parts or "TRUCKCARGO" in parts:
+            return "Motor Truck Cargo"
+
+        if "BOP" in parts or "BP" in parts:
+            return "Businessowners Policy"
+
+        if "UMB" in parts or "UMBRELLA" in parts or "EXCESS" in parts:
+            return "Umbrella / Excess"
+
+        if "WC" in parts or "WORKERS" in parts or "COMP" in parts:
+            return "Workers Compensation"
+
+        if "GL" in parts or "GENERAL" in parts:
+            return "General Liability"
+
+        if "AUTO" in parts or "CA" in parts or "AL" in parts:
+            return "Commercial Auto"
+
+        if "CY" in parts or "CYBER" in parts:
+            return "Cyber Liability"
+
+        if "CP" in parts or "PROPERTY" in parts:
+            return "Commercial Property"
+
+        if "EPLI" in parts:
+            return "Employment Practices Liability"
+
+        if "DO" in parts or "DNO" in parts:
+            return "Directors & Officers"
+
+        return ""
+    except Exception as exc:
+        print("LOSSQ_LINE_OF_BUSINESS_FROM_POLICY_PREFIX_ERROR:", str(exc)[:200])
+        return ""
+
+
+# LOSSQ_APPLY_LINE_OF_BUSINESS_FROM_POLICY_PREFIX_V1
+def lossq_apply_line_of_business_from_policy_prefix(parsed_claims, parsed_profile=None):
+    """
+    Correct parsed claim and policy schedule line names using policy/claim prefixes.
+    """
+    try:
+        parsed_claims = parsed_claims or []
+        parsed_profile = parsed_profile or {}
+
+        for claim in parsed_claims:
+            if not isinstance(claim, dict):
+                continue
+
+            policy_number = (
+                claim.get("policy_number")
+                or claim.get("Policy Number")
+                or claim.get("policy_no")
+                or ""
+            )
+
+            claim_number = (
+                claim.get("claim_number")
+                or claim.get("Claim Number")
+                or claim.get("claim_no")
+                or ""
+            )
+
+            detected_line = (
+                lossq_line_of_business_from_policy_prefix(policy_number)
+                or lossq_line_of_business_from_policy_prefix(claim_number)
+            )
+
+            if detected_line:
+                claim["line_of_business"] = detected_line
+                claim["claim_type"] = detected_line
+                claim["coverage"] = detected_line
+                claim["policy_type"] = detected_line
+
+        policies = parsed_profile.get("policies") or parsed_profile.get("policy_schedule") or []
+        if isinstance(policies, list):
+            for policy in policies:
+                if not isinstance(policy, dict):
+                    continue
+
+                policy_number = (
+                    policy.get("policy_number")
+                    or policy.get("Policy Number")
+                    or policy.get("policy_no")
+                    or ""
+                )
+
+                detected_line = lossq_line_of_business_from_policy_prefix(policy_number)
+
+                if detected_line:
+                    policy["line_of_business"] = detected_line
+                    policy["policy_type"] = detected_line
+                    policy["coverage"] = detected_line
+                    policy["line"] = detected_line
+
+            parsed_profile["policies"] = policies
+            parsed_profile["policy_schedule"] = policies
+
+        return parsed_claims, parsed_profile
+    except Exception as exc:
+        print("LOSSQ_APPLY_LINE_OF_BUSINESS_FROM_POLICY_PREFIX_ERROR:", str(exc)[:200])
+        return parsed_claims, parsed_profile
+
+
+
 # LOSSQ_CLEAN_PROFILE_POLICY_SCHEDULE_ROWS_V1
 def lossq_clean_profile_policy_schedule_rows(parsed_profile, parsed_claims=None):
     """
@@ -3585,6 +3707,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         # LOSSQ_CLEAN_PROFILE_POLICY_SCHEDULE_ROWS_V1
         parsed_profile = lossq_clean_profile_policy_schedule_rows(parsed_profile, parsed_claims)
+
+        # LOSSQ_APPLY_LINE_OF_BUSINESS_FROM_POLICY_PREFIX_V1
+        parsed_claims, parsed_profile = lossq_apply_line_of_business_from_policy_prefix(parsed_claims, parsed_profile)
 
         # LOSSQ_FINAL_PROFILE_DATES_FROM_POLICIES_V1
         parsed_profile = lossq_final_profile_dates_from_policies(parsed_profile)
