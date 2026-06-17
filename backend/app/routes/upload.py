@@ -969,27 +969,56 @@ def _lossq_live_extract_section_based_csv(file_path):
             continue
 
         if current_section == "claims":
-            lower_row = [cell.lower() for cell in nonempty]
+            lower_row = [_lossq_live_clean_cell(cell).lower() for cell in nonempty]
+
+            # LOSSQ_SECTION_CSV_CLAIM_DETAIL_HEADER_MAP_V1
+            # Universal section-based CSV claim parser. Do not rely on one fixed
+            # column order because real loss runs may include Date Reported,
+            # Date Closed, Litigation, Flag, Cause, etc.
             if "claim number" in lower_row and "policy number" in lower_row:
                 claim_header_seen = True
+                claim_headers = [_lossq_live_clean_cell(cell).lower() for cell in row]
                 continue
 
             if not claim_header_seen:
                 continue
 
-            # Expected columns:
-            # Claim Number, Policy Number, Line of Business, Date of Loss,
-            # Status, Paid, Reserve, Total Incurred, Description
-            if len(row) >= 8 and _lossq_live_is_claim_number(row[0]) and _lossq_live_is_policy_number(row[1]):
-                claim_number = _lossq_live_clean_cell(row[0]).upper()
-                policy_number = _lossq_live_clean_cell(row[1]).upper()
-                lob = _lossq_live_clean_cell(row[2])
-                loss_date = _lossq_live_date_to_iso(row[3])
-                status = _lossq_live_clean_cell(row[4]).title() or "Open"
-                paid = _lossq_live_money_to_float(row[5])
-                reserve = _lossq_live_money_to_float(row[6])
-                total = _lossq_live_money_to_float(row[7])
-                description = _lossq_live_clean_cell(row[8]) if len(row) > 8 else ""
+            if not row or len(row) < 2:
+                continue
+
+            def claim_value(*names):
+                for name in names:
+                    key = str(name or "").strip().lower()
+                    if key in claim_headers:
+                        idx = claim_headers.index(key)
+                        if idx < len(row):
+                            return _lossq_live_clean_cell(row[idx])
+                return ""
+
+            claim_number = claim_value("claim number", "claim no", "claim #", "claim id", "claim")
+            policy_number = claim_value("policy number", "policy no", "policy #", "policy")
+            lob = claim_value("line of business", "coverage", "line", "claim type", "policy type")
+            status = claim_value("status", "claim status")
+            loss_date = claim_value("date of loss", "loss date", "dol")
+            reported_date = claim_value("date reported", "reported date", "report date")
+            closed_date = claim_value("date closed", "closed date")
+            paid_raw = claim_value("paid", "paid amount", "total paid", "loss paid")
+            reserve_raw = claim_value("reserve", "reserves", "reserve amount", "total reserve")
+            total_raw = claim_value("total incurred", "incurred", "gross incurred", "net incurred", "total")
+            description = claim_value("description", "loss description", "claim description", "cause of loss", "cause")
+            litigation = claim_value("litigation", "litigated", "suit")
+            flag = claim_value("flag", "risk flag", "severity flag")
+
+            if _lossq_live_is_claim_number(claim_number) and _lossq_live_is_policy_number(policy_number):
+                claim_number = _lossq_live_clean_cell(claim_number).upper()
+                policy_number = _lossq_live_clean_cell(policy_number).upper()
+                paid = _lossq_live_money_to_float(paid_raw)
+                reserve = _lossq_live_money_to_float(reserve_raw)
+                total = _lossq_live_money_to_float(total_raw)
+
+                # If carrier file omits total incurred, calculate safe total.
+                if not total and (paid or reserve):
+                    total = paid + reserve
 
                 claim = {
                     "claim_number": claim_number,
@@ -997,9 +1026,13 @@ def _lossq_live_extract_section_based_csv(file_path):
                     "policy": policy_number,
                     "line_of_business": lob,
                     "claim_type": lob,
-                    "date_of_loss": loss_date,
-                    "loss_date": loss_date,
-                    "status": status,
+                    "date_of_loss": _lossq_live_date_to_iso(loss_date),
+                    "loss_date": _lossq_live_date_to_iso(loss_date),
+                    "date_reported": _lossq_live_date_to_iso(reported_date),
+                    "reported_date": _lossq_live_date_to_iso(reported_date),
+                    "date_closed": _lossq_live_date_to_iso(closed_date),
+                    "closed_date": _lossq_live_date_to_iso(closed_date),
+                    "status": _lossq_live_clean_cell(status).title() or "Open",
                     "paid": paid,
                     "paid_amount": paid,
                     "reserve": reserve,
@@ -1009,6 +1042,8 @@ def _lossq_live_extract_section_based_csv(file_path):
                     "total_net_loss": total,
                     "description": description,
                     "loss_description": description,
+                    "litigation": litigation,
+                    "flag": flag,
                 }
                 claims.append(claim)
             continue
@@ -3270,6 +3305,12 @@ def lossq_line_of_business_from_policy_prefix(value):
 
         if "CY" in parts or "CYBER" in parts:
             return "Cyber Liability"
+
+        if "LIAB" in parts or "LL" in parts or "LIQUOR" in parts:
+            return "Liquor Liability"
+
+        if "PL" in parts or "PROF" in parts or "PROFESSIONAL" in parts:
+            return "Professional Liability"
 
         if "CP" in parts or "PROPERTY" in parts:
             return "Commercial Property"
