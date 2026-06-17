@@ -2212,6 +2212,23 @@ def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
 
         return existing
 
+    # LOSSQ_FINAL_CARRIER_BAD_VALUE_CLEANUP_V1
+    bad_final_carrier_values = {"exposure value", "exposure basis", "premium", "annual premium", "policy number", "line of business"}
+    for carrier_key in ["carrier_name", "writing_carrier", "carrier"]:
+        if str(profile_data.get(carrier_key) or "").strip().lower() in bad_final_carrier_values:
+            profile_data[carrier_key] = ""
+
+    # Backfill carrier from first real policy carrier if profile carrier was cleared.
+    if not profile_data.get("carrier_name") and isinstance(profile_data.get("policies"), list):
+        for policy_item in profile_data.get("policies") or []:
+            possible_carrier = str(
+                policy_item.get("carrier_name") or policy_item.get("writing_carrier") or policy_item.get("carrier") or ""
+            ).strip()
+            if possible_carrier and possible_carrier.lower() not in bad_final_carrier_values:
+                profile_data["carrier_name"] = possible_carrier
+                profile_data["writing_carrier"] = possible_carrier
+                break
+
     new_profile = AccountProfile(
         business_name=profile_data.get("business_name") or "Business Name Not Set",
         carrier_name=profile_data.get("carrier_name") or "Carrier Not Set",
@@ -4347,6 +4364,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
 
 
 
