@@ -1103,6 +1103,119 @@ def _lossq_live_extract_section_based_csv(file_path):
     print("LOSSQ_SECTION_CSV_RETURN_COUNTS:", {"claims": len(claims), "policies": len(policies), "exposures": len(exposures)})
     return claims, account
 
+
+# LOSSQ_SECTION_CSV_HEADER_FALLBACK_V1
+def _lossq_header_fallback_parse_section_csv(file_path):
+    rows = _lossq_live_read_section_csv_rows(file_path)
+    claims = []
+    policies = []
+
+    def clean(v):
+        return _lossq_live_clean_cell(v)
+
+    def key(v):
+        return clean(v).lower().replace("/", " ").replace("_", " ").strip()
+
+    for idx, row in enumerate(rows):
+        header = [key(c) for c in row]
+
+        if "policy number" in header and ("coverage  line" in header or "line of business" in header or "coverage" in header):
+            for data in rows[idx + 1:]:
+                if not data or not any(clean(c) for c in data):
+                    break
+                if len(data) < 2:
+                    continue
+
+                policy_number = clean(data[0]).upper()
+                if not _lossq_live_is_policy_number(policy_number):
+                    continue
+
+                lob = clean(data[1]) if len(data) > 1 else ""
+                carrier = clean(data[2]) if len(data) > 2 else ""
+                effective = _lossq_live_date_to_iso(data[3]) if len(data) > 3 else ""
+                expiration = _lossq_live_date_to_iso(data[4]) if len(data) > 4 else ""
+                premium = clean(data[5]) if len(data) > 5 else ""
+
+                policies.append({
+                    "policy_number": policy_number,
+                    "line_of_business": lob,
+                    "policy_type": lob,
+                    "coverage": lob,
+                    "carrier": carrier,
+                    "carrier_name": carrier,
+                    "effective_date": effective,
+                    "effective": effective,
+                    "expiration_date": expiration,
+                    "expiration": expiration,
+                    "current_premium": premium,
+                    "premium": premium,
+                })
+
+        if "claim number" in header and "policy number" in header:
+            for data in rows[idx + 1:]:
+                if not data or not any(clean(c) for c in data):
+                    break
+
+                row_map = {}
+                for h_i, h in enumerate(header):
+                    row_map[h] = clean(data[h_i]) if h_i < len(data) else ""
+
+                claim_number = row_map.get("claim number", "").upper()
+                policy_number = row_map.get("policy number", "").upper()
+
+                if not _lossq_live_is_claim_number(claim_number) or not _lossq_live_is_policy_number(policy_number):
+                    continue
+
+                paid = _lossq_live_money_to_float(row_map.get("paid", ""))
+                reserve = _lossq_live_money_to_float(row_map.get("reserve", ""))
+                total = _lossq_live_money_to_float(row_map.get("total incurred", ""))
+                if not total and (paid or reserve):
+                    total = paid + reserve
+
+                lob = row_map.get("line of business", "") or row_map.get("coverage", "")
+                status = row_map.get("status", "") or "Open"
+                loss_date = _lossq_live_date_to_iso(row_map.get("date of loss", ""))
+                reported_date = _lossq_live_date_to_iso(row_map.get("date reported", ""))
+                closed_date = _lossq_live_date_to_iso(row_map.get("date closed", ""))
+                description = row_map.get("description", "")
+
+                claims.append({
+                    "claim_number": claim_number,
+                    "policy_number": policy_number,
+                    "policy": policy_number,
+                    "line_of_business": lob,
+                    "claim_type": lob,
+                    "date_of_loss": loss_date,
+                    "loss_date": loss_date,
+                    "date_reported": reported_date,
+                    "reported_date": reported_date,
+                    "date_closed": closed_date,
+                    "closed_date": closed_date,
+                    "status": status.title(),
+                    "paid": paid,
+                    "paid_amount": paid,
+                    "reserve": reserve,
+                    "reserve_amount": reserve,
+                    "total_incurred": total,
+                    "total_amount": total,
+                    "total_net_loss": total,
+                    "description": description,
+                    "loss_description": description,
+                    "litigation": row_map.get("litigation", ""),
+                    "flag": row_map.get("flag", ""),
+                })
+
+    profile = {}
+    if policies:
+        profile["policies"] = policies
+        profile["policy_schedule"] = policies
+        profile["policy_number"] = policies[0].get("policy_number", "")
+        profile["effective_date"] = policies[0].get("effective_date", "")
+        profile["expiration_date"] = policies[0].get("expiration_date", "")
+
+    print("LOSSQ_SECTION_CSV_HEADER_FALLBACK_COUNTS:", {"claims": len(claims), "policies": len(policies)})
+    return claims, profile
+
 def lossq_live_repair_section_csv_upload(file_path, parsed_claims, parsed_profile):
     """
     If the uploaded file is a section-based CSV, override the old row parser
@@ -4113,6 +4226,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
 
 
 
