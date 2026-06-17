@@ -1,4 +1,4 @@
-import re
+﻿import re
 import csv
 import pandas as pd
 
@@ -413,3 +413,4 @@ def parse_claims_from_excel(file_path):
         final.append(claim)
 
     return final
+
