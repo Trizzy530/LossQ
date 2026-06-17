@@ -2809,7 +2809,7 @@ def lossq_csv_label_pair_profile_repair(file_path, parsed_profile):
         if "policynumber" not in header_keys:
             continue
 
-        if not any(key in header_keys for key in ["policytypecoverage", "lineofbusiness", "coverage", "policytype"]):
+        if not any(key in header_keys for key in ["policytypecoverage", "lineofbusiness", "coverage", "policytype", "coverageline", "linecoverage"]):
             continue
 
         # Found a policy schedule header.
@@ -2831,7 +2831,7 @@ def lossq_csv_label_pair_profile_repair(file_path, parsed_profile):
 
                 value = row[col_index]
 
-                if header_key in {"policytypecoverage", "lineofbusiness", "coverage", "policytype"}:
+                if header_key in {"policytypecoverage", "lineofbusiness", "coverage", "policytype", "coverageline", "linecoverage"}:
                     mapped["line_of_business"] = value
                     mapped["policy_type"] = value
                     mapped["coverage"] = value
