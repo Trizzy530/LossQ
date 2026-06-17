@@ -1998,6 +1998,9 @@ function lossqBestPolicyExpirationDateRaw(profileLike: any, policyRows: any[] = 
     profileLike?.expiration_date,
     profileLike?.policy_expiration_date,
     profileLike?.expiry_date,
+    profileLike?.expiration,
+    profileLike?.expirationDate,
+    profileLike?.policyExpirationDate,
     profileLike?.["Expiration Date"],
     profileLike?.["Policy Expiration Date"]
   );
@@ -2011,6 +2014,8 @@ function lossqBestPolicyExpirationDateRaw(profileLike: any, policyRows: any[] = 
       row?.policy_expiration_date,
       row?.expiry_date,
       row?.expiration,
+      row?.expirationDate,
+      row?.policyExpirationDate,
       row?.["Expiration Date"],
       row?.["Policy Expiration Date"]
     );
@@ -8641,6 +8646,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
