@@ -1119,7 +1119,7 @@ def _lossq_header_fallback_parse_section_csv(file_path):
     for idx, row in enumerate(rows):
         header = [key(c) for c in row]
 
-        if "policy number" in header and ("coverage  line" in header or "line of business" in header or "coverage" in header):
+        if "policy number" in header and ("coverage line" in header or "line of business" in header or "coverage" in header):
             for data in rows[idx + 1:]:
                 if not data or not any(clean(c) for c in data):
                     break
@@ -2252,6 +2252,12 @@ def lossq_beta_valid_policy_key(value):
     }
     if key in bad:
         return False
+    # LOSSQ_UNIVERSAL_MULTI_SEGMENT_POLICY_ID_V1
+    # Accept universal carrier/account-prefixed policy IDs:
+    # ABC-GL-2025-1234, ACCT-WC-2025-0001, ORG-LIAB-2025-55, etc.
+    if bool(re.search(r"[A-Z0-9]{2,}[-_][A-Z0-9]{2,}[-_](19|20)\d{2}[-_][A-Z0-9]{2,}", key)):
+        return True
+
     return bool(re.search(r"[A-Z]{2,10}[-_ ]?\d{4}[-_ ][A-Z0-9]+", key)) or bool(re.search(r"[A-Z]{2,10}-\d+", key))
 
 def lossq_beta_valid_claim_number(value):
@@ -4234,6 +4240,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
+
 
 
 
