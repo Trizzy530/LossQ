@@ -982,18 +982,31 @@ def _lossq_live_extract_section_based_csv(file_path):
                     return _lossq_live_clean_cell(row_values[fallback_index])
                 return ""
 
-            policy_number = _get_by_alias(row, policy_header_aliases, 1).upper()
+            # LOSSQ_POLICY_PERIOD_RANGE_SECTION_CSV_V2
+            # Do not let fallback indexes shift Carrier into Effective Date.
+            policy_number = _get_by_alias(row, policy_header_aliases, 0).upper()
             if not _lossq_live_is_policy_number(policy_number):
                 continue
 
-            lob = _get_by_alias(row, line_header_aliases, 0)
-            effective = _lossq_live_date_to_iso(_get_by_alias(row, effective_header_aliases, 2))
-            expiration = _lossq_live_date_to_iso(_get_by_alias(row, expiration_header_aliases, 3))
-            carrier = _get_by_alias(row, carrier_header_aliases, None) or account.get("writing_carrier") or account.get("carrier_name") or ""
-            exposure_basis = _get_by_alias(row, exposure_basis_aliases, 4)
+            lob = _get_by_alias(row, line_header_aliases, 1)
+            carrier = _get_by_alias(row, carrier_header_aliases, 2) or account.get("writing_carrier") or account.get("carrier_name") or ""
+
+            effective_raw = _get_by_alias(row, effective_header_aliases, None)
+            expiration_raw = _get_by_alias(row, expiration_header_aliases, None)
+            effective = _lossq_live_date_to_iso(effective_raw) if re.search(r"\d{1,4}[/-]\d{1,2}[/-]\d{1,4}", str(effective_raw or "")) else ""
+            expiration = _lossq_live_date_to_iso(expiration_raw) if re.search(r"\d{1,4}[/-]\d{1,2}[/-]\d{1,4}", str(expiration_raw or "")) else ""
+
+            if not effective or not expiration:
+                period_value = _get_by_alias(row, policy_period_aliases, None)
+                period_dates = re.findall(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2}", str(period_value or ""))
+                if len(period_dates) >= 2:
+                    effective = effective or _lossq_live_date_to_iso(period_dates[0])
+                    expiration = expiration or _lossq_live_date_to_iso(period_dates[1])
+
             current_premium = _get_by_alias(row, premium_header_aliases, 5)
-            expiring_premium = _get_by_alias(row, expiring_premium_aliases, 6)
-            target_renewal = _get_by_alias(row, target_renewal_aliases, 7)
+            exposure_basis = _get_by_alias(row, exposure_basis_aliases, 6)
+            expiring_premium = _get_by_alias(row, expiring_premium_aliases, None)
+            target_renewal = _get_by_alias(row, target_renewal_aliases, None)
 
             policy = {
                 "line_of_business": lob,
