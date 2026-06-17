@@ -1852,7 +1852,7 @@ function lossqLooksLikeRealClaim(value: unknown): boolean {
   if (!/\d/.test(claimNumber)) return false;
 
   return /[A-Z0-9]+[-_][A-Z0-9]+[-_]\d{2,4}[-_]\d{2,6}/.test(claimNumber)
-    || /(CLM|CLAIM|GL|WC|AUTO|AU|PROP|PR|CP|CPL|PROPERTY|CY|BOP|UMB|CARGO|MTC|EPLI|DO|DNO|LIAB|LIQUOR|PL|PROF|PROFESSIONAL|GAR|GARAGE|GARAGEKEEPERS)/.test(claimNumber);
+    || /(CLM|CLAIM|GL|WC|AUTO|AU|PROP|PR|CP|CPL|PROPERTY|CY|BOP|UMB|CARGO|MTC|EPLI|DO|DNO|LIAB|LIQUOR|PL|PROF|PROFESSIONAL|GAR|GARAGE|GARAGEKEEPERS|ABUSE|MOLESTATION|SAM|SML|AANDM|SEXUAL|MISCONDUCT|SPECIALTY|CARE|DAYCARE)/.test(claimNumber);
 }
 
 function lossqClaimNumberFromRow(row: any): string {
@@ -8646,6 +8646,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
