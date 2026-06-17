@@ -2614,6 +2614,38 @@ def lossq_profile_date_or_blank(value):
 
 
 # LOSSQ_MESSY_CSV_LABEL_PAIR_PROFILE_REPAIR_V1
+
+# LOSSQ_POLICY_PERIOD_RANGE_SPLIT_V1
+def lossq_policy_period_range_dates(value):
+    """
+    Universal parser for combined policy period values like:
+    03/01/2025 - 03/01/2026
+    03/01/2025 to 03/01/2026
+    Effective 03/01/2025 Expiration 03/01/2026
+    """
+    try:
+        import re
+
+        clean = lossq_section_csv_clean(value)
+        if not clean:
+            return "", ""
+
+        date_matches = re.findall(
+            r"\b(?:\d{1,2}[/-]\d{1,2}[/-]\d{2,4}|\d{4}[/-]\d{1,2}[/-]\d{1,2})\b",
+            clean,
+        )
+
+        if len(date_matches) >= 2:
+            effective = lossq_profile_date_or_blank(date_matches[0])
+            expiration = lossq_profile_date_or_blank(date_matches[1])
+            return effective, expiration
+
+        return "", ""
+    except Exception as exc:
+        print("LOSSQ_POLICY_PERIOD_RANGE_SPLIT_ERROR:", str(exc)[:200])
+        return "", ""
+
+
 def lossq_csv_label_pair_profile_repair(file_path, parsed_profile):
     """
     Universal repair for messy CSV exports where account profile fields are stored
@@ -2682,6 +2714,20 @@ def lossq_csv_label_pair_profile_repair(file_path, parsed_profile):
             fixed = lossq_section_csv_date(value)
             account_info["expiration_date"] = fixed
             account_info["policy_expiration_date"] = fixed
+
+        elif field in {"policyperiod", "policyterm", "period", "coverageperiod", "policydates", "daterange"}:
+            effective, expiration = lossq_policy_period_range_dates(value)
+            if effective and not account_info.get("effective_date"):
+                account_info["effective_date"] = effective
+                account_info["policy_effective_date"] = effective
+            if expiration and not account_info.get("expiration_date"):
+                account_info["expiration_date"] = expiration
+                account_info["policy_expiration_date"] = expiration
+            if effective or expiration:
+                print("LOSSQ_POLICY_PERIOD_RANGE_PROFILE_DATES:", {
+                    "effective_date": account_info.get("effective_date"),
+                    "expiration_date": account_info.get("expiration_date"),
+                })
 
         elif field in {"evaluationdate", "valuationdate", "valuedasof", "asofdate", "reportdate", "lossrunvaluationdate"} and lossq_csv_valid_profile_date_value(value):
             fixed = lossq_section_csv_date(value)
