@@ -956,6 +956,7 @@ def _lossq_live_extract_section_based_csv(file_path):
             line_header_aliases = {"line of business", "line", "coverage line", "coverage", "policy type", "lob"}
             effective_header_aliases = {"effective date", "effective", "eff date", "eff", "policy effective", "policy effective date", "period start", "period from", "term start"}
             expiration_header_aliases = {"expiration date", "expiration", "exp date", "exp", "expiry date", "policy expiration", "policy expiration date", "period end", "period to", "term end"}
+            policy_period_aliases = {"policy period", "policy term", "period", "coverage period", "policy dates", "date range"}
             carrier_header_aliases = {"carrier", "writing carrier", "insurer", "company"}
             premium_header_aliases = {"premium", "annual premium", "current premium", "written premium"}
             exposure_basis_aliases = {"exposure basis", "basis", "exposure"}
@@ -4325,6 +4326,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
 
 
 
