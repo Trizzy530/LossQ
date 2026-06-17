@@ -2409,14 +2409,6 @@ def lossq_beta_valid_claim_number(value):
     if not re.search(r"\d", key):
         return False
 
-    # LOSSQ_REJECT_POLICY_FRAGMENT_AS_CLAIM_V1
-    # Reject policy schedule fragments that are not real claim numbers.
-    # Examples rejected: GL-2025, CY-2025, BOP-2025, GL-2025-3101-GENERAL.
-    # Examples kept: HSBT-GL-250012, HSBT-CY-260005, BPDLC-ABUSE-250033.
-    policy_fragment_pattern = r"^(GL|WC|BOP|AUTO|AU|CARGO|MTC|UMB|CY|CP|PROP|EPLI|DO|DNO|LIAB|PL|IM)[-_ ]?(19|20)\d{2}([-_ ][A-Z0-9]+)?([-_ ][A-Z]+)?$"
-    if re.match(policy_fragment_pattern, key):
-        if not re.match(r"^[A-Z0-9]{2,}[-_](GL|WC|BOP|AUTO|AU|CARGO|MTC|UMB|CY|CP|PROP|EPLI|DO|DNO|LIAB|PL|IM)[-_]\d{2,4}[-_]\d{3,8}$", key):
-            return False
 
     # LOSSQ_UNIVERSAL_CLAIM_NUMBER_FILTER_V1
     # Universal commercial claim numbers may have 3 or 4+ segments:
@@ -4005,15 +3997,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         # LOSSQ_BETA_FILTER_AND_PURGE_BEFORE_SAVE_V1
         parsed_claims, lossq_beta_removed_rows = lossq_beta_filter_claim_rows(parsed_claims)
 
-        # LOSSQ_REJECT_POLICY_FRAGMENT_AS_CLAIM_V1
-    # Reject policy schedule fragments that are not real claim numbers.
-    # Examples rejected: GL-2025, CY-2025, BOP-2025, GL-2025-3101-GENERAL.
-    # Examples kept: HSBT-GL-250012, HSBT-CY-260005, BPDLC-ABUSE-250033.
-    policy_fragment_pattern = r"^(GL|WC|BOP|AUTO|AU|CARGO|MTC|UMB|CY|CP|PROP|EPLI|DO|DNO|LIAB|PL|IM)[-_ ]?(19|20)\d{2}([-_ ][A-Z0-9]+)?([-_ ][A-Z]+)?$"
-    if re.match(policy_fragment_pattern, key):
-        if not re.match(r"^[A-Z0-9]{2,}[-_](GL|WC|BOP|AUTO|AU|CARGO|MTC|UMB|CY|CP|PROP|EPLI|DO|DNO|LIAB|PL|IM)[-_]\d{2,4}[-_]\d{3,8}$", key):
-            return False
-
+    
     # LOSSQ_UNIVERSAL_CLAIM_NUMBER_FILTER_V1
         if lossq_beta_removed_rows:
             print("LOSSQ_BETA_FILTER_REMOVED_ROWS:", lossq_beta_removed_rows[:10])
@@ -4356,6 +4340,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
+
 
 
 
