@@ -1097,6 +1097,7 @@ def _lossq_live_extract_section_based_csv(file_path):
         account["extraction_score"] = 95 if claims and policies else 75
         account["requires_review"] = False if claims and policies else True
 
+    print("LOSSQ_SECTION_CSV_RETURN_COUNTS:", {"claims": len(claims), "policies": len(policies), "exposures": len(exposures)})
     return claims, account
 
 def lossq_live_repair_section_csv_upload(file_path, parsed_claims, parsed_profile):
@@ -4109,5 +4110,6 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
 
 
