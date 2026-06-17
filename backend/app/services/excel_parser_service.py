@@ -76,10 +76,15 @@ ALIASES = {
         "lineofbusiness", "lob", "coverage", "coverageline", "policytype", "line", "claimtype",
     ],
     "effective_date": [
-        "effectivedate", "inceptiondate", "policybegin", "policystart",
+        # LOSSQ_XLSX_POLICY_DATE_ALIASES_V1
+        "effectivedate", "effective", "effdate", "eff", "inceptiondate",
+        "policybegin", "policystart", "policyeffective", "policyeffectivedate",
+        "periodstart", "periodfrom", "termstart", "from",
     ],
     "expiration_date": [
-        "expirationdate", "expirydate", "policyend", "policyexpiration",
+        "expirationdate", "expiration", "expdate", "exp", "expirydate",
+        "policyend", "policyexpiration", "policyexpirationdate", "policyexpiry",
+        "policyexpirydate", "periodend", "periodto", "termend", "to",
     ],
     "evaluation_date": [
         "evaluationdate", "valuationdate", "rundate", "reportdate", "asofdate",
@@ -413,5 +418,6 @@ def parse_claims_from_excel(file_path):
         final.append(claim)
 
     return final
+
 
 
