@@ -920,10 +920,10 @@ def _lossq_live_extract_section_based_csv(file_path):
                     account["producer"] = value
                 elif key in {"producer number"}:
                     account["producer_number"] = value
-                elif key in {"effective date"}:
+                elif key in {"effective date", "effective", "policy effective", "policy effective date", "policy start", "policy start date", "period start", "period from", "term start", "inception date"}:
                     account["effective_date"] = _lossq_live_date_to_iso(value)
                     account["effective"] = account["effective_date"]
-                elif key in {"expiration date"}:
+                elif key in {"expiration date", "expiration", "expiry date", "policy expiration", "policy expiration date", "policy expiry", "policy expiry date", "policy end", "policy end date", "period end", "period to", "term end"}:
                     account["expiration_date"] = _lossq_live_date_to_iso(value)
                     account["expiration"] = account["expiration_date"]
                 elif key in {"main policy number", "main policy", "policy number"}:
@@ -4258,6 +4258,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
 
 
 
