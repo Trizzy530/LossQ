@@ -788,7 +788,22 @@ def _lossq_live_is_policy_number(value):
     raw = _lossq_live_clean_cell(value).upper()
     if not raw:
         return False
-    return bool(re.search(r"[A-Z]{2,10}-\d{4}-[A-Z0-9]+", raw))
+
+    blocked = {
+        "POLICY NUMBER", "POLICY", "ACCOUNT INFORMATION", "POLICY SCHEDULE",
+        "CLAIM DETAIL", "LOSS SUMMARY", "UNDERWRITING NOTES", "N/A", "NONE", "UNKNOWN",
+    }
+    if raw in blocked:
+        return False
+
+    # LOSSQ_LIVE_UNIVERSAL_POLICY_ID_V1
+    if re.search(r"[A-Z0-9]{2,}[-_][A-Z0-9]{2,}[-_](19|20)\d{2}[-_][A-Z0-9]{2,}", raw):
+        return True
+
+    if re.search(r"[A-Z]{2,10}[-_](19|20)\d{2}[-_][A-Z0-9]{2,}", raw):
+        return True
+
+    return False
 
 def _lossq_live_is_claim_number(value):
     raw = _lossq_live_clean_cell(value).upper()
@@ -796,26 +811,29 @@ def _lossq_live_is_claim_number(value):
         return False
 
     blocked = {
-        "NOTE",
-        "NOTES",
-        "LOSS SUMMARY",
-        "METRIC",
-        "TOTAL CLAIMS",
-        "OPEN CLAIMS",
-        "CLOSED CLAIMS",
-        "TOTAL PAID",
-        "TOTAL RESERVE",
-        "TOTAL INCURRED",
-        "LARGEST LOSS",
-        "LITIGATED CLAIMS",
-        "CLAIMS WITH ATTORNEY INVOLVEMENT",
-        "UNDERWRITING NOTES",
+        "NOTE", "NOTES", "LOSS SUMMARY", "METRIC", "TOTAL CLAIMS", "OPEN CLAIMS",
+        "CLOSED CLAIMS", "TOTAL PAID", "TOTAL RESERVE", "TOTAL INCURRED",
+        "LARGEST LOSS", "LITIGATED CLAIMS", "CLAIMS WITH ATTORNEY INVOLVEMENT",
+        "UNDERWRITING NOTES", "CLAIM NUMBER", "POLICY NUMBER", "DESCRIPTION",
     }
-
     if raw in blocked:
         return False
 
-    return bool(re.search(r"[A-Z0-9]+-[A-Z0-9]+-\d{2,4}-\d{2,6}", raw))
+    if not re.search(r"\d", raw):
+        return False
+
+    # LOSSQ_LIVE_UNIVERSAL_CLAIM_ID_V1
+    if re.search(r"[A-Z0-9]{2,}[-_][A-Z0-9]{2,}[-_]\d{4,8}", raw):
+        return True
+
+    if re.search(r"[A-Z0-9]{2,}[-_][A-Z0-9]{2,}[-_](19|20)\d{2}[-_][A-Z0-9]{2,}", raw):
+        return True
+
+    compact = re.sub(r"[^A-Z0-9]", "", raw)
+    if len(compact) >= 6 and re.search(r"[A-Z]", compact) and re.search(r"\d", compact):
+        return True
+
+    return False
 
 def _lossq_live_read_section_csv_rows(file_path):
     rows = []
@@ -4240,6 +4258,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
 
 
 
