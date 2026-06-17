@@ -2854,6 +2854,25 @@ def lossq_csv_label_pair_profile_repair(file_path, parsed_profile):
                     mapped["expiration_date"] = fixed
                     mapped["policy_expiration_date"] = fixed
 
+                # LOSSQ_POLICY_PERIOD_RANGE_SCHEDULE_DATES_V1
+                elif header_key in {"policyperiod", "policyterm", "period", "coverageperiod", "policydates", "daterange"}:
+                    effective, expiration = lossq_policy_period_range_dates(value)
+
+                    if effective:
+                        mapped["effective_date"] = effective
+                        mapped["policy_effective_date"] = effective
+
+                    if expiration:
+                        mapped["expiration_date"] = expiration
+                        mapped["policy_expiration_date"] = expiration
+
+                    if effective or expiration:
+                        print("LOSSQ_POLICY_PERIOD_RANGE_SCHEDULE_DATES:", {
+                            "policy_number": mapped.get("policy_number"),
+                            "effective_date": mapped.get("effective_date"),
+                            "expiration_date": mapped.get("expiration_date"),
+                        })
+
                 elif header_key in {"annualpremium", "currentpremium", "premium"}:
                     mapped["current_premium"] = value
 
