@@ -240,6 +240,60 @@ def get_from_row(row_values, header_map, field, default=None):
     return default
 
 
+
+# LOSSQ_XLSX_POLICY_SCHEDULE_DATE_LOOKUP_V1
+def extract_policy_schedule_dates_from_raw_sheet(raw_df):
+    schedule = {}
+    if raw_df is None or raw_df.empty:
+        return schedule
+
+    rows = raw_df.fillna("").values.tolist()
+    effective_aliases = {"effectivedate", "effective", "effdate", "eff", "inceptiondate", "policybegin", "policystart", "policyeffective", "policyeffectivedate", "periodstart", "periodfrom", "termstart", "from"}
+    expiration_aliases = {"expirationdate", "expiration", "expdate", "exp", "expirydate", "policyend", "policyexpiration", "policyexpirationdate", "policyexpiry", "policyexpirydate", "periodend", "periodto", "termend", "to"}
+
+    for idx, row in enumerate(rows[:120]):
+        normalized = [normalize_key(cell) for cell in row]
+        has_policy = any(cell in {"policynumber", "policyno", "policy"} for cell in normalized)
+        has_effective = any(cell in effective_aliases for cell in normalized)
+        has_expiration = any(cell in expiration_aliases for cell in normalized)
+
+        if not (has_policy and (has_effective or has_expiration)):
+            continue
+
+        header_map = {key: pos for pos, key in enumerate(normalized) if key}
+
+        def idx_for(candidates):
+            for candidate in candidates:
+                if candidate in header_map:
+                    return header_map[candidate]
+            return None
+
+        policy_idx = idx_for(["policynumber", "policyno", "policy"])
+        eff_idx = idx_for(list(effective_aliases))
+        exp_idx = idx_for(list(expiration_aliases))
+
+        if policy_idx is None:
+            continue
+
+        for data_row in rows[idx + 1:]:
+            clean_cells = [clean_text(cell) for cell in data_row]
+            if not any(clean_cells):
+                break
+
+            policy_number = clean_cells[policy_idx] if policy_idx < len(clean_cells) else ""
+            if not policy_number or not re.search(r"[A-Z]{2,10}-[A-Z0-9]+-\d{4}-[A-Z0-9]+", policy_number.upper()):
+                continue
+
+            effective = clean_cells[eff_idx] if eff_idx is not None and eff_idx < len(clean_cells) else ""
+            expiration = clean_cells[exp_idx] if exp_idx is not None and exp_idx < len(clean_cells) else ""
+
+            schedule[policy_number.upper()] = {
+                "effective_date": effective,
+                "expiration_date": expiration,
+            }
+
+    return schedule
+
 def parse_raw_sheet(raw_df):
     if raw_df is None or raw_df.empty:
         return []
@@ -249,6 +303,7 @@ def parse_raw_sheet(raw_df):
         return []
 
     metadata = extract_metadata_from_raw_sheet(raw_df)
+    policy_schedule_dates = extract_policy_schedule_dates_from_raw_sheet(raw_df)
 
     headers = list(raw_df.iloc[header_index].values)
     header_map = row_to_normalized_map(headers)
@@ -418,6 +473,7 @@ def parse_claims_from_excel(file_path):
         final.append(claim)
 
     return final
+
 
 
 
