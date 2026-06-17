@@ -1361,7 +1361,9 @@ def parse_file(file_path: str, filename: str):
         # Exposure Inputs are now manual only. Do not auto-merge premium/exposure fields from uploads.
         return claims, profile
 
-    if lower_name.endswith(".csv") or lower_name.endswith(".xlsx"):
+    # LOSSQ_DO_NOT_PARSE_XLSX_AS_CSV_V1
+    # XLSX files are ZIP workbooks and must not be read by csv.reader.
+    if lower_name.endswith(".csv"):
         # LOSSQ_SECTION_CSV_PRIORITY_V1
         section_claims, section_profile = _lossq_live_extract_section_based_csv(file_path)
         if section_claims or section_profile.get("account_number") or section_profile.get("business_name"):
@@ -4314,6 +4316,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
 
 
 
