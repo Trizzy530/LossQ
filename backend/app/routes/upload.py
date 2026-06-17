@@ -835,6 +835,9 @@ def _lossq_live_read_section_csv_rows(file_path):
 
 def _lossq_live_extract_section_based_csv(file_path):
     rows = _lossq_live_read_section_csv_rows(file_path)
+    print("LOSSQ_SECTION_CSV_ENTERED:", {"file_path": str(file_path), "rows": len(rows)})
+    for idx, raw_debug_row in enumerate(rows[:25]):
+        print("LOSSQ_SECTION_CSV_RAW_ROW:", {"idx": idx, "row": raw_debug_row})
 
     if not rows:
         return [], {}
@@ -4110,6 +4113,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
 
 
 
