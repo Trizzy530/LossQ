@@ -363,6 +363,7 @@ def parse_raw_sheet(raw_df):
 
         seen.add(unique_key)
 
+        policy_dates = policy_schedule_dates.get(policy_number.upper(), {})
         claims.append(
             {
                 "business_name": business_name,
@@ -473,6 +474,8 @@ def parse_claims_from_excel(file_path):
         final.append(claim)
 
     return final
+
+
 
 
 
