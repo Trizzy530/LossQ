@@ -3231,7 +3231,7 @@ if (activeProfile?.policy_number) {
         // Backend /claims is the only source of truth for Claims Analysis rows.
         // Do not fall back to current upload cache or last upload cache because those can carry stale policy/line values.
         if (myVersion === loadVersionRef.current) {
-          setClaims(lossqFilterRealClaims(dedupeClaims(serverMatches)));
+          setClaims(lossqFilterRealClaims(serverMatches));
         }
       } else {
         if (myVersion === loadVersionRef.current) {
@@ -8646,6 +8646,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
