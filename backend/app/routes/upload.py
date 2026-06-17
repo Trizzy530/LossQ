@@ -1373,7 +1373,16 @@ def parse_file(file_path: str, filename: str):
             return claims, {}
         return [], {}
 
-    return [], {}
+
+    if lower_name.endswith(".xlsx") or lower_name.endswith(".xls"):
+        # LOSSQ_XLSX_EXCEL_PARSER_BRANCH_V1
+        # Do not parse XLSX as CSV. Use the Excel parser only.
+        if parse_claims_from_excel:
+            claims = parse_claims_from_excel(file_path)
+            return claims, {}
+        return [], {}
+
+
 
 
 def parse_date(value: Any):
