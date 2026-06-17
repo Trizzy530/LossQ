@@ -449,10 +449,35 @@ def parse_claims_from_excel(file_path):
         raw_df = lossq_read_ragged_csv(file_path)
         all_claims.extend(parse_raw_sheet(raw_df))
     else:
+        # LOSSQ_XLSX_MULTI_SHEET_CONTEXT_MERGE_V1
         sheets = pd.read_excel(file_path, sheet_name=None, header=None, dtype=object)
+
+        workbook_metadata = {}
+        workbook_policy_dates = {}
+
+        for _, raw_df in sheets.items():
+            sheet_metadata = extract_metadata_from_raw_sheet(raw_df)
+            for key, value in sheet_metadata.items():
+                if value and not workbook_metadata.get(key):
+                    workbook_metadata[key] = value
+
+            sheet_dates = extract_policy_schedule_dates_from_raw_sheet(raw_df)
+            workbook_policy_dates.update(sheet_dates)
 
         for _, raw_df in sheets.items():
             sheet_claims = parse_raw_sheet(raw_df)
+            for claim in sheet_claims:
+                policy_key = clean_text(claim.get("policy_number")).upper()
+                policy_dates = workbook_policy_dates.get(policy_key, {})
+
+                for key, value in workbook_metadata.items():
+                    if value and not claim.get(key):
+                        claim[key] = value
+
+                if policy_dates:
+                    claim["effective_date"] = claim.get("effective_date") or policy_dates.get("effective_date", "")
+                    claim["expiration_date"] = claim.get("expiration_date") or policy_dates.get("expiration_date", "")
+
             all_claims.extend(sheet_claims)
 
     # Global dedupe across sheets.
@@ -473,6 +498,7 @@ def parse_claims_from_excel(file_path):
         seen.add(key)
         final.append(claim)
 
+    return final
     return final
 
 
