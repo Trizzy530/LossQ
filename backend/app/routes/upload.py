@@ -946,6 +946,13 @@ def _lossq_live_extract_section_based_csv(file_path):
             continue
 
         if current_section == "policies":
+            # LOSSQ_ACCOUNT_CARRIER_BAD_VALUE_CLEANUP_V1
+            # Do not let table headers like Exposure Value become carrier values.
+            bad_carrier_values = {"exposure value", "exposure basis", "premium", "annual premium", "policy number", "line of business"}
+            for carrier_key in ["carrier_name", "writing_carrier", "carrier"]:
+                if str(account.get(carrier_key) or "").strip().lower() in bad_carrier_values:
+                    account[carrier_key] = ""
+
             # LOSSQ_UNIVERSAL_POLICY_SCHEDULE_HEADER_MAP_V1
             def _policy_header_key(v):
                 return " ".join(_lossq_live_clean_cell(v).lower().replace("/", " ").replace("_", " ").replace("#", "number").split())
@@ -4340,6 +4347,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
 
 
 
