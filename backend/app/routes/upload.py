@@ -5142,6 +5142,20 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             parsed_profile,
         )
 
+        # LOSSQ_REAPPLY_DIRECT_EXPOSURE_AFTER_CSV_REPAIRS_V1
+        # Re-apply direct CSV/XLSX exposure values after CSV claim/profile repairs so they are not lost.
+        direct_exposure_inputs_after_csv_repairs = lossq_extract_exposure_inputs_directly_from_file(file_path)
+        if direct_exposure_inputs_after_csv_repairs:
+            if not isinstance(parsed_profile, dict):
+                parsed_profile = {}
+            parsed_profile.update({
+                k: v for k, v in direct_exposure_inputs_after_csv_repairs.items()
+                if v not in ("", None, [], {})
+            })
+            parsed_profile["exposure_inputs"] = direct_exposure_inputs_after_csv_repairs
+            parsed_profile["exposures"] = direct_exposure_inputs_after_csv_repairs
+            print("LOSSQ_DIRECT_EXPOSURE_REAPPLIED_AFTER_CSV_REPAIRS:", direct_exposure_inputs_after_csv_repairs)
+
         # LOSSQ_UNIVERSAL_PRODUCING_AGENCY_EXTRACTION_V1
         upload_agency_name = lossq_header_agency_from_csv(file_path) or lossq_universal_agency_from_csv(file_path)
         if upload_agency_name:
