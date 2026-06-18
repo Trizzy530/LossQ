@@ -1011,71 +1011,188 @@ function firstNonEmptyArray(...values: any[]) {
   return [];
 }
 
-// LOSSQ_DERIVE_EXPOSURE_FROM_POLICY_ROWS_V1
+// LOSSQ_DERIVE_EXPOSURE_FROM_POLICY_ROWS_V2
 function deriveExposureInputsFromPolicyRows(profileLike: any) {
-  const policies = Array.isArray(profileLike?.policies) ? profileLike.policies : [];
   const exposure: AnyObject = {};
 
+  const exposureFields = [
+    "current_premium",
+    "expiring_premium",
+    "target_renewal_premium",
+    "line_of_business",
+    "state",
+    "class_code",
+    "class_codes",
+    "limits",
+    "coverage_limit",
+    "deductible",
+    "retention",
+    "payroll",
+    "revenue",
+    "sales",
+    "receipts",
+    "employee_count",
+    "vehicle_count",
+    "driver_count",
+    "property_tiv",
+    "tiv",
+    "building_value",
+    "contents_value",
+    "square_footage",
+    "location_count",
+    "unit_count",
+    "cargo_limit",
+    "umbrella_limit",
+    "experience_mod",
+    "mod",
+    "exposure_change_percent",
+    "cyber_revenue",
+    "professional_revenue",
+    "exposure_basis",
+  ];
+
+  const cleanValue = (value: any) => String(value ?? "").replace(/\s+/g, " ").trim();
+
   const setIfBlank = (field: string, value: any) => {
-    const clean = String(value || "").trim();
-    if (clean && !exposure[field]) exposure[field] = clean;
+    const clean = cleanValue(value);
+    if (clean && !cleanValue(exposure[field])) {
+      exposure[field] = clean;
+    }
   };
 
   const money = (value: any) => {
-    const match = String(value || "").match(/\$?\s*[0-9][0-9,]*(?:\.\d{2})?/);
+    const raw = cleanValue(value);
+    const match = raw.match(/\$?\s*[0-9][0-9,]*(?:\.\d{2})?/);
     return match ? match[0].replace(/\s+/g, "") : "";
   };
 
   const numberAfter = (label: string, value: any) => {
-    const pattern = new RegExp(`${label}s?\\s*[:\\-]?\\s*([0-9,]+)`, "i");
-    const match = String(value || "").match(pattern);
-    return match ? match[1] : "";
+    const raw = cleanValue(value);
+    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+    const match = raw.match(new RegExp(`${escaped}[^0-9]{0,30}([0-9][0-9,]*)`, "i"));
+    return match ? match[1].replace(/,/g, "") : "";
   };
 
-  policies.forEach((policy: any) => {
-    const rowText = Object.values(policy || {}).join(" ");
-
-    if (/payroll/i.test(rowText)) setIfBlank("payroll", money(rowText));
-    if (/revenue|sales/i.test(rowText)) {
-      const m = money(rowText);
-      setIfBlank("revenue", m);
-      setIfBlank("sales", m);
+  const moneyAfterAny = (labels: string[], value: any) => {
+    const raw = cleanValue(value);
+    for (const label of labels) {
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const match = raw.match(new RegExp(`${escaped}[^$0-9]{0,40}(\\$?\\s*[0-9][0-9,]*(?:\\.\\d{2})?)`, "i"));
+      if (match) return match[1].replace(/\s+/g, "");
     }
-    if (/vehicle/i.test(rowText)) setIfBlank("vehicle_count", numberAfter("vehicle", rowText));
-    if (/driver/i.test(rowText)) setIfBlank("driver_count", numberAfter("driver", rowText));
-    if (/employee/i.test(rowText)) setIfBlank("employee_count", numberAfter("employee", rowText));
-    if (/limit/i.test(rowText)) {
-      const m = money(rowText);
-      setIfBlank("coverage_limit", m);
-      setIfBlank("limits", m);
-      if (/umbrella|excess/i.test(rowText)) setIfBlank("umbrella_limit", m);
-    }
-    if (/tiv|total insured value/i.test(rowText)) {
-      const m = money(rowText);
-      setIfBlank("property_tiv", m);
-      setIfBlank("tiv", m);
-    }
+    return "";
+  };
 
-    const premiumCandidates = [
-      policy?.premium,
-      policy?.current_premium,
-      policy?.annual_premium,
-      policy?.written_premium,
-      policy?.total_premium,
-    ];
+  const numberAfterAny = (labels: string[], value: any) => {
+    const raw = cleanValue(value);
+    for (const label of labels) {
+      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+      const match = raw.match(new RegExp(`${escaped}[^0-9]{0,40}([0-9][0-9,]*)`, "i"));
+      if (match) return match[1].replace(/,/g, "");
+    }
+    return "";
+  };
 
-    premiumCandidates.forEach((item) => {
-      const m = money(item);
-      if (m) setIfBlank("current_premium", m);
+  const collectRows = (value: any): any[] => {
+    if (!value) return [];
+    if (Array.isArray(value)) return value;
+    if (typeof value === "string") {
+      try {
+        const parsed = JSON.parse(value);
+        return Array.isArray(parsed) ? parsed : [];
+      } catch {
+        return [];
+      }
+    }
+    return [];
+  };
+
+  const policies = [
+    ...collectRows(profileLike?.policies),
+    ...collectRows(profileLike?.policy_schedule),
+    ...collectRows(profileLike?.premium_worksheet),
+    ...collectRows(profileLike?.exposures),
+    ...collectRows(profileLike?.exposure_inputs),
+    ...collectRows(profileLike?.validation?.policies),
+    ...collectRows(profileLike?.validation?.policy_schedule),
+    ...collectRows(profileLike?.validation?.premium_worksheet),
+    ...collectRows(profileLike?.validation?.exposures),
+  ];
+
+  const sourceObjects = [
+    profileLike,
+    profileLike?.validation,
+    profileLike?.exposure_inputs,
+    profileLike?.exposures,
+    profileLike?.premium_worksheet,
+    profileLike?.summary,
+    ...(Array.isArray(policies) ? policies : []),
+  ].filter(Boolean);
+
+  sourceObjects.forEach((item: any) => {
+    exposureFields.forEach((field) => {
+      if (item && typeof item === "object") {
+        setIfBlank(field, item[field]);
+      }
     });
 
-    if (!exposure.line_of_business) {
-      setIfBlank(
-        "line_of_business",
-        policy?.line_of_business || policy?.policy_type || policy?.coverage || policy?.line
-      );
+    if (item && typeof item === "object") {
+      setIfBlank("current_premium", item.currentPremium || item.currentPremiumAmount || item.annual_premium || item.written_premium || item.total_premium || item.premium);
+      setIfBlank("expiring_premium", item.expiringPremium || item.previous_premium || item.prior_premium);
+      setIfBlank("target_renewal_premium", item.targetRenewalPremium || item.renewal_premium || item.estimated_renewal_premium);
+      setIfBlank("property_tiv", item.total_insured_value || item.totalInsuredValue || item.property_value);
+      setIfBlank("tiv", item.total_insured_value || item.totalInsuredValue || item.property_tiv);
+      setIfBlank("employee_count", item.employees || item.employeeCount);
+      setIfBlank("vehicle_count", item.vehicles || item.vehicleCount);
+      setIfBlank("driver_count", item.drivers || item.driverCount);
+      setIfBlank("line_of_business", item.line || item.lob || item.coverage || item.policy_type || item.line_of_business);
     }
   });
+
+  const rawTextParts = [
+    cleanValue(profileLike?.raw_text_preview),
+    cleanValue(profileLike?.raw_text),
+    cleanValue(profileLike?.notes),
+    cleanValue(profileLike?.underwriter_notes),
+    cleanValue(profileLike?.validation?.raw_text_preview),
+    ...sourceObjects.map((item: any) =>
+      typeof item === "object" ? Object.entries(item).map(([k, v]) => `${k}: ${v}`).join(" ") : cleanValue(item)
+    ),
+  ].filter(Boolean);
+
+  const rowText = rawTextParts.join(" | ");
+
+  setIfBlank("payroll", moneyAfterAny(["payroll", "annual payroll", "estimated payroll"], rowText));
+  setIfBlank("revenue", moneyAfterAny(["revenue", "sales", "gross sales", "annual revenue", "receipts"], rowText));
+  setIfBlank("sales", moneyAfterAny(["sales", "gross sales"], rowText));
+  setIfBlank("receipts", moneyAfterAny(["receipts", "gross receipts"], rowText));
+  setIfBlank("current_premium", moneyAfterAny(["current premium", "annual premium", "written premium", "total premium", "premium"], rowText));
+  setIfBlank("expiring_premium", moneyAfterAny(["expiring premium", "prior premium", "previous premium"], rowText));
+  setIfBlank("target_renewal_premium", moneyAfterAny(["target renewal premium", "renewal premium", "estimated renewal premium"], rowText));
+  setIfBlank("property_tiv", moneyAfterAny(["property tiv", "total insured value", "tiv"], rowText));
+  setIfBlank("tiv", moneyAfterAny(["total insured value", "tiv"], rowText));
+  setIfBlank("building_value", moneyAfterAny(["building value", "building limit"], rowText));
+  setIfBlank("contents_value", moneyAfterAny(["contents value", "business personal property", "bpp"], rowText));
+  setIfBlank("coverage_limit", moneyAfterAny(["coverage limit", "policy limit", "limit"], rowText));
+  setIfBlank("limits", moneyAfterAny(["policy limits", "coverage limit", "limit"], rowText));
+  setIfBlank("deductible", moneyAfterAny(["deductible"], rowText));
+  setIfBlank("retention", moneyAfterAny(["retention", "sir", "self insured retention"], rowText));
+  setIfBlank("cargo_limit", moneyAfterAny(["cargo limit", "motor truck cargo limit"], rowText));
+  setIfBlank("umbrella_limit", moneyAfterAny(["umbrella limit", "excess limit"], rowText));
+
+  setIfBlank("employee_count", numberAfterAny(["employee count", "employees", "number of employees"], rowText));
+  setIfBlank("vehicle_count", numberAfterAny(["vehicle count", "vehicles", "power units"], rowText));
+  setIfBlank("driver_count", numberAfterAny(["driver count", "drivers"], rowText));
+  setIfBlank("location_count", numberAfterAny(["location count", "locations"], rowText));
+  setIfBlank("unit_count", numberAfterAny(["unit count", "units"], rowText));
+  setIfBlank("square_footage", numberAfterAny(["square footage", "sq ft", "sqft"], rowText));
+
+  if (!exposure.line_of_business && policies.length > 0) {
+    const lines = policies
+      .map((policy: any) => cleanValue(policy?.line_of_business || policy?.policy_type || policy?.coverage || policy?.line || policy?.lob))
+      .filter(Boolean);
+    if (lines.length > 0) setIfBlank("line_of_business", Array.from(new Set(lines)).join(", "));
+  }
 
   const basisParts = [
     exposure.payroll ? `Payroll: ${exposure.payroll}` : "",
@@ -1083,11 +1200,12 @@ function deriveExposureInputsFromPolicyRows(profileLike: any) {
     exposure.vehicle_count ? `Vehicles: ${exposure.vehicle_count}` : "",
     exposure.driver_count ? `Drivers: ${exposure.driver_count}` : "",
     exposure.employee_count ? `Employees: ${exposure.employee_count}` : "",
+    exposure.property_tiv ? `Property TIV: ${exposure.property_tiv}` : "",
     exposure.coverage_limit ? `Limit: ${exposure.coverage_limit}` : "",
   ].filter(Boolean);
 
   if (basisParts.length > 0) {
-    exposure.exposure_basis = basisParts.join("; ");
+    setIfBlank("exposure_basis", basisParts.join(" | "));
   }
 
   return exposure;
@@ -3731,8 +3849,8 @@ async function saveProfile() {
 // LOSSQ_AUTO_FILL_EXPOSURE_INPUTS_AFTER_UPLOAD_V1
 function buildExposureInputsFromUploadedAccount(): AnyObject {
   const sourceProfile: AnyObject = {
-    ...(profile || {}),
     ...(displayProfile || {}),
+    ...(profile || {}),
   };
 
   const derivedFromProfile = deriveExposureInputsFromPolicyRows(sourceProfile);
@@ -3917,9 +4035,15 @@ async function saveExposureInputs() {
 
     const extractedExposure = deriveExposureInputsFromPolicyRows(profile);
 
+    const autoExposureOnlyForBlankFields = Object.fromEntries(
+      Object.entries(extractedExposure || {}).filter(([key, value]) => {
+        return String(value || "").trim() && !String(profile?.[key] || "").trim();
+      })
+    );
+
     const nextProfile = {
       ...profile,
-      ...extractedExposure,
+      ...autoExposureOnlyForBlankFields,
       policy_number: profile?.policy_number || selectedPolicy || "",
       account_number: profile?.account_number || selectedPolicy || "",
       customer_number:
@@ -7262,7 +7386,7 @@ const modelChartNarrative =
               </h2>
 
               <p className="text-slate-400 mb-8 max-w-4xl">
-                Manually enter premium, exposure, limits, class, and underwriting data for the selected account. These values support Premium Forecast, Renewal Risk, Submission Builder, and underwriting review.
+                LossQ auto-fills premium, exposure, limits, class, and underwriting data from the selected loss run when available. You can manually edit any field, and manual edits override auto-filled values.
               </p>
 
               <div className="rounded-3xl border border-blue-400/20 bg-blue-500/10 p-5 mb-8">
@@ -7325,6 +7449,15 @@ const modelChartNarrative =
               </div>
 
               <div className="mt-8 flex flex-wrap gap-4">
+                <button
+                  type="button"
+                  onClick={autoFillExposureInputsFromUpload}
+                  className="btn-primary"
+                >
+                  Auto-Fill From Loss Run
+                </button>
+
+                {/* LOSSQ_EXPOSURE_AUTOFILL_BUTTON_V1 */}
                 <button onClick={saveExposureInputs} className="btn-success">
                   Save Exposure Inputs
                 </button>
