@@ -4025,6 +4025,43 @@ function autoFillExposureInputsFromUpload() {
 }
 
 
+
+  // LOSSQ_EXPOSURE_AUTOFILL_HANDLER_V1
+  function autoFillExposureInputsFromUpload() {
+    const selectedPolicy = getSelectedPolicyNumber();
+
+    const sourceProfile: AnyObject = {
+      ...(displayProfile || {}),
+      ...(profile || {}),
+    };
+
+    const extractedExposure = deriveExposureInputsFromPolicyRows(sourceProfile);
+
+    if (!extractedExposure || Object.keys(extractedExposure).length === 0) {
+      setMessage("No automatic exposure values were found in the selected loss run.");
+      return;
+    }
+
+    const mergedProfile = {
+      ...profile,
+      ...Object.fromEntries(
+        Object.entries(extractedExposure).filter(([key, value]) => {
+          return String(value || "").trim() && !String(profile?.[key] || "").trim();
+        })
+      ),
+      policy_number: profile?.policy_number || selectedPolicy || "",
+      account_number: profile?.account_number || selectedPolicy || "",
+      customer_number:
+        profile?.customer_number ||
+        profile?.account_number ||
+        selectedPolicy ||
+        "",
+    };
+
+    setProfile(mergedProfile);
+    setMessage("Exposure inputs auto-filled from the selected loss run. Review and save your changes.");
+  }
+
 async function saveExposureInputs() {
     // LOSSQ_EXPOSURE_INPUTS_BACKEND_SAVE_V1
     const selectedPolicy =
