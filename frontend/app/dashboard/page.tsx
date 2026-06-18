@@ -7111,7 +7111,7 @@ const modelChartNarrative =
   }
 
   return (
-    <main className="min-h-screen bg-[#020617] text-white overflow-hidden">
+    <main className="min-h-screen bg-[#020617] text-white overflow-x-hidden">
       <div className="fixed inset-0 bg-[radial-gradient(circle_at_top_left,#1d4ed866,transparent_28%),radial-gradient(circle_at_top_right,#0ea5e955,transparent_30%),radial-gradient(circle_at_bottom,#312e8155,transparent_35%)]" />
       <div className="fixed inset-0 bg-[linear-gradient(to_right,rgba(255,255,255,0.04)_1px,transparent_1px),linear-gradient(to_bottom,rgba(255,255,255,0.04)_1px,transparent_1px)] bg-[size:72px_72px] opacity-20" />
 
@@ -7221,7 +7221,7 @@ const modelChartNarrative =
   </div>
 </aside>
 
-        <section className="flex-1 px-5 md:px-8 py-8 pb-32 max-w-7xl mx-auto w-full lg:ml-72">
+        <section className="flex-1 px-4 sm:px-5 md:px-8 py-6 md:py-8 pb-32 max-w-7xl mx-auto w-full lg:ml-72">
           <header className="flex flex-col gap-6 lg:flex-row lg:items-center lg:justify-between mb-8">
             <div>
               <div className="inline-flex items-center gap-2 rounded-full border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm text-blue-200 mb-5">
@@ -7229,7 +7229,7 @@ const modelChartNarrative =
                 AI Underwriting Command Center
               </div>
 
-              <h1 className="text-4xl md:text-6xl font-black tracking-tight">
+              <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-tight break-words">
                 LossQ Dashboard
               </h1>
 
@@ -7307,8 +7307,8 @@ const modelChartNarrative =
 
 
 
-          <div className="lg:hidden glass-panel p-4 mb-6 overflow-x-auto">
-            <div className="flex gap-3 min-w-max">
+          <div className="lg:hidden glass-panel p-3 mb-6 overflow-x-auto sticky top-3 z-40">
+            <div className="flex gap-2 min-w-max">
               <MobileToolButton active={activeTool === "overview"} onClick={() => changeActiveTool("overview")}>Overview</MobileToolButton>
               <MobileToolButton active={activeTool === "profiles"} onClick={() => changeActiveTool("profiles")}>Profiles</MobileToolButton>
               <MobileToolButton active={activeTool === "upload"} onClick={() => changeActiveTool("upload")}>Upload</MobileToolButton>
@@ -7707,7 +7707,7 @@ const modelChartNarrative =
                 <Input label="State" value={displayProfile?.state || profile?.state || deriveExposureInputsFromPolicyRows(profile)?.state || ""} onChange={(v) => setProfile({ ...profile, state: v })} />
                 <Input label="Class Code(s)" value={profile?.class_code || editableProfileValue("class_codes")} onChange={(v) => setProfile({ ...profile, class_code: v, class_codes: v })} />
 
-                <Input label="Policy Limits" value={profile?.limits || editableProfileValue("coverage_limit")} onChange={(v) => setProfile({ ...profile, limits: v, coverage_limit: v })} />
+                <Input label="Policy Limits" value={safePolicyLimitsValue()} onChange={(v) => setProfile({ ...profile, limits: v, coverage_limit: v })} />
                 <Input label="Deductible" value={displayProfile?.deductible || profile?.deductible || deriveExposureInputsFromPolicyRows(profile)?.deductible || ""} onChange={(v) => setProfile({ ...profile, deductible: v })} />
                 <Input label="Retention / SIR" value={displayProfile?.retention || profile?.retention || deriveExposureInputsFromPolicyRows(profile)?.retention || ""} onChange={(v) => setProfile({ ...profile, retention: v })} />
 
@@ -7772,7 +7772,7 @@ const modelChartNarrative =
             <section className="glass-panel p-6 md:p-8">
               <h2 className="text-2xl md:text-3xl font-bold mb-5">Upload & Report Center</h2>
 
-              <div className="flex flex-wrap gap-4 items-center">
+              <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4 items-stretch sm:items-center">
                 <input
                   type="file"
                   multiple

@@ -69,3 +69,158 @@ body {
 * {
   box-sizing: border-box;
 }
+
+/* LOSSQ_MOBILE_IPAD_RESPONSIVE_SAFETY_V1 */
+html,
+body {
+  max-width: 100%;
+  overflow-x: hidden;
+  -webkit-text-size-adjust: 100%;
+  text-size-adjust: 100%;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+img,
+svg,
+video,
+canvas {
+  max-width: 100%;
+  height: auto;
+}
+
+button,
+a,
+input,
+select,
+textarea {
+  touch-action: manipulation;
+}
+
+input,
+select,
+textarea {
+  max-width: 100%;
+  font-size: 16px;
+}
+
+table {
+  border-collapse: collapse;
+}
+
+@media (max-width: 1024px) {
+  .glass-panel {
+    border-radius: 1.25rem;
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-danger {
+    min-height: 44px;
+  }
+}
+
+@media (max-width: 768px) {
+  main {
+    width: 100%;
+    max-width: 100vw;
+    overflow-x: hidden;
+  }
+
+  section {
+    max-width: 100%;
+  }
+
+  .glass-panel {
+    padding: 1rem !important;
+    border-radius: 1.1rem;
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-danger {
+    width: 100%;
+    justify-content: center;
+    text-align: center;
+    white-space: normal;
+  }
+
+  input[type="file"] {
+    width: 100%;
+    max-width: 100%;
+    white-space: normal;
+  }
+
+  input,
+  select,
+  textarea {
+    width: 100%;
+  }
+
+  h1 {
+    font-size: clamp(2rem, 11vw, 3.25rem) !important;
+    line-height: 1.05 !important;
+    overflow-wrap: anywhere;
+  }
+
+  h2 {
+    font-size: clamp(1.4rem, 7vw, 2rem) !important;
+    line-height: 1.15 !important;
+    overflow-wrap: anywhere;
+  }
+
+  h3,
+  p,
+  li,
+  td,
+  th,
+  div {
+    overflow-wrap: anywhere;
+  }
+
+  .signup-form {
+    width: 100%;
+    flex-direction: column;
+  }
+
+  .signup-form input,
+  .signup-form button {
+    width: 100%;
+  }
+
+  .cta-box,
+  .pricing-card,
+  .legal-card {
+    width: 100%;
+    max-width: 100%;
+  }
+}
+
+@media (max-width: 480px) {
+  .glass-panel {
+    padding: 0.9rem !important;
+  }
+
+  .btn-primary,
+  .btn-secondary,
+  .btn-danger {
+    padding-left: 1rem !important;
+    padding-right: 1rem !important;
+  }
+}
+
+/* iPad/tablet polish */
+@media (min-width: 769px) and (max-width: 1180px) {
+  .glass-panel {
+    border-radius: 1.5rem;
+  }
+
+  input,
+  select,
+  textarea,
+  button {
+    min-height: 44px;
+  }
+}
