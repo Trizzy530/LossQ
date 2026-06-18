@@ -4147,6 +4147,19 @@ function buildExposureInputsFromUploadedAccount(): AnyObject {
   );
 }
 
+
+  // LOSSQ_EDITABLE_PROFILE_VALUE_PRESERVE_EMPTY_V1
+  const editableProfileValue = (field: string) => {
+    const profileObject = (profile || {}) as AnyObject;
+    const displayObject = (displayProfile || {}) as AnyObject;
+
+    if (Object.prototype.hasOwnProperty.call(profileObject, field)) {
+      return String(profileObject[field] ?? "");
+    }
+
+    return String(displayObject[field] ?? "");
+  };
+
 function autoFillExposureInputsFromUpload() {
   // LOSSQ_EXPOSURE_AUTOFILL_HANDLER_FORCE_UI_UPDATE_V2
   const selectedPolicyForExposure = String(
@@ -7626,21 +7639,21 @@ const modelChartNarrative =
 
                 <Input label="Primary Line of Business" value={displayProfile?.line_of_business || profile?.line_of_business || deriveExposureInputsFromPolicyRows(profile)?.line_of_business || ""} onChange={(v) => setProfile({ ...profile, line_of_business: v })} />
                 <Input label="State" value={displayProfile?.state || profile?.state || deriveExposureInputsFromPolicyRows(profile)?.state || ""} onChange={(v) => setProfile({ ...profile, state: v })} />
-                <Input label="Class Code(s)" value={profile?.class_code || profile?.class_codes || ""} onChange={(v) => setProfile({ ...profile, class_code: v, class_codes: v })} />
+                <Input label="Class Code(s)" value={profile?.class_code || editableProfileValue("class_codes")} onChange={(v) => setProfile({ ...profile, class_code: v, class_codes: v })} />
 
-                <Input label="Policy Limits" value={profile?.limits || profile?.coverage_limit || ""} onChange={(v) => setProfile({ ...profile, limits: v, coverage_limit: v })} />
+                <Input label="Policy Limits" value={profile?.limits || editableProfileValue("coverage_limit")} onChange={(v) => setProfile({ ...profile, limits: v, coverage_limit: v })} />
                 <Input label="Deductible" value={displayProfile?.deductible || profile?.deductible || deriveExposureInputsFromPolicyRows(profile)?.deductible || ""} onChange={(v) => setProfile({ ...profile, deductible: v })} />
                 <Input label="Retention / SIR" value={displayProfile?.retention || profile?.retention || deriveExposureInputsFromPolicyRows(profile)?.retention || ""} onChange={(v) => setProfile({ ...profile, retention: v })} />
 
                 <Input label="Payroll" value={displayProfile?.payroll || profile?.payroll || deriveExposureInputsFromPolicyRows(profile)?.payroll || ""} onChange={(v) => setProfile({ ...profile, payroll: v })} />
-                <Input label="Revenue / Sales" value={profile?.revenue || profile?.sales || ""} onChange={(v) => setProfile({ ...profile, revenue: v, sales: v })} />
+                <Input label="Revenue / Sales" value={profile?.revenue || editableProfileValue("sales")} onChange={(v) => setProfile({ ...profile, revenue: v, sales: v })} />
                 <Input label="Receipts" value={displayProfile?.receipts || profile?.receipts || deriveExposureInputsFromPolicyRows(profile)?.receipts || ""} onChange={(v) => setProfile({ ...profile, receipts: v })} />
 
                 <Input label="Employee Count" value={displayProfile?.employee_count || profile?.employee_count || deriveExposureInputsFromPolicyRows(profile)?.employee_count || ""} onChange={(v) => setProfile({ ...profile, employee_count: v })} />
                 <Input label="Vehicle Count" value={displayProfile?.vehicle_count || profile?.vehicle_count || deriveExposureInputsFromPolicyRows(profile)?.vehicle_count || ""} onChange={(v) => setProfile({ ...profile, vehicle_count: v })} />
                 <Input label="Driver Count" value={displayProfile?.driver_count || profile?.driver_count || deriveExposureInputsFromPolicyRows(profile)?.driver_count || ""} onChange={(v) => setProfile({ ...profile, driver_count: v })} />
 
-                <Input label="Property TIV" value={profile?.property_tiv || profile?.tiv || ""} onChange={(v) => setProfile({ ...profile, property_tiv: v, tiv: v })} />
+                <Input label="Property TIV" value={profile?.property_tiv || editableProfileValue("tiv")} onChange={(v) => setProfile({ ...profile, property_tiv: v, tiv: v })} />
                 <Input label="Building Value" value={displayProfile?.building_value || profile?.building_value || deriveExposureInputsFromPolicyRows(profile)?.building_value || ""} onChange={(v) => setProfile({ ...profile, building_value: v })} />
                 <Input label="Contents Value" value={displayProfile?.contents_value || profile?.contents_value || deriveExposureInputsFromPolicyRows(profile)?.contents_value || ""} onChange={(v) => setProfile({ ...profile, contents_value: v })} />
 
@@ -7650,7 +7663,7 @@ const modelChartNarrative =
 
                 <Input label="Cargo Limit" value={displayProfile?.cargo_limit || profile?.cargo_limit || deriveExposureInputsFromPolicyRows(profile)?.cargo_limit || ""} onChange={(v) => setProfile({ ...profile, cargo_limit: v })} />
                 <Input label="Umbrella / Excess Limit" value={displayProfile?.umbrella_limit || profile?.umbrella_limit || deriveExposureInputsFromPolicyRows(profile)?.umbrella_limit || ""} onChange={(v) => setProfile({ ...profile, umbrella_limit: v })} />
-                <Input label="Experience Mod" value={profile?.experience_mod || profile?.mod || ""} onChange={(v) => setProfile({ ...profile, experience_mod: v, mod: v })} />
+                <Input label="Experience Mod" value={profile?.experience_mod || editableProfileValue("mod")} onChange={(v) => setProfile({ ...profile, experience_mod: v, mod: v })} />
 
                 <Input label="Exposure Change %" value={displayProfile?.exposure_change_percent || profile?.exposure_change_percent || deriveExposureInputsFromPolicyRows(profile)?.exposure_change_percent || ""} onChange={(v) => setProfile({ ...profile, exposure_change_percent: v })} />
                 <Input label="Cyber Revenue" value={displayProfile?.cyber_revenue || profile?.cyber_revenue || deriveExposureInputsFromPolicyRows(profile)?.cyber_revenue || ""} onChange={(v) => setProfile({ ...profile, cyber_revenue: v })} />
@@ -7662,7 +7675,7 @@ const modelChartNarrative =
                   Notes / Underwriter Comments
                 </label>
                 <textarea
-                  value={profile?.underwriter_notes || ""}
+                  value={editableProfileValue("underwriter_notes")}
                   onChange={(e) => setProfile({ ...profile, underwriter_notes: e.target.value })}
                   className="w-full min-h-[150px] rounded-2xl bg-slate-950/70 border border-white/10 px-4 py-4 text-white outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20"
                   placeholder="Enter exposure assumptions, underwriting notes, class details, loss control updates, or renewal pricing assumptions..."
