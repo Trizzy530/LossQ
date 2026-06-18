@@ -4170,6 +4170,28 @@ function buildExposureInputsFromUploadedAccount(): AnyObject {
     return String(displayObject[field] ?? "");
   };
 
+  // LOSSQ_SAFE_POLICY_LIMITS_DISPLAY_V1
+  const safePolicyLimitsValue = () => {
+    const coverageLimit = editableProfileValue("coverage_limit");
+    if (coverageLimit) return coverageLimit;
+
+    const rawLimits = editableProfileValue("limits");
+    const lowerLimits = rawLimits.toLowerCase();
+
+    if (
+      lowerLimits.includes("payroll") ||
+      lowerLimits.includes("revenue") ||
+      lowerLimits.includes("employees") ||
+      lowerLimits.includes("vehicles") ||
+      lowerLimits.includes("drivers") ||
+      lowerLimits.includes("umbrella")
+    ) {
+      return "";
+    }
+
+    return rawLimits;
+  };
+
 function autoFillExposureInputsFromUpload() {
   // LOSSQ_EXPOSURE_AUTOFILL_HANDLER_FORCE_UI_UPDATE_V2
   const selectedPolicyForExposure = String(
