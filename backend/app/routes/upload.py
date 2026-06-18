@@ -2457,41 +2457,43 @@ def lossq_beta_valid_claim_number(value):
     if any(item in key for item in blocked_contains):
         return False
 
-    # Real claim numbers almost always include digits and enough structure.
     if not re.search(r"\d", key):
         return False
 
-
-    # LOSSQ_UNIVERSAL_CLAIM_NUMBER_FILTER_V1
-    # Universal commercial claim numbers may have 3 or 4+ segments:
-    # PCS-EPLI-250119, PCS-DO-250124, HFS-CP-250038, OBR-CY-250048, etc.
-    universal_line_tokens = (
-        "CLM", "CLAIM",
-        "GL", "WC", "AUTO", "AU",
-        "PROP", "PR", "CP", "BOP",
-        "CY", "CYBER",
-        "UMB", "EXCESS",
-        "EPLI", "EPL",
-        "DO", "DNO", "D&O",
-        "EO", "E&O", "PL",
-        "IM", "CRIME", "FID", "FIDUCIARY",
-        "CARGO", "MTC",
+    # LOSSQ_REJECT_POLICY_FRAGMENT_AS_CLAIM_V2
+    # Reject policy schedule fragments that look like line + year + policy suffix.
+    # Rejected: GL-2025, CY-2025, BOP-2025, GL-2025-3101-GENERAL.
+    # Accepted: HSBT-GL-250012, HSBT-CY-260005, BPDLC-ABUSE-250033.
+    line_tokens = (
+        "GL", "WC", "AUTO", "AU", "PROP", "PR", "CP", "BOP", "CY", "CYBER",
+        "UMB", "EXCESS", "EPLI", "EPL", "DO", "DNO", "EO", "PL", "IM",
+        "CRIME", "FID", "FIDUCIARY", "CARGO", "MTC", "LIAB", "ABUSE",
+        "MOLESTATION", "GAR", "GARAGE"
     )
 
-    if any(token in key for token in universal_line_tokens):
+    policy_fragment_pattern = r"^(" + "|".join(line_tokens) + r")[-_ ]?(19|20)\d{2}([-_ ][A-Z0-9]+){0,3}$"
+    if re.match(policy_fragment_pattern, key):
+        return False
+
+    # Real claim numbers usually include an account/carrier prefix before the line token.
+    real_prefixed_claim_pattern = r"^[A-Z0-9]{2,}[-_](" + "|".join(line_tokens) + r")[-_]\d{2,4}[-_]\d{3,8}$"
+    if re.match(real_prefixed_claim_pattern, key):
         return True
 
-    # Accept structured alphanumeric claim IDs with at least one separator and at least one digit.
-    if re.search(r"[A-Z0-9]{2,}[-_][A-Z0-9]{2,}[-_][A-Z0-9]{2,}", key):
+    # Accept explicit claim IDs.
+    if re.search(r"\b(CLM|CLAIM)[-_ ]?[A-Z0-9]{3,}", key):
         return True
 
-    # Accept carrier-style claim numbers that are mostly alphanumeric and long enough.
+    # Accept structured alphanumeric claim IDs with at least 3 meaningful segments,
+    # but only if they are not policy-fragment shaped.
+    if re.search(r"^[A-Z0-9]{2,}[-_][A-Z0-9]{2,}[-_][A-Z0-9]{2,}([-_][A-Z0-9]{2,})?$", key):
+        return True
+
     compact = re.sub(r"[^A-Z0-9]", "", key)
-    if len(compact) >= 6 and re.search(r"\d", compact) and re.search(r"[A-Z]", compact):
+    if len(compact) >= 8 and re.search(r"\d", compact) and re.search(r"[A-Z]", compact):
         return True
 
     return False
-
 def lossq_beta_filter_claim_rows(parsed_claims):
     clean_claims = []
     removed_rows = []
@@ -4392,6 +4394,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
 
 
 
