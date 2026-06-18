@@ -6443,6 +6443,102 @@ const trendNoteDisplay =
     ? `LossQ reviewed ${totalClaims} account-specific claim(s), including ${openClaims} open claim(s), ${litigationClaims} litigation claim(s), $${Number(totalIncurred || 0).toLocaleString()} incurred, and $${Number(totalReserve || 0).toLocaleString()} reserved.`
     : "No trend intelligence available yet.");
 
+// LOSSQ_MODEL_PREDICTION_CHARTS_V1
+function lossqChartNumber(value: any): number {
+  if (value === null || value === undefined) return 0;
+  if (typeof value === "number") return Number.isFinite(value) ? value : 0;
+
+  const cleaned = String(value)
+    .replace(/[$,%]/g, "")
+    .replace(/[^0-9.-]/g, "")
+    .trim();
+
+  const parsed = Number(cleaned);
+  return Number.isFinite(parsed) ? parsed : 0;
+}
+
+const modelScoreChartData = [
+  {
+    name: "Renewal Score",
+    value: lossqChartNumber(effectiveSummary?.renewal_score),
+  },
+  {
+    name: "Quote Probability",
+    value: lossqChartNumber(
+      effectiveDecision?.quote_probability ?? effectiveDecision?.renewal_probability
+    ),
+  },
+  {
+    name: "Marketability",
+    value: lossqChartNumber(effectiveDecision?.marketability_score),
+  },
+  {
+    name: "Carrier Appetite",
+    value: lossqChartNumber(effectiveCarrierAppetite?.carrier_appetite_score),
+  },
+  {
+    name: "Submission Readiness",
+    value: lossqChartNumber(
+      effectiveSubmissionReadiness?.submission_readiness_score ??
+        submissionBuilder?.submission_readiness_score
+    ),
+  },
+].filter((item) => Number(item.value || 0) > 0);
+
+const premiumForecastRangeData = [
+  {
+    name: "Best Case",
+    value: lossqChartNumber(effectivePremiumForecast?.best_case_percent),
+  },
+  {
+    name: "Expected",
+    value: lossqChartNumber(effectivePremiumForecast?.expected_increase_percent),
+  },
+  {
+    name: "Worst Case",
+    value: lossqChartNumber(effectivePremiumForecast?.worst_case_percent),
+  },
+].filter((item) => Number.isFinite(Number(item.value)));
+
+const modelLineSummarySource =
+  effectiveSummary?.renewal_metrics?.line_summary ||
+  effectiveDecision?.decision_metrics?.line_summary ||
+  effectivePremiumForecast?.forecast_metrics?.line_summary ||
+  submissionBuilder?.line_of_business_summary ||
+  [];
+
+const modelLossDriverLineData = Array.isArray(modelLineSummarySource)
+  ? modelLineSummarySource
+      .map((item: any) => ({
+        name:
+          item?.line_of_business ||
+          item?.line ||
+          item?.name ||
+          item?.coverage ||
+          "Unknown",
+        incurred: lossqChartNumber(item?.total_incurred),
+        reserve: lossqChartNumber(item?.reserve_amount),
+        claims: lossqChartNumber(item?.claim_count),
+        litigation: lossqChartNumber(item?.litigation_claims),
+      }))
+      .filter(
+        (item: any) =>
+          item.incurred > 0 ||
+          item.reserve > 0 ||
+          item.claims > 0 ||
+          item.litigation > 0
+      )
+      .sort((a: any, b: any) => b.incurred - a.incurred)
+      .slice(0, 8)
+  : [];
+
+const modelChartNarrative =
+  effectiveSummary?.predicted_carrier_reaction ||
+  effectivePremiumForecast?.forecast_summary ||
+  effectiveDecision?.underwriter_decision_summary ||
+  "Model prediction charts will populate after renewal intelligence, carrier appetite, premium forecast, and submission readiness are loaded.";
+
+
   if (!authReady) {
     return <LoadingScreen title="Checking session..." subtitle="Validating your LossQ access" />;
   }
@@ -7977,6 +8073,60 @@ const trendNoteDisplay =
                 <MetricCard title="Total Reserve" value={hasActiveAccount ? `$${Number(totalReserve || 0).toLocaleString()}` : "-"} />
                 <MetricCard title="Total Incurred" value={totalIncurredDisplay} />
               </div>
+
+              <div className="mb-8 rounded-3xl border border-blue-400/20 bg-blue-500/10 p-5">
+                <p className="text-sm font-semibold text-blue-200 mb-2">
+                  Model Prediction View
+                </p>
+                <p className="text-sm text-slate-300 leading-6">
+                  {modelChartNarrative}
+                </p>
+              </div>
+
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-6 mb-8">
+                <ChartCard title="Prediction Scores">
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={modelScoreChartData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                      <XAxis dataKey="name" stroke="#94a3b8" />
+                      <YAxis stroke="#94a3b8" domain={[0, 100]} />
+                      <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
+                      <Bar dataKey="value" fill="#38bdf8" radius={[8, 8, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+
+                <ChartCard title="Premium Forecast Range">
+                  <ResponsiveContainer width="100%" height={300}>
+                    <BarChart data={premiumForecastRangeData}>
+                      <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                      <XAxis dataKey="name" stroke="#94a3b8" />
+                      <YAxis stroke="#94a3b8" />
+                      <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
+                      <Bar dataKey="value" fill="#a78bfa" radius={[8, 8, 0, 0]} />
+                    </BarChart>
+                  </ResponsiveContainer>
+                </ChartCard>
+              </div>
+
+              {modelLossDriverLineData.length > 0 && (
+                <div className="mb-8">
+                  <ChartCard title="Model Loss Drivers by Line">
+                    <ResponsiveContainer width="100%" height={340}>
+                      <BarChart data={modelLossDriverLineData}>
+                        <CartesianGrid strokeDasharray="3 3" stroke="#334155" />
+                        <XAxis dataKey="name" stroke="#94a3b8" />
+                        <YAxis stroke="#94a3b8" />
+                        <Tooltip contentStyle={{ backgroundColor: "#0f172a", border: "1px solid #334155", color: "#fff" }} />
+                        <Bar dataKey="incurred" fill="#38bdf8" radius={[8, 8, 0, 0]} />
+                        <Bar dataKey="reserve" fill="#f59e0b" radius={[8, 8, 0, 0]} />
+                        <Bar dataKey="claims" fill="#22c55e" radius={[8, 8, 0, 0]} />
+                        <Bar dataKey="litigation" fill="#ef4444" radius={[8, 8, 0, 0]} />
+                      </BarChart>
+                    </ResponsiveContainer>
+                  </ChartCard>
+                </div>
+              )}
 
               <div className="rounded-2xl border border-white/10 bg-slate-950/70 p-5 mb-6">
                 <h3 className="font-semibold mb-2">Trend Intelligence</h3>
