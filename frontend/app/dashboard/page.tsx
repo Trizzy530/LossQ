@@ -3691,6 +3691,22 @@ if (activeProfile?.policy_number) {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeTool, profile?.policy_number, profile?.account_number]);
 
+  // LOSSQ_CLEAR_STALE_EXPOSURE_AUTOFILL_MESSAGE_V1
+  useEffect(() => {
+    if (activeTool !== "exposure-inputs") return;
+
+    setMessage((current) => {
+      const value = String(current || "");
+      if (
+        value.includes("No exposure values were found on this profile yet") ||
+        value.includes("Exposure values were found, but existing manual values were preserved")
+      ) {
+        return "";
+      }
+      return current;
+    });
+  }, [activeTool, profile?.policy_number, profile?.account_number]);
+
   async function selectAccount(policyNumber: string) {
     resetProfileAnalyticsState({
       setSummary,
@@ -5852,7 +5868,9 @@ useEffect(() => {
 
   if (!hasAccount) return;
 
-  autoFillExposureInputsFromUpload();
+  // LOSSQ_EXPOSURE_AUTOFILL_CLICK_ONLY_V1
+  // Do not auto-run exposure auto-fill when the Exposure Inputs page loads.
+  // Auto-Fill should only run when the user clicks the button.
 }, [
   blankWorkspaceMode,
   displayProfile?.business_name,
