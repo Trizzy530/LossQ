@@ -680,3 +680,129 @@ def cancel_subscription(current_user=Depends(get_current_user), db: Session = De
         "cancel_at_period_end": stripe_cancel_requested,
     }
 
+# LOSSQ_BILLING_CHECKOUT_COMPAT_ENDPOINT_V1
+@router.post("/checkout")
+def create_checkout_compat(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    Compatibility endpoint for Settings -> Billing & Subscription upgrade buttons.
+
+    Returns a Stripe Checkout URL when Stripe price IDs are configured.
+    If Stripe is not configured, this fails safely instead of deleting or changing account data.
+    """
+    import os
+
+    org = get_org(db, current_user)
+
+    requested_plan = str(
+        payload.get("plan")
+        or payload.get("package")
+        or payload.get("subscription_plan")
+        or "professional"
+    ).strip().lower()
+
+    if requested_plan in {"pro"}:
+        requested_plan = "professional"
+
+    if requested_plan in {"enterprise"}:
+        requested_plan = "agency"
+
+    if requested_plan in {"founder", "founding", "founding agency"}:
+        requested_plan = "founding_agency"
+
+    allowed_plans = {"starter", "professional", "agency", "founding_agency"}
+
+    if requested_plan not in allowed_plans:
+        raise HTTPException(status_code=400, detail="Invalid billing plan selected.")
+
+    price_lookup = (
+        globals().get("PRICE_IDS")
+        or globals().get("STRIPE_PRICE_IDS")
+        or globals().get("PLAN_PRICE_IDS")
+        or {}
+    )
+
+    price_id = None
+
+    if isinstance(price_lookup, dict):
+        price_id = (
+            price_lookup.get(requested_plan)
+            or price_lookup.get(requested_plan.upper())
+            or price_lookup.get(requested_plan.replace("_", "-"))
+        )
+
+    env_price_keys = [
+        f"STRIPE_PRICE_{requested_plan.upper()}",
+        f"STRIPE_{requested_plan.upper()}_PRICE_ID",
+        f"{requested_plan.upper()}_PRICE_ID",
+        f"LOSSQ_STRIPE_{requested_plan.upper()}_PRICE_ID",
+    ]
+
+    for key in env_price_keys:
+        if not price_id:
+            price_id = os.getenv(key)
+
+    if not STRIPE_SECRET_KEY:
+        raise HTTPException(
+            status_code=400,
+            detail="Stripe billing is not configured yet. Add STRIPE_SECRET_KEY and plan price IDs.",
+        )
+
+    if not price_id:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Stripe price ID is not configured for the {requested_plan} plan.",
+        )
+
+    success_url = (
+        payload.get("success_url")
+        or os.getenv("LOSSQ_BILLING_SUCCESS_URL")
+        or "https://www.lossq.com/dashboard?billing=success"
+    )
+
+    cancel_url = (
+        payload.get("cancel_url")
+        or os.getenv("LOSSQ_BILLING_CANCEL_URL")
+        or "https://www.lossq.com/settings/billing?billing=cancelled"
+    )
+
+    try:
+        customer_id = getattr(org, "stripe_customer_id", None)
+
+        session_payload = {
+            "mode": "subscription",
+            "line_items": [{"price": price_id, "quantity": 1}],
+            "success_url": success_url,
+            "cancel_url": cancel_url,
+            "metadata": {
+                "organization_id": str(getattr(org, "id", "")),
+                "user_id": str(current_user.get("id") if isinstance(current_user, dict) else getattr(current_user, "id", "")),
+                "plan": requested_plan,
+            },
+            "subscription_data": {
+                "metadata": {
+                    "organization_id": str(getattr(org, "id", "")),
+                    "plan": requested_plan,
+                }
+            },
+        }
+
+        if customer_id:
+            session_payload["customer"] = customer_id
+        else:
+            user_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
+            if user_email:
+                session_payload["customer_email"] = user_email
+
+        session = stripe.checkout.Session.create(**session_payload)
+
+        return {
+            "ok": True,
+            "plan": requested_plan,
+            "url": session.url,
+            "checkout_url": session.url,
+            "session_id": session.id,
+        }
+
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Stripe checkout failed: {str(exc)}")
+
