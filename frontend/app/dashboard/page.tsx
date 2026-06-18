@@ -6593,6 +6593,16 @@ const modelChartNarrative =
   if (dashboardError) {
     return (
       <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
+
+        {/* LOSSQ_FIXED_REPORT_ISSUE_BUTTON_V1 */}
+        <button
+          type="button"
+          onClick={openBetaFeedbackEmail}
+          className="fixed bottom-6 right-6 z-[9999] rounded-full border border-cyan-300/40 bg-cyan-500 px-5 py-3 text-sm font-bold text-slate-950 shadow-2xl shadow-cyan-500/30 hover:bg-cyan-400"
+        >
+          Report Issue
+        </button>
+
         {/* LOSSQ_EXTRACTION_REVIEW_BANNER_RENDER_V1 */}
         <LossQExtractionReviewBanner profile={Array.isArray(profiles) && profiles.length > 0 ? profiles[0] : null} />
 <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,#1d4ed855,transparent_35%),radial-gradient(circle_at_bottom_right,#0ea5e955,transparent_30%)]" />
@@ -8915,6 +8925,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
