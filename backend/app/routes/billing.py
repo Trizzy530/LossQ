@@ -185,6 +185,26 @@ def to_datetime_from_unix(value: Any):
 
 # LOSSQ_PLAN_FUNCTION_LIMITS_V1
 PLAN_FUNCTION_LIMITS = {
+    # LOSSQ_BETA_ACCESS_PLAN_V1
+    "beta": {
+        "label": "Beta Access",
+        "user_limit": 1,
+        "upload_limit": 10,
+        "features": [
+            "overview",
+            "account_profiles",
+            "loss_run_upload",
+            "claims_analysis",
+            "renewal_score",
+            "renewal_memo",
+            "reports",
+            "copilot",
+            "carrier_packet",
+            "submission_builder",
+            "carrier_email_draft",
+            "charts",
+        ],
+    },
     "free": {
         "label": "Free / Trial",
         "user_limit": 1,
@@ -305,6 +325,8 @@ def normalize_plan_name(plan):
         return "agency"
     if clean in {"starter", "start"}:
         return "starter"
+    if clean in {"beta", "beta_access", "early_access"}:
+        return "beta"
     return clean if clean in PLAN_FUNCTION_LIMITS else "free"
 
 
@@ -609,6 +631,23 @@ def billing_status(
     db: Session = Depends(get_db),
 ):
     org = get_org(db, current_user)
+
+    # LOSSQ_BETA_ACCESS_EXPIRATION_V1
+    if str(getattr(org, "plan", "") or "").lower() == "beta":
+        beta_end = getattr(org, "current_period_end", None)
+        if beta_end:
+            now = datetime.now(timezone.utc)
+            if getattr(beta_end, "tzinfo", None) is None:
+                beta_end = beta_end.replace(tzinfo=timezone.utc)
+            if beta_end < now:
+                org.plan = "free"
+                org.subscription_status = "beta_expired"
+                org.upload_limit = 0
+                if hasattr(org, "user_limit"):
+                    org.user_limit = 1
+                db.commit()
+                db.refresh(org)
+
     return {
         **serialize_org_billing(org),
         "founding_slots_remaining": founding_slots_remaining(db),
@@ -1030,4 +1069,3 @@ def create_checkout_compat(payload: dict, current_user=Depends(get_current_user)
 
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Stripe checkout failed: {str(exc)}")
-

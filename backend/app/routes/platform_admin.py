@@ -1,5 +1,6 @@
+from datetime import datetime, timedelta, timezone
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect, text
 import os
@@ -393,3 +394,153 @@ def platform_support_lookup(
         "organization_count": len(organizations),
     }
 
+# LOSSQ_PLATFORM_ADMIN_BETA_ACCESS_ENDPOINTS_V1
+def _lossq_platform_find_beta_org_id(db: Session, payload: dict):
+    org_id = payload.get("organization_id") or payload.get("org_id")
+    email = str(payload.get("email") or payload.get("user_email") or "").strip().lower()
+
+    if org_id:
+        try:
+            return int(org_id)
+        except Exception:
+            raise HTTPException(status_code=400, detail="organization_id must be a number.")
+
+    if not email:
+        raise HTTPException(status_code=400, detail="Provide organization_id or user email.")
+
+    if not table_exists(db, "users"):
+        raise HTTPException(status_code=404, detail="Users table not found.")
+
+    rows = db.execute(
+        text("SELECT organization_id FROM users WHERE lower(email) = :email LIMIT 1"),
+        {"email": email},
+    ).fetchall()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="No user found with that email.")
+
+    row = row_to_dict(rows[0])
+    found_org_id = row.get("organization_id")
+
+    if not found_org_id:
+        raise HTTPException(status_code=404, detail="User does not have an organization_id.")
+
+    return int(found_org_id)
+
+
+def _lossq_platform_org_update_columns(db: Session):
+    if not table_exists(db, "organizations"):
+        raise HTTPException(status_code=404, detail="Organizations table not found.")
+    return get_columns(db, "organizations")
+
+
+@router.post("/beta-access/grant")
+def grant_beta_access(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    require_platform_admin(current_user)
+
+    org_id = _lossq_platform_find_beta_org_id(db, payload)
+    columns = _lossq_platform_org_update_columns(db)
+
+    days = int(payload.get("days") or 30)
+    upload_limit = int(payload.get("upload_limit") or 10)
+    user_limit = int(payload.get("user_limit") or 1)
+
+    if days < 1 or days > 120:
+        raise HTTPException(status_code=400, detail="Beta days must be between 1 and 120.")
+
+    beta_end = datetime.now(timezone.utc) + timedelta(days=days)
+
+    updates = {
+        "plan": "beta",
+        "subscription_status": "active",
+        "upload_limit": upload_limit,
+        "current_period_end": beta_end,
+    }
+
+    if "user_limit" in columns:
+        updates["user_limit"] = user_limit
+
+    set_parts = []
+    params = {"org_id": org_id}
+
+    for key, value in updates.items():
+        if key in columns:
+            set_parts.append(f"{key} = :{key}")
+            params[key] = value
+
+    if "updated_at" in columns:
+        set_parts.append("updated_at = CURRENT_TIMESTAMP")
+
+    if not set_parts:
+        raise HTTPException(status_code=500, detail="No beta access columns are available to update.")
+
+    db.execute(
+        text(f"UPDATE organizations SET {', '.join(set_parts)} WHERE id = :org_id"),
+        params,
+    )
+    db.commit()
+
+    rows = db.execute(
+        text("SELECT id, name, plan, subscription_status, upload_limit, current_period_end FROM organizations WHERE id = :org_id"),
+        {"org_id": org_id},
+    ).fetchall()
+
+    org = row_to_dict(rows[0]) if rows else {"id": org_id}
+
+    return {
+        "ok": True,
+        "message": "Beta access granted.",
+        "organization": org,
+        "days": days,
+        "upload_limit": upload_limit,
+        "user_limit": user_limit,
+    }
+
+
+@router.post("/beta-access/revoke")
+def revoke_beta_access(
+    payload: dict = Body(...),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    require_platform_admin(current_user)
+
+    org_id = _lossq_platform_find_beta_org_id(db, payload)
+    columns = _lossq_platform_org_update_columns(db)
+
+    updates = {
+        "plan": "free",
+        "subscription_status": "beta_revoked",
+        "upload_limit": 0,
+        "current_period_end": None,
+    }
+
+    if "user_limit" in columns:
+        updates["user_limit"] = 1
+
+    set_parts = []
+    params = {"org_id": org_id}
+
+    for key, value in updates.items():
+        if key in columns:
+            set_parts.append(f"{key} = :{key}")
+            params[key] = value
+
+    if "updated_at" in columns:
+        set_parts.append("updated_at = CURRENT_TIMESTAMP")
+
+    db.execute(
+        text(f"UPDATE organizations SET {', '.join(set_parts)} WHERE id = :org_id"),
+        params,
+    )
+    db.commit()
+
+    return {
+        "ok": True,
+        "message": "Beta access revoked.",
+        "organization_id": org_id,
+    }

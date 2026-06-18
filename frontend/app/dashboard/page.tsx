@@ -2974,7 +2974,8 @@ function normalizeProfileName(item: any) {
 
   // LOSSQ_DASHBOARD_PAYMENT_GATE_V1
   const PAID_DASHBOARD_PLANS = new Set([
-    "starter",
+
+    "beta","starter",
     "professional",
     "agency",
     "founding_agency",
@@ -3013,7 +3014,7 @@ function normalizeProfileName(item: any) {
     const status = getDashboardBillingStatus();
 
     if (!PAID_DASHBOARD_PLANS.has(plan)) {
-      return "A paid LossQ subscription is required before you can access the dashboard.";
+      return "A paid LossQ subscription or approved beta access is required before you can access the dashboard.";
     }
 
     return `Your ${plan} subscription is currently ${status}. Please update billing to continue using the dashboard.`;
