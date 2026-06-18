@@ -93,6 +93,8 @@ const LOSSQ_PLAN_FUNCTION_LIMITS: Record<string, string[]> = {
     "audit_logs",
     "team_management",
     "user_permissions",
+    "charts",
+
   ],
   founding_agency: [
     "overview",
@@ -121,6 +123,7 @@ const LOSSQ_PLAN_FUNCTION_LIMITS: Record<string, string[]> = {
 
 // LOSSQ_PROFESSIONAL_CHARTS_INCLUDED_V1
 // LOSSQ_PROFESSIONAL_ADVANCED_ANALYTICS_INCLUDED_V1
+// LOSSQ_PROFESSIONAL_AGENCY_CHARTS_ACCESS_V1
 const LOSSQ_TOOL_REQUIRED_FEATURE: Record<string, string> = {
   overview: "overview",
   profiles: "account_profiles",

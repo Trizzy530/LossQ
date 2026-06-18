@@ -1,4 +1,5 @@
-﻿from fastapi import Depends
+# LOSSQ_PROFESSIONAL_AGENCY_CHARTS_ACCESS_V1
+from fastapi import Depends
 
 from app.auth_utils import get_current_user
 
@@ -53,6 +54,8 @@ PLAN_FUNCTION_LIMITS = {
             "carrier_packet",
             "carrier_email_draft",
             "advanced_analytics",
+            "charts",
+
         ],
     },
     "agency": {
@@ -79,6 +82,8 @@ PLAN_FUNCTION_LIMITS = {
             "audit_logs",
             "team_management",
             "user_permissions",
+            "charts",
+
         ],
     },
     "founding_agency": {
