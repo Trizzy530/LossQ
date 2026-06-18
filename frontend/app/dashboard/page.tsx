@@ -4148,24 +4148,104 @@ function buildExposureInputsFromUploadedAccount(): AnyObject {
 }
 
 function autoFillExposureInputsFromUpload() {
-  const extracted = buildExposureInputsFromUploadedAccount();
+  // LOSSQ_EXPOSURE_AUTOFILL_HANDLER_FORCE_UI_UPDATE_V2
+  const selectedPolicyForExposure = String(
+    profile?.policy_number ||
+      profile?.account_number ||
+      displayProfile?.policy_number ||
+      displayProfile?.account_number ||
+      ""
+  ).trim();
 
-  if (Object.keys(extracted).length === 0) return;
+  let cachedUpload: any = {};
+  try {
+    const rawCached = typeof window !== "undefined"
+      ? localStorage.getItem(CURRENT_UPLOAD_CACHE_KEY)
+      : "";
+    cachedUpload = rawCached ? JSON.parse(rawCached) : {};
+  } catch {
+    cachedUpload = {};
+  }
+
+  const sourceProfile: AnyObject = {
+    ...(displayProfile || {}),
+    ...(profile || {}),
+    cached_upload: cachedUpload,
+    cached_claims: Array.isArray(cachedUpload) ? cachedUpload : cachedUpload?.claims || cachedUpload?.rows || [],
+  };
+
+  const extractedFromCurrentProfile = deriveExposureInputsFromPolicyRows(sourceProfile);
+  const extractedFromDisplayProfile = deriveExposureInputsFromPolicyRows(displayProfile || {});
+  const extractedFromProfile = deriveExposureInputsFromPolicyRows(profile || {});
+  const extractedFromCachedUpload = deriveExposureInputsFromPolicyRows(cachedUpload || {});
+
+  let extracted: AnyObject = {
+    ...(typeof buildExposureInputsFromUploadedAccount === "function"
+      ? buildExposureInputsFromUploadedAccount()
+      : {}),
+    ...(extractedFromCachedUpload || {}),
+    ...(extractedFromDisplayProfile || {}),
+    ...(extractedFromProfile || {}),
+    ...(extractedFromCurrentProfile || {}),
+  };
+
+  extracted = Object.fromEntries(
+    Object.entries(extracted).filter(([, value]) => String(value || "").trim() !== "")
+  );
+
+  if (Object.keys(extracted).length === 0) {
+    setMessage(
+      "No exposure values were found on this profile yet. Re-upload a loss run with labeled exposure fields, or enter the fields manually and click Save Exposure Inputs."
+    );
+    return;
+  }
+
+  let filledCount = 0;
 
   setProfile((prev: AnyObject) => {
-    const next: AnyObject = { ...(prev || {}) };
-    let changed = false;
+    const next: AnyObject = {
+      ...(prev || {}),
+      policy_number:
+        prev?.policy_number ||
+        sourceProfile?.policy_number ||
+        selectedPolicyForExposure ||
+        "",
+      account_number:
+        prev?.account_number ||
+        sourceProfile?.account_number ||
+        selectedPolicyForExposure ||
+        "",
+      customer_number:
+        prev?.customer_number ||
+        sourceProfile?.customer_number ||
+        sourceProfile?.account_number ||
+        selectedPolicyForExposure ||
+        "",
+    };
 
     Object.entries(extracted).forEach(([key, value]) => {
-      if (!String(next[key] || "").trim() && String(value || "").trim()) {
-        next[key] = value;
-        changed = true;
+      const clean = String(value || "").trim();
+      if (!clean) return;
+
+      if (!String(next[key] || "").trim()) {
+        next[key] = clean;
+        filledCount += 1;
       }
     });
 
-    return changed ? next : prev;
+    return next;
   });
+
+  if (filledCount > 0) {
+    setMessage(`Exposure Inputs auto-filled ${filledCount} field(s). Review and click Save Exposure Inputs.`);
+  } else {
+    setMessage(
+      "Exposure values were found, but existing manual values were preserved. Clear a field first if you want Auto-Fill to replace it."
+    );
+  }
 }
+
+
 async function saveExposureInputs() {
     // LOSSQ_EXPOSURE_INPUTS_BACKEND_SAVE_V1
     const selectedPolicy =
