@@ -360,6 +360,14 @@ export default function SettingsPage() {
               Company Profile
             </a>
 
+            {/* LOSSQ_SETTINGS_BILLING_LINK_V1 */}
+            <a
+              href="/settings/billing"
+              className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-5 py-3 font-semibold text-emerald-100 hover:bg-emerald-400/20"
+            >
+              Billing & Subscription
+            </a>
+
             <a
               href="/settings/support-lookup"
               className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-semibold text-cyan-100 hover:bg-cyan-400/20"

@@ -633,3 +633,50 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 
     return {"received": True}
 
+# LOSSQ_BILLING_CANCEL_SUBSCRIPTION_ENDPOINT_V1
+@router.post("/cancel-subscription")
+def cancel_subscription(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    """
+    End/cancel the current organization's subscription.
+
+    Safety rule:
+    - This does not delete users, organizations, account profiles, claims, uploads, or reports.
+    - If Stripe is configured and a subscription id exists, request cancellation at period end.
+    - If no Stripe subscription id exists, downgrade local access to free/cancelled.
+    """
+    org = get_org(db, current_user)
+
+    subscription_id = getattr(org, "stripe_subscription_id", None)
+    stripe_cancel_requested = False
+
+    if subscription_id and STRIPE_SECRET_KEY:
+        try:
+            stripe.Subscription.modify(subscription_id, cancel_at_period_end=True)
+            stripe_cancel_requested = True
+        except Exception as exc:
+            raise HTTPException(
+                status_code=502,
+                detail=f"Stripe cancellation request failed: {str(exc)}",
+            )
+
+    if stripe_cancel_requested:
+        org.subscription_status = "canceling"
+    else:
+        org.plan = "free"
+        org.subscription_status = "cancelled"
+
+    db.commit()
+    db.refresh(org)
+
+    return {
+        "ok": True,
+        "message": (
+            "Subscription cancellation requested. Access will remain until Stripe ends the current billing period."
+            if stripe_cancel_requested
+            else "Subscription ended locally. Account data was not deleted."
+        ),
+        "plan": getattr(org, "plan", "free"),
+        "subscription_status": getattr(org, "subscription_status", "cancelled"),
+        "cancel_at_period_end": stripe_cancel_requested,
+    }
+
