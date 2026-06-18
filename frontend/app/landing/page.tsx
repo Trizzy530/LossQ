@@ -2,9 +2,13 @@
 
 import { useEffect, useState } from "react";
 
+const API = process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
+
 export default function LandingPage() {
   const [email, setEmail] = useState("");
   const [joined, setJoined] = useState(false);
+  const [joining, setJoining] = useState(false);
+  const [joinMessage, setJoinMessage] = useState("");
   const [mounted, setMounted] = useState(false);
 
   useEffect(() => {
@@ -72,13 +76,43 @@ export default function LandingPage() {
     };
   }, [mounted]);
 
-  function handleSignup() {
-    if (!email || !email.includes("@")) {
+  // LOSSQ_BETA_SIGNUP_BACKEND_NOTIFY_V1
+  async function handleSignup() {
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail || !cleanEmail.includes("@")) {
       alert("Enter a valid email.");
       return;
     }
 
-    setJoined(true);
+    setJoining(true);
+    setJoinMessage("");
+
+    try {
+      const response = await fetch(`${API}/beta/notify`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          email: cleanEmail,
+          source: "landing_page_beta_waitlist",
+          page_url: typeof window !== "undefined" ? window.location.href : "",
+          user_agent: typeof navigator !== "undefined" ? navigator.userAgent : "",
+        }),
+      });
+
+      const data = await response.json().catch(() => ({}));
+
+      if (!response.ok || data?.ok === false) {
+        throw new Error(data?.message || "Beta signup could not be submitted.");
+      }
+
+      setJoined(true);
+      setJoinMessage("You're on the list. We'll be in touch shortly.");
+    } catch (error: any) {
+      setJoinMessage(error?.message || "Beta signup failed. Please try again.");
+    } finally {
+      setJoining(false);
+    }
   }
 
   if (!mounted) {
@@ -263,21 +297,35 @@ export default function LandingPage() {
           </p>
 
           {!joined ? (
-            <div className="signup-form">
-              <input
-                type="email"
-                placeholder="your@agency.com"
-                value={email}
-                onChange={(e) => setEmail(e.target.value)}
-              />
+            <>
+              <div className="signup-form">
+                <input
+                  type="email"
+                  placeholder="your@agency.com"
+                  value={email}
+                  onChange={(e) => setEmail(e.target.value)}
+                />
 
-              <button onClick={handleSignup}>Join Beta</button>
-            </div>
+                <button onClick={handleSignup} disabled={joining}>
+                  {joining ? "Joining..." : "Join Beta"}
+                </button>
+              </div>
+
+              {joinMessage ? (
+                <p className="success-msg show">{joinMessage}</p>
+              ) : null}
+            </>
           ) : (
             <p className="success-msg show">
-              ✓ You&apos;re on the list. We&apos;ll be in touch shortly.
+              ✓ {joinMessage || "You're on the list. We'll be in touch shortly."}
             </p>
           )}
+
+          {joined ? (
+            <p className="success-msg show">
+              ✓ {joinMessage || "You&apos;re on the list. We&apos;ll be in touch shortly."}
+            </p>
+          ) : null}
 
           <p className="form-note">
             No credit card required · Founder pricing available
@@ -1072,4 +1120,3 @@ function Price({
     </div>
   );
 }
-
