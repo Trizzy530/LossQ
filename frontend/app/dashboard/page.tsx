@@ -7312,6 +7312,20 @@ const modelChartNarrative =
               <MobileToolButton active={activeTool === "overview"} onClick={() => changeActiveTool("overview")}>Overview</MobileToolButton>
               <MobileToolButton active={activeTool === "profiles"} onClick={() => changeActiveTool("profiles")}>Profiles</MobileToolButton>
               <MobileToolButton active={activeTool === "upload"} onClick={() => changeActiveTool("upload")}>Upload</MobileToolButton>
+              {/* LOSSQ_MOBILE_REPORT_SETTINGS_NAV_V1 */}
+              <button
+                type="button"
+                onClick={openBetaFeedbackEmail}
+                className="shrink-0 rounded-xl border border-yellow-300/60 bg-yellow-300 px-4 py-3 text-sm font-bold text-slate-950 shadow-lg shadow-yellow-300/20"
+              >
+                Report Issue
+              </button>
+              <a
+                href="/settings"
+                className="shrink-0 rounded-xl border border-white/15 bg-white/10 px-4 py-3 text-sm font-bold text-white hover:bg-white/15"
+              >
+                Settings
+              </a>
               <MobileToolButton active={activeTool === "exposure-inputs"} onClick={() => changeActiveTool("exposure-inputs")}>Exposure Inputs</MobileToolButton>
               <MobileToolButton active={activeTool === "renewal-risk"} onClick={() => changeActiveTool("renewal-risk")}>Renewal Risk</MobileToolButton>
               <MobileToolButton active={activeTool === "decision"} onClick={() => changeActiveTool("decision")}>Decision</MobileToolButton>

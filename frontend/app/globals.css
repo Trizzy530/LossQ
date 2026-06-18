@@ -173,11 +173,25 @@ table {
 
   h3,
   p,
-  li,
   td,
   th,
-  div {
+  .glass-panel,
+  .glass-panel * {
     overflow-wrap: anywhere;
+  }
+
+  footer,
+  footer *,
+  nav,
+  nav * {
+    overflow-wrap: normal;
+    word-break: normal;
+  }
+
+  footer a,
+  footer li,
+  footer span {
+    white-space: nowrap;
   }
 
   .signup-form {
@@ -222,5 +236,26 @@ table {
   textarea,
   button {
     min-height: 44px;
+  }
+}
+
+
+/* LOSSQ_MOBILE_FOOTER_LINK_FIX_V1 */
+@media (max-width: 768px) {
+  footer ul,
+  footer nav,
+  .footer-links {
+    display: flex;
+    flex-wrap: wrap;
+    justify-content: center;
+    gap: 0.75rem 1rem;
+  }
+
+  footer a,
+  footer li,
+  footer span {
+    white-space: nowrap;
+    word-break: normal;
+    overflow-wrap: normal;
   }
 }
