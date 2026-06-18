@@ -3025,6 +3025,48 @@ def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
         organization_id=current_user["organization_id"],
     )
 
+    # LOSSQ_UPSERT_ACCOUNT_PROFILE_EXPOSURE_FIELDS_V1
+    # Ensure captured CSV/PDF/XLSX exposure inputs are saved on newly-created profiles.
+    for exposure_field in [
+        "current_premium",
+        "expiring_premium",
+        "target_renewal_premium",
+        "line_of_business",
+        "state",
+        "class_code",
+        "class_codes",
+        "limits",
+        "coverage_limit",
+        "deductible",
+        "retention",
+        "payroll",
+        "revenue",
+        "sales",
+        "receipts",
+        "employee_count",
+        "vehicle_count",
+        "driver_count",
+        "property_tiv",
+        "tiv",
+        "building_value",
+        "contents_value",
+        "square_footage",
+        "location_count",
+        "unit_count",
+        "cargo_limit",
+        "umbrella_limit",
+        "experience_mod",
+        "mod",
+        "exposure_change_percent",
+        "cyber_revenue",
+        "professional_revenue",
+        "exposure_basis",
+        "underwriter_notes",
+    ]:
+        exposure_value = profile_data.get(exposure_field)
+        if exposure_value not in ("", None, [], {}) and hasattr(new_profile, exposure_field):
+            setattr(new_profile, exposure_field, exposure_value)
+
     db.add(new_profile)
     db.flush()
     db.refresh(new_profile)
@@ -5464,6 +5506,32 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         profile_data["policy_number"] = profile_account_key or primary_claim_policy_number or f"UPLOAD-{upload_session_id}"
 
     profile_data = derive_exposure_inputs_from_policy_schedule(profile_data)
+
+    # LOSSQ_PROFILE_DATA_EXPOSURE_SAVE_DEBUG_V1
+    debug_exposure_payload = {
+        key: profile_data.get(key)
+        for key in [
+            "current_premium",
+            "expiring_premium",
+            "target_renewal_premium",
+            "payroll",
+            "revenue",
+            "sales",
+            "employee_count",
+            "vehicle_count",
+            "driver_count",
+            "property_tiv",
+            "coverage_limit",
+            "deductible",
+            "umbrella_limit",
+            "cyber_revenue",
+            "experience_mod",
+            "exposure_basis",
+        ]
+        if profile_data.get(key) not in ("", None, [], {})
+    }
+    if debug_exposure_payload:
+        print("LOSSQ_PROFILE_DATA_EXPOSURE_BEFORE_SAVE:", debug_exposure_payload)
 
     profile = upsert_account_profile(db, profile_data, current_user)
 
