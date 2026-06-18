@@ -2004,6 +2004,83 @@ def lossq_repair_pdf_claims_from_raw_text(raw_text, parsed_claims):
     return parsed_claims
 
 
+
+# LOSSQ_DIRECT_FILE_EXPOSURE_CAPTURE_V1
+def lossq_extract_exposure_inputs_directly_from_file(file_path: str):
+    """
+    Universal direct file exposure extractor.
+    Reads CSV/XLSX rows before the claim parser strips non-claim exposure columns.
+    """
+    exposure_inputs = {}
+
+    try:
+        lower_path = str(file_path or "").lower()
+
+        if lower_path.endswith(".csv"):
+            rows = []
+            for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+                try:
+                    with open(file_path, "r", newline="", encoding=encoding, errors="ignore") as handle:
+                        rows = list(csv.DictReader(handle))
+                    break
+                except Exception:
+                    rows = []
+
+            if rows:
+                exposure_inputs.update(extract_exposure_inputs_from_parsed_rows(rows) or {})
+
+        elif lower_path.endswith((".xlsx", ".xls")):
+            try:
+                from openpyxl import load_workbook
+
+                workbook = load_workbook(file_path, data_only=True)
+                rows = []
+
+                for sheet in workbook.worksheets:
+                    values = list(sheet.iter_rows(values_only=True))
+                    if not values:
+                        continue
+
+                    # Header row format.
+                    header = [str(cell or "").strip() for cell in values[0]]
+                    if any(header):
+                        for raw_row in values[1:]:
+                            row = {}
+                            for index, header_name in enumerate(header):
+                                if not header_name:
+                                    continue
+                                row[header_name] = raw_row[index] if index < len(raw_row) else ""
+                            if row:
+                                rows.append(row)
+
+                    # Label/value rows.
+                    for raw_row in values:
+                        clean_cells = [cell for cell in raw_row if cell not in ("", None)]
+                        if len(clean_cells) >= 2:
+                            rows.append({
+                                "label": clean_cells[0],
+                                "value": clean_cells[1],
+                            })
+
+                if rows:
+                    exposure_inputs.update(extract_exposure_inputs_from_parsed_rows(rows) or {})
+            except Exception as exc:
+                print("LOSSQ_XLSX_DIRECT_EXPOSURE_CAPTURE_ERROR:", str(exc)[:200])
+
+    except Exception as exc:
+        print("LOSSQ_DIRECT_FILE_EXPOSURE_CAPTURE_ERROR:", str(exc)[:200])
+
+    exposure_inputs = {
+        k: v for k, v in (exposure_inputs or {}).items()
+        if v not in ("", None, [], {})
+    }
+
+    if exposure_inputs:
+        print("LOSSQ_DIRECT_FILE_EXPOSURE_CAPTURED:", exposure_inputs)
+
+    return exposure_inputs
+
+
 def parse_file(file_path: str, filename: str):
     lower_name = str(filename or "").lower()
 
@@ -5027,6 +5104,15 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         try:
             parsed_claims, parsed_profile = parse_file(file_path, safe_upload_filename or safe_filename)
+
+            # LOSSQ_DIRECT_FILE_EXPOSURE_CAPTURE_V1
+            direct_exposure_inputs = lossq_extract_exposure_inputs_directly_from_file(file_path)
+            if direct_exposure_inputs:
+                if not isinstance(parsed_profile, dict):
+                    parsed_profile = {}
+                parsed_profile.update({k: v for k, v in direct_exposure_inputs.items() if v not in ("", None, [], {})})
+                parsed_profile["exposure_inputs"] = direct_exposure_inputs
+                parsed_profile["exposures"] = direct_exposure_inputs
             parsed_profile = lossq_section_csv_apply_profile_date_repair(file_path, parsed_profile)
             parsed_profile = lossq_csv_label_pair_profile_repair(file_path, parsed_profile)
             parsed_profile = lossq_pdf_profile_repair(file_path, parsed_profile)
