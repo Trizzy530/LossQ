@@ -430,6 +430,18 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
     if not rows:
         return parsed_claims, parsed_profile
 
+    # LOSSQ_CSV_RAW_ROW_EXPOSURE_CAPTURE_V1
+    # Capture exposure/premium fields directly from raw CSV rows before claim normalization strips extra columns.
+    raw_upload_exposure_inputs = extract_exposure_inputs_from_parsed_rows(rows) or {}
+    if raw_upload_exposure_inputs:
+        if not isinstance(parsed_profile, dict):
+            parsed_profile = {}
+        parsed_profile = dict(parsed_profile)
+        parsed_profile.update({k: v for k, v in raw_upload_exposure_inputs.items() if v not in ("", None, [], {})})
+        parsed_profile["exposure_inputs"] = raw_upload_exposure_inputs
+        parsed_profile["exposures"] = raw_upload_exposure_inputs
+        print("LOSSQ_CSV_RAW_ROW_EXPOSURE_CAPTURED:", raw_upload_exposure_inputs)
+
     def clean(value):
         return clean_profile_value(value)
 
@@ -651,7 +663,7 @@ def extract_exposure_inputs_from_parsed_rows(rows):
     profile = {}
 
     def clean(value):
-        return str(value or "").replace("\ufeff", "").replace("ï»¿", "").strip()
+        return str(value or "").replace("\ufeff", "").replace("", "").strip()
 
     def norm_key(value):
         return re.sub(r"[^a-z0-9]", "", clean(value).lower())
