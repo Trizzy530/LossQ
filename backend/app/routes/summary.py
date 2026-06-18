@@ -156,7 +156,7 @@ def data_quality(claims, policy_numbers=None, profile_data=None):
 
 
 # LOSSQ_REALISTIC_RENEWAL_RISK_MODEL_V1
-def build_renewal_risk_engine(claims):
+def lossq_original_build_renewal_risk_engine(claims):
     claims = claims or []
 
     def m(value):
@@ -499,6 +499,437 @@ def build_renewal_risk_engine(claims):
             "line_summary": line_output,
         },
     }
+
+
+
+# LOSSQ_SAFETY_RISK_AND_CLAIM_STORY_ENGINE_V1
+def lossq_story_money(value):
+    try:
+        if value is None:
+            return 0.0
+        if isinstance(value, (int, float)):
+            return float(value)
+        cleaned = str(value).replace("$", "").replace(",", "").strip()
+        cleaned = "".join(ch for ch in cleaned if ch.isdigit() or ch in ".-")
+        return float(cleaned) if cleaned not in {"", ".", "-", "-."} else 0.0
+    except Exception:
+        return 0.0
+
+
+def lossq_story_text(value):
+    return str(value or "").strip()
+
+
+def lossq_story_field(claim, *names):
+    for name in names:
+        try:
+            if isinstance(claim, dict):
+                value = claim.get(name)
+            else:
+                value = getattr(claim, name, None)
+            if value not in (None, ""):
+                return value
+        except Exception:
+            continue
+    return ""
+
+
+def lossq_story_claim_number(claim):
+    return lossq_story_text(
+        lossq_story_field(
+            claim,
+            "claim_number",
+            "claimNumber",
+            "claim_no",
+            "claim_id",
+            "number",
+        )
+    ) or "Unnumbered Claim"
+
+
+def lossq_story_line(claim):
+    raw = lossq_story_text(
+        lossq_story_field(
+            claim,
+            "line_of_business",
+            "lineOfBusiness",
+            "policy_type",
+            "coverage",
+            "coverage_type",
+            "lob",
+            "claim_type",
+            "type",
+        )
+    )
+    upper = raw.upper()
+
+    if any(term in upper for term in ["WORKERS", "WORK COMP", "WC"]):
+        return "Workers Compensation"
+    if any(term in upper for term in ["AUTO", "VEHICLE", "TRUCK", "FLEET"]):
+        return "Commercial Auto"
+    if any(term in upper for term in ["CARGO", "MOTOR TRUCK", "MTC"]):
+        return "Cargo"
+    if any(term in upper for term in ["PROPERTY", "BUILDING", "BOP", "CPP", "CP "]):
+        return "Property"
+    if any(term in upper for term in ["CYBER", "DATA", "BREACH"]):
+        return "Cyber"
+    if any(term in upper for term in ["EPLI", "EMPLOYMENT", "HARASSMENT", "DISCRIMINATION"]):
+        return "Employment Practices Liability"
+    if any(term in upper for term in ["D&O", "DIRECTORS", "OFFICERS"]):
+        return "Directors & Officers"
+    if any(term in upper for term in ["PROFESSIONAL", "E&O", "ERRORS", "OMISSIONS"]):
+        return "Professional Liability"
+    if any(term in upper for term in ["LIQUOR", "DRAM"]):
+        return "Liquor Liability"
+    if any(term in upper for term in ["UMB", "UMBRELLA", "EXCESS"]):
+        return "Umbrella / Excess"
+    if any(term in upper for term in ["GENERAL", "GL", "LIABILITY", "PREMISES"]):
+        return "General Liability"
+
+    return raw or "Commercial Lines"
+
+
+def lossq_story_status(claim):
+    raw = lossq_story_text(lossq_story_field(claim, "status", "claim_status", "open_closed"))
+    return raw or "Status Not Set"
+
+
+def lossq_story_is_open(claim):
+    status = lossq_story_status(claim).upper()
+    return any(term in status for term in ["OPEN", "PENDING", "ACTIVE", "REOPEN"])
+
+
+def lossq_story_litigation(claim):
+    raw = lossq_story_text(
+        lossq_story_field(
+            claim,
+            "litigation",
+            "litigated",
+            "lawsuit",
+            "attorney_involved",
+            "represented",
+        )
+    ).upper()
+    return raw in {"YES", "Y", "TRUE", "1"} or any(term in raw for term in ["LITIGATION", "LAWSUIT", "ATTORNEY", "COUNSEL"])
+
+
+def lossq_story_paid(claim):
+    return lossq_story_money(lossq_story_field(claim, "paid", "paid_amount", "total_paid", "indemnity_paid"))
+
+
+def lossq_story_reserve(claim):
+    return lossq_story_money(lossq_story_field(claim, "reserve", "reserve_amount", "total_reserve", "outstanding_reserve"))
+
+
+def lossq_story_incurred(claim):
+    incurred = lossq_story_money(
+        lossq_story_field(
+            claim,
+            "incurred",
+            "total_incurred",
+            "gross_incurred",
+            "net_incurred",
+            "loss_incurred",
+        )
+    )
+    if incurred > 0:
+        return incurred
+    return lossq_story_paid(claim) + lossq_story_reserve(claim)
+
+
+def lossq_story_description(claim):
+    return lossq_story_text(
+        lossq_story_field(
+            claim,
+            "description",
+            "loss_description",
+            "claim_description",
+            "cause_of_loss",
+            "accident_description",
+            "notes",
+            "summary",
+        )
+    )
+
+
+def lossq_story_date(claim):
+    return lossq_story_text(
+        lossq_story_field(
+            claim,
+            "loss_date",
+            "date_of_loss",
+            "claim_date",
+            "accident_date",
+            "reported_date",
+        )
+    )
+
+
+def lossq_format_money(value):
+    return "${:,.0f}".format(lossq_story_money(value))
+
+
+def lossq_build_safety_recommendations(claims):
+    claims = claims or []
+    total_claims = len(claims)
+    open_claims = [claim for claim in claims if lossq_story_is_open(claim)]
+    litigated_claims = [claim for claim in claims if lossq_story_litigation(claim)]
+    high_severity_claims = [claim for claim in claims if lossq_story_incurred(claim) >= 50000]
+    lines = sorted(set(lossq_story_line(claim) for claim in claims))
+
+    recommendations = []
+
+    if total_claims == 0:
+        return ["No validated claims are available yet. Upload loss runs before generating safety and risk recommendations."]
+
+    if open_claims:
+        recommendations.append(
+            f"Request current adjuster status notes on {len(open_claims)} open claim(s), including reserve rationale, next action date, and expected closure timeline."
+        )
+
+    if litigated_claims:
+        recommendations.append(
+            f"Prepare a litigation management update for {len(litigated_claims)} litigated claim(s), including defense counsel status, mediation dates, settlement authority, and expected disposition."
+        )
+
+    if high_severity_claims:
+        recommendations.append(
+            f"Create large-loss narratives for {len(high_severity_claims)} claim(s) over $50,000 and document corrective actions taken after each event."
+        )
+
+    for line in lines:
+        upper = line.upper()
+
+        if "WORKERS" in upper:
+            recommendations.extend([
+                "Implement or document return-to-work procedures, supervisor accident reporting, employee safety training, and post-incident corrective action.",
+                "Request OSHA logs, safety meeting records, job hazard analysis, and updated workers compensation loss-control materials.",
+            ])
+
+        elif "AUTO" in upper:
+            recommendations.extend([
+                "Document driver qualification standards, MVR review cadence, telematics use, vehicle inspection procedures, and accident review process.",
+                "Request driver roster, vehicle schedule, safety manual, maintenance logs, and any fleet safety corrective actions.",
+            ])
+
+        elif "CARGO" in upper:
+            recommendations.extend([
+                "Document cargo securement procedures, theft prevention controls, driver check-in process, and high-value load protocols.",
+                "Request cargo contracts, bill-of-lading procedures, warehouse/yard security controls, and cargo claim prevention steps.",
+            ])
+
+        elif "PROPERTY" in upper or "BOP" in upper:
+            recommendations.extend([
+                "Complete property risk-control review focused on maintenance, life safety, water intrusion prevention, fire protection, and inspection logs.",
+                "Request property photos, COPE details, roof/plumbing/electrical updates, sprinkler/alarm documentation, and maintenance records.",
+            ])
+
+        elif "CYBER" in upper:
+            recommendations.extend([
+                "Document MFA, backups, endpoint protection, employee phishing training, vendor controls, and incident response procedures.",
+                "Request cyber application updates, network security controls, backup testing evidence, and breach response improvements.",
+            ])
+
+        elif "EMPLOYMENT" in upper or "EPLI" in upper:
+            recommendations.extend([
+                "Review HR policies, anti-harassment training, termination procedures, complaint handling, and manager documentation practices.",
+                "Request employee handbook, training logs, HR incident documentation, and corrective employment-practice controls.",
+            ])
+
+        elif "LIQUOR" in upper:
+            recommendations.extend([
+                "Document alcohol service training, ID verification, incident logs, security procedures, and intoxication refusal protocols.",
+                "Request server training certificates, liquor liability controls, event procedures, and management oversight documentation.",
+            ])
+
+        elif "UMBRELLA" in upper or "EXCESS" in upper:
+            recommendations.extend([
+                "Prepare umbrella-facing claim explanations for all severe/open underlying losses and document controls reducing future severity.",
+                "Confirm underlying limits, open reserves, litigation status, and any claim expected to pierce primary coverage.",
+            ])
+
+        elif "GENERAL" in upper or "LIABILITY" in upper:
+            recommendations.extend([
+                "Document premises safety controls, inspection procedures, maintenance logs, incident reporting, and customer/visitor hazard prevention.",
+                "Request corrective-action evidence, photos, maintenance records, contracts, certificates of insurance, and claim prevention procedures.",
+            ])
+
+    # Universal recommendations
+    recommendations.extend([
+        "Prepare a carrier-facing improvement letter explaining what changed after the loss experience and how future frequency/severity will be reduced.",
+        "Create a renewal document package with updated loss runs, claim status notes, safety controls, exposure changes, and management response.",
+    ])
+
+    cleaned = []
+    for item in recommendations:
+        if item and item not in cleaned:
+            cleaned.append(item)
+
+    return cleaned[:12]
+
+
+def lossq_build_risk_control_plan(claims):
+    claims = claims or []
+    if not claims:
+        return ["No claim activity was available to build a risk-control plan."]
+
+    total_incurred = sum(lossq_story_incurred(claim) for claim in claims)
+    total_reserve = sum(lossq_story_reserve(claim) for claim in claims)
+    open_count = sum(1 for claim in claims if lossq_story_is_open(claim))
+    litigation_count = sum(1 for claim in claims if lossq_story_litigation(claim))
+
+    plan = [
+        f"Review {len(claims)} claim(s) totaling {lossq_format_money(total_incurred)} incurred and {lossq_format_money(total_reserve)} reserved.",
+        "Separate claim issues into frequency drivers, severity drivers, open reserve issues, and documentation gaps.",
+    ]
+
+    if open_count:
+        plan.append(f"Prioritize closure strategy for {open_count} open claim(s) before renewal submission.")
+    if litigation_count:
+        plan.append(f"Obtain litigation action plans for {litigation_count} claim(s) before marketing the account.")
+    if total_reserve > 0:
+        plan.append("Request reserve review and expected development comments from the adjuster/carrier.")
+    if total_incurred >= 100000:
+        plan.append("Prepare executive-level narrative explaining large-loss controls and management response.")
+
+    plan.append("Submit evidence of corrective action with the renewal packet to improve carrier confidence.")
+    return plan
+
+
+def lossq_build_underwriting_documents(claims):
+    claims = claims or []
+    docs = [
+        "Updated valued loss runs with open/closed status.",
+        "Current open claim notes and reserve rationale.",
+        "Large-loss narratives for significant claims.",
+        "Management corrective-action letter.",
+    ]
+
+    lines = " ".join(lossq_story_line(claim).upper() for claim in claims)
+
+    if "WORKERS" in lines:
+        docs.extend(["OSHA logs.", "Safety training records.", "Return-to-work policy."])
+    if "AUTO" in lines:
+        docs.extend(["Driver roster.", "Vehicle schedule.", "MVR review evidence.", "Fleet safety policy."])
+    if "PROPERTY" in lines or "BOP" in lines:
+        docs.extend(["Property photos.", "COPE details.", "Maintenance logs.", "Roof/plumbing/electrical updates."])
+    if "CYBER" in lines:
+        docs.extend(["Cyber controls summary.", "MFA/backups confirmation.", "Incident response plan."])
+    if "EMPLOYMENT" in lines or "EPLI" in lines:
+        docs.extend(["Employee handbook.", "HR training logs.", "Complaint/discipline procedure summary."])
+    if "LIQUOR" in lines:
+        docs.extend(["Alcohol service training records.", "Incident/refusal logs.", "Security procedures."])
+
+    cleaned = []
+    for doc in docs:
+        if doc not in cleaned:
+            cleaned.append(doc)
+    return cleaned
+
+
+def lossq_build_claim_stories(claims):
+    stories = []
+
+    for claim in claims or []:
+        number = lossq_story_claim_number(claim)
+        line = lossq_story_line(claim)
+        status = lossq_story_status(claim)
+        paid = lossq_story_paid(claim)
+        reserve = lossq_story_reserve(claim)
+        incurred = lossq_story_incurred(claim)
+        description = lossq_story_description(claim)
+        loss_date = lossq_story_date(claim)
+        is_open = lossq_story_is_open(claim)
+        litigated = lossq_story_litigation(claim)
+
+        concern_parts = []
+        if is_open:
+            concern_parts.append("open claim development")
+        if reserve > 0:
+            concern_parts.append("reserve adequacy")
+        if litigated:
+            concern_parts.append("litigation exposure")
+        if incurred >= 50000:
+            concern_parts.append("large-loss severity")
+        if not concern_parts:
+            concern_parts.append("claim frequency and final loss outcome")
+
+        story = (
+            f"Claim {number} is a {line} claim"
+            f"{f' with a loss date of {loss_date}' if loss_date else ''}. "
+            f"The claim is currently reported as {status}, with {lossq_format_money(paid)} paid, "
+            f"{lossq_format_money(reserve)} reserved, and {lossq_format_money(incurred)} total incurred. "
+        )
+
+        if description:
+            story += f"The reported loss description indicates: {description}. "
+
+        story += (
+            f"From an underwriting standpoint, the main items to address are {', '.join(concern_parts)}. "
+            "Broker positioning should include current claim status, expected resolution timeline, reserve rationale, "
+            "and any corrective actions taken to reduce repeat losses."
+        )
+
+        stories.append({
+            "claim_number": number,
+            "line_of_business": line,
+            "status": status,
+            "paid": paid,
+            "reserve": reserve,
+            "incurred": incurred,
+            "litigation": litigated,
+            "carrier_facing_story": story,
+            "broker_positioning": (
+                "Provide updated claim notes, explain corrective action, and show why the loss is controlled or unlikely to repeat."
+            ),
+        })
+
+    return stories
+
+
+def lossq_build_claim_story_summary(stories):
+    if not stories:
+        return "No claim stories are available because no validated claims were found."
+
+    open_count = sum(1 for story in stories if str(story.get("status", "")).upper().find("OPEN") >= 0)
+    litigated_count = sum(1 for story in stories if story.get("litigation"))
+    total_incurred = sum(lossq_story_money(story.get("incurred")) for story in stories)
+
+    return (
+        f"LossQ generated carrier-facing narratives for {len(stories)} claim(s), including "
+        f"{open_count} open claim(s), {litigated_count} litigated claim(s), and "
+        f"{lossq_format_money(total_incurred)} total incurred. These narratives are designed to help brokers explain "
+        "loss development, reserve posture, corrective actions, and renewal positioning."
+    )
+
+
+def build_renewal_risk_engine(claims):
+    result = lossq_original_build_renewal_risk_engine(claims)
+
+    if not isinstance(result, dict):
+        result = {}
+
+    claim_stories = lossq_build_claim_stories(claims or [])
+    safety_recommendations = lossq_build_safety_recommendations(claims or [])
+    risk_control_plan = lossq_build_risk_control_plan(claims or [])
+    recommended_docs = lossq_build_underwriting_documents(claims or [])
+
+    large_loss_narratives = [
+        story for story in claim_stories
+        if lossq_story_money(story.get("incurred")) >= 50000 or story.get("litigation")
+    ]
+
+    result["safety_recommendations"] = safety_recommendations
+    result["risk_control_recommendations"] = safety_recommendations
+    result["loss_control_plan"] = risk_control_plan
+    result["carrier_risk_improvement_plan"] = risk_control_plan
+    result["recommended_underwriting_documents"] = recommended_docs
+    result["ai_claim_stories"] = claim_stories
+    result["large_loss_narratives"] = large_loss_narratives
+    result["claim_story_summary"] = lossq_build_claim_story_summary(claim_stories)
+
+    return result
+
 
 
 def build_underwriting_intelligence(claims):

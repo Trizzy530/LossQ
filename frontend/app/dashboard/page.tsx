@@ -7342,6 +7342,73 @@ const modelChartNarrative =
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
                 <ListCard title="Renewal Drivers" items={effectiveSummary?.renewal_drivers || ["No renewal drivers available."]} color="blue" />
                 <ListCard title="Carrier Concerns" items={effectiveSummary?.carrier_concerns || ["No carrier concerns available."]} color="red" />
+
+                {/* LOSSQ_FRONTEND_SAFETY_CLAIM_STORY_DISPLAY_V1 */}
+                <div className="lg:col-span-2">
+                  <ListCard
+                    title="Safety & Risk Recommendations"
+                    items={
+                      effectiveSummary?.safety_recommendations ||
+                      effectiveSummary?.risk_control_recommendations ||
+                      ["No safety and risk recommendations available yet."]
+                    }
+                    color="blue"
+                  />
+                </div>
+
+                <div className="lg:col-span-2">
+                  <ListCard
+                    title="Loss-Control Plan"
+                    items={
+                      effectiveSummary?.loss_control_plan ||
+                      effectiveSummary?.carrier_risk_improvement_plan ||
+                      ["No loss-control plan available yet."]
+                    }
+                    color="purple"
+                  />
+                </div>
+
+                <div className="lg:col-span-2">
+                  <ListCard
+                    title="Recommended Underwriting Documents"
+                    items={
+                      effectiveSummary?.recommended_underwriting_documents ||
+                      ["No underwriting document checklist available yet."]
+                    }
+                    color="blue"
+                  />
+                </div>
+
+                <div className="lg:col-span-2">
+                  <TextCard
+                    title="AI Claim Story Summary"
+                    text={
+                      effectiveSummary?.claim_story_summary ||
+                      "No AI claim story summary available yet."
+                    }
+                  />
+                </div>
+
+                <div className="lg:col-span-2">
+                  <ListCard
+                    title="AI Claim Story Generator"
+                    items={
+                      Array.isArray(effectiveSummary?.ai_claim_stories) &&
+                      effectiveSummary.ai_claim_stories.length > 0
+                        ? effectiveSummary.ai_claim_stories.map((story: any) =>
+                            typeof story === "string"
+                              ? story
+                              : `${story.claim_number || "Claim"} - ${
+                                  story.carrier_facing_story ||
+                                  story.story ||
+                                  "No claim story available."
+                                }`
+                          )
+                        : ["No AI claim stories available yet."]
+                    }
+                    color="purple"
+                  />
+                </div>
               </div>
 
               <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
