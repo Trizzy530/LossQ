@@ -2654,12 +2654,56 @@ def lossq_beta_get_claim_amounts(item):
     return amounts
 
 
+
 def lossq_beta_apply_recovered_amounts(item):
     if not isinstance(item, dict):
         return item, {}
 
-    amounts = lossq_beta_get_claim_amounts(item)
-    if not amounts or not any(value > 0 for value in amounts.values()):
+    def current_amount(key):
+        return lossq_beta_money_to_float(item.get(key))
+
+    current_paid = current_amount("paid_amount")
+    current_reserve = current_amount("reserve_amount")
+    current_total = current_amount("total_incurred")
+
+    text_amounts = lossq_beta_extract_money_triplet_from_text(item)
+
+    use_text_override = False
+    override_reason = ""
+
+    if text_amounts and any(lossq_beta_money_to_float(v) > 0 for v in text_amounts.values()):
+        text_paid = lossq_beta_money_to_float(text_amounts.get("paid_amount"))
+        text_reserve = lossq_beta_money_to_float(text_amounts.get("reserve_amount"))
+        text_total = lossq_beta_money_to_float(text_amounts.get("total_incurred"))
+
+        text_total_matches_parts = abs((text_paid + text_reserve) - text_total) <= max(2.0, text_total * 0.02)
+
+        current_total_conflicts = (
+            current_total > 0
+            and text_total > 0
+            and abs(current_total - text_total) > max(100.0, text_total * 0.10)
+        )
+
+        current_amounts_missing = (
+            current_paid <= 0
+            or ("reserve_amount" not in item and "reserve" not in item)
+            or current_total <= 0
+        )
+
+        # LOSSQ_ROW_TEXT_AMOUNT_OVERRIDE_V1
+        # Universal safeguard:
+        # If the claim narrative/row text contains a clean paid + reserve = total triplet,
+        # trust that row-level triplet over a conflicting summary/header amount.
+        if text_total_matches_parts and (current_total_conflicts or current_amounts_missing):
+            use_text_override = True
+            override_reason = "row_text_triplet_conflict" if current_total_conflicts else "row_text_triplet_missing_amounts"
+
+    if use_text_override:
+        amounts = text_amounts
+    else:
+        amounts = lossq_beta_get_claim_amounts(item)
+
+    if not amounts or not any(lossq_beta_money_to_float(value) > 0 for value in amounts.values()):
         return item, {}
 
     changed = {}
@@ -2668,9 +2712,18 @@ def lossq_beta_apply_recovered_amounts(item):
         current = lossq_beta_money_to_float(item.get(key))
         recovered = lossq_beta_money_to_float(amounts.get(key))
 
-        if current <= 0 and recovered >= 0:
+        should_replace = False
+
+        if use_text_override:
+            should_replace = True
+        elif current <= 0 and recovered >= 0:
+            should_replace = True
+
+        if should_replace:
+            before = item.get(key)
             item[key] = recovered
-            changed[key] = recovered
+            if str(before) != str(recovered):
+                changed[key] = recovered
 
     if changed:
         print("LOSSQ_BETA_AMOUNT_RECOVERY_APPLIED:", {
@@ -2680,10 +2733,12 @@ def lossq_beta_apply_recovered_amounts(item):
             "policy_number": lossq_beta_clean_text(
                 item.get("policy_number") or item.get("Policy Number") or item.get("policy")
             ),
+            "reason": override_reason or "missing_amount_recovery",
             **changed,
         })
 
     return item, changed
+
 
 
 def lossq_beta_has_commercial_line_context(item):
