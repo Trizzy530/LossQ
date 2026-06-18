@@ -317,7 +317,7 @@ export default function LandingPage() {
             </>
           ) : (
             <p className="success-msg show">
-              ✓ {joinMessage || "You're on the list. We'll be in touch shortly."}
+              ✓ You're on the list. We'll be in touch shortly.
             </p>
           )}
 
