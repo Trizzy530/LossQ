@@ -643,103 +643,279 @@ def get_db():
 
 
 def extract_exposure_inputs_from_raw_text(raw_text: str):
-    # LOSSQ_ENABLE_AUTO_EXPOSURE_EXTRACTION_V2
-    # Fallback extractor for clean commercial loss runs with labeled exposure/premium fields.
+    # LOSSQ_ENABLE_AUTO_EXPOSURE_EXTRACTION_V3
+    # Universal exposure extractor for labeled CSV, XLSX text, PDF text, premium worksheets, and policy schedules.
+    import csv
+    import io
+    import re
 
     text_value = str(raw_text or "")
     profile = {}
-    # Prefer exact labeled lines before broad scanning.
-    label_patterns = {
-        "current_premium": [r"Current\s+Premium\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
-        "expiring_premium": [r"Expiring\s+Premium\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
-        "target_renewal_premium": [r"Target\s+Renewal\s+Premium\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
-        "payroll": [r"Payroll\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
-        "revenue": [r"Revenue\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)", r"Revenue\s*/\s*Sales\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
-        "sales": [r"Sales\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
-        "property_tiv": [r"Property\s+TIV\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)", r"Total\s+Insured\s+Value\s*[:\-]\s*(\$\s*[0-9][0-9,]*(?:\.\d{2})?)"],
-        "vehicle_count": [r"Vehicle\s+Count\s*[:\-]\s*([0-9,]+)", r"Vehicles\s*[:\-]\s*([0-9,]+)"],
-        "employee_count": [r"Employee\s+Count\s*[:\-]\s*([0-9,]+)", r"Employees\s*[:\-]\s*([0-9,]+)"],
-        "driver_count": [r"Driver\s+Count\s*[:\-]\s*([0-9,]+)", r"Drivers\s*[:\-]\s*([0-9,]+)"],
+
+    def clean(value):
+        return str(value or "").replace("\ufeff", "").replace("ï»¿", "").strip()
+
+    def norm_key(value):
+        return re.sub(r"[^a-z0-9]", "", clean(value).lower())
+
+    def is_bad_value(value):
+        v = clean(value)
+        if not v:
+            return True
+        # Do not treat policy years or dates as exposure values.
+        if re.fullmatch(r"(19|20)\d{2}", v):
+            return True
+        if re.fullmatch(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", v):
+            return True
+        if re.fullmatch(r"\d{1,2}[-/]\d{1,2}[-/]\d{2,4}", v):
+            return True
+        return False
+
+    def money_value(value):
+        v = clean(value)
+        if is_bad_value(v):
+            return ""
+        match = re.search(r"\$?\s*[0-9][0-9,]*(?:\.\d{2})?", v)
+        if not match:
+            return ""
+        found = match.group(0).replace(" ", "")
+        if is_bad_value(found.replace("$", "").replace(",", "")):
+            return ""
+        return found
+
+    def count_value(value):
+        v = clean(value)
+        if is_bad_value(v):
+            return ""
+        match = re.search(r"\b[0-9][0-9,]*\b", v)
+        if not match:
+            return ""
+        found = match.group(0).replace(",", "")
+        if is_bad_value(found):
+            return ""
+        return found
+
+    field_map = {
+        "currentpremium": "current_premium",
+        "annualpremium": "current_premium",
+        "writtenpremium": "current_premium",
+        "totalpremium": "current_premium",
+        "premium": "current_premium",
+
+        "expiringpremium": "expiring_premium",
+        "priorpremium": "expiring_premium",
+        "previouspremium": "expiring_premium",
+
+        "targetrenewalpremium": "target_renewal_premium",
+        "renewalpremium": "target_renewal_premium",
+        "estimatedrenewalpremium": "target_renewal_premium",
+
+        "primarylineofbusiness": "line_of_business",
+        "lineofbusiness": "line_of_business",
+        "lob": "line_of_business",
+        "policytype": "line_of_business",
+        "coverage": "line_of_business",
+
+        "state": "state",
+        "primarystate": "state",
+        "classcode": "class_code",
+        "classcodes": "class_codes",
+
+        "policylimits": "limits",
+        "limits": "limits",
+        "coveragelimit": "coverage_limit",
+        "deductible": "deductible",
+        "retention": "retention",
+        "sir": "retention",
+
+        "payroll": "payroll",
+        "annualpayroll": "payroll",
+        "estimatedpayroll": "payroll",
+
+        "revenue": "revenue",
+        "annualrevenue": "revenue",
+        "sales": "sales",
+        "grosssales": "sales",
+        "revenuesales": "revenue",
+        "receipts": "receipts",
+        "grossreceipts": "receipts",
+
+        "employeecount": "employee_count",
+        "employees": "employee_count",
+        "numberofemployees": "employee_count",
+
+        "vehiclecount": "vehicle_count",
+        "vehicles": "vehicle_count",
+        "powerunits": "vehicle_count",
+
+        "drivercount": "driver_count",
+        "drivers": "driver_count",
+
+        "propertytiv": "property_tiv",
+        "totalinsuredvalue": "property_tiv",
+        "tiv": "tiv",
+
+        "buildingvalue": "building_value",
+        "buildinglimit": "building_value",
+        "contentsvalue": "contents_value",
+        "businesspersonalproperty": "contents_value",
+        "bpp": "contents_value",
+
+        "squarefootage": "square_footage",
+        "sqft": "square_footage",
+        "locationcount": "location_count",
+        "locations": "location_count",
+        "unitcount": "unit_count",
+        "units": "unit_count",
+
+        "cargolimit": "cargo_limit",
+        "umbrellalimit": "umbrella_limit",
+        "excesslimit": "umbrella_limit",
+
+        "experiencemod": "experience_mod",
+        "mod": "mod",
+        "exposurechangepercent": "exposure_change_percent",
+        "cyberrevenue": "cyber_revenue",
+        "professionalrevenue": "professional_revenue",
+        "exposurebasis": "exposure_basis",
     }
 
-    for field, patterns in label_patterns.items():
-        for pattern in patterns:
-            match = re.search(pattern, text_value, re.IGNORECASE)
-            if match and match.group(1):
-                profile[field] = re.sub(r"\\s+", " ", str(match.group(1) or "")).strip(" :|-").replace(" ", "")
-                break
-
-
-    def clean_value(value):
-        value = str(value or "").strip()
-        value = re.sub(r"\s+", " ", value)
-        value = value.strip(" :|-")
-        return value
-
-    def find_value(labels, money=False, percent=False):
-        for label in labels:
-            if money:
-                pattern = rf"{label}\s*[:\-]?\s*(\$?\s*[0-9][0-9,]*(?:\.\d{{2}})?)"
-            elif percent:
-                pattern = rf"{label}\s*[:\-]?\s*([0-9]+(?:\.\d+)?\s*%?)"
-            else:
-                pattern = rf"{label}\s*[:\-]?\s*([A-Za-z0-9$%,./#&()\- ]{{1,80}})"
-
-            match = re.search(pattern, text_value, re.IGNORECASE)
-            if match:
-                value = clean_value(match.group(1))
-                if value:
-                    return value
-
-        return ""
-
-    mappings = {
-        "current_premium": (["Current Premium", "Current Term Premium", "Total Current Premium", "Premium Current"], True, False),
-        "expiring_premium": (["Expiring Premium", "Prior Premium", "Prior Term Premium", "Expiring Term Premium"], True, False),
-        "target_renewal_premium": (["Target Renewal Premium", "Renewal Target Premium", "Projected Renewal Premium"], True, False),
-        "payroll": (["Payroll", "Annual Payroll", "Estimated Payroll"], True, False),
-        "revenue": (["Revenue", "Annual Revenue", "Gross Revenue", "Estimated Revenue"], True, False),
-        "sales": (["Sales", "Annual Sales", "Gross Sales"], True, False),
-        "receipts": (["Receipts", "Gross Receipts", "Annual Receipts"], True, False),
-        "property_tiv": (["Property TIV", "Total Insured Value", "TIV"], True, False),
-        "tiv": (["TIV", "Total Insured Value"], True, False),
-        "building_value": (["Building Value", "Building Limit"], True, False),
-        "contents_value": (["Contents Value", "Business Personal Property", "BPP"], True, False),
-        "vehicle_count": (["Vehicle Count", "Number of Vehicles", "Vehicles"], False, False),
-        "driver_count": (["Driver Count", "Number of Drivers", "Drivers"], False, False),
-        "employee_count": (["Employee Count", "Number of Employees", "Employees"], False, False),
-        "location_count": (["Location Count", "Number of Locations", "Locations"], False, False),
-        "unit_count": (["Unit Count", "Units"], False, False),
-        "square_footage": (["Square Footage", "Sq Ft", "Building Square Footage"], False, False),
-        "coverage_limit": (["Coverage Limit", "Policy Limit", "Limit"], True, False),
-        "limits": (["Limits", "Liability Limits"], False, False),
-        "deductible": (["Deductible", "Property Deductible", "Collision Deductible"], True, False),
-        "retention": (["Retention", "SIR", "Self Insured Retention"], True, False),
-        "cargo_limit": (["Cargo Limit", "Motor Truck Cargo Limit"], True, False),
-        "umbrella_limit": (["Umbrella Limit", "Excess Limit"], True, False),
-        "experience_mod": (["Experience Mod", "Experience Modification", "EMR", "MOD"], False, False),
-        "mod": (["MOD", "Experience Mod", "EMR"], False, False),
-        "exposure_change_percent": (["Exposure Change", "Exposure Change Percent", "Exposure Change %"], False, True),
-        "class_code": (["Class Code", "Primary Class Code"], False, False),
-        "class_codes": (["Class Codes", "Classification Codes"], False, False),
-        "line_of_business": (["Line of Business", "Coverage Line", "LOB"], False, False),
-        "state": (["State", "Primary State", "Governing State"], False, False),
-        "exposure_basis": (["Exposure Basis", "Rating Basis"], False, False),
+    money_fields = {
+        "current_premium",
+        "expiring_premium",
+        "target_renewal_premium",
+        "limits",
+        "coverage_limit",
+        "deductible",
+        "retention",
+        "payroll",
+        "revenue",
+        "sales",
+        "receipts",
+        "property_tiv",
+        "tiv",
+        "building_value",
+        "contents_value",
+        "cargo_limit",
+        "umbrella_limit",
+        "cyber_revenue",
+        "professional_revenue",
     }
 
-    for field, config in mappings.items():
-        labels, money, percent = config
-        value = find_value(labels, money=money, percent=percent)
-        if value:
+    count_fields = {
+        "employee_count",
+        "vehicle_count",
+        "driver_count",
+        "square_footage",
+        "location_count",
+        "unit_count",
+    }
+
+    def set_field(field, value):
+        if not field or field not in field_map.values():
+            return
+
+        if field in money_fields:
+            value = money_value(value)
+        elif field in count_fields:
+            value = count_value(value)
+        else:
+            value = clean(value)
+
+        if value and not profile.get(field):
             profile[field] = value
+
+    def apply_pair(key, value):
+        mapped = field_map.get(norm_key(key))
+        if mapped:
+            set_field(mapped, value)
+
+    # CSV-style extraction: headers on first line, values on following rows.
+    try:
+        sample = text_value.strip()
+        if "," in sample and "\n" in sample:
+            reader = csv.DictReader(io.StringIO(sample))
+            for row in reader:
+                for key, value in dict(row or {}).items():
+                    apply_pair(key, value)
+                # One good row is enough because exposure columns repeat per claim row.
+                if profile:
+                    break
+    except Exception:
+        pass
+
+    # Label/value extraction from text lines and worksheet-style rows.
+    for line in text_value.splitlines():
+        if not line.strip():
+            continue
+
+        if ":" in line:
+            left, right = line.split(":", 1)
+            apply_pair(left, right)
+
+        if "," in line:
+            parts = [p.strip() for p in line.split(",")]
+            if len(parts) >= 2:
+                for i in range(len(parts) - 1):
+                    apply_pair(parts[i], parts[i + 1])
+
+    # Regex fallback for labels embedded in text.
+    label_aliases = {
+        "current_premium": ["current premium", "annual premium", "written premium", "total premium"],
+        "expiring_premium": ["expiring premium", "prior premium", "previous premium"],
+        "target_renewal_premium": ["target renewal premium", "renewal premium", "estimated renewal premium"],
+        "payroll": ["annual payroll", "estimated payroll", "payroll"],
+        "revenue": ["annual revenue", "revenue"],
+        "sales": ["gross sales", "sales"],
+        "receipts": ["gross receipts", "receipts"],
+        "employee_count": ["employee count", "number of employees", "employees"],
+        "vehicle_count": ["vehicle count", "vehicles", "power units"],
+        "driver_count": ["driver count", "drivers"],
+        "property_tiv": ["property tiv", "total insured value"],
+        "tiv": ["tiv"],
+        "coverage_limit": ["coverage limit", "policy limit"],
+        "limits": ["policy limits", "limits"],
+        "deductible": ["deductible"],
+        "umbrella_limit": ["umbrella limit", "excess limit"],
+        "cyber_revenue": ["cyber revenue"],
+        "professional_revenue": ["professional revenue"],
+        "experience_mod": ["experience mod", "mod"],
+    }
+
+    for field, labels in label_aliases.items():
+        if profile.get(field):
+            continue
+        for label in labels:
+            pattern = re.compile(
+                re.escape(label) + r"[^$0-9A-Za-z]{0,50}(\$?\s*[0-9][0-9,]*(?:\.\d{2})?|[A-Za-z][A-Za-z0-9 ./%-]{1,80})",
+                re.IGNORECASE,
+            )
+            match = pattern.search(text_value)
+            if match:
+                set_field(field, match.group(1))
+                if profile.get(field):
+                    break
+
+    basis_parts = []
+    if profile.get("payroll"):
+        basis_parts.append(f"Payroll: {profile['payroll']}")
+    if profile.get("revenue"):
+        basis_parts.append(f"Revenue: {profile['revenue']}")
+    if profile.get("vehicle_count"):
+        basis_parts.append(f"Vehicles: {profile['vehicle_count']}")
+    if profile.get("driver_count"):
+        basis_parts.append(f"Drivers: {profile['driver_count']}")
+    if profile.get("employee_count"):
+        basis_parts.append(f"Employees: {profile['employee_count']}")
+    if profile.get("property_tiv"):
+        basis_parts.append(f"Property TIV: {profile['property_tiv']}")
+
+    if basis_parts and not profile.get("exposure_basis"):
+        profile["exposure_basis"] = " | ".join(basis_parts)
 
     return profile
 
 
-
-
-
-# LOSSQ_LIVE_SECTION_BASED_CSV_REPAIR_V1
 def _lossq_live_clean_cell(value):
     return re.sub(r"\s+", " ", str(value or "").strip())
 
