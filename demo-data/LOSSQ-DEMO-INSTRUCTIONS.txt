@@ -1,0 +1,32 @@
+﻿LOSSQ DEMO ACCOUNT SETUP
+
+Recommended demo user:
+demo@lossq.com
+
+Demo upload files:
+1. lossq-demo-blue-ridge-foods.csv
+2. lossq-demo-iron-ridge-hvac.csv
+3. lossq-demo-riverbend-apartments.csv
+
+Demo flow:
+1. Register or login as demo@lossq.com
+2. Go to Upload Center
+3. Upload one demo CSV at a time
+4. Open Carrier Profiles
+5. Select the uploaded account
+6. Show:
+   - Account Snapshot
+   - Policy Schedule
+   - Claims
+   - Renewal Risk
+   - Safety & Risk Recommendations
+   - AI Claim Story Generator
+   - Charts
+   - Submission Builder
+   - Carrier Packet / PDF exports
+
+Best demo account:
+Riverbend Apartment Communities LLC
+
+Why:
+It has multiple policy lines, open claims, litigation, property loss, workers comp, EPLI, umbrella exposure, and strong AI claim story output.

@@ -1,0 +1,142 @@
+LOSSQ DEMO SCRIPT
+
+Opening Line:
+
+“LossQ is an AI underwriting intelligence platform that turns messy commercial insurance loss runs into renewal-ready insights, claim stories, safety recommendations, charts, and carrier submission material in minutes.”
+
+Demo Account:
+
+Use:
+Riverbend Apartment Communities LLC
+
+Why this account works well:
+It has multiple policy lines, open claims, litigation, workers comp, property, EPLI, umbrella/excess exposure, and large-loss activity. This lets LossQ show real underwriting value instead of just basic claim totals.
+
+Demo Flow:
+
+1. Account Snapshot
+
+“First, LossQ identifies the insured, producing agency, writing carrier, account number, policy dates, and evaluation date. Instead of manually reading through a loss run, the account profile is structured automatically.”
+
+Show:
+
+* Insured
+* Carrier
+* Account number
+* Effective date
+* Expiration date
+* Evaluation date
+
+2. Policy Schedule
+
+“LossQ separates the account by policy line so the underwriter or broker can quickly see which coverages are active and which claims belong to each line.”
+
+Show:
+
+* General Liability
+* Commercial Property
+* Workers Compensation
+* EPLI
+* Umbrella / Excess
+
+3. Claims
+
+“Now the platform converts raw claim data into a usable claim dashboard. This helps the broker, underwriter, or agency quickly understand open claims, reserves, paid losses, total incurred, litigation, and severity.”
+
+Show:
+
+* Claim count
+* Open claims
+* Closed claims
+* Paid
+* Reserve
+* Total incurred
+* Litigation flags
+
+4. Charts
+
+“Charts help users visualize the loss picture instead of trying to interpret rows of data manually.”
+
+Show:
+
+* Incurred by line of business
+* Open claim aging
+* Severity distribution
+* Model prediction charts
+
+5. Renewal Risk
+
+“This is where LossQ becomes more than a parser. It analyzes the account like an underwriting assistant and gives a renewal score, risk level, carrier concerns, premium pressure, and broker recommendation.”
+
+Say:
+“Instead of just saying the account has losses, LossQ explains how those losses may impact renewal, pricing, carrier appetite, and marketability.”
+
+Show:
+
+* Renewal score
+* Risk level
+* Carrier concerns
+* Broker recommendation
+* Premium pressure
+* Submission readiness
+
+6. Safety & Risk Recommendations
+
+“This section answers the most important question after identifying the risk: what should the broker or insured do next?”
+
+Show:
+
+* Immediate safety actions
+* Loss-control recommendations
+* Documents to gather
+* Carrier improvement plan
+
+Say:
+“This gives the agency a proactive action plan instead of waiting for the carrier to ask follow-up questions.”
+
+7. AI Claim Story Generator
+
+“Carriers often want explanations for large losses, open claims, and litigated claims. LossQ generates carrier-facing claim narratives automatically.”
+
+Show:
+
+* Claim story summary
+* Individual claim narratives
+* Large-loss narratives
+* Litigation narratives
+
+Say:
+“This saves the broker time and helps make the account more marketable by giving the carrier a clear explanation of what happened, where the claim stands, and what corrective actions should be documented.”
+
+8. Submission Builder
+
+“Once the loss data is analyzed, LossQ helps build submission-ready underwriting material.”
+
+Show:
+
+* Executive summary
+* Underwriter narrative
+* Carrier submission email
+* Missing documents
+* Broker marketing memo
+
+Say:
+“This helps agencies move from raw loss runs to a carrier-ready submission package faster.”
+
+9. Carrier Packet / PDF Export
+
+“Finally, LossQ can package the information into exportable reports for renewal strategy, carrier review, or internal underwriting meetings.”
+
+Show:
+
+* Report exports
+* Carrier packet
+* Renewal memo
+
+Closing Line:
+
+“LossQ is designed to reduce manual loss-run review, improve renewal strategy, help brokers explain claims, and give underwriters cleaner submission data. The goal is to turn messy loss runs into underwriting-ready intelligence in minutes.”
+
+Beta Ask:
+
+“We’re currently testing with a small group of insurance users. What I’m looking for is feedback on upload accuracy, usefulness of the renewal intelligence, and whether the safety recommendations and claim stories would save time in your workflow.”
