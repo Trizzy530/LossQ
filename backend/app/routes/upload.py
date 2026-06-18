@@ -642,6 +642,234 @@ def get_db():
 
 
 
+
+# LOSSQ_EXTRACT_EXPOSURE_FROM_PARSED_ROWS_V1
+def extract_exposure_inputs_from_parsed_rows(rows):
+    """Extract exposure/premium fields from parsed CSV/XLSX/PDF row dictionaries."""
+    import re
+
+    profile = {}
+
+    def clean(value):
+        return str(value or "").replace("\ufeff", "").replace("ï»¿", "").strip()
+
+    def norm_key(value):
+        return re.sub(r"[^a-z0-9]", "", clean(value).lower())
+
+    def is_bad_value(value):
+        v = clean(value)
+        if not v:
+            return True
+        if re.fullmatch(r"(19|20)\d{2}", v):
+            return True
+        if re.fullmatch(r"\d{4}[-/]\d{1,2}[-/]\d{1,2}", v):
+            return True
+        if re.fullmatch(r"\d{1,2}[-/]\d{1,2}[-/]\d{2,4}", v):
+            return True
+        return False
+
+    def money_value(value):
+        v = clean(value)
+        if is_bad_value(v):
+            return ""
+        match = re.search(r"\$?\s*[0-9][0-9,]*(?:\.\d{2})?", v)
+        if not match:
+            return ""
+        found = match.group(0).replace(" ", "")
+        numeric = found.replace("$", "").replace(",", "")
+        if is_bad_value(numeric):
+            return ""
+        return found
+
+    def count_value(value):
+        v = clean(value)
+        if is_bad_value(v):
+            return ""
+        match = re.search(r"\b[0-9][0-9,]*\b", v)
+        if not match:
+            return ""
+        found = match.group(0).replace(",", "")
+        if is_bad_value(found):
+            return ""
+        return found
+
+    field_map = {
+        "currentpremium": "current_premium",
+        "annualpremium": "current_premium",
+        "writtenpremium": "current_premium",
+        "totalpremium": "current_premium",
+        "premium": "current_premium",
+
+        "expiringpremium": "expiring_premium",
+        "priorpremium": "expiring_premium",
+        "previouspremium": "expiring_premium",
+
+        "targetrenewalpremium": "target_renewal_premium",
+        "renewalpremium": "target_renewal_premium",
+        "estimatedrenewalpremium": "target_renewal_premium",
+
+        "policylimits": "limits",
+        "limits": "limits",
+        "coveragelimit": "coverage_limit",
+        "deductible": "deductible",
+        "retention": "retention",
+        "sir": "retention",
+
+        "payroll": "payroll",
+        "annualpayroll": "payroll",
+        "estimatedpayroll": "payroll",
+
+        "revenue": "revenue",
+        "annualrevenue": "revenue",
+        "revenuesales": "revenue",
+        "sales": "sales",
+        "grosssales": "sales",
+        "receipts": "receipts",
+        "grossreceipts": "receipts",
+
+        "employeecount": "employee_count",
+        "employees": "employee_count",
+        "numberofemployees": "employee_count",
+
+        "vehiclecount": "vehicle_count",
+        "vehicles": "vehicle_count",
+        "powerunits": "vehicle_count",
+
+        "drivercount": "driver_count",
+        "drivers": "driver_count",
+
+        "propertytiv": "property_tiv",
+        "totalinsuredvalue": "property_tiv",
+        "tiv": "tiv",
+
+        "buildingvalue": "building_value",
+        "buildinglimit": "building_value",
+        "contentsvalue": "contents_value",
+        "businesspersonalproperty": "contents_value",
+        "bpp": "contents_value",
+
+        "squarefootage": "square_footage",
+        "sqft": "square_footage",
+        "locationcount": "location_count",
+        "locations": "location_count",
+        "unitcount": "unit_count",
+        "units": "unit_count",
+
+        "cargolimit": "cargo_limit",
+        "umbrellalimit": "umbrella_limit",
+        "excesslimit": "umbrella_limit",
+
+        "experiencemod": "experience_mod",
+        "mod": "mod",
+        "exposurechangepercent": "exposure_change_percent",
+        "cyberrevenue": "cyber_revenue",
+        "professionalrevenue": "professional_revenue",
+        "exposurebasis": "exposure_basis",
+    }
+
+    money_fields = {
+        "current_premium",
+        "expiring_premium",
+        "target_renewal_premium",
+        "limits",
+        "coverage_limit",
+        "deductible",
+        "retention",
+        "payroll",
+        "revenue",
+        "sales",
+        "receipts",
+        "property_tiv",
+        "tiv",
+        "building_value",
+        "contents_value",
+        "cargo_limit",
+        "umbrella_limit",
+        "cyber_revenue",
+        "professional_revenue",
+    }
+
+    count_fields = {
+        "employee_count",
+        "vehicle_count",
+        "driver_count",
+        "square_footage",
+        "location_count",
+        "unit_count",
+    }
+
+    def set_field(field, value):
+        if not field:
+            return
+
+        if field in money_fields:
+            value = money_value(value)
+        elif field in count_fields:
+            value = count_value(value)
+        else:
+            value = clean(value)
+
+        if value and not profile.get(field):
+            profile[field] = value
+
+    if not isinstance(rows, list):
+        return {}
+
+    for row in rows:
+        if not isinstance(row, dict):
+            continue
+
+        for key, value in row.items():
+            mapped = field_map.get(norm_key(key))
+            if mapped:
+                set_field(mapped, value)
+
+        # Some parsers store label/value pairs instead of normal columns.
+        label = (
+            row.get("label")
+            or row.get("field")
+            or row.get("metric")
+            or row.get("name")
+            or row.get("exposure_label")
+            or row.get("exposure_type")
+        )
+        value = (
+            row.get("value")
+            or row.get("amount")
+            or row.get("exposure_value")
+            or row.get("exposure")
+            or row.get("current_value")
+        )
+
+        if label and value:
+            mapped = field_map.get(norm_key(label))
+            if mapped:
+                set_field(mapped, value)
+
+        # One fully populated row is enough because exposure columns repeat on every CSV claim row.
+        if len(profile.keys()) >= 5:
+            break
+
+    basis_parts = []
+    if profile.get("payroll"):
+        basis_parts.append(f"Payroll: {profile['payroll']}")
+    if profile.get("revenue"):
+        basis_parts.append(f"Revenue: {profile['revenue']}")
+    if profile.get("vehicle_count"):
+        basis_parts.append(f"Vehicles: {profile['vehicle_count']}")
+    if profile.get("driver_count"):
+        basis_parts.append(f"Drivers: {profile['driver_count']}")
+    if profile.get("employee_count"):
+        basis_parts.append(f"Employees: {profile['employee_count']}")
+    if profile.get("property_tiv"):
+        basis_parts.append(f"Property TIV: {profile['property_tiv']}")
+
+    if basis_parts and not profile.get("exposure_basis"):
+        profile["exposure_basis"] = " | ".join(basis_parts)
+
+    return profile
+
+
 def extract_exposure_inputs_from_raw_text(raw_text: str):
     # LOSSQ_ENABLE_AUTO_EXPOSURE_EXTRACTION_V3
     # Universal exposure extractor for labeled CSV, XLSX text, PDF text, premium worksheets, and policy schedules.
@@ -653,7 +881,7 @@ def extract_exposure_inputs_from_raw_text(raw_text: str):
     profile = {}
 
     def clean(value):
-        return str(value or "").replace("\ufeff", "").replace("ï»¿", "").strip()
+        return str(value or "").replace("\ufeff", "").replace("", "").strip()
 
     def norm_key(value):
         return re.sub(r"[^a-z0-9]", "", clean(value).lower())
@@ -1526,7 +1754,10 @@ def lossq_live_repair_section_csv_upload(file_path, parsed_claims, parsed_profil
         or parsed_profile.get("raw_text")
         or ""
     )
-    exposure_inputs = extract_exposure_inputs_from_raw_text(raw_text_for_exposure)
+    exposure_inputs = {}
+    exposure_inputs.update(extract_exposure_inputs_from_raw_text(raw_text_for_exposure) or {})
+    exposure_inputs.update(extract_exposure_inputs_from_parsed_rows(parsed_claims) or {})
+
     if exposure_inputs:
         merged_profile.update({k: v for k, v in exposure_inputs.items() if v not in ("", None, [], {})})
         merged_profile["exposure_inputs"] = exposure_inputs
@@ -1775,7 +2006,10 @@ def parse_file(file_path: str, filename: str):
         raw_text_preview = result.get("raw_text_preview", "")[:50000]
 
         # LOSSQ_APPLY_EXPOSURE_INPUTS_TO_UPLOAD_PROFILE_V1
-        exposure_inputs = extract_exposure_inputs_from_raw_text(raw_text_preview)
+        exposure_inputs = {}
+        exposure_inputs.update(extract_exposure_inputs_from_raw_text(raw_text_preview) or {})
+        exposure_inputs.update(extract_exposure_inputs_from_parsed_rows(parsed_claims) or {})
+
         if exposure_inputs:
             profile.update({k: v for k, v in exposure_inputs.items() if v not in ("", None, [], {})})
             validation["exposure_inputs"] = exposure_inputs
