@@ -3,6 +3,7 @@
 from app.auth_utils import get_current_user
 
 
+# LOSSQ_PROFESSIONAL_ADVANCED_ANALYTICS_INCLUDED_V1
 # LOSSQ_PACKAGE_GATE_SAFE_BOOT_RESTORE_V1
 # Temporary safe boot version so the backend can start and login can work.
 # We will re-enable hard API blocks after confirming the correct database dependency.
@@ -51,6 +52,7 @@ PLAN_FUNCTION_LIMITS = {
             "submission_builder",
             "carrier_packet",
             "carrier_email_draft",
+            "advanced_analytics",
         ],
     },
     "agency": {

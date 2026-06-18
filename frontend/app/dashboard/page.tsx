@@ -67,6 +67,8 @@ const LOSSQ_PLAN_FUNCTION_LIMITS: Record<string, string[]> = {
     "carrier_packet",
     "carrier_email_draft",
     "advanced_analytics",
+    "charts",
+
 
   ],
   agency: [
@@ -118,6 +120,7 @@ const LOSSQ_PLAN_FUNCTION_LIMITS: Record<string, string[]> = {
 };
 
 // LOSSQ_PROFESSIONAL_CHARTS_INCLUDED_V1
+// LOSSQ_PROFESSIONAL_ADVANCED_ANALYTICS_INCLUDED_V1
 const LOSSQ_TOOL_REQUIRED_FEATURE: Record<string, string> = {
   overview: "overview",
   profiles: "account_profiles",
