@@ -1,4 +1,4 @@
-﻿import csv
+import csv
 from fastapi import HTTPException, APIRouter, UploadFile, File, Depends, Form
 from sqlalchemy.orm import Session
 from sqlalchemy import text, inspect, func
@@ -643,9 +643,7 @@ def get_db():
 
 
 def extract_exposure_inputs_from_raw_text(raw_text: str):
-    # LOSSQ_DISABLE_AUTO_EXPOSURE_EXTRACTION_V1
-    return {}
-    # LOSSQ_RAW_TEXT_EXPOSURE_INPUT_EXTRACTOR_V1
+    # LOSSQ_ENABLE_AUTO_EXPOSURE_EXTRACTION_V2
     # Fallback extractor for clean commercial loss runs with labeled exposure/premium fields.
 
     text_value = str(raw_text or "")
@@ -1344,6 +1342,20 @@ def lossq_live_repair_section_csv_upload(file_path, parsed_claims, parsed_profil
         merged_profile["claims"] = section_claims
         merged_profile["parsed_claims"] = section_claims
 
+    # LOSSQ_APPLY_EXPOSURE_INPUTS_TO_GENERIC_PARSE_RESULT_V1
+    raw_text_for_exposure = str(
+        merged_profile.get("raw_text_preview")
+        or merged_profile.get("raw_text")
+        or parsed_profile.get("raw_text_preview")
+        or parsed_profile.get("raw_text")
+        or ""
+    )
+    exposure_inputs = extract_exposure_inputs_from_raw_text(raw_text_for_exposure)
+    if exposure_inputs:
+        merged_profile.update({k: v for k, v in exposure_inputs.items() if v not in ("", None, [], {})})
+        merged_profile["exposure_inputs"] = exposure_inputs
+        merged_profile["exposures"] = exposure_inputs
+
     return parsed_claims, merged_profile
 
 
@@ -1585,6 +1597,13 @@ def parse_file(file_path: str, filename: str):
         validation = result.get("validation") or {}
 
         raw_text_preview = result.get("raw_text_preview", "")[:50000]
+
+        # LOSSQ_APPLY_EXPOSURE_INPUTS_TO_UPLOAD_PROFILE_V1
+        exposure_inputs = extract_exposure_inputs_from_raw_text(raw_text_preview)
+        if exposure_inputs:
+            profile.update({k: v for k, v in exposure_inputs.items() if v not in ("", None, [], {})})
+            validation["exposure_inputs"] = exposure_inputs
+            validation["exposures"] = exposure_inputs
         claims = lossq_repair_pdf_claims_from_raw_text(raw_text_preview, claims)
         result["claims"] = claims
         profile = extract_universal_profile_from_text(
@@ -4641,7 +4660,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         # LOSSQ_BETA_FILTER_AND_PURGE_BEFORE_SAVE_V1
         parsed_claims, lossq_beta_removed_rows = lossq_beta_filter_claim_rows(parsed_claims)
 
-    
+
     # LOSSQ_UNIVERSAL_CLAIM_NUMBER_FILTER_V1
         if lossq_beta_removed_rows:
             print("LOSSQ_BETA_FILTER_REMOVED_ROWS:", lossq_beta_removed_rows[:10])
@@ -4984,35 +5003,3 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
