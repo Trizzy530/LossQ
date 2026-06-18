@@ -2494,6 +2494,290 @@ def lossq_beta_valid_claim_number(value):
         return True
 
     return False
+
+# LOSSQ_UNIVERSAL_REAL_CLAIM_ROW_EVIDENCE_V1
+def lossq_beta_money_to_float(value):
+    try:
+        raw = str(value or "").strip()
+        if not raw:
+            return 0.0
+
+        raw = raw.replace("$", "").replace(",", "").replace(" ", "")
+        negative = raw.startswith("(") and raw.endswith(")")
+        raw = raw.strip("()")
+
+        if raw in {"", "-", "--", "N/A", "NA", "NONE", "NULL"}:
+            return 0.0
+
+        number = float(raw)
+        return -number if negative else number
+    except Exception:
+        return 0.0
+
+
+def lossq_beta_extract_money_triplet_from_text(item):
+    if not isinstance(item, dict):
+        return {}
+
+    text_parts = []
+    for key in [
+        "description",
+        "loss_description",
+        "claim_description",
+        "cause_of_loss",
+        "narrative",
+        "notes",
+        "raw_text",
+    ]:
+        value = item.get(key)
+        if value not in ("", None):
+            text_parts.append(str(value))
+
+    text_value = " ".join(text_parts)
+    if not text_value.strip():
+        return {}
+
+    # Remove dates so date numbers are not mistaken for claim dollars.
+    scrubbed = re.sub(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", " ", text_value)
+    scrubbed = re.sub(r"\b(19|20)\d{2}\b", " ", scrubbed)
+
+    line_patterns = [
+        r"general\s+liability",
+        r"liquor\s+liability",
+        r"workers?\s+comp(?:ensation)?",
+        r"business\s*owners?\s+policy",
+        r"\bbop\b",
+        r"cyber\s+liability",
+        r"commercial\s+auto",
+        r"auto\s+liability",
+        r"cargo",
+        r"property",
+        r"umbrella",
+        r"excess",
+        r"epli",
+        r"employment\s+practices",
+        r"directors?\s+and\s+officers?",
+        r"\bd\s*&\s*o\b",
+        r"professional\s+liability",
+        r"errors?\s+and\s+omissions?",
+        r"inland\s+marine",
+        r"crime",
+        r"abuse",
+        r"molestation",
+        r"garage",
+    ]
+
+    segments = []
+    for pattern in line_patterns:
+        match = re.search(pattern, scrubbed, re.IGNORECASE)
+        if match:
+            segments.append(scrubbed[match.end(): match.end() + 220])
+
+    # Fallback to full text if no known commercial line label was found.
+    if not segments:
+        segments.append(scrubbed[:260])
+
+    for segment in segments:
+        tokens = re.findall(r"\$?\(?\d[\d,]*(?:\.\d+)?\)?", segment)
+        numbers = [lossq_beta_money_to_float(token) for token in tokens]
+
+        # Keep zeros because reserve can be 0. Require at least one positive value.
+        clean_numbers = [n for n in numbers if n >= 0]
+        if len(clean_numbers) >= 3 and any(n > 0 for n in clean_numbers[:3]):
+            paid = clean_numbers[0]
+            reserve = clean_numbers[1]
+            total = clean_numbers[2]
+            if total <= 0 and (paid > 0 or reserve > 0):
+                total = paid + reserve
+            return {
+                "paid_amount": paid,
+                "reserve_amount": reserve,
+                "total_incurred": total,
+            }
+
+        if len(clean_numbers) >= 2 and any(n > 0 for n in clean_numbers[:2]):
+            paid = clean_numbers[0]
+            reserve = 0.0
+            total = clean_numbers[1]
+            if total <= 0 and paid > 0:
+                total = paid
+            return {
+                "paid_amount": paid,
+                "reserve_amount": reserve,
+                "total_incurred": total,
+            }
+
+    return {}
+
+
+def lossq_beta_get_claim_amounts(item):
+    if not isinstance(item, dict):
+        return {}
+
+    paid = lossq_beta_money_to_float(
+        item.get("paid_amount")
+        or item.get("paid")
+        or item.get("Paid")
+        or item.get("Paid Amount")
+        or item.get("Total Paid")
+    )
+    reserve = lossq_beta_money_to_float(
+        item.get("reserve_amount")
+        or item.get("reserve")
+        or item.get("Reserve")
+        or item.get("Reserve Amount")
+        or item.get("Outstanding Reserve")
+    )
+    total = lossq_beta_money_to_float(
+        item.get("total_incurred")
+        or item.get("incurred")
+        or item.get("Total Incurred")
+        or item.get("Incurred")
+        or item.get("Total")
+        or item.get("total")
+    )
+
+    if total <= 0 and (paid > 0 or reserve > 0):
+        total = paid + reserve
+
+    amounts = {
+        "paid_amount": paid,
+        "reserve_amount": reserve,
+        "total_incurred": total,
+    }
+
+    if not any(value > 0 for value in amounts.values()):
+        recovered = lossq_beta_extract_money_triplet_from_text(item)
+        if recovered:
+            amounts.update(recovered)
+
+    return amounts
+
+
+def lossq_beta_apply_recovered_amounts(item):
+    if not isinstance(item, dict):
+        return item, {}
+
+    amounts = lossq_beta_get_claim_amounts(item)
+    if not amounts or not any(value > 0 for value in amounts.values()):
+        return item, {}
+
+    changed = {}
+
+    for key in ["paid_amount", "reserve_amount", "total_incurred"]:
+        current = lossq_beta_money_to_float(item.get(key))
+        recovered = lossq_beta_money_to_float(amounts.get(key))
+
+        if current <= 0 and recovered >= 0:
+            item[key] = recovered
+            changed[key] = recovered
+
+    if changed:
+        print("LOSSQ_BETA_AMOUNT_RECOVERY_APPLIED:", {
+            "claim_number": lossq_beta_clean_text(
+                item.get("claim_number") or item.get("claim_id") or item.get("Claim Number")
+            ),
+            "policy_number": lossq_beta_clean_text(
+                item.get("policy_number") or item.get("Policy Number") or item.get("policy")
+            ),
+            **changed,
+        })
+
+    return item, changed
+
+
+def lossq_beta_has_commercial_line_context(item):
+    if not isinstance(item, dict):
+        return False
+
+    text_value = " ".join(
+        str(value or "")
+        for key, value in item.items()
+        if key in {
+            "line_of_business",
+            "claim_type",
+            "policy_type",
+            "coverage",
+            "Coverage",
+            "Line of Business",
+            "description",
+            "loss_description",
+            "claim_description",
+            "cause_of_loss",
+        }
+    ).upper()
+
+    line_terms = [
+        "GENERAL LIABILITY",
+        "LIQUOR LIABILITY",
+        "WORKERS COMPENSATION",
+        "WORKERS COMP",
+        "BUSINESSOWNERS POLICY",
+        "BUSINESS OWNERS POLICY",
+        "BOP",
+        "CYBER LIABILITY",
+        "CYBER",
+        "COMMERCIAL AUTO",
+        "AUTO LIABILITY",
+        "CARGO",
+        "PROPERTY",
+        "UMBRELLA",
+        "EXCESS",
+        "EPLI",
+        "EMPLOYMENT PRACTICES",
+        "DIRECTORS AND OFFICERS",
+        "D&O",
+        "PROFESSIONAL LIABILITY",
+        "ERRORS AND OMISSIONS",
+        "E&O",
+        "INLAND MARINE",
+        "CRIME",
+        "ABUSE",
+        "MOLESTATION",
+        "GARAGE",
+    ]
+
+    return any(term in text_value for term in line_terms)
+
+
+def lossq_beta_has_real_claim_row_evidence(item):
+    if not isinstance(item, dict):
+        return False
+
+    description = lossq_beta_clean_text(
+        item.get("description")
+        or item.get("loss_description")
+        or item.get("claim_description")
+        or item.get("cause_of_loss")
+        or ""
+    )
+
+    policy_number = (
+        item.get("policy_number")
+        or item.get("Policy Number")
+        or item.get("policy_no")
+        or item.get("policy")
+        or ""
+    )
+
+    has_policy_context = bool(policy_number and lossq_beta_valid_policy_key(policy_number))
+    has_line_context = lossq_beta_has_commercial_line_context(item)
+
+    amounts = lossq_beta_get_claim_amounts(item)
+    has_financial_context = bool(amounts and any(value > 0 for value in amounts.values()))
+
+    has_loss_narrative = bool(len(description) >= 12 and re.search(r"[A-Za-z]", description))
+
+    # Universal claim-row test:
+    # A row can survive an imperfect/generated claim number only if the row still
+    # looks like an actual claim: commercial line + financial values + policy or narrative context.
+    return bool(
+        has_line_context
+        and has_financial_context
+        and (has_policy_context or has_loss_narrative)
+    )
+
+
 def lossq_beta_filter_claim_rows(parsed_claims):
     clean_claims = []
     removed_rows = []
@@ -2503,17 +2787,23 @@ def lossq_beta_filter_claim_rows(parsed_claims):
             removed_rows.append({"reason": "not_dict", "row": str(item)[:160]})
             continue
 
+        item, recovered_amounts = lossq_beta_apply_recovered_amounts(item)
+
         claim_number = (
             item.get("claim_number")
-            or item.get("claim_no")
-            or item.get("claim")
+            or item.get("Claim Number")
             or item.get("claim_id")
+            or item.get("Claim ID")
+            or item.get("claim_no")
             or ""
         )
+
         policy_number = (
             item.get("policy_number")
-            or item.get("policy")
+            or item.get("Policy Number")
             or item.get("policy_no")
+            or item.get("Policy No")
+            or item.get("policy")
             or ""
         )
 
@@ -2524,7 +2814,10 @@ def lossq_beta_filter_claim_rows(parsed_claims):
             or ""
         )
 
-        if not lossq_beta_valid_claim_number(claim_number):
+        valid_claim_number = lossq_beta_valid_claim_number(claim_number)
+        real_claim_evidence = lossq_beta_has_real_claim_row_evidence(item)
+
+        if not valid_claim_number and not real_claim_evidence:
             removed_rows.append({
                 "reason": "invalid_claim_number",
                 "claim_number": lossq_beta_clean_text(claim_number),
@@ -2541,9 +2834,23 @@ def lossq_beta_filter_claim_rows(parsed_claims):
             })
             continue
 
+        if real_claim_evidence and not valid_claim_number:
+            print("LOSSQ_BETA_REAL_CLAIM_ROW_RESCUED:", {
+                "claim_number": lossq_beta_clean_text(claim_number),
+                "policy_number": lossq_beta_clean_text(policy_number),
+                "line_of_business": lossq_beta_clean_text(
+                    item.get("line_of_business") or item.get("claim_type") or item.get("policy_type")
+                ),
+                "paid_amount": item.get("paid_amount"),
+                "reserve_amount": item.get("reserve_amount"),
+                "total_incurred": item.get("total_incurred"),
+            })
+
         clean_claims.append(item)
 
     return clean_claims, removed_rows
+
+
 
 def lossq_beta_collect_upload_policy_keys(parsed_profile, parsed_claims, fallback_policy_number=""):
     keys = set()
