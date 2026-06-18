@@ -1,4 +1,4 @@
-﻿// LOSSQ_CORRECT_PROJECT_REDEPLOY_20260611210133
+// LOSSQ_CORRECT_PROJECT_REDEPLOY_20260611210133
 "use client";
 
 // LOSSQ_MANUAL_EXPOSURE_INPUTS_FRONTEND_REDEPLOY_V2
@@ -2732,16 +2732,18 @@ function normalizeProfileName(item: any) {
     return `Your ${plan} subscription is currently ${status}. Please update billing to continue using the dashboard.`;
   }
 
+  // LOSSQ_MERGE_SERVER_AND_LOCAL_PLAN_FEATURES_V1
   function getDashboardPlanFeatures() {
     const serverFeatures = Array.isArray(billingStatus?.features)
-      ? billingStatus.features
+      ? billingStatus.features.map((item: any) => String(item))
       : [];
 
-    if (serverFeatures.length > 0) {
-      return serverFeatures.map((item: any) => String(item));
-    }
+    const localFeatures =
+      LOSSQ_PLAN_FUNCTION_LIMITS[getDashboardPlan()] ||
+      LOSSQ_PLAN_FUNCTION_LIMITS.free ||
+      [];
 
-    return LOSSQ_PLAN_FUNCTION_LIMITS[getDashboardPlan()] || LOSSQ_PLAN_FUNCTION_LIMITS.free;
+    return Array.from(new Set([...localFeatures, ...serverFeatures]));
   }
 
   function canUseFeature(feature: string) {
