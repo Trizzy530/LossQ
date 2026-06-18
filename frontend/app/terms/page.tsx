@@ -1,102 +1,94 @@
 import LegalPage from "../legal/LegalPage";
 
 const sections = [
-    {
-      heading: 'Acceptance of Terms',
-      body: [
-        'By accessing or using LossQ, you agree to these Terms and Conditions. If you do not agree, do not use the platform.',
-        'LossQ may update these Terms from time to time. Continued use of the platform after updates means you accept the revised Terms.',
-      ],
-    },
-    {
-      heading: 'Use of the Platform',
-      body: [
-        'LossQ provides software tools for loss run organization, claims analysis, underwriting support, renewal intelligence, document processing, reporting, and related workflow automation.',
-        'You are responsible for ensuring that all information uploaded to LossQ is accurate, lawful, and authorized for use.',
-      ],
-    },
-    {
-      heading: 'Accounts and Security',
-      body: [
-        'You are responsible for maintaining the confidentiality of your account credentials and for all activity under your account.',
-        'You agree to notify LossQ promptly if you believe your account has been compromised or used without authorization.',
-      ],
-    },
-    {
-      heading: 'Customer Data',
-      body: [
-        'You retain ownership of the business records, loss runs, claims data, policy information, documents, and other materials you upload to LossQ.',
-        'You grant LossQ permission to process Customer Data only as needed to provide, maintain, secure, improve, and support the platform.',
-      ],
-    },
-    {
-      heading: 'Subscriptions and Payment',
-      body: [
-        'Paid features may require an active subscription. Fees, billing cycles, usage limits, and plan features are shown at checkout or in your account settings.',
-        'Failure to pay may result in account restriction, suspension, or cancellation.',
-      ],
-    },
-    {
-      heading: 'Acceptable Use',
-      body: [
-        'You may not use LossQ to upload unlawful data, violate third-party rights, interfere with platform operations, reverse engineer the service, or attempt unauthorized access.',
-        'You may not use LossQ outputs as the sole basis for legal, insurance, underwriting, claim, coverage, or financial decisions.',
-      ],
-    },
-    {
-      heading: 'AI and Automation',
-      body: [
-        'LossQ may use automated extraction, OCR, AI-assisted classification, scoring, and summarization tools.',
-        'AI-generated results may be incomplete or inaccurate and must be reviewed by a qualified professional before reliance.',
-      ],
-    },
-    {
-      heading: 'No Insurance, Legal, or Financial Advice',
-      body: [
-        'LossQ is a technology platform. It does not provide legal advice, insurance advice, underwriting authority, coverage determinations, claim adjustment, or binding insurance quotes.',
-        'You are responsible for independent review and professional judgment.',
-      ],
-    },
-    {
-      heading: 'Intellectual Property',
-      body: [
-        'LossQ and its software, design, workflows, branding, reports, and platform features are owned by LossQ or its licensors.',
-        'You may not copy, resell, reproduce, or create derivative products from LossQ without written permission.',
-      ],
-    },
-    {
-      heading: 'Termination',
-      body: [
-        'LossQ may suspend or terminate access if you violate these Terms, misuse the platform, create security risk, or fail to pay required fees.',
-        'You may stop using LossQ at any time.',
-      ],
-    },
-    {
-      heading: 'Limitation of Liability',
-      body: [
-        'To the fullest extent permitted by law, LossQ is not liable for indirect, incidental, special, consequential, or punitive damages, including lost profits, lost business, or lost data.',
-        "LossQ's total liability is limited to the amount paid by you for the service during the three months before the event giving rise to the claim.",
-      ],
-    },
-    {
-      heading: 'Governing Law',
-      body: [
-        'These Terms are governed by the laws of the State of North Carolina, without regard to conflict-of-law principles.',
-      ],
-    },
-    {
-      heading: 'Contact',
-      body: [
-        'Questions about these Terms may be sent to support@lossq.com.',
-      ],
-    },
-  ];
+  {
+    heading: "Acceptance of Terms",
+    body: [
+      "By accessing or using LossQ, you agree to these Terms of Service and any policies referenced in the LossQ Legal Center.",
+      "If you use LossQ on behalf of an agency, brokerage, carrier, employer, or other organization, you represent that you are authorized to bind that organization to these terms.",
+    ],
+  },
+  {
+    heading: "Platform Purpose",
+    body: [
+      "LossQ provides software tools for organizing loss runs, policy information, claims data, underwriting support, renewal preparation, reporting, analytics, and workflow automation.",
+      "LossQ is a technology platform only. It does not act as an insurance carrier, broker, agent, adjuster, attorney, actuary, or underwriting authority.",
+    ],
+  },
+  {
+    heading: "User Responsibilities",
+    body: [
+      "You are responsible for the accuracy, legality, authorization, and completeness of all information, documents, loss runs, policy data, claim data, notes, and materials uploaded or entered into LossQ.",
+      "You must only upload documents and data that you have the right to process, review, analyze, store, and use through LossQ.",
+      "You are responsible for reviewing all extracted data, AI-assisted outputs, reports, recommendations, scores, claim stories, safety recommendations, and submission materials before relying on or sharing them.",
+    ],
+  },
+  {
+    heading: "No Professional Advice",
+    body: [
+      "LossQ does not provide legal advice, insurance coverage advice, underwriting authority, actuarial advice, financial advice, claim adjustment, risk acceptance, or carrier placement decisions.",
+      "Outputs generated by LossQ are informational and workflow-support tools only. All final decisions remain the responsibility of qualified users and their organizations.",
+    ],
+  },
+  {
+    heading: "AI, OCR, and Automation",
+    body: [
+      "LossQ may use OCR, extraction logic, machine learning, AI-assisted workflows, scoring models, and automation to generate summaries, recommendations, reports, classifications, and risk indicators.",
+      "AI and OCR outputs may be incomplete, inaccurate, outdated, misclassified, or affected by document quality, format, missing information, user input, or carrier-specific wording.",
+      "You must independently verify claim amounts, policy numbers, dates, coverage lines, status, reserves, litigation indicators, and recommendations against source documents and professional judgment.",
+    ],
+  },
+  {
+    heading: "Subscription, Billing, and Access",
+    body: [
+      "Certain features require a paid subscription or eligible package. Feature availability may vary by plan and may change over time.",
+      "Subscriptions are billed through the payment processor made available by LossQ. You are responsible for maintaining accurate billing information and authorized payment methods.",
+      "LossQ may suspend or limit access for failed payments, disputed charges, misuse, unauthorized access, security concerns, or violation of these terms.",
+    ],
+  },
+  {
+    heading: "Customer Data",
+    body: [
+      "Customer data may include business information, loss runs, claims, policy data, carrier information, reports, notes, and workflow activity.",
+      "LossQ does not sell customer uploaded documents or claim data to advertisers.",
+      "You retain responsibility for data you upload and for ensuring your use of LossQ complies with applicable contracts, privacy obligations, confidentiality duties, and insurance-related requirements.",
+    ],
+  },
+  {
+    heading: "Acceptable Use",
+    body: [
+      "You may not use LossQ to upload unlawful data, infringe third-party rights, bypass security, reverse engineer the platform, overload the service, scrape data, misuse credentials, or interfere with other users.",
+      "You may not represent AI-generated outputs as independently verified facts unless you have reviewed and confirmed them.",
+    ],
+  },
+  {
+    heading: "Reports and Exports",
+    body: [
+      "Reports, carrier packets, claim stories, renewal summaries, safety recommendations, and exported materials are generated from available data and should be reviewed before use.",
+      "LossQ does not guarantee carrier acceptance, renewal, quote availability, pricing, coverage terms, claim outcome, reserve adequacy, or underwriting decision.",
+    ],
+  },
+  {
+    heading: "Limitation of Liability",
+    body: [
+      "To the maximum extent permitted by law, LossQ is not liable for indirect, incidental, consequential, special, punitive, or lost-profit damages arising from use of the platform.",
+      "LossQ is not responsible for decisions made based on unverified outputs, inaccurate uploads, incomplete source documents, carrier actions, underwriting decisions, claim outcomes, or third-party systems.",
+    ],
+  },
+  {
+    heading: "Changes to the Service",
+    body: [
+      "LossQ may update, improve, modify, suspend, or discontinue features, models, workflows, plans, pricing, or integrations at any time.",
+      "Material legal policy updates may be posted in the Legal Center or otherwise communicated through the platform.",
+    ],
+  },
+];
 
 export default function Page() {
   return (
     <LegalPage
-      title='Terms and Conditions'
-      subtitle='These Terms govern your access to and use of LossQ.'
+      title="Terms of Service"
+      subtitle="These terms govern access to and use of LossQ, including uploads, reports, AI-assisted analysis, billing, and workflow tools."
       sections={sections}
     />
   );

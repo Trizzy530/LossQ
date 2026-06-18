@@ -1,8 +1,9 @@
 const links = [
-  { href: "/terms", label: "Terms and Conditions" },
+  { href: "/terms", label: "Terms of Service" },
   { href: "/privacy", label: "Privacy Policy" },
   { href: "/data-security", label: "Data Security Policy" },
   { href: "/refund-policy", label: "Refund and Cancellation Policy" },
+  { href: "/cancellation-policy", label: "Cancellation Policy" },
   { href: "/ai-disclaimer", label: "AI Disclaimer" },
   { href: "/insurance-disclaimer", label: "Insurance Disclaimer" },
 ];
@@ -19,20 +20,24 @@ export default function LegalIndexPage() {
           <p className="text-sm font-semibold text-cyan-300">LossQ Legal Center</p>
           <h1 className="mt-3 text-4xl font-bold tracking-tight">Legal Policies</h1>
           <p className="mt-4 text-slate-300">
-            Review LossQ's terms, privacy, security, refund, AI, and insurance disclaimers.
+            Review LossQ's terms, privacy, security, billing, cancellation, AI, and insurance disclaimers.
           </p>
-        </div>
 
-        <div className="mt-8 grid gap-4">
-          {links.map((link) => (
-            <a
-              key={link.href}
-              href={link.href}
-              className="rounded-3xl border border-white/10 bg-white/[0.035] p-6 font-semibold hover:border-cyan-300/40 hover:bg-white/[0.06]"
-            >
-              {link.label}
-            </a>
-          ))}
+          <div className="mt-8 grid gap-3">
+            {links.map((link) => (
+              <a
+                key={link.href}
+                href={link.href}
+                className="rounded-2xl border border-white/10 bg-slate-950/50 px-5 py-4 text-slate-100 hover:border-cyan-300/40 hover:bg-cyan-400/10"
+              >
+                {link.label}
+              </a>
+            ))}
+          </div>
+
+          <div className="mt-8 rounded-3xl border border-amber-400/20 bg-amber-400/10 p-5 text-sm text-amber-100">
+            These materials are starter legal templates for LossQ and should be reviewed by qualified legal counsel before public launch or enterprise use.
+          </div>
         </div>
       </section>
     </main>
