@@ -2691,7 +2691,7 @@ def lossq_beta_valid_claim_number(value):
     # LOSSQ_REJECT_POLICY_FRAGMENT_AS_CLAIM_V2
     # Reject policy schedule fragments that look like line + year + policy suffix.
     # Rejected: GL-2025, CY-2025, BOP-2025, GL-2025-3101-GENERAL.
-    # Accepted: HSBT-GL-250012, HSBT-CY-260005, BPDLC-ABUSE-250033.
+    # Accepted: carrier/account-prefixed commercial claim IDs with line and numeric claim segments.
     line_tokens = (
         "GL", "WC", "AUTO", "AU", "PROP", "PR", "CP", "BOP", "CY", "CYBER",
         "UMB", "EXCESS", "EPLI", "EPL", "DO", "DNO", "EO", "PL", "IM",
