@@ -1347,6 +1347,232 @@ def lossq_live_repair_section_csv_upload(file_path, parsed_claims, parsed_profil
     return parsed_claims, merged_profile
 
 
+
+# LOSSQ_PDF_CLAIM_DETAIL_NUMBER_REPAIR_V1
+def lossq_pdf_clean_text(value):
+    return re.sub(r"\s+", " ", str(value or "")).strip()
+
+
+def lossq_pdf_claim_number_is_policy_derived(claim_number, policy_number="", line_of_business=""):
+    claim = lossq_beta_norm_key(claim_number)
+    policy = lossq_beta_norm_key(policy_number)
+
+    if not claim:
+        return True
+
+    if policy and claim == policy:
+        return True
+
+    claim_compact = re.sub(r"[^A-Z0-9]", "", claim)
+    policy_compact = re.sub(r"[^A-Z0-9]", "", policy)
+
+    if policy_compact and (claim_compact in policy_compact or policy_compact in claim_compact):
+        return True
+
+    line_tokens = (
+        "GL", "WC", "AUTO", "AU", "PROP", "PR", "CP", "BOP", "CY", "CYBER",
+        "UMB", "EXCESS", "EPLI", "EPL", "DO", "DNO", "EO", "PL", "IM",
+        "CRIME", "FID", "FIDUCIARY", "CARGO", "MTC", "LIAB", "ABUSE",
+        "MOLESTATION", "GAR", "GARAGE"
+    )
+
+    # Generated/policy-derived examples:
+    # CP-2025, UMB-2025, GL-2025-4701-GENERAL, WC-2025-4703-WORKERS.
+    generated_pattern = r"^(" + "|".join(line_tokens) + r")[-_ ]?(19|20)\d{2}([-_ ][A-Z0-9]+){0,4}$"
+    if re.match(generated_pattern, claim):
+        return True
+
+    return False
+
+
+def lossq_pdf_extract_claim_detail_rows_from_text(raw_text):
+    text_value = str(raw_text or "")
+    if not text_value.strip():
+        return []
+
+    upper_text = text_value.upper()
+    start_index = upper_text.find("CLAIM DETAIL")
+    if start_index >= 0:
+        text_value = text_value[start_index:]
+
+    end_index = text_value.upper().find("UNDERWRITING NOTES")
+    if end_index >= 0:
+        claim_section = text_value[:end_index]
+    else:
+        claim_section = text_value
+
+    claim_id_pattern = r"[A-Z0-9]{2,}(?:[-_][A-Z0-9]{2,}){1,6}"
+    policy_id_pattern = r"[A-Z0-9]{2,}(?:[-_][A-Z0-9]{2,}){2,8}"
+
+    row_start_pattern = re.compile(
+        rf"(?m)^\s*(?P<claim>{claim_id_pattern})\s+(?P<policy>{policy_id_pattern})\s+"
+    )
+
+    starts = list(row_start_pattern.finditer(claim_section))
+    if not starts:
+        return []
+
+    money_pattern = r"\$?\(?\d[\d,]*(?:\.\d+)?\)?"
+    date_pattern = r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"
+
+    claims = []
+
+    for index, match in enumerate(starts):
+        next_start = starts[index + 1].start() if index + 1 < len(starts) else len(claim_section)
+
+        claim_number = lossq_pdf_clean_text(match.group("claim"))
+        policy_number = lossq_pdf_clean_text(match.group("policy"))
+        rest = claim_section[match.end():next_start]
+        rest = lossq_pdf_clean_text(rest)
+
+        if not claim_number or not policy_number:
+            continue
+
+        status_match = re.search(
+            rf"(?P<line>.*?)(?P<status>Open|Closed|Reopened|Pending|Denied|Reported)\s+(?P<loss>{date_pattern})\s+(?P<reported>{date_pattern})(?:\s+(?P<closed>{date_pattern}))?\s+(?P<paid>{money_pattern})\s+(?P<reserve>{money_pattern})\s+(?P<total>{money_pattern})\s*(?P<description>.*)$",
+            rest,
+            re.IGNORECASE | re.DOTALL,
+        )
+
+        if not status_match:
+            continue
+
+        line_of_business = lossq_pdf_clean_text(status_match.group("line"))
+        status = lossq_pdf_clean_text(status_match.group("status")).title()
+        loss_date = lossq_pdf_clean_text(status_match.group("loss"))
+        reported_date = lossq_pdf_clean_text(status_match.group("reported"))
+        closed_date = lossq_pdf_clean_text(status_match.group("closed"))
+
+        paid = lossq_beta_money_to_float(status_match.group("paid"))
+        reserve = lossq_beta_money_to_float(status_match.group("reserve"))
+        total = lossq_beta_money_to_float(status_match.group("total"))
+
+        if total <= 0 and (paid > 0 or reserve > 0):
+            total = paid + reserve
+
+        description = lossq_pdf_clean_text(status_match.group("description"))
+
+        litigation = False
+        litigation_match = re.search(r"\b(Yes|No)\b", description, re.IGNORECASE)
+        if litigation_match:
+            litigation = litigation_match.group(1).lower() == "yes"
+            description = lossq_pdf_clean_text(description[:litigation_match.start()])
+
+        if not line_of_business:
+            continue
+
+        if total <= 0 and paid <= 0 and reserve <= 0:
+            continue
+
+        claims.append({
+            "claim_number": claim_number,
+            "claim_id": claim_number,
+            "policy_number": policy_number,
+            "line_of_business": line_of_business,
+            "claim_type": line_of_business,
+            "policy_type": line_of_business,
+            "status": status,
+            "date_of_loss": loss_date,
+            "loss_date": loss_date,
+            "date_reported": reported_date,
+            "reported_date": reported_date,
+            "date_closed": closed_date,
+            "closed_date": closed_date,
+            "paid": paid,
+            "paid_amount": paid,
+            "reserve": reserve,
+            "reserve_amount": reserve,
+            "total_incurred": total,
+            "total_amount": total,
+            "description": description,
+            "loss_description": description,
+            "litigation": litigation,
+        })
+
+    return claims
+
+
+def lossq_pdf_amounts_close(left, right):
+    try:
+        return abs(float(left or 0) - float(right or 0)) <= 2.0
+    except Exception:
+        return False
+
+
+def lossq_repair_pdf_claims_from_raw_text(raw_text, parsed_claims):
+    raw_claims = lossq_pdf_extract_claim_detail_rows_from_text(raw_text)
+    if not raw_claims:
+        return parsed_claims
+
+    existing_claims = [dict(item) for item in (parsed_claims or []) if isinstance(item, dict)]
+    repaired = []
+    used_existing = set()
+
+    for raw_claim in raw_claims:
+        match_index = None
+
+        raw_policy = lossq_beta_norm_key(raw_claim.get("policy_number"))
+        raw_paid = lossq_beta_money_to_float(raw_claim.get("paid_amount"))
+        raw_reserve = lossq_beta_money_to_float(raw_claim.get("reserve_amount"))
+        raw_total = lossq_beta_money_to_float(raw_claim.get("total_incurred"))
+
+        for idx, existing in enumerate(existing_claims):
+            if idx in used_existing:
+                continue
+
+            existing_policy = lossq_beta_norm_key(existing.get("policy_number"))
+            existing_paid = lossq_beta_money_to_float(existing.get("paid_amount"))
+            existing_reserve = lossq_beta_money_to_float(existing.get("reserve_amount"))
+            existing_total = lossq_beta_money_to_float(existing.get("total_incurred"))
+
+            same_policy = bool(raw_policy and raw_policy == existing_policy)
+            same_amounts = (
+                lossq_pdf_amounts_close(raw_paid, existing_paid)
+                and lossq_pdf_amounts_close(raw_reserve, existing_reserve)
+                and lossq_pdf_amounts_close(raw_total, existing_total)
+            )
+
+            if same_policy and same_amounts:
+                match_index = idx
+                break
+
+        if match_index is not None:
+            used_existing.add(match_index)
+            merged = dict(existing_claims[match_index])
+
+            # Trust the actual row-start claim number from the PDF claim detail table.
+            for key, value in raw_claim.items():
+                if value not in ("", None, [], {}):
+                    merged[key] = value
+
+            repaired.append(merged)
+        else:
+            repaired.append(raw_claim)
+
+    # Keep any unmatched existing claim only if it does not look generated/policy-derived.
+    for idx, existing in enumerate(existing_claims):
+        if idx in used_existing:
+            continue
+
+        if not lossq_pdf_claim_number_is_policy_derived(
+            existing.get("claim_number"),
+            existing.get("policy_number"),
+            existing.get("line_of_business") or existing.get("claim_type"),
+        ):
+            repaired.append(existing)
+
+    if repaired and len(repaired) >= len(existing_claims):
+        print("LOSSQ_PDF_CLAIM_NUMBER_REPAIR_APPLIED:", {
+            "before": len(existing_claims),
+            "after": len(repaired),
+            "claim_numbers": [claim.get("claim_number") for claim in repaired],
+            "total_incurred": sum(lossq_beta_money_to_float(claim.get("total_incurred")) for claim in repaired),
+        })
+        return repaired
+
+    return parsed_claims
+
+
 def parse_file(file_path: str, filename: str):
     lower_name = str(filename or "").lower()
 
@@ -1359,6 +1585,8 @@ def parse_file(file_path: str, filename: str):
         validation = result.get("validation") or {}
 
         raw_text_preview = result.get("raw_text_preview", "")[:50000]
+        claims = lossq_repair_pdf_claims_from_raw_text(raw_text_preview, claims)
+        result["claims"] = claims
         profile = extract_universal_profile_from_text(
             raw_text=raw_text_preview,
             existing_profile=profile,
