@@ -39,10 +39,6 @@ export default function LegalPage({
               </section>
             ))}
           </div>
-
-          <div className="mt-8 rounded-3xl border border-amber-400/20 bg-amber-400/10 p-5 text-sm text-amber-100">
-            These materials are starter legal templates for LossQ and should be reviewed by qualified legal counsel before public launch or enterprise use.
-          </div>
         </div>
       </section>
     </main>
