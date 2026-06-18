@@ -313,6 +313,198 @@ def get_plan_limits(plan):
     return PLAN_FUNCTION_LIMITS.get(normalized, PLAN_FUNCTION_LIMITS["free"])
 
 
+
+
+# LOSSQ_STRIPE_BILLING_AUTOMATION_HELPERS_V1
+def normalize_billing_plan(plan: Any) -> str:
+    clean = str(plan or "").strip().lower().replace("-", "_").replace(" ", "_")
+
+    if clean in {"pro"}:
+        return "professional"
+    if clean in {"enterprise"}:
+        return "agency"
+    if clean in {"founder", "founding", "founding_agency"}:
+        return "founding_agency"
+
+    if clean in {"starter", "professional", "agency", "founding_agency"}:
+        return clean
+
+    return "professional"
+
+
+def stripe_price_env_keys_for_plan(plan: str):
+    normalized = normalize_billing_plan(plan)
+
+    if normalized == "starter":
+        return [
+            "STRIPE_STARTER_PRICE_ID",
+            "STRIPE_PRICE_STARTER",
+            "STRIPE_STARTER_PRICE",
+            "STARTER_PRICE_ID",
+            "LOSSQ_STRIPE_STARTER_PRICE_ID",
+        ]
+
+    if normalized == "professional":
+        return [
+            "STRIPE_PRO_PRICE_ID",
+            "STRIPE_PROFESSIONAL_PRICE_ID",
+            "STRIPE_PRICE_PROFESSIONAL",
+            "STRIPE_PROFESSIONAL_PRICE",
+            "PROFESSIONAL_PRICE_ID",
+            "LOSSQ_STRIPE_PROFESSIONAL_PRICE_ID",
+        ]
+
+    if normalized == "agency":
+        return [
+            "STRIPE_AGENCY_PRICE_ID",
+            "STRIPE_PRICE_AGENCY",
+            "STRIPE_AGENCY_PRICE",
+            "AGENCY_PRICE_ID",
+            "LOSSQ_STRIPE_AGENCY_PRICE_ID",
+        ]
+
+    if normalized == "founding_agency":
+        return [
+            "STRIPE_FOUNDING_PRICE_ID",
+            "STRIPE_FOUNDING_AGENCY_PRICE_ID",
+            "STRIPE_PRICE_FOUNDING_AGENCY",
+            "STRIPE_FOUNDING_PRICE",
+            "FOUNDING_AGENCY_PRICE_ID",
+            "LOSSQ_STRIPE_FOUNDING_AGENCY_PRICE_ID",
+        ]
+
+    return []
+
+
+def get_stripe_price_id_for_plan(plan: str) -> str:
+    normalized = normalize_billing_plan(plan)
+
+    existing = PLAN_TO_PRICE.get(normalized)
+    if existing:
+        return existing
+
+    for key in stripe_price_env_keys_for_plan(normalized):
+        value = os.getenv(key, "").strip()
+        if value:
+            return value
+
+    return ""
+
+
+def plan_data_from_plan(plan: str) -> Dict[str, Any]:
+    normalized = normalize_billing_plan(plan)
+    limits = PLAN_FUNCTION_LIMITS.get(normalized, PLAN_FUNCTION_LIMITS["professional"])
+
+    return {
+        "plan": normalized,
+        "label": limits.get("label", normalized.title()),
+        "user_limit": limits.get("user_limit", 5),
+        "upload_limit": limits.get("upload_limit", -1),
+    }
+
+
+def plan_data_from_price_or_plan(price_id: str = "", plan: str = "") -> Dict[str, Any]:
+    if price_id and price_id in PRICE_TO_PLAN:
+        return PRICE_TO_PLAN[price_id]
+
+    normalized = normalize_billing_plan(plan)
+    expected_price = get_stripe_price_id_for_plan(normalized)
+
+    if price_id and expected_price and price_id == expected_price:
+        return plan_data_from_plan(normalized)
+
+    if normalized:
+        return plan_data_from_plan(normalized)
+
+    raise HTTPException(status_code=400, detail="Unable to determine billing plan from Stripe event.")
+
+
+def extract_price_id_from_subscription_object(obj: Dict[str, Any]) -> str:
+    try:
+        return (
+            obj.get("items", {})
+            .get("data", [{}])[0]
+            .get("price", {})
+            .get("id", "")
+        ) or ""
+    except Exception:
+        return ""
+
+
+def find_org_for_stripe_payload(db: Session, obj: Dict[str, Any], metadata: Optional[Dict[str, Any]] = None):
+    metadata = metadata or {}
+    org = None
+
+    org_id = metadata.get("organization_id") or obj.get("metadata", {}).get("organization_id")
+
+    if org_id:
+        try:
+            org = db.query(Organization).filter(Organization.id == int(org_id)).first()
+        except Exception:
+            org = None
+
+    subscription_id = obj.get("subscription") or obj.get("id")
+    customer_id = obj.get("customer")
+
+    if not org and subscription_id:
+        try:
+            org = db.query(Organization).filter(Organization.stripe_subscription_id == subscription_id).first()
+        except Exception:
+            org = None
+
+    if not org and customer_id:
+        try:
+            org = db.query(Organization).filter(Organization.stripe_customer_id == customer_id).first()
+        except Exception:
+            org = None
+
+    return org
+
+
+def apply_stripe_plan_to_org(
+    db: Session,
+    org: Organization,
+    price_id: str = "",
+    plan: str = "",
+    status: str = "active",
+    subscription_id: str = "",
+    customer_id: str = "",
+    current_period_end: Any = None,
+):
+    plan_data = plan_data_from_price_or_plan(price_id=price_id, plan=plan)
+
+    org.plan = plan_data["plan"]
+    org.subscription_status = status or "active"
+
+    if price_id:
+        org.stripe_price_id = price_id
+    if subscription_id:
+        org.stripe_subscription_id = subscription_id
+    if customer_id:
+        org.stripe_customer_id = customer_id
+
+    org.user_limit = plan_data.get("user_limit", 5)
+    org.upload_limit = plan_data.get("upload_limit", -1)
+
+    converted_period_end = to_datetime_from_unix(current_period_end)
+    if converted_period_end:
+        org.current_period_end = converted_period_end
+
+    db.commit()
+    db.refresh(org)
+    return org
+
+
+def downgrade_org_for_subscription_end(db: Session, org: Organization, status: str = "cancelled"):
+    org.plan = "free"
+    org.subscription_status = status or "cancelled"
+    org.user_limit = 1
+    org.upload_limit = 0
+    db.commit()
+    db.refresh(org)
+    return org
+
+
 def serialize_org_billing(org: Organization):
     return {
         "organization_id": org.id,
@@ -527,14 +719,12 @@ def create_portal_session(
 
 @router.post("/webhook")
 async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
+    # LOSSQ_STRIPE_WEBHOOK_AUTOMATION_V2
     ensure_billing_columns(db)
 
     payload = await request.body()
     signature = request.headers.get("stripe-signature")
 
-    # Verify Stripe signature first, then parse the raw JSON payload into
-    # a normal Python dict. This avoids StripeObject/Event parsing crashes
-    # such as AttributeError: get or KeyError: 0.
     if STRIPE_WEBHOOK_SECRET:
         try:
             stripe.Webhook.construct_event(payload, signature, STRIPE_WEBHOOK_SECRET)
@@ -546,92 +736,145 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     except Exception as exc:
         raise HTTPException(status_code=400, detail=f"Invalid webhook payload: {exc}")
 
-    event_type = event.get("type")
+    event_type = event.get("type", "")
     obj = event.get("data", {}).get("object", {}) or {}
 
-    if event_type == "checkout.session.completed":
-        metadata = obj.get("metadata", {}) or {}
-        org_id = metadata.get("organization_id")
-        price_id = metadata.get("price_id")
-        subscription_id = obj.get("subscription")
-        customer_id = obj.get("customer")
+    org = None
+    subscription_id = ""
+    customer_id = ""
+    price_id = ""
+    plan = ""
+    status = ""
 
-        # Do not call subscription.get() here. Stripe SDK returns StripeObject,
-        # which can crash with AttributeError: get on some versions.
-        # The checkout session already carries the price_id in metadata because
-        # create_checkout_session stores it there. Subscription updated events
-        # can later fill current_period_end.
-        if org_id and price_id:
-            org = db.query(Organization).filter(Organization.id == int(org_id)).first()
+    try:
+        if event_type == "checkout.session.completed":
+            metadata = obj.get("metadata", {}) or {}
+
+            org = find_org_for_stripe_payload(db, obj, metadata)
+            subscription_id = obj.get("subscription") or ""
+            customer_id = obj.get("customer") or ""
+            price_id = metadata.get("price_id") or ""
+            plan = metadata.get("plan") or ""
+            status = "active"
+
+            # If checkout metadata is missing price_id, retrieve subscription from Stripe.
+            if subscription_id and not price_id and STRIPE_SECRET_KEY:
+                try:
+                    subscription = stripe.Subscription.retrieve(subscription_id)
+                    subscription_dict = dict(subscription)
+                    price_id = extract_price_id_from_subscription_object(subscription_dict)
+                    plan = plan or subscription_dict.get("metadata", {}).get("plan", "")
+                except Exception:
+                    pass
+
             if org:
-                apply_plan_to_org(
+                org = apply_stripe_plan_to_org(
                     db,
                     org,
                     price_id=price_id,
-                    status="active",
-                    subscription_id=subscription_id or "",
-                    customer_id=customer_id or "",
+                    plan=plan,
+                    status=status,
+                    subscription_id=subscription_id,
+                    customer_id=customer_id,
                     current_period_end=None,
                 )
 
-    if event_type in {"customer.subscription.created", "customer.subscription.updated"}:
-        subscription_id = obj.get("id")
-        customer_id = obj.get("customer")
-        status = obj.get("status", "inactive")
-        price_id = obj.get("items", {}).get("data", [{}])[0].get("price", {}).get("id")
-        org_id = obj.get("metadata", {}).get("organization_id")
+        elif event_type in {"customer.subscription.created", "customer.subscription.updated"}:
+            metadata = obj.get("metadata", {}) or {}
 
-        org = None
-        if org_id:
-            org = db.query(Organization).filter(Organization.id == int(org_id)).first()
-        if not org and customer_id:
-            org = db.query(Organization).filter(Organization.stripe_customer_id == customer_id).first()
+            org = find_org_for_stripe_payload(db, obj, metadata)
+            subscription_id = obj.get("id") or ""
+            customer_id = obj.get("customer") or ""
+            price_id = extract_price_id_from_subscription_object(obj)
+            plan = metadata.get("plan") or ""
+            status = obj.get("status") or "inactive"
 
-        if org and price_id:
-            apply_plan_to_org(
+            if org and price_id:
+                org = apply_stripe_plan_to_org(
+                    db,
+                    org,
+                    price_id=price_id,
+                    plan=plan,
+                    status=status,
+                    subscription_id=subscription_id,
+                    customer_id=customer_id,
+                    current_period_end=obj.get("current_period_end"),
+                )
+
+        elif event_type in {"customer.subscription.deleted", "customer.subscription.paused"}:
+            metadata = obj.get("metadata", {}) or {}
+
+            org = find_org_for_stripe_payload(db, obj, metadata)
+            subscription_id = obj.get("id") or ""
+            customer_id = obj.get("customer") or ""
+            status = obj.get("status") or "cancelled"
+
+            if org:
+                org = downgrade_org_for_subscription_end(db, org, status=status)
+
+        elif event_type == "invoice.payment_succeeded":
+            subscription_id = obj.get("subscription") or ""
+            customer_id = obj.get("customer") or ""
+
+            org = find_org_for_stripe_payload(
                 db,
-                org,
-                price_id=price_id,
-                status=status,
-                subscription_id=subscription_id,
-                customer_id=customer_id,
-                current_period_end=obj.get("current_period_end"),
+                {
+                    "subscription": subscription_id,
+                    "customer": customer_id,
+                },
+                {},
             )
 
-    if event_type in {"customer.subscription.deleted", "customer.subscription.paused"}:
-        subscription_id = obj.get("id")
-        customer_id = obj.get("customer")
-        org = None
+            if org:
+                org.subscription_status = "active"
+                db.commit()
+                db.refresh(org)
 
-        if subscription_id:
-            org = db.query(Organization).filter(Organization.stripe_subscription_id == subscription_id).first()
-        if not org and customer_id:
-            org = db.query(Organization).filter(Organization.stripe_customer_id == customer_id).first()
+        elif event_type == "invoice.payment_failed":
+            subscription_id = obj.get("subscription") or ""
+            customer_id = obj.get("customer") or ""
 
-        if org:
-            org.subscription_status = obj.get("status", "inactive")
-            org.plan = "free"
-            org.user_limit = 1
-            org.upload_limit = 0
-            db.commit()
+            org = find_org_for_stripe_payload(
+                db,
+                {
+                    "subscription": subscription_id,
+                    "customer": customer_id,
+                },
+                {},
+            )
 
-    record_audit_event(
-        db,
-        current_user={"organization_id": getattr(org, "id", None)} if "org" in locals() and org else {},
-        action="billing_webhook_received",
-        resource_type="billing",
-        resource_id=str(event_type or ""),
-        details={
-            "event": "billing_webhook_received",
-            "stripe_event_type": event_type,
-            "stripe_event_id": event.get("id") if isinstance(event, dict) else "",
-            "subscription_id": subscription_id if "subscription_id" in locals() else "",
-            "organization_id": getattr(org, "id", None) if "org" in locals() and org else None,
-        },
-        request=request,
-    )
+            if org:
+                org.subscription_status = "past_due"
+                db.commit()
+                db.refresh(org)
+
+        record_audit_event(
+            db,
+            current_user={"organization_id": getattr(org, "id", None)} if org else {},
+            action="billing_webhook_received",
+            resource_type="billing",
+            resource_id=str(event_type or ""),
+            details={
+                "event": "billing_webhook_received",
+                "stripe_event_type": event_type,
+                "stripe_event_id": event.get("id") if isinstance(event, dict) else "",
+                "subscription_id": subscription_id,
+                "customer_id": customer_id,
+                "price_id": price_id,
+                "plan": plan,
+                "status": status,
+                "organization_id": getattr(org, "id", None) if org else None,
+            },
+            request=request,
+        )
+
+    except HTTPException:
+        raise
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=f"Billing webhook processing failed: {exc}")
 
     return {"received": True}
+
 
 # LOSSQ_BILLING_CANCEL_SUBSCRIPTION_ENDPOINT_V1
 @router.post("/cancel-subscription")
@@ -683,69 +926,28 @@ def cancel_subscription(current_user=Depends(get_current_user), db: Session = De
 # LOSSQ_BILLING_CHECKOUT_COMPAT_ENDPOINT_V1
 @router.post("/checkout")
 def create_checkout_compat(payload: dict, current_user=Depends(get_current_user), db: Session = Depends(get_db)):
-    """
-    Compatibility endpoint for Settings -> Billing & Subscription upgrade buttons.
-
-    Returns a Stripe Checkout URL when Stripe price IDs are configured.
-    If Stripe is not configured, this fails safely instead of deleting or changing account data.
-    """
-    import os
-
-    org = get_org(db, current_user)
-
-    requested_plan = str(
-        payload.get("plan")
-        or payload.get("package")
-        or payload.get("subscription_plan")
-        or "professional"
-    ).strip().lower()
-
-    if requested_plan in {"pro"}:
-        requested_plan = "professional"
-
-    if requested_plan in {"enterprise"}:
-        requested_plan = "agency"
-
-    if requested_plan in {"founder", "founding", "founding agency"}:
-        requested_plan = "founding_agency"
-
-    allowed_plans = {"starter", "professional", "agency", "founding_agency"}
-
-    if requested_plan not in allowed_plans:
-        raise HTTPException(status_code=400, detail="Invalid billing plan selected.")
-
-    price_lookup = (
-        globals().get("PRICE_IDS")
-        or globals().get("STRIPE_PRICE_IDS")
-        or globals().get("PLAN_PRICE_IDS")
-        or {}
-    )
-
-    price_id = None
-
-    if isinstance(price_lookup, dict):
-        price_id = (
-            price_lookup.get(requested_plan)
-            or price_lookup.get(requested_plan.upper())
-            or price_lookup.get(requested_plan.replace("_", "-"))
-        )
-
-    env_price_keys = [
-        f"STRIPE_PRICE_{requested_plan.upper()}",
-        f"STRIPE_{requested_plan.upper()}_PRICE_ID",
-        f"{requested_plan.upper()}_PRICE_ID",
-        f"LOSSQ_STRIPE_{requested_plan.upper()}_PRICE_ID",
-    ]
-
-    for key in env_price_keys:
-        if not price_id:
-            price_id = os.getenv(key)
+    # LOSSQ_BILLING_CHECKOUT_COMPAT_ENDPOINT_V2
+    require_owner_or_admin(current_user)
 
     if not STRIPE_SECRET_KEY:
         raise HTTPException(
             status_code=400,
-            detail="Stripe billing is not configured yet. Add STRIPE_SECRET_KEY and plan price IDs.",
+            detail="Stripe billing is not configured yet. Add STRIPE_SECRET_KEY in Railway.",
         )
+
+    org = get_org(db, current_user)
+
+    requested_plan = normalize_billing_plan(
+        payload.get("plan")
+        or payload.get("package")
+        or payload.get("subscription_plan")
+        or "professional"
+    )
+
+    if requested_plan == "founding_agency" and founding_slots_remaining(db) <= 0:
+        raise HTTPException(status_code=400, detail="Founding Agency plan is no longer available")
+
+    price_id = get_stripe_price_id_for_plan(requested_plan)
 
     if not price_id:
         raise HTTPException(
@@ -756,44 +958,67 @@ def create_checkout_compat(payload: dict, current_user=Depends(get_current_user)
     success_url = (
         payload.get("success_url")
         or os.getenv("LOSSQ_BILLING_SUCCESS_URL")
-        or "https://www.lossq.com/dashboard?billing=success"
+        or f"{FRONTEND_URL}/dashboard?billing=success"
     )
 
     cancel_url = (
         payload.get("cancel_url")
         or os.getenv("LOSSQ_BILLING_CANCEL_URL")
-        or "https://www.lossq.com/settings/billing?billing=cancelled"
+        or f"{FRONTEND_URL}/settings/billing?billing=cancelled"
     )
 
     try:
         customer_id = getattr(org, "stripe_customer_id", None)
 
-        session_payload = {
-            "mode": "subscription",
-            "line_items": [{"price": price_id, "quantity": 1}],
-            "success_url": success_url,
-            "cancel_url": cancel_url,
-            "metadata": {
-                "organization_id": str(getattr(org, "id", "")),
-                "user_id": str(current_user.get("id") if isinstance(current_user, dict) else getattr(current_user, "id", "")),
+        if not customer_id:
+            customer = stripe.Customer.create(
+                email=current_user.email,
+                name=org.name,
+                metadata={
+                    "organization_id": str(org.id),
+                    "organization_name": org.name or "",
+                    "created_by_user_id": str(current_user.id),
+                },
+            )
+            customer_id = customer.id
+            org.stripe_customer_id = customer_id
+            db.commit()
+
+        session = stripe.checkout.Session.create(
+            mode="subscription",
+            customer=customer_id,
+            line_items=[{"price": price_id, "quantity": 1}],
+            success_url=success_url,
+            cancel_url=cancel_url,
+            allow_promotion_codes=True,
+            metadata={
+                "organization_id": str(org.id),
                 "plan": requested_plan,
+                "price_id": price_id,
             },
-            "subscription_data": {
+            subscription_data={
                 "metadata": {
-                    "organization_id": str(getattr(org, "id", "")),
+                    "organization_id": str(org.id),
                     "plan": requested_plan,
+                    "price_id": price_id,
                 }
             },
-        }
+        )
 
-        if customer_id:
-            session_payload["customer"] = customer_id
-        else:
-            user_email = current_user.get("email") if isinstance(current_user, dict) else getattr(current_user, "email", None)
-            if user_email:
-                session_payload["customer_email"] = user_email
-
-        session = stripe.checkout.Session.create(**session_payload)
+        record_audit_event(
+            db,
+            current_user=current_user,
+            action="billing_checkout_started",
+            resource_type="billing",
+            resource_id=str(session.id),
+            details={
+                "event": "billing_checkout_started",
+                "session_id": session.id,
+                "checkout_url_created": bool(session.url),
+                "price_id": price_id,
+                "plan": requested_plan,
+            },
+        )
 
         return {
             "ok": True,
