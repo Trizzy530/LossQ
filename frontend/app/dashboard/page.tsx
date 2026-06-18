@@ -6684,6 +6684,16 @@ const modelChartNarrative =
                 Report Issue
               </button>
 
+
+            {/* LOSSQ_SIDEBAR_REPORT_ISSUE_BUTTON_V1 */}
+            <button
+              type="button"
+              onClick={openBetaFeedbackEmail}
+              className="w-full rounded-xl border border-yellow-300/50 bg-yellow-300 px-5 py-3 font-bold text-slate-950 shadow-lg shadow-yellow-300/20 hover:bg-yellow-200"
+            >
+              Report Issue
+            </button>
+
 <button
               type="button"
               onClick={logout}
@@ -8925,6 +8935,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
