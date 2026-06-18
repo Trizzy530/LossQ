@@ -1011,47 +1011,16 @@ function firstNonEmptyArray(...values: any[]) {
   return [];
 }
 
-// LOSSQ_DERIVE_EXPOSURE_FROM_POLICY_ROWS_V2
+// LOSSQ_DERIVE_EXPOSURE_FROM_POLICY_ROWS_V3
+// LOSSQ_EXPOSURE_EXTRACTOR_LABEL_STRICT_V3
 function deriveExposureInputsFromPolicyRows(profileLike: any) {
   const exposure: AnyObject = {};
 
-  const exposureFields = [
-    "current_premium",
-    "expiring_premium",
-    "target_renewal_premium",
-    "line_of_business",
-    "state",
-    "class_code",
-    "class_codes",
-    "limits",
-    "coverage_limit",
-    "deductible",
-    "retention",
-    "payroll",
-    "revenue",
-    "sales",
-    "receipts",
-    "employee_count",
-    "vehicle_count",
-    "driver_count",
-    "property_tiv",
-    "tiv",
-    "building_value",
-    "contents_value",
-    "square_footage",
-    "location_count",
-    "unit_count",
-    "cargo_limit",
-    "umbrella_limit",
-    "experience_mod",
-    "mod",
-    "exposure_change_percent",
-    "cyber_revenue",
-    "professional_revenue",
-    "exposure_basis",
-  ];
+  const cleanValue = (value: any) =>
+    String(value ?? "").replace(/\s+/g, " ").trim();
 
-  const cleanValue = (value: any) => String(value ?? "").replace(/\s+/g, " ").trim();
+  const normalizeKey = (value: any) =>
+    cleanValue(value).toLowerCase().replace(/[^a-z0-9]/g, "");
 
   const setIfBlank = (field: string, value: any) => {
     const clean = cleanValue(value);
@@ -1060,37 +1029,166 @@ function deriveExposureInputsFromPolicyRows(profileLike: any) {
     }
   };
 
-  const money = (value: any) => {
+  const isDateLike = (value: any) => {
     const raw = cleanValue(value);
+    return (
+      /^\d{4}[-/]\d{1,2}[-/]\d{1,2}$/.test(raw) ||
+      /^\d{1,2}[-/]\d{1,2}[-/]\d{2,4}$/.test(raw) ||
+      /^(19|20)\d{2}$/.test(raw)
+    );
+  };
+
+  const cleanMoney = (value: any) => {
+    const raw = cleanValue(value);
+    if (!raw || isDateLike(raw)) return "";
     const match = raw.match(/\$?\s*[0-9][0-9,]*(?:\.\d{2})?/);
-    return match ? match[0].replace(/\s+/g, "") : "";
+    if (!match) return "";
+    const valueText = match[0].replace(/\s+/g, "");
+    if (/^(19|20)\d{2}$/.test(valueText.replace(/[$,]/g, ""))) return "";
+    return valueText;
   };
 
-  const numberAfter = (label: string, value: any) => {
+  const cleanCount = (value: any) => {
     const raw = cleanValue(value);
-    const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const match = raw.match(new RegExp(`${escaped}[^0-9]{0,30}([0-9][0-9,]*)`, "i"));
-    return match ? match[1].replace(/,/g, "") : "";
+    if (!raw || isDateLike(raw)) return "";
+    const match = raw.match(/\b[0-9][0-9,]*\b/);
+    if (!match) return "";
+    const valueText = match[0].replace(/,/g, "");
+    if (/^(19|20)\d{2}$/.test(valueText)) return "";
+    return valueText;
   };
 
-  const moneyAfterAny = (labels: string[], value: any) => {
-    const raw = cleanValue(value);
-    for (const label of labels) {
-      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const match = raw.match(new RegExp(`${escaped}[^$0-9]{0,40}(\\$?\\s*[0-9][0-9,]*(?:\\.\\d{2})?)`, "i"));
-      if (match) return match[1].replace(/\s+/g, "");
+  const fieldMap: Record<string, string> = {
+    currentpremium: "current_premium",
+    annualpremium: "current_premium",
+    writtenpremium: "current_premium",
+    totalpremium: "current_premium",
+    premium: "current_premium",
+
+    expiringpremium: "expiring_premium",
+    priorpremium: "expiring_premium",
+    previouspremium: "expiring_premium",
+
+    targetrenewalpremium: "target_renewal_premium",
+    renewalpremium: "target_renewal_premium",
+    estimatedrenewalpremium: "target_renewal_premium",
+
+    primarylineofbusiness: "line_of_business",
+    lineofbusiness: "line_of_business",
+    lob: "line_of_business",
+    policytype: "line_of_business",
+    coverage: "line_of_business",
+
+    state: "state",
+    primarystate: "state",
+
+    classcode: "class_code",
+    classcodes: "class_codes",
+
+    policylimits: "limits",
+    limits: "limits",
+    coveragelimit: "coverage_limit",
+    deductible: "deductible",
+    retention: "retention",
+    sir: "retention",
+
+    payroll: "payroll",
+    annualpayroll: "payroll",
+    estimatedpayroll: "payroll",
+
+    revenue: "revenue",
+    annualrevenue: "revenue",
+    sales: "sales",
+    grosssales: "sales",
+    receipts: "receipts",
+    grossreceipts: "receipts",
+
+    employeecount: "employee_count",
+    employees: "employee_count",
+    numberofemployees: "employee_count",
+
+    vehiclecount: "vehicle_count",
+    vehicles: "vehicle_count",
+    powerunits: "vehicle_count",
+
+    drivercount: "driver_count",
+    drivers: "driver_count",
+
+    propertytiv: "property_tiv",
+    totalinsuredvalue: "property_tiv",
+    tiv: "tiv",
+
+    buildingvalue: "building_value",
+    buildinglimit: "building_value",
+    contentsvalue: "contents_value",
+    businesspersonalproperty: "contents_value",
+    bpp: "contents_value",
+
+    squarefootage: "square_footage",
+    sqft: "square_footage",
+    locationcount: "location_count",
+    locations: "location_count",
+    unitcount: "unit_count",
+    units: "unit_count",
+
+    cargolimit: "cargo_limit",
+    umbrellalimit: "umbrella_limit",
+    excesslimit: "umbrella_limit",
+
+    experiencemod: "experience_mod",
+    mod: "mod",
+    exposurechangepercent: "exposure_change_percent",
+    cyberrevenue: "cyber_revenue",
+    professionalrevenue: "professional_revenue",
+    exposurebasis: "exposure_basis",
+  };
+
+  const moneyFields = new Set([
+    "current_premium",
+    "expiring_premium",
+    "target_renewal_premium",
+    "limits",
+    "coverage_limit",
+    "deductible",
+    "retention",
+    "payroll",
+    "revenue",
+    "sales",
+    "receipts",
+    "property_tiv",
+    "tiv",
+    "building_value",
+    "contents_value",
+    "cargo_limit",
+    "umbrella_limit",
+    "cyber_revenue",
+    "professional_revenue",
+  ]);
+
+  const countFields = new Set([
+    "employee_count",
+    "vehicle_count",
+    "driver_count",
+    "square_footage",
+    "location_count",
+    "unit_count",
+  ]);
+
+  const applyMappedValue = (key: any, value: any) => {
+    const mapped = fieldMap[normalizeKey(key)];
+    if (!mapped) return;
+
+    if (moneyFields.has(mapped)) {
+      setIfBlank(mapped, cleanMoney(value));
+      return;
     }
-    return "";
-  };
 
-  const numberAfterAny = (labels: string[], value: any) => {
-    const raw = cleanValue(value);
-    for (const label of labels) {
-      const escaped = label.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-      const match = raw.match(new RegExp(`${escaped}[^0-9]{0,40}([0-9][0-9,]*)`, "i"));
-      if (match) return match[1].replace(/,/g, "");
+    if (countFields.has(mapped)) {
+      setIfBlank(mapped, cleanCount(value));
+      return;
     }
-    return "";
+
+    setIfBlank(mapped, value);
   };
 
   const collectRows = (value: any): any[] => {
@@ -1107,7 +1205,27 @@ function deriveExposureInputsFromPolicyRows(profileLike: any) {
     return [];
   };
 
-  const policies = [
+  const localRows = (() => {
+    if (typeof window === "undefined") return [];
+    try {
+      const cached = localStorage.getItem(CURRENT_UPLOAD_CACHE_KEY);
+      const parsed = cached ? JSON.parse(cached) : null;
+      if (Array.isArray(parsed)) return parsed;
+      if (Array.isArray(parsed?.claims)) return parsed.claims;
+      if (Array.isArray(parsed?.rows)) return parsed.rows;
+      return [];
+    } catch {
+      return [];
+    }
+  })();
+
+  const rows = [
+    profileLike,
+    profileLike?.validation,
+    profileLike?.exposure_inputs,
+    profileLike?.exposures,
+    profileLike?.premium_worksheet,
+    profileLike?.summary,
     ...collectRows(profileLike?.policies),
     ...collectRows(profileLike?.policy_schedule),
     ...collectRows(profileLike?.premium_worksheet),
@@ -1117,81 +1235,106 @@ function deriveExposureInputsFromPolicyRows(profileLike: any) {
     ...collectRows(profileLike?.validation?.policy_schedule),
     ...collectRows(profileLike?.validation?.premium_worksheet),
     ...collectRows(profileLike?.validation?.exposures),
-  ];
-
-  const sourceObjects = [
-    profileLike,
-    profileLike?.validation,
-    profileLike?.exposure_inputs,
-    profileLike?.exposures,
-    profileLike?.premium_worksheet,
-    profileLike?.summary,
-    ...(Array.isArray(policies) ? policies : []),
+    ...localRows,
   ].filter(Boolean);
 
-  sourceObjects.forEach((item: any) => {
-    exposureFields.forEach((field) => {
-      if (item && typeof item === "object") {
-        setIfBlank(field, item[field]);
-      }
+  rows.forEach((row: any) => {
+    if (!row || typeof row !== "object") return;
+
+    Object.entries(row).forEach(([key, value]) => {
+      applyMappedValue(key, value);
     });
 
-    if (item && typeof item === "object") {
-      setIfBlank("current_premium", item.currentPremium || item.currentPremiumAmount || item.annual_premium || item.written_premium || item.total_premium || item.premium);
-      setIfBlank("expiring_premium", item.expiringPremium || item.previous_premium || item.prior_premium);
-      setIfBlank("target_renewal_premium", item.targetRenewalPremium || item.renewal_premium || item.estimated_renewal_premium);
-      setIfBlank("property_tiv", item.total_insured_value || item.totalInsuredValue || item.property_value);
-      setIfBlank("tiv", item.total_insured_value || item.totalInsuredValue || item.property_tiv);
-      setIfBlank("employee_count", item.employees || item.employeeCount);
-      setIfBlank("vehicle_count", item.vehicles || item.vehicleCount);
-      setIfBlank("driver_count", item.drivers || item.driverCount);
-      setIfBlank("line_of_business", item.line || item.lob || item.coverage || item.policy_type || item.line_of_business);
+    // Some upload rows may use display labels in one column and value in another.
+    const label =
+      row.label ||
+      row.field ||
+      row.metric ||
+      row.name ||
+      row.exposure_label ||
+      row.exposure_type ||
+      "";
+
+    const value =
+      row.value ||
+      row.amount ||
+      row.exposure_value ||
+      row.exposure ||
+      row.current_value ||
+      row.manual_value ||
+      "";
+
+    if (label && value) {
+      applyMappedValue(label, value);
     }
   });
 
-  const rawTextParts = [
-    cleanValue(profileLike?.raw_text_preview),
-    cleanValue(profileLike?.raw_text),
-    cleanValue(profileLike?.notes),
-    cleanValue(profileLike?.underwriter_notes),
-    cleanValue(profileLike?.validation?.raw_text_preview),
-    ...sourceObjects.map((item: any) =>
-      typeof item === "object" ? Object.entries(item).map(([k, v]) => `${k}: ${v}`).join(" ") : cleanValue(item)
-    ),
-  ].filter(Boolean);
+  const labeledText = rows
+    .map((row: any) => {
+      if (!row || typeof row !== "object") return "";
+      return Object.entries(row)
+        .map(([key, value]) => `${key}: ${value}`)
+        .join(" | ");
+    })
+    .join(" | ");
 
-  const rowText = rawTextParts.join(" | ");
+  const moneyAfter = (labels: string[]) => {
+    for (const label of labels) {
+      const pattern = new RegExp(`${label}[^$0-9]{0,50}(\\$?\\s*[0-9][0-9,]*(?:\\.\\d{2})?)`, "i");
+      const match = labeledText.match(pattern);
+      if (match) {
+        const cleaned = cleanMoney(match[1]);
+        if (cleaned) return cleaned;
+      }
+    }
+    return "";
+  };
 
-  setIfBlank("payroll", moneyAfterAny(["payroll", "annual payroll", "estimated payroll"], rowText));
-  setIfBlank("revenue", moneyAfterAny(["revenue", "sales", "gross sales", "annual revenue", "receipts"], rowText));
-  setIfBlank("sales", moneyAfterAny(["sales", "gross sales"], rowText));
-  setIfBlank("receipts", moneyAfterAny(["receipts", "gross receipts"], rowText));
-  setIfBlank("current_premium", moneyAfterAny(["current premium", "annual premium", "written premium", "total premium", "premium"], rowText));
-  setIfBlank("expiring_premium", moneyAfterAny(["expiring premium", "prior premium", "previous premium"], rowText));
-  setIfBlank("target_renewal_premium", moneyAfterAny(["target renewal premium", "renewal premium", "estimated renewal premium"], rowText));
-  setIfBlank("property_tiv", moneyAfterAny(["property tiv", "total insured value", "tiv"], rowText));
-  setIfBlank("tiv", moneyAfterAny(["total insured value", "tiv"], rowText));
-  setIfBlank("building_value", moneyAfterAny(["building value", "building limit"], rowText));
-  setIfBlank("contents_value", moneyAfterAny(["contents value", "business personal property", "bpp"], rowText));
-  setIfBlank("coverage_limit", moneyAfterAny(["coverage limit", "policy limit", "limit"], rowText));
-  setIfBlank("limits", moneyAfterAny(["policy limits", "coverage limit", "limit"], rowText));
-  setIfBlank("deductible", moneyAfterAny(["deductible"], rowText));
-  setIfBlank("retention", moneyAfterAny(["retention", "sir", "self insured retention"], rowText));
-  setIfBlank("cargo_limit", moneyAfterAny(["cargo limit", "motor truck cargo limit"], rowText));
-  setIfBlank("umbrella_limit", moneyAfterAny(["umbrella limit", "excess limit"], rowText));
+  const countAfter = (labels: string[]) => {
+    for (const label of labels) {
+      const pattern = new RegExp(`${label}[^0-9]{0,50}([0-9][0-9,]*)`, "i");
+      const match = labeledText.match(pattern);
+      if (match) {
+        const cleaned = cleanCount(match[1]);
+        if (cleaned) return cleaned;
+      }
+    }
+    return "";
+  };
 
-  setIfBlank("employee_count", numberAfterAny(["employee count", "employees", "number of employees"], rowText));
-  setIfBlank("vehicle_count", numberAfterAny(["vehicle count", "vehicles", "power units"], rowText));
-  setIfBlank("driver_count", numberAfterAny(["driver count", "drivers"], rowText));
-  setIfBlank("location_count", numberAfterAny(["location count", "locations"], rowText));
-  setIfBlank("unit_count", numberAfterAny(["unit count", "units"], rowText));
-  setIfBlank("square_footage", numberAfterAny(["square footage", "sq ft", "sqft"], rowText));
+  setIfBlank("current_premium", moneyAfter(["current premium", "annual premium", "written premium", "total premium"]));
+  setIfBlank("expiring_premium", moneyAfter(["expiring premium", "prior premium", "previous premium"]));
+  setIfBlank("target_renewal_premium", moneyAfter(["target renewal premium", "renewal premium", "estimated renewal premium"]));
+  setIfBlank("payroll", moneyAfter(["annual payroll", "estimated payroll", "payroll"]));
+  setIfBlank("revenue", moneyAfter(["annual revenue", "gross sales", "revenue"]));
+  setIfBlank("sales", moneyAfter(["gross sales", "sales"]));
+  setIfBlank("receipts", moneyAfter(["gross receipts", "receipts"]));
+  setIfBlank("property_tiv", moneyAfter(["property tiv", "total insured value"]));
+  setIfBlank("tiv", moneyAfter(["total insured value", "tiv"]));
+  setIfBlank("coverage_limit", moneyAfter(["coverage limit", "policy limit"]));
+  setIfBlank("limits", moneyAfter(["policy limits", "coverage limit"]));
+  setIfBlank("deductible", moneyAfter(["deductible"]));
+  setIfBlank("umbrella_limit", moneyAfter(["umbrella limit", "excess limit"]));
+  setIfBlank("cyber_revenue", moneyAfter(["cyber revenue"]));
+  setIfBlank("professional_revenue", moneyAfter(["professional revenue"]));
 
-  if (!exposure.line_of_business && policies.length > 0) {
-    const lines = policies
-      .map((policy: any) => cleanValue(policy?.line_of_business || policy?.policy_type || policy?.coverage || policy?.line || policy?.lob))
+  setIfBlank("employee_count", countAfter(["employee count", "number of employees", "employees"]));
+  setIfBlank("vehicle_count", countAfter(["vehicle count", "vehicles", "power units"]));
+  setIfBlank("driver_count", countAfter(["driver count", "drivers"]));
+  setIfBlank("location_count", countAfter(["location count", "locations"]));
+  setIfBlank("unit_count", countAfter(["unit count", "units"]));
+  setIfBlank("square_footage", countAfter(["square footage", "sq ft", "sqft"]));
+
+  if (!cleanValue(exposure.line_of_business)) {
+    const lines = rows
+      .map((row: any) =>
+        cleanValue(row?.line_of_business || row?.policy_type || row?.coverage || row?.line || row?.lob)
+      )
       .filter(Boolean);
-    if (lines.length > 0) setIfBlank("line_of_business", Array.from(new Set(lines)).join(", "));
+
+    if (lines.length > 0) {
+      setIfBlank("line_of_business", Array.from(new Set(lines)).join(", "));
+    }
   }
 
   const basisParts = [
