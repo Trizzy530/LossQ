@@ -6593,17 +6593,7 @@ const modelChartNarrative =
   if (dashboardError) {
     return (
       <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
-
-        {/* LOSSQ_FIXED_REPORT_ISSUE_BUTTON_V1 */}
-        <button
-          type="button"
-          onClick={openBetaFeedbackEmail}
-          className="fixed bottom-24 right-6 z-[99999] rounded-full border border-yellow-300/60 bg-yellow-300 px-5 py-3 text-sm font-black text-slate-950 shadow-2xl shadow-yellow-300/40 hover:bg-yellow-200"
-        >
-          Report Issue
-        </button>
-
-        {/* LOSSQ_EXTRACTION_REVIEW_BANNER_RENDER_V1 */}
+{/* LOSSQ_EXTRACTION_REVIEW_BANNER_RENDER_V1 */}
         <LossQExtractionReviewBanner profile={Array.isArray(profiles) && profiles.length > 0 ? profiles[0] : null} />
 <div className="absolute inset-0 bg-[radial-gradient(circle_at_top,#1d4ed855,transparent_35%),radial-gradient(circle_at_bottom_right,#0ea5e955,transparent_30%)]" />
         <div className="relative bg-white/10 backdrop-blur-xl border border-red-400/40 rounded-3xl p-10 max-w-lg w-full text-center shadow-2xl">
@@ -6683,17 +6673,6 @@ const modelChartNarrative =
               >
                 Report Issue
               </button>
-
-
-            {/* LOSSQ_SIDEBAR_REPORT_ISSUE_BUTTON_V1 */}
-            <button
-              type="button"
-              onClick={openBetaFeedbackEmail}
-              className="w-full rounded-xl border border-yellow-300/50 bg-yellow-300 px-5 py-3 font-bold text-slate-950 shadow-lg shadow-yellow-300/20 hover:bg-yellow-200"
-            >
-              Report Issue
-            </button>
-
 <button
               type="button"
               onClick={logout}
@@ -6791,6 +6770,15 @@ const modelChartNarrative =
   </ToolButton>
 
   <div className="mt-auto space-y-3 pt-6 border-t border-white/10">
+    {/* LOSSQ_VISIBLE_REPORT_ISSUE_NAVBUTTON_V1 */}
+    <button
+      type="button"
+      onClick={openBetaFeedbackEmail}
+      className="w-full rounded-xl border border-yellow-300/60 bg-yellow-300 px-5 py-3 font-bold text-slate-950 shadow-lg shadow-yellow-300/30 hover:bg-yellow-200"
+    >
+      Report Issue
+    </button>
+
     <NavButton href="/settings">Settings</NavButton>
 
     <a
@@ -8935,44 +8923,3 @@ function ChartCard({
     </div>
   );
 }
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
-
