@@ -2229,6 +2229,34 @@ def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
                 profile_data["writing_carrier"] = possible_carrier
                 break
 
+    # LOSSQ_FINAL_RAW_TEXT_CARRIER_BACKFILL_V1
+    # Universal fallback for PDFs/text exports where carrier is present in account text
+    # but policy schedule carrier cells are blank.
+    if not profile_data.get("carrier_name"):
+        raw_text_for_carrier = str(profile_data.get("raw_text_preview") or "")
+        carrier_patterns = [
+            r"(?i)\bwriting\s+carrier\b\s*[:\-]?\s*([A-Z][A-Za-z0-9&.,'\- ]{3,80})",
+            r"(?i)\binsurance\s+carrier\b\s*[:\-]?\s*([A-Z][A-Za-z0-9&.,'\- ]{3,80})",
+            r"(?i)\bcarrier\b\s*[:\-]?\s*([A-Z][A-Za-z0-9&.,'\- ]{3,80})",
+        ]
+
+        for carrier_pattern in carrier_patterns:
+            carrier_match = re.search(carrier_pattern, raw_text_for_carrier)
+            if not carrier_match:
+                continue
+
+            possible_carrier = str(carrier_match.group(1) or "").strip()
+            possible_carrier = re.split(
+                r"\b(Named Insured|Account Number|Policy Number|Effective|Expiration|Evaluation|Producing Agency|Agency|Exposure Value|Exposure Basis|Policy Schedule|Claim Detail)\b",
+                possible_carrier,
+                flags=re.I,
+            )[0].strip(" :-|")
+
+            if possible_carrier and possible_carrier.lower() not in bad_final_carrier_values:
+                profile_data["carrier_name"] = possible_carrier
+                profile_data["writing_carrier"] = possible_carrier
+                break
+
     new_profile = AccountProfile(
         business_name=profile_data.get("business_name") or "Business Name Not Set",
         carrier_name=profile_data.get("carrier_name") or "Carrier Not Set",
@@ -4364,6 +4392,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
 
 # LOSSQ_DEPLOY_TRIGGER_20260614152009
+
 
 
 
