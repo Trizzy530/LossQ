@@ -89,54 +89,495 @@ def insufficient_response(policy_number=None, engine="engine"):
     }
 
 
+
+# LOSSQ_REALISTIC_RENEWAL_MODEL_HELPERS_V1
+def lossq_model_money(value):
+    try:
+        return money(value)
+    except Exception:
+        try:
+            return float(str(value or "0").replace("$", "").replace(",", "").strip() or 0)
+        except Exception:
+            return 0.0
+
+
+def lossq_model_claim_line(claim):
+    line_text = str(
+        getattr(claim, "line_of_business", "")
+        or getattr(claim, "claim_type", "")
+        or getattr(claim, "coverage", "")
+        or getattr(claim, "policy_type", "")
+        or ""
+    ).lower()
+
+    policy_text = str(getattr(claim, "policy_number", "") or "").upper()
+
+    if "worker" in line_text or "comp" in line_text or "-WC-" in policy_text:
+        return "workers_comp"
+    if "liquor" in line_text:
+        return "liquor_liability"
+    if "auto" in line_text or "-AL-" in policy_text or "-AUTO-" in policy_text:
+        return "commercial_auto"
+    if "cargo" in line_text or "-CG-" in policy_text or "-CARGO-" in policy_text:
+        return "cargo"
+    if "property" in line_text or "-CP-" in policy_text or "-PROP-" in policy_text:
+        return "property"
+    if "bop" in line_text or "businessowner" in line_text or "-BOP-" in policy_text:
+        return "bop"
+    if "cyber" in line_text or "-CY-" in policy_text or "-CYBER-" in policy_text:
+        return "cyber"
+    if "employment" in line_text or "epli" in line_text or "-EPLI-" in policy_text:
+        return "epli"
+    if "director" in line_text or "officer" in line_text or "d&o" in line_text or "-DO-" in policy_text:
+        return "d_and_o"
+    if "professional" in line_text or "errors" in line_text or "omissions" in line_text or "-PL-" in policy_text or "-EO-" in policy_text:
+        return "professional_liability"
+    if "inland" in line_text or "marine" in line_text or "-IM-" in policy_text:
+        return "inland_marine"
+    if "crime" in line_text or "-CRIME-" in policy_text:
+        return "crime"
+    if "umbrella" in line_text or "excess" in line_text or "-UMB-" in policy_text or "-XS-" in policy_text:
+        return "umbrella_excess"
+    if "general" in line_text or "liability" in line_text or "-GL-" in policy_text:
+        return "general_liability"
+
+    return "other_commercial"
+
+
+def lossq_model_line_label(code):
+    labels = {
+        "general_liability": "General Liability",
+        "workers_comp": "Workers Compensation",
+        "commercial_auto": "Commercial Auto",
+        "cargo": "Cargo",
+        "property": "Commercial Property",
+        "bop": "BOP",
+        "cyber": "Cyber",
+        "epli": "EPLI",
+        "d_and_o": "D&O",
+        "professional_liability": "Professional Liability",
+        "inland_marine": "Inland Marine",
+        "crime": "Crime",
+        "liquor_liability": "Liquor Liability",
+        "umbrella_excess": "Umbrella / Excess",
+        "other_commercial": "Other Commercial Line",
+    }
+    return labels.get(code, "Other Commercial Line")
+
+
+def lossq_model_metrics(claims):
+    claims = claims or []
+
+    total_claims = len(claims)
+    open_claims = len([claim for claim in claims if is_open(claim)])
+    closed_claims = max(total_claims - open_claims, 0)
+    litigation_claims = len([claim for claim in claims if is_litigated(claim)])
+
+    total_paid = 0.0
+    total_reserve = 0.0
+    total_incurred = 0.0
+    largest_loss = 0.0
+    line_summary = {}
+
+    for claim in claims:
+        paid = lossq_model_money(getattr(claim, "paid_amount", 0))
+        reserve = lossq_model_money(getattr(claim, "reserve_amount", 0))
+        total = lossq_model_money(getattr(claim, "total_incurred", 0))
+        if total <= 0 and (paid > 0 or reserve > 0):
+            total = paid + reserve
+
+        total_paid += paid
+        total_reserve += reserve
+        total_incurred += total
+        largest_loss = max(largest_loss, total)
+
+        line = lossq_model_claim_line(claim)
+        if line not in line_summary:
+            line_summary[line] = {
+                "line_code": line,
+                "line_of_business": lossq_model_line_label(line),
+                "claim_count": 0,
+                "open_claims": 0,
+                "litigation_claims": 0,
+                "paid_amount": 0.0,
+                "reserve_amount": 0.0,
+                "total_incurred": 0.0,
+                "largest_loss": 0.0,
+            }
+
+        line_summary[line]["claim_count"] += 1
+        line_summary[line]["paid_amount"] += paid
+        line_summary[line]["reserve_amount"] += reserve
+        line_summary[line]["total_incurred"] += total
+        line_summary[line]["largest_loss"] = max(line_summary[line]["largest_loss"], total)
+
+        if is_open(claim):
+            line_summary[line]["open_claims"] += 1
+        if is_litigated(claim):
+            line_summary[line]["litigation_claims"] += 1
+
+    average_severity = total_incurred / total_claims if total_claims else 0
+    reserve_ratio = total_reserve / total_incurred if total_incurred else 0
+    closure_rate = closed_claims / total_claims if total_claims else 0
+    largest_loss_ratio = largest_loss / total_incurred if total_incurred else 0
+
+    large_claims_50k = 0
+    large_claims_100k = 0
+    severe_claims_250k = 0
+
+    for claim in claims:
+        paid = lossq_model_money(getattr(claim, "paid_amount", 0))
+        reserve = lossq_model_money(getattr(claim, "reserve_amount", 0))
+        total = lossq_model_money(getattr(claim, "total_incurred", 0))
+        if total <= 0 and (paid > 0 or reserve > 0):
+            total = paid + reserve
+
+        if total >= 50000:
+            large_claims_50k += 1
+        if total >= 100000:
+            large_claims_100k += 1
+        if total >= 250000:
+            severe_claims_250k += 1
+
+    line_output = list(line_summary.values())
+    line_output.sort(key=lambda item: item["total_incurred"], reverse=True)
+
+    return {
+        "total_claims": total_claims,
+        "open_claims": open_claims,
+        "closed_claims": closed_claims,
+        "litigation_claims": litigation_claims,
+        "total_paid": total_paid,
+        "total_reserve": total_reserve,
+        "total_incurred": total_incurred,
+        "largest_loss": largest_loss,
+        "average_severity": average_severity,
+        "reserve_ratio": reserve_ratio,
+        "closure_rate": closure_rate,
+        "largest_loss_ratio": largest_loss_ratio,
+        "large_claims_50k": large_claims_50k,
+        "large_claims_100k": large_claims_100k,
+        "severe_claims_250k": severe_claims_250k,
+        "line_summary": line_output,
+        "line_codes": list(line_summary.keys()),
+    }
+
+
+def lossq_model_market_band(score):
+    if score >= 85:
+        return "Preferred"
+    if score >= 72:
+        return "Standard"
+    if score >= 58:
+        return "Cautious"
+    if score >= 42:
+        return "Restricted"
+    return "Distressed"
+
+
+def lossq_model_premium_band(increase):
+    if increase <= 5:
+        return "Flat to +5%"
+    if increase <= 10:
+        return "+5% to +10%"
+    if increase <= 20:
+        return "+10% to +20%"
+    if increase <= 35:
+        return "+20% to +35%"
+    if increase <= 55:
+        return "+35% to +55%"
+    return "+55% or higher / non-renewal watch"
+
+
+
+
+
+# LOSSQ_REALISTIC_UNDERWRITER_DECISION_ENGINE_V1
 def build_underwriter_decision_engine(claims, policy_number=None):
     if len(claims) == 0:
-        return {**insufficient_response(policy_number, "decision"), "renewal_probability": None, "expected_premium_impact": "Insufficient Data", "carrier_appetite": "Insufficient Data", "marketability_score": None, "submission_readiness": "Needs validated claims before marketing", "underwriting_concerns": ["No claims available for underwriting decision."], "best_market_types": [], "underwriter_decision_summary": "Insufficient claim data. Do not rely on this decision."}
+        return {
+            **insufficient_response(policy_number, "decision"),
+            "renewal_probability": None,
+            "quote_probability": None,
+            "expected_premium_impact": "Insufficient Data",
+            "carrier_appetite": "Insufficient Data",
+            "marketability_score": None,
+            "submission_readiness": "Needs validated claims before marketing",
+            "underwriting_concerns": ["No claims available for underwriting decision."],
+            "best_market_types": [],
+            "required_followups": ["Validate parsed claims and policy schedule."],
+            "broker_action_plan": ["Correct parser/upload data before releasing to markets."],
+            "underwriter_decision_summary": "Insufficient claim data. Do not rely on this decision.",
+        }
+
     intelligence = build_underwriting_intelligence(claims)
-    metrics = get_loss_metrics(claims)
+    base_metrics = get_loss_metrics(claims)
+    metrics = lossq_model_metrics(claims)
+
     renewal_score = int(intelligence.get("renewal_score") or 0)
-    probability = renewal_score
-    if metrics["open_claims"] >= 3: probability -= 8
-    if metrics["litigation_claims"] > 0: probability -= min(metrics["litigation_claims"]*10, 25)
-    if metrics["severe_claims"] > 0: probability -= 10
-    if metrics["total_claims"] >= 10: probability -= 8
-    elif metrics["total_claims"] >= 5: probability -= 4
-    if metrics["trend"] == "Deteriorating": probability -= 8
-    # Floor at 15 for accounts with real claims - 0% implies uninsurable which is rare
-    probability = max(15, min(100, probability)) if len(claims) > 0 else 0
-    probability = min(100, probability)
-    marketability = probability - (min(metrics["flagged_claims"]*5, 15) if metrics["flagged_claims"] else 0)
-    if metrics["total_reserve"] > 100000: marketability -= 8
-    marketability = max(0, min(100, marketability))
-    if probability >= 85: impact, appetite, ready = "Flat to +5%", "Strong", "Ready for standard renewal marketing"
-    elif probability >= 70: impact, appetite, ready = "+5% to +15%", "Moderate", "Marketable with broker narrative"
-    elif probability >= 50: impact, appetite, ready = "+15% to +35%", "Limited", "Needs claim narratives and reserve explanations before marketing"
-    else: impact, appetite, ready = "+35% or higher / possible non-renewal concern", "Restricted", "Not ready without corrective-action documentation"
+
+    probability = 96
+
+    probability -= max(0, metrics["total_claims"] - 2) * 3
+    probability -= min(metrics["open_claims"] * 6, 24)
+    probability -= min(metrics["litigation_claims"] * 10, 30)
+    probability -= min(metrics["large_claims_100k"] * 8, 24)
+    probability -= min(metrics["severe_claims_250k"] * 12, 24)
+
+    if metrics["total_incurred"] >= 1500000:
+        probability -= 24
+    elif metrics["total_incurred"] >= 1000000:
+        probability -= 18
+    elif metrics["total_incurred"] >= 500000:
+        probability -= 12
+    elif metrics["total_incurred"] >= 250000:
+        probability -= 7
+
+    if metrics["reserve_ratio"] >= 0.60:
+        probability -= 14
+    elif metrics["reserve_ratio"] >= 0.40:
+        probability -= 9
+    elif metrics["reserve_ratio"] >= 0.25:
+        probability -= 5
+
+    if metrics["closure_rate"] >= 0.80 and metrics["total_reserve"] <= 0:
+        probability += 5
+    elif metrics["closure_rate"] >= 0.65 and metrics["open_claims"] <= 1:
+        probability += 3
+
+    if renewal_score:
+        probability = int((probability * 0.65) + (renewal_score * 0.35))
+
+    probability = max(12, min(100, round(probability)))
+
+    marketability = probability
+    marketability -= min(metrics["open_claims"] * 3, 12)
+    marketability -= min(metrics["litigation_claims"] * 4, 16)
+    if metrics["reserve_ratio"] >= 0.40:
+        marketability -= 7
+    if metrics["large_claims_100k"] >= 2:
+        marketability -= 6
+    marketability = max(0, min(100, round(marketability)))
+
+    appetite = lossq_model_market_band(marketability)
+
+    if probability >= 85:
+        impact = "Flat to +5%"
+        ready = "Ready for standard renewal marketing with current valued loss runs."
+    elif probability >= 72:
+        impact = "+5% to +10%"
+        ready = "Marketable with broker narrative and updated loss valuation."
+    elif probability >= 58:
+        impact = "+10% to +20%"
+        ready = "Marketable with claim narratives, reserve support, and corrective-action detail."
+    elif probability >= 42:
+        impact = "+20% to +35%"
+        ready = "Needs underwriting cleanup before broad marketing; target specialty or incumbent markets first."
+    else:
+        impact = "+35% or higher / possible non-renewal concern"
+        ready = "Not ready for broad market release without updated loss runs, open-claim status, litigation updates, and corrective-action documentation."
+
     concerns = []
-    if metrics["open_claims"]: concerns.append(f"{metrics['open_claims']} open claim(s) may continue developing.")
-    if metrics["litigation_claims"]: concerns.append(f"{metrics['litigation_claims']} litigated claim(s) create uncertainty.")
-    if metrics["total_reserve"]: concerns.append(f"${metrics['total_reserve']:,.2f} in reserves may pressure renewal terms.")
-    if metrics["large_claims"]: concerns.append(f"{metrics['large_claims']} large claim(s) exceed $100,000.")
-    if metrics["total_claims"] >= 5: concerns.append("Claim frequency may raise carrier concerns.")
-    return {"policy_number": policy_number, "is_credible": True, "renewal_probability": probability, "expected_premium_impact": impact, "carrier_appetite": appetite, "marketability_score": marketability, "submission_readiness": ready, "underwriting_concerns": concerns or ["No major underwriting concerns detected."], "best_market_types": ["Regional commercial markets", "Middle-market carriers", "Specialty markets if standard appetite is limited"], "decision_metrics": metrics, "underwriter_decision_summary": f"LossQ estimates a {probability}% renewal probability based on {metrics['total_claims']} account-specific claims, {metrics['open_claims']} open claims, ${metrics['total_incurred']:,.2f} incurred, ${metrics['total_reserve']:,.2f} reserves, and {metrics['litigation_claims']} litigated claims."}
+    if metrics["open_claims"]:
+        concerns.append(f"{metrics['open_claims']} open claim(s) may continue developing before renewal.")
+    if metrics["litigation_claims"]:
+        concerns.append(f"{metrics['litigation_claims']} litigated claim(s) create uncertainty around defense cost, venue, and ultimate severity.")
+    if metrics["total_reserve"]:
+        concerns.append(f"${metrics['total_reserve']:,.0f} in outstanding reserves may pressure terms and quote authority.")
+    if metrics["large_claims_100k"]:
+        concerns.append(f"{metrics['large_claims_100k']} large claim(s) exceed $100,000 and require carrier-ready narratives.")
+    if metrics["total_claims"] >= 5:
+        concerns.append("Claim frequency may raise questions about controls, maintenance, staffing, safety, or operational discipline.")
+    if metrics["reserve_ratio"] >= 0.40:
+        concerns.append(f"Reserve ratio is {metrics['reserve_ratio']:.0%}, indicating material unresolved loss development.")
+
+    if not concerns:
+        concerns.append("No major underwriting concerns detected from the validated claim set.")
+
+    best_market_types = []
+    line_codes = set(metrics.get("line_codes") or [])
+
+    if marketability >= 80:
+        best_market_types.append("Admitted standard commercial markets")
+        best_market_types.append("Regional preferred markets")
+    elif marketability >= 60:
+        best_market_types.append("Regional commercial markets")
+        best_market_types.append("Middle-market carriers")
+        best_market_types.append("Incumbent renewal market")
+    elif marketability >= 42:
+        best_market_types.append("Specialty markets")
+        best_market_types.append("Program markets where line appetite matches operations")
+        best_market_types.append("Incumbent market with corrective-action narrative")
+    else:
+        best_market_types.append("E&S or specialty markets")
+        best_market_types.append("Incumbent-only strategy until open claim/litigation issues are clarified")
+
+    if "cyber" in line_codes:
+        best_market_types.append("Cyber specialty markets requiring controls, MFA, EDR, backups, and incident response detail")
+    if "umbrella_excess" in line_codes:
+        best_market_types.append("Umbrella/excess markets requiring underlying loss explanations and limit structure")
+    if "epli" in line_codes:
+        best_market_types.append("EPLI markets requiring HR controls, handbook, training, and claim status")
+    if "property" in line_codes:
+        best_market_types.append("Property markets requiring COPE details, roof age, valuation, and loss mitigation")
+    if "workers_comp" in line_codes:
+        best_market_types.append("Workers compensation markets requiring safety controls and return-to-work detail")
+
+    required_followups = [
+        "Current valued loss runs with valuation date",
+        "Large-loss narratives with corrective action",
+        "Updated exposure basis and current/expiring premium by line",
+    ]
+    if metrics["open_claims"]:
+        required_followups.append("Open-claim adjuster status, reserve basis, and expected closure timeline")
+    if metrics["litigation_claims"]:
+        required_followups.append("Litigation report with counsel, venue, settlement posture, and next milestone")
+
+    broker_action_plan = [
+        "Lead with a concise account narrative tying claim experience to corrective action.",
+        "Separate one-time severity events from recurring frequency issues where the facts support it.",
+        "Package open claims and litigated claims before approaching preferred markets.",
+    ]
+
+    if marketability < 60:
+        broker_action_plan.append("Approach incumbent and specialty markets first; hold preferred markets until claim documentation is complete.")
+    else:
+        broker_action_plan.append("Market standard and regional carriers with a complete submission and current valuation.")
+
+    return {
+        "policy_number": policy_number,
+        "is_credible": True,
+        "renewal_probability": probability,
+        "quote_probability": probability,
+        "expected_premium_impact": impact,
+        "carrier_appetite": appetite,
+        "marketability_score": marketability,
+        "submission_readiness": ready,
+        "underwriting_concerns": concerns,
+        "best_market_types": list(dict.fromkeys(best_market_types)),
+        "required_followups": required_followups,
+        "broker_action_plan": broker_action_plan,
+        "decision_metrics": {**base_metrics, **metrics},
+        "underwriter_decision_summary": (
+            f"LossQ estimates a {probability}% renewal/quote probability and {marketability}/100 marketability score. "
+            f"The model considered {metrics['total_claims']} claims, {metrics['open_claims']} open claims, "
+            f"{metrics['litigation_claims']} litigated claims, ${metrics['total_incurred']:,.0f} total incurred, "
+            f"${metrics['total_reserve']:,.0f} reserves, {metrics['reserve_ratio']:.0%} reserve ratio, "
+            f"and {metrics['large_claims_100k']} large claim(s) over $100,000."
+        ),
+    }
 
 
+
+
+# LOSSQ_REALISTIC_CARRIER_APPETITE_ENGINE_V1
 def build_carrier_appetite_engine(claims, policy_number=None):
     if len(claims) == 0:
-        return {**insufficient_response(policy_number, "carrier-appetite"), "carrier_appetite_score": None, "carrier_appetite_level": "Insufficient Data", "best_fit_carriers": [], "poor_fit_carriers": [], "carrier_match_reasons": ["No validated claims available."], "market_strategy": "Do not market until loss data is validated.", "placement_summary": "Insufficient claim data. Carrier appetite has not been rated."}
+        return {
+            **insufficient_response(policy_number, "carrier-appetite"),
+            "carrier_appetite_score": None,
+            "carrier_appetite_level": "Insufficient Data",
+            "best_fit_carriers": [],
+            "poor_fit_carriers": [],
+            "carrier_match_reasons": ["No validated claims available."],
+            "market_strategy": "Do not market until loss data is validated.",
+            "placement_summary": "Insufficient claim data. Carrier appetite has not been rated.",
+        }
+
     decision = build_underwriter_decision_engine(claims, policy_number)
-    metrics = get_loss_metrics(claims)
+    metrics = lossq_model_metrics(claims)
+
     score = int(decision.get("marketability_score") or 0)
-    if metrics["litigation_claims"]: score -= min(metrics["litigation_claims"]*8, 20)
-    if metrics["severe_claims"]: score -= 10
-    if metrics["open_claims"] >= 3: score -= 6
-    if metrics["total_reserve"] >= 250000: score -= 10
-    elif metrics["total_reserve"] >= 100000: score -= 5
-    if metrics["total_claims"] >= 10: score -= 8
-    elif metrics["total_claims"] >= 5: score -= 4
-    score = max(0, min(100, score))
-    level = "Preferred" if score >= 85 else "Strong" if score >= 70 else "Moderate" if score >= 55 else "Limited" if score >= 40 else "Distressed"
-    return {"policy_number": policy_number, "is_credible": True, "carrier_appetite_score": score, "carrier_appetite_level": level, "best_fit_carriers": [], "poor_fit_carriers": [], "carrier_match_reasons": [f"Total claims reviewed: {metrics['total_claims']}", f"Open claims reviewed: {metrics['open_claims']}", f"Litigation claims reviewed: {metrics['litigation_claims']}", f"Reserve exposure: ${metrics['total_reserve']:,.0f}"], "market_strategy": "Use account-specific claim narratives and target markets whose appetite matches the actual loss profile.", "placement_summary": f"Carrier appetite is {score}/100, rated {level}, based on {metrics['total_claims']} account-specific claims and ${metrics['total_incurred']:,.2f} incurred.", "appetite_metrics": metrics}
+
+    # Carrier appetite sensitivity.
+    score -= min(metrics["open_claims"] * 3, 12)
+    score -= min(metrics["litigation_claims"] * 5, 18)
+    score -= min(metrics["large_claims_100k"] * 4, 14)
+
+    if metrics["reserve_ratio"] >= 0.60:
+        score -= 10
+    elif metrics["reserve_ratio"] >= 0.40:
+        score -= 6
+
+    if metrics["total_claims"] >= 10:
+        score -= 8
+    elif metrics["total_claims"] >= 6:
+        score -= 5
+
+    if metrics["closure_rate"] >= 0.80 and metrics["total_reserve"] <= 0:
+        score += 5
+
+    score = max(0, min(100, round(score)))
+    level = lossq_model_market_band(score)
+
+    line_codes = set(metrics.get("line_codes") or [])
+
+    best_fit = []
+    poor_fit = []
+
+    if level in {"Preferred", "Standard"}:
+        best_fit.extend(["Admitted standard markets", "Regional commercial carriers", "Incumbent renewal market"])
+    elif level == "Cautious":
+        best_fit.extend(["Regional commercial carriers", "Middle-market carriers", "Incumbent market with narrative"])
+        poor_fit.extend(["Preferred low-touch markets"])
+    elif level == "Restricted":
+        best_fit.extend(["Specialty markets", "Program markets", "Incumbent market with corrective-action plan"])
+        poor_fit.extend(["Preferred standard markets", "Markets with low tolerance for open reserves or litigation"])
+    else:
+        best_fit.extend(["E&S markets", "Specialty distressed-account markets", "Incumbent-only strategy pending documentation"])
+        poor_fit.extend(["Standard admitted markets", "Preferred regional markets"])
+
+    if "property" in line_codes:
+        best_fit.append("Property markets that can underwrite COPE, TIV, roof, CAT, and loss-control detail")
+    if "cyber" in line_codes:
+        best_fit.append("Cyber specialty markets that review MFA, EDR, backups, and incident response controls")
+    if "epli" in line_codes:
+        best_fit.append("EPLI markets that review HR controls, handbook, training, and prior complaint status")
+    if "umbrella_excess" in line_codes:
+        best_fit.append("Umbrella/excess markets requiring underlying claim narrative and limit adequacy")
+    if "workers_comp" in line_codes:
+        best_fit.append("Workers compensation markets requiring safety program and return-to-work details")
+    if "commercial_auto" in line_codes:
+        best_fit.append("Commercial auto markets requiring driver controls, MVR standards, telematics, and fleet safety")
+
+    reasons = [
+        f"Carrier appetite score: {score}/100 ({level}).",
+        f"Total incurred reviewed: ${metrics['total_incurred']:,.0f}.",
+        f"Open claims: {metrics['open_claims']}; litigated claims: {metrics['litigation_claims']}.",
+        f"Outstanding reserves: ${metrics['total_reserve']:,.0f} ({metrics['reserve_ratio']:.0%} reserve ratio).",
+        f"Large losses over $100,000: {metrics['large_claims_100k']}.",
+    ]
+
+    if level == "Preferred":
+        strategy = "Release to standard and regional markets with a clean submission, current valuation, and concise loss narrative."
+    elif level == "Standard":
+        strategy = "Market standard and regional carriers, but include claim narrative and reserve support up front."
+    elif level == "Cautious":
+        strategy = "Prioritize markets comfortable with moderate loss activity. Include large-loss narratives, open-claim status, and corrective action."
+    elif level == "Restricted":
+        strategy = "Start with incumbent, specialty, and program markets. Hold preferred markets until open claims, litigation, and reserves are documented."
+    else:
+        strategy = "Treat as distressed placement. Build documentation first, then approach E&S/specialty markets and the incumbent carrier."
+
+    return {
+        "policy_number": policy_number,
+        "is_credible": True,
+        "carrier_appetite_score": score,
+        "carrier_appetite_level": level,
+        "best_fit_carriers": list(dict.fromkeys(best_fit)),
+        "poor_fit_carriers": list(dict.fromkeys(poor_fit)),
+        "carrier_match_reasons": reasons,
+        "market_strategy": strategy,
+        "placement_summary": (
+            f"Carrier appetite is {score}/100, rated {level}. "
+            f"LossQ expects {decision.get('expected_premium_impact')} pricing pressure based on "
+            f"{metrics['total_claims']} claims, ${metrics['total_incurred']:,.0f} incurred, "
+            f"{metrics['open_claims']} open claims, {metrics['litigation_claims']} litigated claims, "
+            f"and ${metrics['total_reserve']:,.0f} reserves."
+        ),
+        "appetite_metrics": metrics,
+    }
+
 
 
 def build_carrier_match_engine(claims, policy_number=None):
@@ -481,40 +922,164 @@ def build_carrier_match_engine(claims, policy_number=None):
     }
 
 
+
+# LOSSQ_REALISTIC_PREMIUM_FORECAST_ENGINE_V1
 def build_premium_forecast_engine(claims, policy_number=None):
     if len(claims) == 0:
-        return {**insufficient_response(policy_number, "premium-forecast"), "current_premium": None, "expected_renewal_premium": None, "expected_increase_percent": None, "best_case_percent": None, "likely_range_percent": "Insufficient Data", "worst_case_percent": None, "confidence_score": 0, "forecast_drivers": ["No validated claims were available."], "forecast_summary": "Premium forecast not generated. LossQ needs parsed claims and preferably current premium/exposure data."}
+        return {
+            **insufficient_response(policy_number, "premium-forecast"),
+            "current_premium": None,
+            "expected_renewal_premium": None,
+            "expected_increase_percent": None,
+            "best_case_percent": None,
+            "likely_range_percent": "Insufficient Data",
+            "worst_case_percent": None,
+            "confidence_score": 0,
+            "forecast_drivers": ["No validated claims were available."],
+            "forecast_summary": "Premium forecast not generated. LossQ needs parsed claims and preferably current premium/exposure data.",
+        }
+
     intelligence = build_underwriting_intelligence(claims)
     decision = build_underwriter_decision_engine(claims, policy_number)
-    metrics = get_loss_metrics(claims)
+    metrics = lossq_model_metrics(claims)
+
     total_incurred = metrics["total_incurred"]
-    modeled_current = max(25000, int((total_incurred * 0.65) + 50000))
+
+    # Modeled current premium is a fallback when real premium is not available.
+    # It is not a quote; it gives the model a denominator for expected pricing pressure.
+    modeled_current = max(25000, int((total_incurred * 0.55) + 45000))
     loss_ratio = total_incurred / modeled_current if modeled_current else 0
-    increase = 3
-    if loss_ratio >= 2.0: increase += 45
-    elif loss_ratio >= 1.25: increase += 32
-    elif loss_ratio >= 0.75: increase += 20
-    elif loss_ratio >= 0.50: increase += 12
-    elif loss_ratio <= 0.20: increase -= 2
-    if metrics["total_claims"] >= 10: increase += 12
-    elif metrics["total_claims"] >= 5: increase += 7
-    if metrics["largest_loss"] >= 250000: increase += 15
-    elif metrics["largest_loss"] >= 100000: increase += 8
-    if metrics["open_claims"]: increase += min(metrics["open_claims"]*4, 16)
-    if metrics["litigation_claims"]: increase += min(metrics["litigation_claims"]*10, 25)
-    if metrics["total_reserve"] >= 250000: increase += 12
-    elif metrics["total_reserve"] >= 100000: increase += 8
-    if metrics["trend"] == "Deteriorating": increase += 10
+
+    increase = 0
+
+    if loss_ratio >= 2.00:
+        increase += 42
+    elif loss_ratio >= 1.50:
+        increase += 32
+    elif loss_ratio >= 1.00:
+        increase += 24
+    elif loss_ratio >= 0.75:
+        increase += 16
+    elif loss_ratio >= 0.50:
+        increase += 9
+    elif loss_ratio <= 0.20:
+        increase -= 3
+
+    if metrics["total_claims"] >= 12:
+        increase += 14
+    elif metrics["total_claims"] >= 8:
+        increase += 10
+    elif metrics["total_claims"] >= 5:
+        increase += 6
+    elif metrics["total_claims"] <= 1:
+        increase -= 2
+
+    if metrics["largest_loss"] >= 500000:
+        increase += 20
+    elif metrics["largest_loss"] >= 250000:
+        increase += 14
+    elif metrics["largest_loss"] >= 100000:
+        increase += 8
+    elif metrics["largest_loss"] >= 50000:
+        increase += 4
+
+    if metrics["open_claims"]:
+        increase += min(metrics["open_claims"] * 4, 18)
+
+    if metrics["litigation_claims"]:
+        increase += min(metrics["litigation_claims"] * 8, 24)
+
+    if metrics["reserve_ratio"] >= 0.60:
+        increase += 14
+    elif metrics["reserve_ratio"] >= 0.40:
+        increase += 9
+    elif metrics["reserve_ratio"] >= 0.25:
+        increase += 5
+
     renewal_score = int(intelligence.get("renewal_score") or 0)
-    if renewal_score < 50: increase += 15
-    elif renewal_score < 70: increase += 8
-    if int(decision.get("marketability_score") or 0) < 50: increase += 10
-    increase = int(max(-5, min(125, increase)))
-    expected = int(modeled_current * (1 + increase/100))
-    confidence = 55 + (10 if metrics["total_claims"] >= 3 else 0) + (10 if metrics["yearly_incurred"] else 0) + (5 if metrics["total_reserve"] else 0)
+    if renewal_score < 40:
+        increase += 16
+    elif renewal_score < 55:
+        increase += 10
+    elif renewal_score < 70:
+        increase += 5
+    elif renewal_score >= 85:
+        increase -= 4
+
+    if int(decision.get("marketability_score") or 0) < 45:
+        increase += 12
+    elif int(decision.get("marketability_score") or 0) < 60:
+        increase += 7
+
+    if metrics["closure_rate"] >= 0.80 and metrics["total_reserve"] <= 0:
+        increase -= 4
+
+    increase = int(max(-5, min(125, round(increase))))
+
+    best_case = max(-5, increase - 10)
+    worst_case = min(150, increase + 20)
+
+    if metrics["open_claims"] or metrics["litigation_claims"] or metrics["reserve_ratio"] >= 0.35:
+        worst_case = min(150, increase + 30)
+
+    expected = int(modeled_current * (1 + increase / 100))
+
+    confidence = 50
+    if metrics["total_claims"] >= 3:
+        confidence += 10
+    if metrics["line_summary"]:
+        confidence += 8
+    if metrics["total_incurred"] > 0:
+        confidence += 7
+    if metrics["open_claims"] or metrics["litigation_claims"]:
+        confidence -= 5
+    if metrics["total_claims"] <= 1:
+        confidence -= 8
+
     confidence = max(35, min(85, confidence))
-    drivers = [f"Modeled loss ratio: {loss_ratio*100:.1f}%", f"{metrics['total_claims']} account-specific claim(s)", f"Open claims: {metrics['open_claims']}", f"Litigated claims: {metrics['litigation_claims']}", f"Reserve exposure: ${metrics['total_reserve']:,.0f}", f"Largest loss: ${metrics['largest_loss']:,.0f}"]
-    return {"policy_number": policy_number, "is_credible": True, "current_premium": modeled_current, "expected_renewal_premium": expected, "expected_increase_percent": increase, "best_case_percent": max(-5, increase-10), "likely_range_percent": f"{max(-5, increase-10)}% to {min(150, increase+25)}%", "worst_case_percent": min(150, increase+25), "confidence_score": confidence, "forecast_drivers": drivers, "forecast_metrics": metrics, "forecast_summary": f"LossQ projects ${expected:,.0f}, an estimated {increase}% change from modeled current premium of ${modeled_current:,.0f}. This is a modeled forecast, not a carrier quote, based on loss ratio, claim frequency, open claim load, litigation, reserves, and renewal score."}
+
+    pricing_action = lossq_model_premium_band(increase)
+
+    drivers = [
+        f"Modeled loss ratio: {loss_ratio * 100:.1f}%.",
+        f"{metrics['total_claims']} account-specific claim(s) reviewed.",
+        f"Total incurred: ${metrics['total_incurred']:,.0f}.",
+        f"Largest loss: ${metrics['largest_loss']:,.0f}.",
+        f"Open claims: {metrics['open_claims']}.",
+        f"Litigated claims: {metrics['litigation_claims']}.",
+        f"Outstanding reserves: ${metrics['total_reserve']:,.0f} ({metrics['reserve_ratio']:.0%} reserve ratio).",
+        f"Marketability score: {decision.get('marketability_score')}/100.",
+    ]
+
+    if metrics["line_summary"]:
+        top_line = metrics["line_summary"][0]
+        drivers.append(
+            f"Primary loss driver: {top_line['line_of_business']} with ${top_line['total_incurred']:,.0f} incurred."
+        )
+
+    return {
+        "policy_number": policy_number,
+        "is_credible": True,
+        "current_premium": modeled_current,
+        "expected_renewal_premium": expected,
+        "expected_increase_percent": increase,
+        "best_case_percent": best_case,
+        "likely_range_percent": f"{best_case}% to {worst_case}%",
+        "worst_case_percent": worst_case,
+        "pricing_action_band": pricing_action,
+        "non_renewal_watch": bool(increase >= 45 or int(decision.get("marketability_score") or 0) < 42),
+        "confidence_score": confidence,
+        "forecast_drivers": drivers,
+        "forecast_metrics": metrics,
+        "forecast_summary": (
+            f"LossQ projects a modeled renewal premium of ${expected:,.0f}, an estimated {increase}% change "
+            f"from modeled current premium of ${modeled_current:,.0f}. Expected pricing action is {pricing_action}. "
+            f"This is not a carrier quote; it is a rules-based forecast using loss ratio, frequency, severity, "
+            f"open reserves, litigation, line mix, and marketability."
+        ),
+    }
+
+
 
 
 def _safe_policy_json(value):

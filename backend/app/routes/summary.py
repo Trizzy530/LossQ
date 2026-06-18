@@ -154,19 +154,120 @@ def data_quality(claims, policy_numbers=None, profile_data=None):
     }
 
 
+
+# LOSSQ_REALISTIC_RENEWAL_RISK_MODEL_V1
 def build_renewal_risk_engine(claims):
+    claims = claims or []
+
+    def m(value):
+        try:
+            return money(value)
+        except Exception:
+            try:
+                return float(str(value or "0").replace("$", "").replace(",", "").strip() or 0)
+            except Exception:
+                return 0.0
+
+    def claim_line(c):
+        line = clean(
+            getattr(c, "line_of_business", "")
+            or getattr(c, "claim_type", "")
+            or getattr(c, "coverage", "")
+            or getattr(c, "policy_type", "")
+            or getattr(c, "policy_number", "")
+        ).lower()
+
+        policy = clean(getattr(c, "policy_number", "")).upper()
+
+        if "worker" in line or "comp" in line or "-WC-" in policy:
+            return "Workers Compensation"
+        if "liquor" in line:
+            return "Liquor Liability"
+        if "auto" in line or "-AL-" in policy or "-AUTO-" in policy:
+            return "Commercial Auto"
+        if "cargo" in line or "-CG-" in policy or "-CARGO-" in policy:
+            return "Cargo"
+        if "property" in line or "-CP-" in policy or "-PROP-" in policy:
+            return "Commercial Property"
+        if "bop" in line or "businessowner" in line or "-BOP-" in policy:
+            return "BOP"
+        if "cyber" in line or "-CY-" in policy or "-CYBER-" in policy:
+            return "Cyber"
+        if "employment" in line or "epli" in line or "-EPLI-" in policy:
+            return "EPLI"
+        if "director" in line or "officer" in line or "d&o" in line or "-DO-" in policy:
+            return "D&O"
+        if "professional" in line or "errors" in line or "omissions" in line or "-PL-" in policy or "-EO-" in policy:
+            return "Professional Liability"
+        if "inland" in line or "marine" in line or "-IM-" in policy:
+            return "Inland Marine"
+        if "crime" in line or "-CRIME-" in policy:
+            return "Crime"
+        if "umbrella" in line or "excess" in line or "-UMB-" in policy or "-XS-" in policy:
+            return "Umbrella / Excess"
+        if "general" in line or "liability" in line or "-GL-" in policy:
+            return "General Liability"
+
+        return "Other Commercial Line"
+
+    def incurred(c):
+        paid = m(getattr(c, "paid_amount", 0))
+        reserve = m(getattr(c, "reserve_amount", 0))
+        total = m(getattr(c, "total_incurred", 0))
+        if total <= 0 and (paid > 0 or reserve > 0):
+            total = paid + reserve
+        return paid, reserve, total
+
     total_claims = len(claims)
     open_claims = len([c for c in claims if is_open_claim(c)])
     closed_claims = max(total_claims - open_claims, 0)
     litigation_claims = len([c for c in claims if has_litigation(c)])
     flagged_claims = len([c for c in claims if is_flagged_claim(c)])
-    total_paid = sum(money(getattr(c, "paid_amount", 0)) for c in claims)
-    total_reserve = sum(money(getattr(c, "reserve_amount", 0)) for c in claims)
-    total_incurred = sum(money(getattr(c, "total_incurred", 0)) for c in claims)
+
+    total_paid = 0.0
+    total_reserve = 0.0
+    total_incurred = 0.0
+    largest_loss = 0.0
+    line_summary = {}
+
+    for c in claims:
+        paid, reserve, total = incurred(c)
+        total_paid += paid
+        total_reserve += reserve
+        total_incurred += total
+        largest_loss = max(largest_loss, total)
+
+        line = claim_line(c)
+        if line not in line_summary:
+            line_summary[line] = {
+                "claim_count": 0,
+                "open_claims": 0,
+                "litigation_claims": 0,
+                "paid_amount": 0.0,
+                "reserve_amount": 0.0,
+                "total_incurred": 0.0,
+                "largest_loss": 0.0,
+            }
+
+        line_summary[line]["claim_count"] += 1
+        line_summary[line]["paid_amount"] += paid
+        line_summary[line]["reserve_amount"] += reserve
+        line_summary[line]["total_incurred"] += total
+        line_summary[line]["largest_loss"] = max(line_summary[line]["largest_loss"], total)
+
+        if is_open_claim(c):
+            line_summary[line]["open_claims"] += 1
+        if has_litigation(c):
+            line_summary[line]["litigation_claims"] += 1
+
     average_severity = total_incurred / total_claims if total_claims else 0
-    large_claims = len([c for c in claims if money(getattr(c, "total_incurred", 0)) >= 100000])
-    severe_claims = len([c for c in claims if money(getattr(c, "total_incurred", 0)) >= 250000])
+    large_claims = len([c for c in claims if incurred(c)[2] >= 50000])
+    large_claims_100k = len([c for c in claims if incurred(c)[2] >= 100000])
+    severe_claims = len([c for c in claims if incurred(c)[2] >= 250000])
     open_reserve_pressure = total_reserve / total_incurred if total_incurred else 0
+    closure_rate = closed_claims / total_claims if total_claims else 0
+    largest_loss_ratio = largest_loss / total_incurred if total_incurred else 0
+    line_count = len(line_summary)
 
     if total_claims == 0:
         return {
@@ -177,65 +278,191 @@ def build_renewal_risk_engine(claims):
             "broker_recommendation": "Do not rely on this renewal result until claims and policy schedule are populated.",
             "renewal_summary": "Insufficient claim data. Renewal risk has not been rated.",
             "renewal_metrics": {
-                "total_claims": 0, "open_claims": 0, "closed_claims": 0, "litigation_claims": 0,
-                "flagged_claims": 0, "large_claims": 0, "severe_claims": 0,
-                "total_paid": 0, "total_reserve": 0, "total_incurred": 0,
-                "average_severity": 0, "open_reserve_pressure": 0,
+                "total_claims": 0,
+                "open_claims": 0,
+                "closed_claims": 0,
+                "litigation_claims": 0,
+                "flagged_claims": 0,
+                "large_claims": 0,
+                "large_claims_100k": 0,
+                "severe_claims": 0,
+                "total_paid": 0,
+                "total_reserve": 0,
+                "total_incurred": 0,
+                "average_severity": 0,
+                "largest_loss": 0,
+                "open_reserve_pressure": 0,
+                "closure_rate": 0,
+                "largest_loss_ratio": 0,
+                "line_summary": [],
             },
         }
 
     score = 100
-    score -= min(total_claims * 4, 24)
-    score -= min(open_claims * 10, 30)
-    score -= min(litigation_claims * 16, 36)
-    score -= min(flagged_claims * 8, 24)
-    score -= min(large_claims * 12, 24)
-    score -= min(severe_claims * 18, 36)
-    if total_incurred >= 1000000: score -= 30
-    elif total_incurred >= 500000: score -= 22
-    elif total_incurred >= 250000: score -= 14
-    elif total_incurred >= 100000: score -= 7
-    if total_reserve >= 250000: score -= 18
-    elif total_reserve >= 100000: score -= 10
-    elif total_reserve >= 50000: score -= 6
-    if average_severity >= 100000: score -= 12
-    elif average_severity >= 50000: score -= 6
-    if open_reserve_pressure >= 0.50: score -= 10
-    elif open_reserve_pressure >= 0.25: score -= 5
+
+    # Frequency pressure. Carriers tolerate isolated losses better than recurring patterns.
+    if total_claims >= 12:
+        score -= 26
+    elif total_claims >= 8:
+        score -= 20
+    elif total_claims >= 5:
+        score -= 14
+    elif total_claims >= 3:
+        score -= 7
+    else:
+        score -= total_claims * 2
+
+    # Open claim development pressure.
+    score -= min(open_claims * 8, 30)
+
+    # Litigation pressure. Litigation creates ultimate-loss uncertainty.
+    score -= min(litigation_claims * 12, 34)
+
+    # Severity and shock-loss pressure.
+    if largest_loss >= 500000:
+        score -= 28
+    elif largest_loss >= 250000:
+        score -= 20
+    elif largest_loss >= 100000:
+        score -= 12
+    elif largest_loss >= 50000:
+        score -= 6
+
+    # Total incurred load.
+    if total_incurred >= 1500000:
+        score -= 32
+    elif total_incurred >= 1000000:
+        score -= 26
+    elif total_incurred >= 500000:
+        score -= 18
+    elif total_incurred >= 250000:
+        score -= 11
+    elif total_incurred >= 100000:
+        score -= 5
+
+    # Outstanding reserve pressure.
+    if open_reserve_pressure >= 0.60:
+        score -= 16
+    elif open_reserve_pressure >= 0.40:
+        score -= 11
+    elif open_reserve_pressure >= 0.25:
+        score -= 6
+
+    if total_reserve >= 500000:
+        score -= 18
+    elif total_reserve >= 250000:
+        score -= 12
+    elif total_reserve >= 100000:
+        score -= 8
+    elif total_reserve >= 50000:
+        score -= 4
+
+    # Average severity and concentration.
+    if average_severity >= 150000:
+        score -= 13
+    elif average_severity >= 75000:
+        score -= 8
+    elif average_severity >= 40000:
+        score -= 4
+
+    if largest_loss_ratio >= 0.70 and total_claims >= 2:
+        score -= 5
+
+    if flagged_claims:
+        score -= min(flagged_claims * 6, 18)
+
+    if closure_rate >= 0.80 and total_reserve <= 0:
+        score += 6
+    elif closure_rate >= 0.65 and open_claims <= 1:
+        score += 3
+
     score = max(0, min(100, round(score)))
 
-    if score >= 80:
+    if score >= 82:
         level = "Low"
-    elif score >= 60:
+    elif score >= 65:
         level = "Moderate"
-    elif score >= 40:
+    elif score >= 45:
         level = "High"
     else:
         level = "Critical"
 
-    drivers = [f"{total_claims} account-specific claim(s) identified.", f"Total incurred losses are ${total_incurred:,.2f}."]
-    if open_claims: drivers.append(f"{open_claims} open claim(s) create renewal uncertainty.")
-    if litigation_claims: drivers.append(f"{litigation_claims} litigated claim(s) increase severity uncertainty.")
-    if total_reserve: drivers.append(f"Outstanding reserves total ${total_reserve:,.2f}.")
-    if large_claims: drivers.append(f"{large_claims} large claim(s) exceed $100,000.")
-    if flagged_claims: drivers.append(f"{flagged_claims} flagged/watch claim(s) require explanation.")
+    if score >= 82:
+        premium_pressure = "Flat to +5%"
+        carrier_reaction = "Standard renewal review with normal underwriting questions."
+    elif score >= 65:
+        premium_pressure = "+5% to +15%"
+        carrier_reaction = "Marketable, but underwriter will expect claim explanations and current loss valuation."
+    elif score >= 45:
+        premium_pressure = "+15% to +35%"
+        carrier_reaction = "Terms may tighten. Expect deductible, retention, pricing, or coverage limitations."
+    else:
+        premium_pressure = "+35% or higher / possible non-renewal concern"
+        carrier_reaction = "Restricted appetite. Carrier may require corrective-action documentation before quoting."
+
+    drivers = [
+        f"{total_claims} account-specific claim(s) identified across {line_count} commercial line(s).",
+        f"Total incurred losses are ${total_incurred:,.0f}; largest loss is ${largest_loss:,.0f}.",
+        f"Open reserve pressure is {open_reserve_pressure:.0%} with ${total_reserve:,.0f} outstanding.",
+    ]
+
+    if open_claims:
+        drivers.append(f"{open_claims} open claim(s) may continue developing before renewal.")
+    if litigation_claims:
+        drivers.append(f"{litigation_claims} litigated claim(s) increase ultimate-loss uncertainty.")
+    if large_claims_100k:
+        drivers.append(f"{large_claims_100k} claim(s) exceed $100,000 and require large-loss narratives.")
+    elif large_claims:
+        drivers.append(f"{large_claims} claim(s) exceed $50,000 and should be explained.")
+    if closure_rate >= 0.75:
+        drivers.append(f"Closure rate is {closure_rate:.0%}, which helps reduce uncertainty if closed claims are fully resolved.")
 
     concerns = []
-    if open_claims: concerns.append("Open claims may continue to develop before renewal.")
-    if litigation_claims: concerns.append("Litigation increases uncertainty around ultimate loss severity.")
-    if total_reserve >= 50000: concerns.append("Outstanding reserves may affect loss development and pricing.")
-    if total_claims >= 5: concerns.append("Claim frequency may raise carrier concerns about controls or operations.")
-    if large_claims: concerns.append("Large losses require detailed claim narratives and corrective action.")
-    if not concerns: concerns.append("No major carrier concerns detected from the account-specific loss data.")
+    if open_claims:
+        concerns.append("Open claims may continue to develop and should be supported with adjuster notes and reserve rationale.")
+    if litigation_claims:
+        concerns.append("Litigation increases uncertainty around venue, defense costs, settlement posture, and ultimate loss severity.")
+    if total_reserve >= 50000:
+        concerns.append("Outstanding reserves may affect loss development, pricing, and carrier willingness to quote.")
+    if total_claims >= 5:
+        concerns.append("Claim frequency may raise carrier questions about controls, operations, staffing, maintenance, or safety procedures.")
+    if large_claims:
+        concerns.append("Large losses require detailed narratives, corrective actions, and recurrence-prevention documentation.")
+    if not concerns:
+        concerns.append("No major carrier concerns detected from the validated account-specific loss data.")
+
+    followups = [
+        "Current valued loss runs by line and policy year",
+        "Large loss narratives for severity claims",
+        "Corrective action taken after each material loss",
+    ]
+    if open_claims:
+        followups.append("Adjuster status, reserve basis, and expected closure timeline for open claims")
+    if litigation_claims:
+        followups.append("Litigation status, defense counsel update, venue, and settlement posture")
 
     if level == "Low":
-        rec = "Proceed with standard renewal marketing after confirming loss runs are currently valued."
+        rec = "Proceed with standard renewal marketing after confirming currently valued loss runs and exposure basis."
     elif level == "Moderate":
-        rec = "Prepare a broker narrative addressing open claims, reserves, and corrective actions."
+        rec = "Market the account with a broker narrative addressing frequency, open reserves, and corrective actions."
     elif level == "High":
-        rec = "Build detailed claim narratives, reserve updates, litigation status, and loss-control documentation before marketing."
+        rec = "Build detailed claim narratives, reserve updates, litigation status, and loss-control documentation before broad market release."
     else:
-        rec = "Treat as critical renewal. Obtain updated loss runs, litigation updates, reserve explanations, and corrective-action plan before approaching markets."
+        rec = "Treat as critical renewal. Obtain updated loss runs, litigation updates, reserve explanations, and a corrective-action plan before approaching standard markets."
+
+    line_output = []
+    for line, values in line_summary.items():
+        line_output.append({
+            "line_of_business": line,
+            "claim_count": values["claim_count"],
+            "open_claims": values["open_claims"],
+            "litigation_claims": values["litigation_claims"],
+            "paid_amount": values["paid_amount"],
+            "reserve_amount": values["reserve_amount"],
+            "total_incurred": values["total_incurred"],
+            "largest_loss": values["largest_loss"],
+        })
+    line_output.sort(key=lambda item: item["total_incurred"], reverse=True)
 
     return {
         "renewal_score": score,
@@ -243,13 +470,33 @@ def build_renewal_risk_engine(claims):
         "renewal_drivers": drivers,
         "carrier_concerns": concerns,
         "broker_recommendation": rec,
-        "renewal_summary": f"The selected account has a renewal score of {score}/100, indicating {level.lower()} renewal risk based on {total_claims} claims, {open_claims} open claims, ${total_incurred:,.2f} total incurred, ${total_reserve:,.2f} reserves, and {litigation_claims} litigated claims.",
+        "renewal_summary": (
+            f"The selected account has a renewal score of {score}/100, indicating {level.lower()} renewal risk. "
+            f"The model considered {total_claims} claims, {open_claims} open claims, {litigation_claims} litigated claims, "
+            f"${total_incurred:,.0f} total incurred, ${total_reserve:,.0f} reserves, {closure_rate:.0%} closure rate, "
+            f"and largest-loss concentration of {largest_loss_ratio:.0%}. Expected pricing pressure is {premium_pressure}."
+        ),
+        "predicted_carrier_reaction": carrier_reaction,
+        "expected_premium_pressure": premium_pressure,
+        "required_underwriting_followups": followups,
         "renewal_metrics": {
-            "total_claims": total_claims, "open_claims": open_claims, "closed_claims": closed_claims,
-            "litigation_claims": litigation_claims, "flagged_claims": flagged_claims,
-            "large_claims": large_claims, "severe_claims": severe_claims,
-            "total_paid": total_paid, "total_reserve": total_reserve, "total_incurred": total_incurred,
-            "average_severity": average_severity, "open_reserve_pressure": open_reserve_pressure,
+            "total_claims": total_claims,
+            "open_claims": open_claims,
+            "closed_claims": closed_claims,
+            "litigation_claims": litigation_claims,
+            "flagged_claims": flagged_claims,
+            "large_claims": large_claims,
+            "large_claims_100k": large_claims_100k,
+            "severe_claims": severe_claims,
+            "total_paid": total_paid,
+            "total_reserve": total_reserve,
+            "total_incurred": total_incurred,
+            "average_severity": average_severity,
+            "largest_loss": largest_loss,
+            "open_reserve_pressure": open_reserve_pressure,
+            "closure_rate": closure_rate,
+            "largest_loss_ratio": largest_loss_ratio,
+            "line_summary": line_output,
         },
     }
 
