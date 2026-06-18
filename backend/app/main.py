@@ -6,10 +6,11 @@ from fastapi.middleware.cors import CORSMiddleware
 from app.database import Base, engine
 from app.security_middleware import SecurityHeadersMiddleware, TrustedHostGuardMiddleware, SimpleRateLimitMiddleware
 from app.routes import (
+    beta,
     auth,
     upload,
     upload_v2,
-    claims,    
+    claims,
     summary,
     upload_history,
     reports,
@@ -100,6 +101,7 @@ app.add_middleware(
 )
 
 app.include_router(auth.router)
+app.include_router(beta.router)
 app.include_router(platform_admin.router)
 app.include_router(upload.router)
 app.include_router(upload_v2.router)
