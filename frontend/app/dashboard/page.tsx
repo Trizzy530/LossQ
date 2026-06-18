@@ -4170,7 +4170,7 @@ function buildExposureInputsFromUploadedAccount(): AnyObject {
     return String(displayObject[field] ?? "");
   };
 
-  // LOSSQ_SAFE_POLICY_LIMITS_DISPLAY_V1
+  // LOSSQ_POLICY_LIMITS_EXPOSURE_BASIS_BLOCK_V2
   const safePolicyLimitsValue = () => {
     const coverageLimit = editableProfileValue("coverage_limit");
     if (coverageLimit) return coverageLimit;
@@ -4178,14 +4178,17 @@ function buildExposureInputsFromUploadedAccount(): AnyObject {
     const rawLimits = editableProfileValue("limits");
     const lowerLimits = rawLimits.toLowerCase();
 
-    if (
+    const looksLikeExposureBasis =
       lowerLimits.includes("payroll") ||
       lowerLimits.includes("revenue") ||
       lowerLimits.includes("employees") ||
       lowerLimits.includes("vehicles") ||
       lowerLimits.includes("drivers") ||
-      lowerLimits.includes("umbrella")
-    ) {
+      lowerLimits.includes("umbrella") ||
+      lowerLimits.includes("exposure basis") ||
+      lowerLimits.includes("gl limit");
+
+    if (looksLikeExposureBasis) {
       return "";
     }
 

@@ -2571,6 +2571,36 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
     )
 
 
+
+# LOSSQ_CLEAN_EXPOSURE_LIMITS_FIELD_V1
+def lossq_clean_exposure_limits_field(profile_data: dict):
+    """
+    Keep exposure_basis separate from policy limits.
+    If limits contains a full exposure sentence, replace it with coverage_limit when available.
+    """
+    profile_data = dict(profile_data or {})
+
+    raw_limits = str(profile_data.get("limits") or "").strip()
+    lower_limits = raw_limits.lower()
+
+    looks_like_exposure_basis = any(token in lower_limits for token in [
+        "payroll",
+        "revenue",
+        "employees",
+        "vehicles",
+        "drivers",
+        "umbrella",
+        "gl limit",
+        "exposure basis",
+    ])
+
+    if looks_like_exposure_basis:
+        coverage_limit = profile_data.get("coverage_limit") or profile_data.get("policy_limit") or ""
+        profile_data["limits"] = coverage_limit or ""
+
+    return profile_data
+
+
 def extract_profile_data(
     parsed_claims: list[dict],
     fallback_policy_number: str,
@@ -5267,6 +5297,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             elif parsed_account:
                 file_policy_number = parsed_account
 
+            parsed_profile = lossq_clean_exposure_limits_field(parsed_profile)
+
             for key, value in parsed_profile.items():
                 if key in ["policies", "validation", "raw_text_preview"]:
                     direct_profile[key] = value
@@ -5532,6 +5564,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     }
     if debug_exposure_payload:
         print("LOSSQ_PROFILE_DATA_EXPOSURE_BEFORE_SAVE:", debug_exposure_payload)
+
+    # LOSSQ_CLEAN_EXPOSURE_LIMITS_FIELD_V1
+    profile_data = lossq_clean_exposure_limits_field(profile_data)
 
     profile = upsert_account_profile(db, profile_data, current_user)
 
