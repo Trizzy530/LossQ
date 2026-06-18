@@ -6598,7 +6598,7 @@ const modelChartNarrative =
         <button
           type="button"
           onClick={openBetaFeedbackEmail}
-          className="fixed bottom-6 right-6 z-[9999] rounded-full border border-cyan-300/40 bg-cyan-500 px-5 py-3 text-sm font-bold text-slate-950 shadow-2xl shadow-cyan-500/30 hover:bg-cyan-400"
+          className="fixed bottom-24 right-6 z-[99999] rounded-full border border-yellow-300/60 bg-yellow-300 px-5 py-3 text-sm font-black text-slate-950 shadow-2xl shadow-yellow-300/40 hover:bg-yellow-200"
         >
           Report Issue
         </button>
@@ -8925,6 +8925,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
