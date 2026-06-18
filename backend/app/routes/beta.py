@@ -63,6 +63,7 @@ Received At: {datetime.utcnow().isoformat()} UTC
         headers={
             "Authorization": f"Bearer {resend_api_key}",
             "Content-Type": "application/json",
+            "User-Agent": "LossQ/1.0 (https://www.lossq.com; hello@lossq.com)",
         },
         method="POST",
     )
