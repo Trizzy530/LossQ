@@ -31,6 +31,23 @@ const CURRENT_UPLOAD_CACHE_KEY = "lossq_current_upload_claims";
 
 // LOSSQ_FRONTEND_PLAN_FUNCTION_LIMITS_V1
 const LOSSQ_PLAN_FUNCTION_LIMITS: Record<string, string[]> = {
+  // LOSSQ_FRONTEND_BETA_ACCESS_PLAN_V1
+  beta: [
+    "overview",
+    "account_profiles",
+    "loss_run_upload",
+    "claims_analysis",
+    "renewal_score",
+    "renewal_memo",
+    "reports",
+    "pdf_exports",
+    "copilot",
+    "carrier_packet",
+    "submission_builder",
+    "carrier_email_draft",
+    "charts",
+  ],
+
   free: [
     "overview",
     "account_profiles",
@@ -2958,6 +2975,7 @@ function normalizeProfileName(item: any) {
 
     if (clean === "pro") return "professional";
     if (clean === "enterprise") return "agency";
+    if (clean === "beta" || clean === "beta_access" || clean === "early_access") return "beta";
 
     return LOSSQ_PLAN_FUNCTION_LIMITS[clean] ? clean : "free";
   }
@@ -2975,7 +2993,8 @@ function normalizeProfileName(item: any) {
   // LOSSQ_DASHBOARD_PAYMENT_GATE_V1
   const PAID_DASHBOARD_PLANS = new Set([
 
-    "beta","starter",
+    "beta",
+    "starter",
     "professional",
     "agency",
     "founding_agency",
