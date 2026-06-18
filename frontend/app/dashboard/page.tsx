@@ -1324,19 +1324,7 @@ function deriveExposureInputsFromPolicyRows(profileLike: any) {
   setIfBlank("location_count", countAfter(["location count", "locations"]));
   setIfBlank("unit_count", countAfter(["unit count", "units"]));
   setIfBlank("square_footage", countAfter(["square footage", "sq ft", "sqft"]));
-
-  if (!cleanValue(exposure.line_of_business)) {
-    const lines = rows
-      .map((row: any) =>
-        cleanValue(row?.line_of_business || row?.policy_type || row?.coverage || row?.line || row?.lob)
-      )
-      .filter(Boolean);
-
-    if (lines.length > 0) {
-      setIfBlank("line_of_business", Array.from(new Set(lines)).join(", "));
-    }
-  }
-
+  // Primary Line of Business is manual-only in Exposure Inputs.
   const basisParts = [
     exposure.payroll ? `Payroll: ${exposure.payroll}` : "",
     exposure.revenue ? `Revenue: ${exposure.revenue}` : "",
@@ -1350,6 +1338,12 @@ function deriveExposureInputsFromPolicyRows(profileLike: any) {
   if (basisParts.length > 0) {
     setIfBlank("exposure_basis", basisParts.join(" | "));
   }
+
+  delete exposure.line_of_business;
+  delete exposure.primary_line_of_business;
+  delete exposure.class_code;
+  delete exposure.class_codes;
+  delete exposure.state;
 
   return exposure;
 }
@@ -4201,6 +4195,15 @@ function autoFillExposureInputsFromUpload() {
     ...(extractedFromProfile || {}),
     ...(extractedFromCurrentProfile || {}),
   };
+
+  // LOSSQ_EXPOSURE_LINE_OF_BUSINESS_MANUAL_ONLY_V1
+  // Do not auto-fill underwriting classification fields from detected claim/policy lines.
+  // These must remain manually editable so fallback values like GL/General Liability do not reappear.
+  delete extracted.line_of_business;
+  delete extracted.primary_line_of_business;
+  delete extracted.class_code;
+  delete extracted.class_codes;
+  delete extracted.state;
 
   extracted = Object.fromEntries(
     Object.entries(extracted).filter(([, value]) => String(value || "").trim() !== "")
