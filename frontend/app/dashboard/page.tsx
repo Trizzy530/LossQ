@@ -2357,10 +2357,42 @@ export default function DashboardPage() {
 
   const router = useRouter();
 
+  // LOSSQ_BETA_FEEDBACK_BUTTON_V2
+  const openBetaFeedbackEmail = () => {
+    const subject = encodeURIComponent("LossQ Beta Feedback / Issue Report");
+
+    const body = encodeURIComponent(
+      [
+        "LossQ Beta Feedback / Issue Report",
+        "",
+        "What happened?",
+        "",
+        "",
+        "What were you trying to do?",
+        "",
+        "",
+        "Page URL:",
+        typeof window !== "undefined" ? window.location.href : "Dashboard",
+        "",
+        "Date/Time:",
+        new Date().toLocaleString(),
+        "",
+        "Browser:",
+        typeof navigator !== "undefined" ? navigator.userAgent : "Unknown",
+        "",
+        "Screenshots attached: Yes / No",
+      ].join("\n")
+    );
+
+    window.location.href = `mailto:support@lossq.com?subject=${subject}&body=${body}`;
+  };
+
+
+
   const [activeTool, setActiveTool] = useState<ToolKey>("overview");
 
-  
-  
+
+
 
 
 // LOSSQ_CLAIM_ANALYSIS_SORTABLE_TABLE_V1
@@ -3695,7 +3727,7 @@ async function saveProfile() {
     }
   }
 
-  
+
 // LOSSQ_AUTO_FILL_EXPOSURE_INPUTS_AFTER_UPLOAD_V1
 function buildExposureInputsFromUploadedAccount(): AnyObject {
   const sourceProfile: AnyObject = {
@@ -3970,7 +4002,7 @@ async function saveExposureInputs() {
   }
 
   async function uploadFiles() {
-  
+
     // LOSSQ_CLEAR_STALE_CLAIM_CACHE_ON_UPLOAD_V1
     try {
       setClaims(lossqFilterRealClaims([]));
@@ -4023,7 +4055,7 @@ if (isUploading) return;
     clearCachedLastUploadReview();
     clearCachedCurrentUpload();
     setMessage("Uploading and analyzing loss runs with V2 parser...");
-    
+
      const uploadResults: any[] = [];
 
     /*
@@ -4959,7 +4991,7 @@ async function exportCarrierLossRun() {
     }
   }
 
-  
+
   async function generateCarrierPacket() {
     if (!canUseFeature("carrier_packet")) {
       setMessage("Carrier Packet is not included in the current package.");
@@ -5010,7 +5042,7 @@ async function exportCarrierLossRun() {
     }
   }
 
-  
+
   async function prepareCarrierEmail() {
     if (!canUseFeature("carrier_email_draft")) {
       setMessage("Prepare Carrier Email is not included in the current package.");
@@ -5123,7 +5155,7 @@ async function exportCarrierLossRun() {
     setMessage("Renewal memo copied.");
   }
 
-  
+
 
 // LOSSQ_COPILOT_ACCOUNT_POLICY_SET_PAYLOAD_V1
 function lossqCopilotPolicyNumbersFromProfile(profileLike: any): string[] {
@@ -6633,7 +6665,16 @@ const modelChartNarrative =
               Refresh Billing
             </button>
 
-            <button
+
+              <button
+                type="button"
+                onClick={openBetaFeedbackEmail}
+                className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-400/20"
+              >
+                Report Issue
+              </button>
+
+<button
               type="button"
               onClick={logout}
               className="rounded-xl border border-red-400/30 px-5 py-3 font-bold text-red-200 hover:bg-red-500/10"
@@ -7109,8 +7150,8 @@ const modelChartNarrative =
 
             </>
           )}
-          
-       
+
+
 
           {activeTool === "profiles" && (
             <>
@@ -8874,6 +8915,7 @@ function ChartCard({
     </div>
   );
 }
+
 
 
 
