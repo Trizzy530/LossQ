@@ -86,6 +86,30 @@ def get_db():
         db.close()
 
 
+
+
+# LOSSQ_BILLING_UPLOAD_USAGE_COUNT_V1
+def lossq_count_org_uploads(db: Session, organization_id):
+    if not organization_id:
+        return 0
+
+    try:
+        return int(
+            db.execute(
+                text(
+                    """
+                    SELECT COUNT(*)
+                    FROM upload_history
+                    WHERE organization_id = :organization_id
+                    """
+                ),
+                {"organization_id": organization_id},
+            ).scalar()
+            or 0
+        )
+    except Exception:
+        return 0
+
 def ensure_billing_columns(db: Session):
     """Keep deployed DB compatible without a full migration tool."""
     dialect = db.bind.dialect.name
@@ -648,11 +672,31 @@ def billing_status(
                 db.commit()
                 db.refresh(org)
 
-    return {
+    payload = {
         **serialize_org_billing(org),
         "founding_slots_remaining": founding_slots_remaining(db),
         "is_billing_admin": (current_user.role or "user").lower() in {"owner", "admin"},
     }
+
+    uploads_used = lossq_count_org_uploads(db, getattr(org, "id", None))
+    upload_limit = payload.get("upload_limit")
+
+    try:
+        clean_upload_limit = int(upload_limit or 0)
+    except Exception:
+        clean_upload_limit = 0
+
+    if clean_upload_limit < 0:
+        remaining_uploads = None
+    elif clean_upload_limit == 0:
+        remaining_uploads = 0
+    else:
+        remaining_uploads = max(clean_upload_limit - uploads_used, 0)
+
+    payload["uploads_used"] = uploads_used
+    payload["remaining_uploads"] = remaining_uploads
+
+    return payload
 
 
 @router.post("/create-checkout-session")

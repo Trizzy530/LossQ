@@ -645,6 +645,73 @@ UPLOAD_DIR = "uploads"
 os.makedirs(UPLOAD_DIR, exist_ok=True)
 
 
+
+
+# LOSSQ_BETA_UPLOAD_LIMIT_ENFORCEMENT_V1
+def lossq_beta_upload_usage_guard(db: Session, current_user: dict, incoming_file_count: int = 1):
+    org_id = None
+    if isinstance(current_user, dict):
+        org_id = current_user.get("organization_id")
+
+    if not org_id:
+        return
+
+    try:
+        org_row = db.execute(
+            text(
+                """
+                SELECT plan, subscription_status, upload_limit
+                FROM organizations
+                WHERE id = :org_id
+                """
+            ),
+            {"org_id": org_id},
+        ).mappings().first()
+    except Exception:
+        return
+
+    if not org_row:
+        return
+
+    plan = str(org_row.get("plan") or "").strip().lower()
+    subscription_status = str(org_row.get("subscription_status") or "").strip().lower()
+
+    is_beta = plan in {"beta", "beta_access", "early_access"} or subscription_status.startswith("beta")
+
+    if not is_beta:
+        return
+
+    try:
+        upload_limit = int(org_row.get("upload_limit") or 10)
+    except Exception:
+        upload_limit = 10
+
+    if upload_limit <= 0:
+        upload_limit = 10
+
+    try:
+        uploads_used = (
+            db.query(UploadHistory)
+            .filter(UploadHistory.organization_id == org_id)
+            .count()
+        )
+    except Exception:
+        uploads_used = 0
+
+    incoming_file_count = max(int(incoming_file_count or 1), 1)
+    projected_uploads = uploads_used + incoming_file_count
+
+    if projected_uploads > upload_limit:
+        remaining = max(upload_limit - uploads_used, 0)
+        raise HTTPException(
+            status_code=403,
+            detail=(
+                f"Beta upload limit reached. This beta account has used "
+                f"{uploads_used} of {upload_limit} uploads. "
+                f"{remaining} upload(s) remaining."
+            ),
+        )
+
 def get_db():
     db = SessionLocal()
     try:
@@ -5154,6 +5221,7 @@ def lossq_global_profile_cleanup(parsed_profile):
 async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
     ensure_account_profile_columns(db)
+    lossq_beta_upload_usage_guard(db, current_user, len(files or []))
 
     total_saved = 0
     total_duplicates_skipped = 0
