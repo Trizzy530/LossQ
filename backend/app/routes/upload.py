@@ -5218,6 +5218,163 @@ def lossq_global_profile_cleanup(parsed_profile):
     return parsed_profile
 
 
+
+
+# LOSSQ_UNIVERSAL_PROFILE_IDENTITY_POLICY_CLEANUP_V1
+def lossq_universal_profile_identity_policy_cleanup(profile):
+    """
+    Universal cleanup for section-style, carrier-style, CSV, XLSX, and PDF profiles.
+    Does not hardcode any customer, carrier, file, or demo case.
+    """
+    if not isinstance(profile, dict):
+        return profile
+
+    profile = dict(profile)
+
+    def clean(value):
+        return re.sub(r"\s+", " ", str(value or "").strip())
+
+    def norm_key(value):
+        return re.sub(r"[^a-z0-9]+", "_", str(value or "").strip().lower()).strip("_")
+
+    def first_value(*keys):
+        normalized = {norm_key(k): v for k, v in profile.items()}
+        for key in keys:
+            value = profile.get(key)
+            if clean(value):
+                return clean(value)
+
+            value = normalized.get(norm_key(key))
+            if clean(value):
+                return clean(value)
+
+        return ""
+
+    def looks_like_policy(value):
+        value = clean(value).upper()
+        if not value:
+            return False
+        return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
+
+    def split_policy_values(value):
+        value = clean(value)
+        if not value:
+            return []
+
+        pieces = re.split(r"\s*(?:/|,|;|\||\band\b|\+)\s*", value, flags=re.IGNORECASE)
+        results = []
+
+        for piece in pieces:
+            piece = clean(piece)
+            if not piece:
+                continue
+
+            matches = re.findall(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", piece.upper())
+
+            if matches:
+                for match in matches:
+                    match = clean(match).replace(" ", "-")
+                    if match and match not in results:
+                        results.append(match)
+            elif looks_like_policy(piece):
+                piece = piece.upper().replace(" ", "-")
+                if piece not in results:
+                    results.append(piece)
+
+        return results
+
+    # 1) Business name / insured name universal mapping.
+    business_name = first_value(
+        "business_name",
+        "insured_name",
+        "insured",
+        "named_insured",
+        "named insured",
+        "applicant",
+        "account_name",
+        "account name",
+        "company_name",
+        "company",
+    )
+
+    if business_name:
+        profile["business_name"] = business_name
+        profile["insured_name"] = profile.get("insured_name") or business_name
+        profile["named_insured"] = profile.get("named_insured") or business_name
+
+    # 2) Policy values may appear in policy_number, account_number, main_policy, or raw headings.
+    raw_policy_value = first_value(
+        "policy_number",
+        "policy number",
+        "policy_numbers",
+        "policy numbers",
+        "main_policy",
+        "main policy",
+        "account_number",
+        "account number",
+    )
+
+    policies = split_policy_values(raw_policy_value)
+
+    existing_policies = profile.get("policies")
+    if isinstance(existing_policies, list):
+        for item in existing_policies:
+            if isinstance(item, dict):
+                policies.extend(split_policy_values(item.get("policy_number") or item.get("policy") or item.get("number")))
+            else:
+                policies.extend(split_policy_values(item))
+
+    # De-dupe while preserving order.
+    deduped_policies = []
+    for policy in policies:
+        policy = clean(policy).upper()
+        if policy and policy not in deduped_policies:
+            deduped_policies.append(policy)
+
+    if deduped_policies:
+        profile["policy_number"] = deduped_policies[0]
+        profile["main_policy"] = deduped_policies[0]
+        profile["policy_numbers"] = deduped_policies
+
+        existing_policy_rows = profile.get("policies") if isinstance(profile.get("policies"), list) else []
+        rebuilt = []
+
+        seen = set()
+        for policy in deduped_policies:
+            rebuilt.append({"policy_number": policy})
+            seen.add(policy)
+
+        for item in existing_policy_rows:
+            if isinstance(item, dict):
+                policy = clean(item.get("policy_number") or item.get("policy") or item.get("number")).upper()
+                if policy and policy not in seen:
+                    rebuilt.append(item)
+                    seen.add(policy)
+
+        profile["policies"] = rebuilt
+
+    # 3) Account number should not be a policy-number bundle.
+    account_number = first_value("account_number", "account number", "customer_number", "customer number")
+    true_account_number = first_value(
+        "account_id",
+        "account id",
+        "customer_id",
+        "customer id",
+        "insured_id",
+        "insured id",
+        "client_id",
+        "client id",
+    )
+
+    if account_number and looks_like_policy(account_number):
+        if true_account_number and not looks_like_policy(true_account_number):
+            profile["account_number"] = true_account_number
+        else:
+            profile["account_number"] = ""
+
+    return profile
+
+
 async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
     ensure_account_profile_columns(db)
@@ -5309,6 +5466,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         # LOSSQ_FINAL_PROFILE_DATES_FROM_POLICIES_V1
         parsed_profile = lossq_final_profile_dates_from_policies(parsed_profile)
+        parsed_profile = lossq_universal_profile_identity_policy_cleanup(parsed_profile)
         if upload_agency_name:
             parsed_profile = parsed_profile or {}
             parsed_profile["agency_name"] = upload_agency_name
