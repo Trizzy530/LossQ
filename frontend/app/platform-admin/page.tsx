@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -139,6 +139,12 @@ export default function PlatformAdminPage() {
               className="rounded-xl border border-white/10 px-4 py-2 text-sm hover:bg-white/10"
             >
               Back to Dashboard
+            </button>
+            <button
+              onClick={() => router.push("/platform-admin/beta-requests")}
+              className="rounded-xl border border-cyan-400/30 px-4 py-2 text-sm font-bold text-cyan-200 hover:bg-cyan-400/10"
+            >
+              Beta Requests
             </button>
             <button
               onClick={loadPlatformAdmin}

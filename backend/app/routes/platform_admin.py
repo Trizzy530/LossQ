@@ -544,3 +544,266 @@ def revoke_beta_access(
         "message": "Beta access revoked.",
         "organization_id": org_id,
     }
+
+
+# LOSSQ_PLATFORM_ADMIN_BETA_REQUESTS_V1
+def ensure_platform_beta_requests_table(db: Session):
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS beta_requests (
+                id SERIAL PRIMARY KEY,
+                email VARCHAR(320) UNIQUE NOT NULL,
+                source VARCHAR(120),
+                page_url TEXT,
+                user_agent TEXT,
+                status VARCHAR(50) DEFAULT 'new',
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                approved_at TIMESTAMP NULL,
+                rejected_at TIMESTAMP NULL,
+                activated_at TIMESTAMP NULL
+            )
+            """
+        )
+    )
+
+    for column_sql in [
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS source VARCHAR(120)",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS page_url TEXT",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS user_agent TEXT",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'new'",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS notes TEXT",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP NULL",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP NULL",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP NULL",
+    ]:
+        try:
+            db.execute(text(column_sql))
+        except Exception:
+            pass
+
+    db.commit()
+
+
+def _lossq_apply_beta_access_to_org(db: Session, org_id: int, days: int = 30, upload_limit: int = 10, user_limit: int = 1):
+    columns = _lossq_platform_org_update_columns(db)
+
+    beta_end = datetime.now(timezone.utc) + timedelta(days=days)
+
+    updates = {
+        "plan": "beta",
+        "subscription_status": "active",
+        "upload_limit": upload_limit,
+        "current_period_end": beta_end,
+    }
+
+    if "user_limit" in columns:
+        updates["user_limit"] = user_limit
+
+    set_parts = []
+    params = {"org_id": org_id}
+
+    for key, value in updates.items():
+        if key in columns:
+            set_parts.append(f"{key} = :{key}")
+            params[key] = value
+
+    if not set_parts:
+        raise HTTPException(status_code=500, detail="No beta access columns are available to update.")
+
+    db.execute(
+        text(f"UPDATE organizations SET {', '.join(set_parts)} WHERE id = :org_id"),
+        params,
+    )
+
+    rows = db.execute(
+        text("SELECT id, name, plan, subscription_status, upload_limit, current_period_end FROM organizations WHERE id = :org_id"),
+        {"org_id": org_id},
+    ).fetchall()
+
+    return row_to_dict(rows[0]) if rows else {"id": org_id}
+
+
+@router.get("/beta-requests")
+def list_beta_requests(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    require_platform_admin(current_user)
+    ensure_platform_beta_requests_table(db)
+
+    rows = db.execute(
+        text(
+            """
+            SELECT id, email, source, page_url, user_agent, status, notes,
+                   created_at, updated_at, approved_at, rejected_at, activated_at
+            FROM beta_requests
+            ORDER BY created_at DESC, id DESC
+            LIMIT 250
+            """
+        )
+    ).fetchall()
+
+    requests = [row_to_dict(row) for row in rows]
+
+    for item in requests:
+        email = str(item.get("email") or "").strip().lower()
+        item["registered"] = False
+        item["user"] = None
+        item["organization"] = None
+
+        if not email or not table_exists(db, "users"):
+            continue
+
+        user_rows = db.execute(
+            text("SELECT id, email, role, organization_id, created_at FROM users WHERE lower(email) = :email LIMIT 1"),
+            {"email": email},
+        ).fetchall()
+
+        if user_rows:
+            user = row_to_dict(user_rows[0])
+            item["registered"] = True
+            item["user"] = user
+
+            org_id = user.get("organization_id")
+            if org_id and table_exists(db, "organizations"):
+                org_rows = db.execute(
+                    text("SELECT id, name, plan, subscription_status, upload_limit, current_period_end FROM organizations WHERE id = :org_id LIMIT 1"),
+                    {"org_id": org_id},
+                ).fetchall()
+                item["organization"] = row_to_dict(org_rows[0]) if org_rows else None
+
+    return {"beta_requests": requests, "count": len(requests)}
+
+
+@router.post("/beta-requests/{request_id}/approve")
+def approve_beta_request(
+    request_id: int,
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    require_platform_admin(current_user)
+    ensure_platform_beta_requests_table(db)
+
+    rows = db.execute(
+        text("SELECT id, email FROM beta_requests WHERE id = :request_id LIMIT 1"),
+        {"request_id": request_id},
+    ).fetchall()
+
+    if not rows:
+        raise HTTPException(status_code=404, detail="Beta request not found.")
+
+    request_row = row_to_dict(rows[0])
+    email = str(request_row.get("email") or "").strip().lower()
+
+    days = int(payload.get("days") or 30)
+    upload_limit = int(payload.get("upload_limit") or 10)
+    user_limit = int(payload.get("user_limit") or 1)
+
+    if days < 1 or days > 120:
+        raise HTTPException(status_code=400, detail="Beta days must be between 1 and 120.")
+
+    try:
+        org_id = _lossq_platform_find_beta_org_id(db, {"email": email})
+    except HTTPException:
+        db.execute(
+            text(
+                """
+                UPDATE beta_requests
+                SET status = 'approved',
+                    approved_at = CURRENT_TIMESTAMP,
+                    updated_at = CURRENT_TIMESTAMP,
+                    notes = 'Approved pending user registration.'
+                WHERE id = :request_id
+                """
+            ),
+            {"request_id": request_id},
+        )
+        db.commit()
+
+        return {
+            "ok": True,
+            "status": "approved",
+            "message": "Beta request approved. User must register before dashboard access can be activated.",
+            "email": email,
+        }
+
+    organization = _lossq_apply_beta_access_to_org(
+        db,
+        org_id=org_id,
+        days=days,
+        upload_limit=upload_limit,
+        user_limit=user_limit,
+    )
+
+    db.execute(
+        text(
+            """
+            UPDATE beta_requests
+            SET status = 'activated',
+                approved_at = COALESCE(approved_at, CURRENT_TIMESTAMP),
+                activated_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP,
+                notes = 'Beta access activated.'
+            WHERE id = :request_id
+            """
+        ),
+        {"request_id": request_id},
+    )
+
+    db.commit()
+
+    return {
+        "ok": True,
+        "status": "activated",
+        "message": "Beta access activated.",
+        "email": email,
+        "organization": organization,
+        "days": days,
+        "upload_limit": upload_limit,
+        "user_limit": user_limit,
+    }
+
+
+@router.post("/beta-requests/{request_id}/reject")
+def reject_beta_request(
+    request_id: int,
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    require_platform_admin(current_user)
+    ensure_platform_beta_requests_table(db)
+
+    note = str(payload.get("note") or "Rejected by platform admin.").strip()
+
+    result = db.execute(
+        text(
+            """
+            UPDATE beta_requests
+            SET status = 'rejected',
+                rejected_at = CURRENT_TIMESTAMP,
+                updated_at = CURRENT_TIMESTAMP,
+                notes = :note
+            WHERE id = :request_id
+            """
+        ),
+        {"request_id": request_id, "note": note},
+    )
+
+    db.commit()
+
+    if getattr(result, "rowcount", 0) == 0:
+        raise HTTPException(status_code=404, detail="Beta request not found.")
+
+    return {
+        "ok": True,
+        "status": "rejected",
+        "message": "Beta request rejected.",
+        "request_id": request_id,
+    }

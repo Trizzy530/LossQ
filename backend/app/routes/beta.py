@@ -1,11 +1,13 @@
 from fastapi import APIRouter
 from pydantic import BaseModel
+from sqlalchemy import text
 from typing import Optional
 from datetime import datetime
 import json
 import os
 import urllib.request
 import urllib.error
+from app.database import SessionLocal
 
 router = APIRouter(prefix="/beta", tags=["Beta Notifications"])
 
@@ -15,6 +17,105 @@ class BetaNotifyRequest(BaseModel):
     source: Optional[str] = "landing_page"
     page_url: Optional[str] = ""
     user_agent: Optional[str] = ""
+
+
+# LOSSQ_BETA_REQUEST_STORAGE_V1
+def ensure_beta_requests_table(db):
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS beta_requests (
+                id SERIAL PRIMARY KEY,
+                email VARCHAR(320) UNIQUE NOT NULL,
+                source VARCHAR(120),
+                page_url TEXT,
+                user_agent TEXT,
+                status VARCHAR(50) DEFAULT 'new',
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                approved_at TIMESTAMP NULL,
+                rejected_at TIMESTAMP NULL,
+                activated_at TIMESTAMP NULL
+            )
+            """
+        )
+    )
+
+    for column_sql in [
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS source VARCHAR(120)",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS page_url TEXT",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS user_agent TEXT",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'new'",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS notes TEXT",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS approved_at TIMESTAMP NULL",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS rejected_at TIMESTAMP NULL",
+        "ALTER TABLE beta_requests ADD COLUMN IF NOT EXISTS activated_at TIMESTAMP NULL",
+    ]:
+        try:
+            db.execute(text(column_sql))
+        except Exception:
+            pass
+
+    db.commit()
+
+
+def save_beta_request(payload: BetaNotifyRequest):
+    db = SessionLocal()
+    try:
+        ensure_beta_requests_table(db)
+
+        existing = db.execute(
+            text("SELECT id, status FROM beta_requests WHERE lower(email) = :email LIMIT 1"),
+            {"email": payload.email},
+        ).fetchone()
+
+        if existing:
+            current_status = str(dict(existing._mapping).get("status") or "new").lower()
+            next_status = "new" if current_status in {"rejected"} else current_status
+
+            db.execute(
+                text(
+                    """
+                    UPDATE beta_requests
+                    SET source = :source,
+                        page_url = :page_url,
+                        user_agent = :user_agent,
+                        status = :status,
+                        updated_at = CURRENT_TIMESTAMP
+                    WHERE lower(email) = :email
+                    """
+                ),
+                {
+                    "email": payload.email,
+                    "source": payload.source or "landing_page",
+                    "page_url": payload.page_url or "",
+                    "user_agent": payload.user_agent or "",
+                    "status": next_status,
+                },
+            )
+        else:
+            db.execute(
+                text(
+                    """
+                    INSERT INTO beta_requests (email, source, page_url, user_agent, status)
+                    VALUES (:email, :source, :page_url, :user_agent, 'new')
+                    """
+                ),
+                {
+                    "email": payload.email,
+                    "source": payload.source or "landing_page",
+                    "page_url": payload.page_url or "",
+                    "user_agent": payload.user_agent or "",
+                },
+            )
+
+        db.commit()
+        return True
+    finally:
+        db.close()
     note: Optional[str] = ""
 
 
@@ -199,7 +300,14 @@ async def beta_notify(payload: BetaNotifyRequest):
 
     sent = False
     auto_reply_sent = False
+    request_saved = False
     error = ""
+
+    # LOSSQ_BETA_REQUEST_SAVE_ON_NOTIFY_V1
+    try:
+        request_saved = save_beta_request(payload)
+    except Exception as exc:
+        print("LOSSQ_BETA_REQUEST_SAVE_ERROR:", str(exc)[:500])
 
     try:
         sent = send_beta_notification(payload)
@@ -219,6 +327,7 @@ async def beta_notify(payload: BetaNotifyRequest):
         "ok": True,
         "sent": sent,
         "auto_reply_sent": auto_reply_sent,
+        "request_saved": request_saved,
         "message": "Beta request received.",
         "email": payload.email,
         "error": error if os.getenv("LOSSQ_DEBUG_EMAIL_ERRORS", "").lower() == "true" else "",
