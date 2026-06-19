@@ -6416,6 +6416,32 @@ const visibleClaims = blankWorkspaceMode
   ? filteredVisibleClaims
   : backendOnlyClaimsForDisplay;
 
+// LOSSQ_PRODUCING_AGENCY_SOURCE_DEBUG_V1
+console.log("LOSSQ_PRODUCING_AGENCY_SOURCE_DEBUG", {
+  displayProfileAgency: {
+    agency_name: displayProfile?.agency_name,
+    producing_agency: displayProfile?.producing_agency,
+    company_name: displayProfile?.company_name,
+    organization_name: displayProfile?.organization_name,
+    organization: displayProfile?.organization,
+  },
+  profileAgency: {
+    agency_name: profile?.agency_name,
+    producing_agency: profile?.producing_agency,
+    company_name: profile?.company_name,
+    organization_name: profile?.organization_name,
+    organization: profile?.organization,
+  },
+  billingStatusAgency: {
+    company_name: billingStatus?.company_name,
+    organization_name: billingStatus?.organization_name,
+    agency_name: billingStatus?.agency_name,
+    organization: billingStatus?.organization,
+    subscription: billingStatus?.subscription,
+  },
+});
+
+
 const validatedVisibleClaims = visibleClaims.filter((claim: any) => hasValidatedClaimData(claim));
 // LOSSQ_VISIBLE_CLAIMS_RENDER_DEBUG_V1
 console.log("LOSSQ_VISIBLE_CLAIMS_RENDER_DEBUG", {
