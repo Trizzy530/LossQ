@@ -54,7 +54,7 @@ Next step:
 
 Please create your LossQ account using the same email address you used for the beta request:
 
-https://www.lossq.com/login
+https://www.lossq.com/register
 
 Once your account is created, our team can activate limited beta dashboard access if approved.
 
