@@ -91,7 +91,7 @@ export default function BetaRequestsPage() {
       }
 
       if (response.status === 403) {
-        setMessage("Platform Admin access is required to view beta requests.");
+        setMessage("This area is restricted to authorized LossQ administrators.");
         setRequests([]);
         return;
       }

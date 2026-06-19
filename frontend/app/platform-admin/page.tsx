@@ -83,7 +83,7 @@ export default function PlatformAdminPage() {
 
       if ([statsRes.status, usersRes.status, orgsRes.status].includes(403)) {
         setError(
-          "You do not have Platform Admin access. Add your exact login email to PLATFORM_ADMIN_EMAILS in Railway."
+          "This area is restricted to authorized LossQ administrators."
         );
         return;
       }

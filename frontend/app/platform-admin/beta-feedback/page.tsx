@@ -88,7 +88,7 @@ export default function PlatformBetaFeedbackPage() {
       }
 
       if (response.status === 403) {
-        setMessage("Platform Admin access is required to view beta feedback.");
+        setMessage("This area is restricted to authorized LossQ administrators.");
         setFeedback([]);
         return;
       }

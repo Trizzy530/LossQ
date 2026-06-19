@@ -131,7 +131,7 @@ export default function PlatformBetaActivityPage() {
       }
 
       if (response.status === 403) {
-        setMessage("Platform Admin access is required to view beta activity.");
+        setMessage("This area is restricted to authorized LossQ administrators.");
         setUsers([]);
         return;
       }
