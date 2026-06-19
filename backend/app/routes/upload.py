@@ -5690,6 +5690,353 @@ def lossq_universal_section_csv_claims_profile_repair(file_path, parsed_claims=N
     return parsed_claims, parsed_profile
 
 
+
+
+# LOSSQ_UNIVERSAL_SECTION_CSV_CLAIMS_PROFILE_REPAIR_V2
+def lossq_universal_section_csv_claims_profile_repair_v2(file_path, parsed_claims=None, parsed_profile=None):
+    """
+    Universal section-based CSV loss run repair.
+
+    Handles CSV files that include sections such as:
+    - EXPOSURE / POLICY INFORMATION
+    - ACCOUNT INFORMATION
+    - POLICY INFORMATION
+    - CLAIMS DETAIL
+    - LOSS SUMMARY
+
+    This does not hardcode carrier, insured, file name, or demo data.
+    """
+    parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+    parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+
+    if not str(file_path or "").lower().endswith(".csv"):
+        return parsed_claims, parsed_profile
+
+    try:
+        with open(file_path, "r", encoding="utf-8-sig", errors="replace", newline="") as handle:
+            rows = list(csv.reader(handle))
+    except Exception:
+        return parsed_claims, parsed_profile
+
+    if not rows:
+        return parsed_claims, parsed_profile
+
+    def clean(value):
+        return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+    def norm(value):
+        return re.sub(r"[^a-z0-9]+", "_", clean(value).lower()).strip("_")
+
+    def money(value):
+        raw = clean(value)
+        if not raw:
+            return 0.0
+
+        neg = raw.startswith("(") and raw.endswith(")")
+        raw = raw.replace("$", "").replace(",", "").replace("(", "").replace(")", "")
+        raw = re.sub(r"[^0-9.\-]", "", raw)
+
+        if raw in {"", "-", ".", "-."}:
+            return 0.0
+
+        try:
+            amount = float(raw)
+            return -amount if neg else amount
+        except Exception:
+            return 0.0
+
+    def header_index(headers, candidates):
+        normalized_headers = [norm(header) for header in headers]
+        normalized_candidates = [norm(candidate) for candidate in candidates]
+
+        for i, header in enumerate(normalized_headers):
+            if header in normalized_candidates:
+                return i
+
+        for i, header in enumerate(normalized_headers):
+            for candidate in normalized_candidates:
+                if candidate and (candidate in header or header in candidate):
+                    return i
+
+        return None
+
+    def value_at(row, index):
+        if index is None:
+            return ""
+        if index < 0 or index >= len(row):
+            return ""
+        return clean(row[index])
+
+    def looks_like_policy(value):
+        value = clean(value).upper()
+        if not value:
+            return False
+        return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
+
+    def split_policy_numbers(value):
+        raw = clean(value)
+        if not raw:
+            return []
+
+        found = []
+        pieces = re.split(r"\s*(?:/|,|;|\||\band\b|\+)\s*", raw, flags=re.IGNORECASE)
+
+        for piece in pieces:
+            piece = clean(piece).upper()
+            matches = re.findall(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", piece)
+
+            for match in matches:
+                match = clean(match).upper().replace(" ", "-")
+                if match and match not in found:
+                    found.append(match)
+
+        return found
+
+    def infer_policy_line(policy_number, fallback_line=""):
+        policy = clean(policy_number).upper()
+        fallback = clean(fallback_line)
+
+        if policy.startswith("WC"):
+            return "Workers Compensation"
+        if policy.startswith(("GL", "CGL")):
+            return "General Liability"
+        if policy.startswith(("PL", "PROD")):
+            return "Products Liability"
+        if policy.startswith(("AL", "AUTO", "CA")):
+            return "Commercial Auto"
+        if policy.startswith(("BOP", "CP", "PROP")):
+            return "Property / BOP"
+        if policy.startswith(("UMB", "UM")):
+            return "Umbrella"
+        if policy.startswith(("CY", "CYBER")):
+            return "Cyber Liability"
+
+        return fallback or "Unknown"
+
+    def choose_policy_for_claim(line_of_business, policy_numbers):
+        if not policy_numbers:
+            return ""
+
+        line = clean(line_of_business).upper()
+
+        if "WC" in line or "WORK" in line:
+            return next((p for p in policy_numbers if str(p).upper().startswith("WC")), policy_numbers[0])
+
+        if "PROD" in line or "LIAB" in line or "GL" in line or "GENERAL" in line:
+            return next(
+                (
+                    p for p in policy_numbers
+                    if str(p).upper().startswith(("GL", "CGL", "PL", "PROD"))
+                ),
+                policy_numbers[0],
+            )
+
+        return policy_numbers[0]
+
+    section_headers = {
+        "claims_detail",
+        "claim_detail",
+        "claim_details",
+        "claims",
+        "loss_detail",
+        "loss_details",
+        "claim_listing",
+        "claim_list",
+    }
+
+    stop_sections = {
+        "loss_summary",
+        "summary",
+        "totals",
+        "total",
+        "exposure_summary",
+        "premium_summary",
+        "policy_year",
+        "underwriting_notes",
+        "notes",
+    }
+
+    profile_labels = {}
+    claims_header_row_index = None
+
+    for i, row in enumerate(rows):
+        first = norm(row[0] if row else "")
+
+        if first in section_headers:
+            claims_header_row_index = i + 1
+            break
+
+        if len(row) >= 2:
+            label = norm(row[0])
+            value = clean(row[1])
+            if label and value:
+                profile_labels[label] = value
+
+    def profile_first(*labels):
+        for label in labels:
+            value = profile_labels.get(norm(label))
+            if clean(value):
+                return clean(value)
+        return ""
+
+    # Universal profile extraction from label/value section.
+    insured_name = profile_first(
+        "insured name",
+        "named insured",
+        "insured",
+        "applicant",
+        "account name",
+        "company name",
+        "company",
+        "business name",
+    )
+
+    if insured_name:
+        parsed_profile["business_name"] = insured_name
+        parsed_profile["insured_name"] = insured_name
+        parsed_profile["named_insured"] = insured_name
+
+    carrier = profile_first("carrier", "writing carrier", "insurance carrier", "company")
+    if carrier:
+        parsed_profile["carrier"] = carrier
+        parsed_profile["carrier_name"] = carrier
+        parsed_profile["writing_carrier"] = carrier
+
+    policy_value = profile_first("policy number", "policy numbers", "policy no", "policy")
+    policy_numbers = split_policy_numbers(policy_value)
+
+    line_value = profile_first("line of business", "lines of business", "coverage", "lob")
+    line_parts = [
+        clean(part)
+        for part in re.split(r"\s*(?:/|,|;|\||\band\b|\+)\s*", line_value, flags=re.IGNORECASE)
+        if clean(part)
+    ]
+
+    if policy_numbers:
+        parsed_profile["policy_number"] = policy_numbers[0]
+        parsed_profile["main_policy"] = policy_numbers[0]
+        parsed_profile["policy_numbers"] = policy_numbers
+        parsed_profile["policies"] = [
+            {
+                "policy_number": policy_number,
+                "line_of_business": infer_policy_line(
+                    policy_number,
+                    line_parts[min(index, len(line_parts) - 1)] if line_parts else "",
+                ),
+                "policy_type": infer_policy_line(
+                    policy_number,
+                    line_parts[min(index, len(line_parts) - 1)] if line_parts else "",
+                ),
+                "carrier": carrier or parsed_profile.get("carrier") or "",
+                "writing_carrier": carrier or parsed_profile.get("writing_carrier") or "",
+            }
+            for index, policy_number in enumerate(policy_numbers)
+        ]
+
+    policy_period = profile_first("policy period", "policy term", "coverage period", "effective expiration")
+    period_dates = re.findall(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", policy_period)
+
+    if len(period_dates) >= 1:
+        parsed_profile["effective_date"] = parsed_profile.get("effective_date") or period_dates[0]
+    if len(period_dates) >= 2:
+        parsed_profile["expiration_date"] = parsed_profile.get("expiration_date") or period_dates[1]
+
+    account_number = profile_first("account number", "account no", "customer number", "client number")
+    if account_number and not looks_like_policy(account_number):
+        parsed_profile["account_number"] = account_number
+    elif parsed_profile.get("account_number") and looks_like_policy(parsed_profile.get("account_number")):
+        parsed_profile["account_number"] = ""
+
+    exposure_map = {
+        "annual_revenue": ["annual revenue", "revenue", "sales", "gross sales"],
+        "payroll": ["total payroll annual", "payroll", "annual payroll"],
+        "employee_count": ["full time employees", "employees", "employee count"],
+        "operations": ["operations", "business operations", "description of operations"],
+        "facilities": ["facilities", "locations", "premises"],
+        "sic_code": ["primary sic code", "sic code"],
+        "experience_modifier": ["experience modifier", "emod", "e mod", "experience modifier e mod"],
+        "safety_program": ["safety program", "risk control", "safety"],
+        "evaluation_date": ["evaluation date", "valuation date", "as of date", "loss run date"],
+    }
+
+    for target, labels in exposure_map.items():
+        value = profile_first(*labels)
+        if value:
+            parsed_profile[target] = value
+
+    # Universal claims extraction from claims section.
+    repaired_claims = []
+
+    if claims_header_row_index is not None and claims_header_row_index < len(rows):
+        headers = [clean(value) for value in rows[claims_header_row_index]]
+
+        claim_number_i = header_index(headers, ["claim #", "claim no", "claim number", "claim_number", "claim"])
+        dol_i = header_index(headers, ["date of loss", "loss date", "date_of_loss", "dol"])
+        reported_i = header_index(headers, ["date reported", "reported date", "date_reported"])
+        claimant_i = header_index(headers, ["claimant", "claimant name", "injured worker", "party"])
+        line_i = header_index(headers, ["line", "line of business", "coverage", "lob"])
+        description_i = header_index(headers, ["description", "loss description", "cause", "claim description"])
+        status_i = header_index(headers, ["status", "claim status", "open closed", "open/closed"])
+        incurred_i = header_index(headers, ["total incurred", "incurred", "total"])
+        paid_i = header_index(headers, ["paid", "total paid"])
+        reserve_i = header_index(headers, ["reserve", "total reserve", "outstanding reserve"])
+        subro_i = header_index(headers, ["subrogation", "subro", "recovery"])
+
+        for row in rows[claims_header_row_index + 1:]:
+            first = norm(row[0] if row else "")
+
+            if first in stop_sections:
+                break
+
+            if not any(clean(cell) for cell in row):
+                continue
+
+            claim_number = value_at(row, claim_number_i)
+
+            if not claim_number:
+                continue
+
+            line = value_at(row, line_i)
+            status = value_at(row, status_i)
+            paid = money(value_at(row, paid_i))
+            reserve = money(value_at(row, reserve_i))
+            incurred = money(value_at(row, incurred_i))
+
+            if incurred <= 0 and (paid or reserve):
+                incurred = paid + reserve
+
+            claim = {
+                "claim_number": claim_number,
+                "date_of_loss": value_at(row, dol_i),
+                "date_reported": value_at(row, reported_i),
+                "claimant": value_at(row, claimant_i),
+                "line_of_business": line,
+                "description": value_at(row, description_i),
+                "claim_status": status,
+                "status": status,
+                "total_incurred": incurred,
+                "paid": paid,
+                "reserve": reserve,
+                "subrogation": value_at(row, subro_i),
+            }
+
+            claim_policy = choose_policy_for_claim(line, policy_numbers)
+            if claim_policy:
+                claim["policy_number"] = claim_policy
+
+            repaired_claims.append(claim)
+
+    # If this was truly a section CSV and claims were found, trust the section parser.
+    if repaired_claims:
+        parsed_claims = repaired_claims
+
+    # Never let account number become a policy bundle.
+    if parsed_profile.get("account_number") and looks_like_policy(parsed_profile.get("account_number")):
+        parsed_profile["account_number"] = ""
+
+    return parsed_claims, parsed_profile
+
+
 async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
     ensure_account_profile_columns(db)
@@ -5742,6 +6089,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         # LOSSQ_UNIVERSAL_SECTION_CSV_CLAIMS_PROFILE_REPAIR_CALL_V1
         parsed_claims, parsed_profile = lossq_universal_section_csv_claims_profile_repair(
+            file_path,
+            parsed_claims,
+            parsed_profile,
+        )
+
+        # LOSSQ_UNIVERSAL_SECTION_CSV_CLAIMS_PROFILE_REPAIR_CALL_V2
+        parsed_claims, parsed_profile = lossq_universal_section_csv_claims_profile_repair_v2(
             file_path,
             parsed_claims,
             parsed_profile,
