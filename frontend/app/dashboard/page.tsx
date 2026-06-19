@@ -2206,11 +2206,72 @@ function lossqClaimNumberFromRow(row: any): string {
 
 // LOSSQ_FRONTEND_CLAIM_FILTER_ACTIVE_V1
 function lossqFilterRealClaims(rows: any): any[] {
-  // LOSSQ_UNIVERSAL_VALID_BACKEND_CLAIM_FILTER_V1
-  // Use the universal backend-claim validator. This prevents specialty lines
-  // from being hidden on the dashboard.
+  // LOSSQ_UNIVERSAL_VALID_BACKEND_CLAIM_FILTER_V2
+  // Self-contained validator so Vercel does not depend on an external helper.
+  // Keeps valid specialty claim lines like Liquor Liability, Cyber, Dealer Open Lot,
+  // Inland Marine, Cargo, D&O, EPLI, Professional Liability, Umbrella, Garage, and Property.
   const rawRows = Array.isArray(rows) ? rows : [];
-  return rawRows.filter((claim: any) => hasValidatedClaimData(claim));
+
+  const clean = (value: any) =>
+    String(value ?? "")
+      .replace(/\ufeff/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const key = (value: any) =>
+    clean(value)
+      .toUpperCase()
+      .replace(/[^A-Z0-9]+/g, "");
+
+  return rawRows.filter((claim: any) => {
+    if (!claim || typeof claim !== "object") return false;
+
+    const claimNumber = clean(
+      claim.claim_number ||
+        claim.claimNumber ||
+        claim["Claim Number"] ||
+        claim["Claim #"] ||
+        claim.claim_id ||
+        ""
+    );
+
+    const claimKey = key(claimNumber);
+
+    const blockedClaimNumbers = new Set([
+      "",
+      "CLAIM",
+      "CLAIMS",
+      "CLAIMNUMBER",
+      "CLAIMNO",
+      "CLAIMID",
+      "TOTAL",
+      "TOTALS",
+      "SUMMARY",
+      "LOSSSUMMARY",
+      "CLAIMSDETAIL",
+      "EXPOSUREPOLICYINFORMATION",
+      "POLICYINFORMATION",
+      "HEADER",
+      "FIELD",
+      "VALUE",
+    ]);
+
+    if (blockedClaimNumbers.has(claimKey)) return false;
+
+    const hasPolicy = Boolean(clean(claim.policy_number || claim.policyNumber || claim["Policy Number"]));
+    const hasLine = Boolean(clean(claim.line_of_business || claim.claim_type || claim.coverage || claim["Line of Business"]));
+    const hasStatus = Boolean(clean(claim.status || claim.claim_status || claim["Status"]));
+    const hasDate = Boolean(clean(claim.date_of_loss || claim.loss_date || claim.date_reported || claim["Date of Loss"]));
+    const hasDescription = Boolean(clean(claim.description || claim.cause_of_loss || claim["Description"]));
+    const hasClaimant = Boolean(clean(claim.claimant || claim.claimant_name || claim["Claimant"]));
+
+    const paid = Number(claim.paid_amount ?? claim.paid ?? claim["Paid"] ?? 0) || 0;
+    const reserve = Number(claim.reserve_amount ?? claim.reserve ?? claim["Reserve"] ?? 0) || 0;
+    const incurred = Number(claim.total_incurred ?? claim.incurred ?? claim["Total Incurred"] ?? 0) || 0;
+    const hasMoney = paid !== 0 || reserve !== 0 || incurred !== 0;
+
+    return hasPolicy || hasLine || hasStatus || hasDate || hasDescription || hasClaimant || hasMoney;
+  });
 }
 
 function lossqDateValue(...values: unknown[]): string {
@@ -6423,69 +6484,8 @@ const lastUploadPolicySet = new Set(
 );
 
 
-// LOSSQ_HAS_VALIDATED_CLAIM_DATA_HELPER_V1
-function hasValidatedClaimData(claim: any): boolean {
-  // LOSSQ_UNIVERSAL_VALID_BACKEND_CLAIM_FILTER_V1
-  // A backend-saved claim is valid when it has a real claim number plus
-  // at least one supporting claim field. Do not reject specialty lines like
-  // Liquor Liability, Cyber, Dealer Open Lot, Inland Marine, Cargo, D&O, EPLI,
-  // Professional Liability, Umbrella, Garage, or Property.
-  if (!claim || typeof claim !== "object") return false;
 
-  const clean = (value: any) =>
-    String(value ?? "")
-      .replace(/\ufeff/g, "")
-      .replace(/\s+/g, " ")
-      .trim();
 
-  const key = (value: any) => clean(value).toUpperCase().replace(/[^A-Z0-9]+/g, "");
-
-  const claimNumber = clean(
-    claim.claim_number ||
-      claim.claimNumber ||
-      claim["Claim Number"] ||
-      claim["Claim #"] ||
-      claim.claim_id ||
-      claim.id
-  );
-
-  const claimKey = key(claimNumber);
-
-  const blockedClaimNumbers = new Set([
-    "",
-    "CLAIM",
-    "CLAIMS",
-    "CLAIMNUMBER",
-    "CLAIMNO",
-    "CLAIMID",
-    "TOTAL",
-    "TOTALS",
-    "SUMMARY",
-    "LOSSSUMMARY",
-    "CLAIMSDETAIL",
-    "EXPOSUREPOLICYINFORMATION",
-    "POLICYINFORMATION",
-    "HEADER",
-    "FIELD",
-    "VALUE",
-  ]);
-
-  if (blockedClaimNumbers.has(claimKey)) return false;
-
-  const hasPolicy = Boolean(clean(claim.policy_number || claim.policyNumber || claim["Policy Number"]));
-  const hasLine = Boolean(clean(claim.line_of_business || claim.claim_type || claim.coverage || claim["Line of Business"]));
-  const hasStatus = Boolean(clean(claim.status || claim.claim_status || claim["Status"]));
-  const hasDate = Boolean(clean(claim.date_of_loss || claim.loss_date || claim.date_reported || claim["Date of Loss"]));
-  const hasDescription = Boolean(clean(claim.description || claim.cause_of_loss || claim["Description"]));
-  const hasClaimant = Boolean(clean(claim.claimant || claim.claimant_name || claim["Claimant"]));
-
-  const paid = Number(claim.paid_amount ?? claim.paid ?? claim["Paid"] ?? 0) || 0;
-  const reserve = Number(claim.reserve_amount ?? claim.reserve ?? claim["Reserve"] ?? 0) || 0;
-  const incurred = Number(claim.total_incurred ?? claim.incurred ?? claim["Total Incurred"] ?? 0) || 0;
-  const hasMoney = paid !== 0 || reserve !== 0 || incurred !== 0;
-
-  return hasPolicy || hasLine || hasStatus || hasDate || hasDescription || hasClaimant || hasMoney;
-}
 
 
 // LOSSQ_SAFE_DASHBOARD_CLAIMS_FROM_BACKEND_V1
@@ -6499,7 +6499,7 @@ function lossqSafeDashboardClaimsFromBackend(rows: any, sourceLabel = "claims-ap
   // Cargo, Professional Liability, D&O, EPLI, and other universal commercial lines.
   const rawRows = Array.isArray(rows) ? rows : [];
   const strictRows = lossqFilterRealClaims(rawRows);
-  const fallbackRows = rawRows.filter((claim: any) => hasValidatedClaimData(claim));
+  const fallbackRows = lossqFilterRealClaims(rawRows);
 
   if (fallbackRows.length > strictRows.length) {
     console.warn("LOSSQ_SAFE_DASHBOARD_CLAIMS_FROM_BACKEND_FALLBACK", {
@@ -6531,7 +6531,7 @@ const visibleClaims = blankWorkspaceMode
 
 
 
-const validatedVisibleClaims = visibleClaims.filter((claim: any) => hasValidatedClaimData(claim));
+const validatedVisibleClaims = lossqFilterRealClaims(visibleClaims);
 // LOSSQ_VISIBLE_CLAIMS_RENDER_DEBUG_V1
 console.log("LOSSQ_VISIBLE_CLAIMS_RENDER_DEBUG", {
   blankWorkspaceMode,
