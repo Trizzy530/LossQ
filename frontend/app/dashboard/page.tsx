@@ -2875,6 +2875,75 @@ function normalizeProfileName(item: any) {
     return token ? { Authorization: `Bearer ${token}` } : {};
   }
 
+  // LOSSQ_FRONTEND_SINGLE_SESSION_WATCHER_V1
+  function handleSessionExpiredElsewhere() {
+    clearSession();
+
+    try {
+      sessionStorage.setItem(
+        "lossq_session_message",
+        "Session expired because this account was signed in somewhere else."
+      );
+    } catch {
+      // ignore storage errors
+    }
+
+    router.replace("/login?expired=shared");
+  }
+
+  useEffect(() => {
+    if (typeof window === "undefined") return;
+
+    let stopped = false;
+
+    async function checkActiveSession() {
+      const token = getToken();
+
+      if (!token || stopped) return;
+
+      try {
+        const res = await fetch(`${API}/auth/me`, {
+          headers: {
+            Authorization: `Bearer ${token}`,
+          },
+          cache: "no-store",
+        });
+
+        if (res.status === 401 || res.status === 403) {
+          if (!stopped) {
+            handleSessionExpiredElsewhere();
+          }
+        }
+      } catch {
+        // Do not log users out for temporary network issues.
+      }
+    }
+
+    const intervalId = window.setInterval(checkActiveSession, 30000);
+
+    const handleFocus = () => {
+      checkActiveSession();
+    };
+
+    const handleVisibilityChange = () => {
+      if (document.visibilityState === "visible") {
+        checkActiveSession();
+      }
+    };
+
+    window.addEventListener("focus", handleFocus);
+    document.addEventListener("visibilitychange", handleVisibilityChange);
+
+    checkActiveSession();
+
+    return () => {
+      stopped = true;
+      window.clearInterval(intervalId);
+      window.removeEventListener("focus", handleFocus);
+      document.removeEventListener("visibilitychange", handleVisibilityChange);
+    };
+  }, []);
+
 
 
   // LOSSQ_NAMED_WELCOME_BANNER_V1
