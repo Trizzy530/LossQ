@@ -577,6 +577,10 @@ Your LossQ beta request has been approved.
 
 Once your registered LossQ account is matched to this email address, our team can activate beta dashboard access.
 
+Before testing, please review the LossQ Beta Guide:
+
+https://www.lossq.com/beta-guide
+
 Best,
 LossQ Team
 hello@lossq.com
@@ -590,6 +594,10 @@ Your LossQ beta dashboard access is now active.
 You can log in here:
 
 https://www.lossq.com/login
+
+Please review the LossQ Beta Guide before testing:
+
+https://www.lossq.com/beta-guide
 
 Best,
 LossQ Team
