@@ -6525,6 +6525,8 @@ const backendOnlyClaimsForDisplay = lossqSafeDashboardClaimsFromBackend(
 );
 const visibleClaims = blankWorkspaceMode
   ? []
+  : backendOnlyClaimsForDisplay.length >= filteredVisibleClaims.length
+  ? backendOnlyClaimsForDisplay
   : filteredVisibleClaims.length > 0
   ? filteredVisibleClaims
   : backendOnlyClaimsForDisplay;
