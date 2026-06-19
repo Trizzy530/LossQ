@@ -2550,7 +2550,19 @@ function lossqSafeWritingCarrierDisplay(profileLike: any): string {
 // a carrier, or a specific customer. Prefer true producing agency values,
 // then fall back to the user's saved organization/company profile.
 function lossqProducingAgencyFromObject(obj: any): string {
-  const organization = obj?.organization || obj?.org || obj?.agency_profile || obj?.company_profile || {};
+  const dashboardOrganization =
+    obj?.dashboardIdentity?.organization ||
+    obj?.currentUser?.organization ||
+    {};
+
+  const organization =
+    obj?.organization ||
+    obj?.org ||
+    obj?.agency_profile ||
+    obj?.company_profile ||
+    dashboardOrganization ||
+    {};
+
   const billingOrganization =
     obj?.billingStatus?.organization ||
     obj?.billing_status?.organization ||
@@ -2570,6 +2582,7 @@ function lossqProducingAgencyFromObject(obj: any): string {
     obj?.organization_name,
     obj?.organizationName,
     obj?.org_name,
+    obj?.name,
     obj?.["Producing Agency"],
     obj?.["Producer"],
     obj?.["Agency Name"],
@@ -2580,6 +2593,11 @@ function lossqProducingAgencyFromObject(obj: any): string {
     organization?.company_name,
     organization?.organization_name,
     organization?.name,
+    dashboardOrganization?.agency_name,
+    dashboardOrganization?.producing_agency,
+    dashboardOrganization?.company_name,
+    dashboardOrganization?.organization_name,
+    dashboardOrganization?.name,
     billingOrganization?.agency_name,
     billingOrganization?.producing_agency,
     billingOrganization?.company_name,
@@ -6457,30 +6475,6 @@ const visibleClaims = blankWorkspaceMode
   ? filteredVisibleClaims
   : backendOnlyClaimsForDisplay;
 
-// LOSSQ_PRODUCING_AGENCY_SOURCE_DEBUG_V1
-console.log("LOSSQ_PRODUCING_AGENCY_SOURCE_DEBUG", {
-  displayProfileAgency: {
-    agency_name: displayProfile?.agency_name,
-    producing_agency: displayProfile?.producing_agency,
-    company_name: displayProfile?.company_name,
-    organization_name: displayProfile?.organization_name,
-    organization: displayProfile?.organization,
-  },
-  profileAgency: {
-    agency_name: profile?.agency_name,
-    producing_agency: profile?.producing_agency,
-    company_name: profile?.company_name,
-    organization_name: profile?.organization_name,
-    organization: profile?.organization,
-  },
-  billingStatusAgency: {
-    company_name: billingStatus?.company_name,
-    organization_name: billingStatus?.organization_name,
-    agency_name: billingStatus?.agency_name,
-    organization: billingStatus?.organization,
-    subscription: billingStatus?.subscription,
-  },
-});
 
 
 const validatedVisibleClaims = visibleClaims.filter((claim: any) => hasValidatedClaimData(claim));
@@ -7794,12 +7788,12 @@ const modelChartNarrative =
                     value={lossqProducingAgencyFromObject({
                       ...(billingStatus || {}),
                       billingStatus,
+                      ...(profile || {}),
+                      ...(displayProfile || {}),
                       dashboardIdentity,
                       currentUser: dashboardIdentity?.user,
                       organization: dashboardIdentity?.organization,
                       ...(dashboardIdentity?.organization || {}),
-                      ...(profile || {}),
-                      ...(displayProfile || {}),
                     })}
                   />
                   <ProfileDetail label="Main Policy" value={mainPolicyNumber || "-"} />
