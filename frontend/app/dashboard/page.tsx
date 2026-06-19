@@ -2888,6 +2888,11 @@ function normalizeProfileName(item: any) {
       // ignore storage errors
     }
 
+    if (typeof window !== "undefined") {
+      window.location.href = "/login?expired=shared";
+      return;
+    }
+
     router.replace("/login?expired=shared");
   }
 
@@ -2902,9 +2907,12 @@ function normalizeProfileName(item: any) {
       if (!token || stopped) return;
 
       try {
-        const res = await fetch(`${API}/auth/me`, {
+        const res = await fetch(`${API}/auth/me?session_check=${Date.now()}`, {
+          method: "GET",
           headers: {
             Authorization: `Bearer ${token}`,
+            "Cache-Control": "no-cache",
+            Pragma: "no-cache",
           },
           cache: "no-store",
         });
@@ -2919,7 +2927,7 @@ function normalizeProfileName(item: any) {
       }
     }
 
-    const intervalId = window.setInterval(checkActiveSession, 30000);
+    const intervalId = window.setInterval(checkActiveSession, 5000);
 
     const handleFocus = () => {
       checkActiveSession();
@@ -2931,7 +2939,14 @@ function normalizeProfileName(item: any) {
       }
     };
 
+    // LOSSQ_FRONTEND_SINGLE_SESSION_CLICK_CHECK_V1
+    const handleUserActivity = () => {
+      checkActiveSession();
+    };
+
     window.addEventListener("focus", handleFocus);
+    window.addEventListener("click", handleUserActivity);
+    window.addEventListener("touchstart", handleUserActivity);
     document.addEventListener("visibilitychange", handleVisibilityChange);
 
     checkActiveSession();
@@ -2940,6 +2955,8 @@ function normalizeProfileName(item: any) {
       stopped = true;
       window.clearInterval(intervalId);
       window.removeEventListener("focus", handleFocus);
+      window.removeEventListener("click", handleUserActivity);
+      window.removeEventListener("touchstart", handleUserActivity);
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
