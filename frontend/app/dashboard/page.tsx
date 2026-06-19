@@ -7781,7 +7781,7 @@ const modelChartNarrative =
                   <ProfileDetail label="Carrier" value={lossqSafeCarrierDisplay(displayProfile)} />
                   <ProfileDetail
                     label="Account Number"
-                    value={lossqDisplayAccountNumber(displayProfile) || "-"}
+                    value={lossqDisplayAccountNumber(displayProfile) || lossqDisplayAccountNumber(profile) || "-"}
                   />
                   <ProfileDetail
                     label="Producing Agency"

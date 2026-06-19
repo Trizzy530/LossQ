@@ -86,6 +86,27 @@ def ensure_claimant_column(db):
                 pass
 
 
+
+# LOSSQ_CLAIM_DETAIL_COLUMNS_ENSURE_V1
+def ensure_claim_detail_columns(db):
+    columns = {
+        "claimant": "VARCHAR",
+        "jurisdiction_state": "VARCHAR",
+        "adjuster": "VARCHAR",
+        "examiner": "VARCHAR",
+    }
+
+    for column_name, column_type in columns.items():
+        try:
+            db.execute(text(f"ALTER TABLE claims ADD COLUMN IF NOT EXISTS {column_name} {column_type}"))
+            db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+
 def claim_to_dict(claim: Claim):
     return {
         "id": getattr(claim, "id", None),
@@ -233,6 +254,7 @@ def get_claims(
     current_user: dict = Depends(get_current_user),
 ):
     ensure_claim_timeline_columns(db)
+    ensure_claim_detail_columns(db)
     ensure_claimant_column(db)
     query = db.query(Claim).filter(Claim.organization_id == current_user["organization_id"])
 
@@ -283,6 +305,7 @@ def lookup_claim(
     current_user: dict = Depends(get_current_user),
 ):
     ensure_claim_timeline_columns(db)
+    ensure_claim_detail_columns(db)
     ensure_claimant_column(db)
     query = db.query(Claim).filter(
         Claim.organization_id == current_user["organization_id"],
@@ -303,6 +326,7 @@ def get_claim_detail(
     current_user: dict = Depends(get_current_user),
 ):
     ensure_claim_timeline_columns(db)
+    ensure_claim_detail_columns(db)
     ensure_claimant_column(db)
     claim = db.query(Claim).filter(
         Claim.id == claim_id,

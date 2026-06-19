@@ -8,6 +8,9 @@ class Claim(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     claim_number = Column(String, index=True)
+    jurisdiction_state = Column(String, nullable=True)
+    adjuster = Column(String, nullable=True)
+    examiner = Column(String, nullable=True)
     claimant = Column(String, nullable=True)
     policy_id = Column(Integer)
     policy_number = Column(String, index=True, nullable=True)
