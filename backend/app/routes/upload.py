@@ -6632,6 +6632,54 @@ def lossq_force_section_csv_claims_before_save(file_path, parsed_claims=None, pa
     return parsed_claims, profile
 
 
+
+
+# LOSSQ_UPLOAD_ROOT_CAUSE_DEBUG_V1
+def lossq_debug_upload_snapshot(stage, parsed_claims=None, parsed_profile=None, extra=None):
+    try:
+        claims = parsed_claims if isinstance(parsed_claims, list) else []
+        profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+
+        sample_claims = []
+        for claim in claims[:5]:
+            if isinstance(claim, dict):
+                sample_claims.append({
+                    "claim_number": claim.get("claim_number") or claim.get("claim #") or claim.get("claim"),
+                    "policy_number": claim.get("policy_number"),
+                    "line_of_business": claim.get("line_of_business") or claim.get("line") or claim.get("coverage"),
+                    "status": claim.get("claim_status") or claim.get("status"),
+                    "paid": claim.get("paid") or claim.get("total_paid"),
+                    "reserve": claim.get("reserve") or claim.get("total_reserve"),
+                    "total_incurred": claim.get("total_incurred") or claim.get("incurred"),
+                    "keys": sorted(list(claim.keys()))[:30],
+                })
+
+        print("LOSSQ_UPLOAD_DEBUG_SNAPSHOT:", {
+            "stage": stage,
+            "claim_count": len(claims),
+            "sample_claims": sample_claims,
+            "profile": {
+                "id": profile.get("id"),
+                "business_name": profile.get("business_name"),
+                "insured_name": profile.get("insured_name"),
+                "named_insured": profile.get("named_insured"),
+                "carrier_name": profile.get("carrier_name"),
+                "writing_carrier": profile.get("writing_carrier"),
+                "producing_agency": profile.get("producing_agency"),
+                "agency_name": profile.get("agency_name"),
+                "account_number": profile.get("account_number"),
+                "customer_number": profile.get("customer_number"),
+                "policy_number": profile.get("policy_number"),
+                "main_policy": profile.get("main_policy"),
+                "policy_numbers": profile.get("policy_numbers"),
+                "policies": profile.get("policies"),
+            },
+            "extra": extra or {},
+        })
+    except Exception as exc:
+        print("LOSSQ_UPLOAD_DEBUG_SNAPSHOT_FAILED:", str(exc)[:500])
+
+
 async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
     ensure_account_profile_columns(db)
@@ -6658,11 +6706,23 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         try:
             parsed_claims, parsed_profile = parse_file(file_path, safe_upload_filename or safe_filename)
+            lossq_debug_upload_snapshot(
+                "after_parse_file",
+                parsed_claims,
+                parsed_profile,
+                {"filename": safe_upload_filename or safe_filename},
+            )
             # LOSSQ_FORCE_SECTION_CSV_CLAIMS_BEFORE_SAVE_CALL_V1
             parsed_claims, parsed_profile = lossq_force_section_csv_claims_before_save(
                 file_path,
                 parsed_claims,
                 parsed_profile,
+            )
+            lossq_debug_upload_snapshot(
+                "after_force_section_csv_claims_before_save",
+                parsed_claims,
+                parsed_profile,
+                {"filename": safe_upload_filename or safe_filename},
             )
 
             # LOSSQ_DIRECT_FILE_EXPOSURE_CAPTURE_V1
@@ -6700,6 +6760,12 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             file_path,
             parsed_claims,
             parsed_profile,
+        )
+        lossq_debug_upload_snapshot(
+            "after_universal_section_csv_v2",
+            parsed_claims,
+            parsed_profile,
+            {"filename": safe_upload_filename or safe_filename if "safe_upload_filename" in locals() else ""},
         )
 
         # LOSSQ_APPLY_LIVE_SECTION_BASED_CSV_REPAIR_V1
@@ -6747,6 +6813,12 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         parsed_claims, parsed_profile = lossq_universal_profile_claim_final_normalizer(
             parsed_claims,
             parsed_profile,
+        )
+        lossq_debug_upload_snapshot(
+            "after_final_profile_claim_normalizer",
+            parsed_claims,
+            parsed_profile,
+            {"filename": safe_upload_filename or safe_filename if "safe_upload_filename" in locals() else ""},
         )
         parsed_profile = lossq_universal_profile_identity_policy_cleanup(parsed_profile)
         if upload_agency_name:
@@ -6828,6 +6900,12 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         if not direct_profile.get("policy_number"):
             direct_profile["policy_number"] = file_policy_number
 
+        lossq_debug_upload_snapshot(
+            "before_all_parsed_claims_extend",
+            parsed_claims,
+            parsed_profile,
+            {"filename": safe_upload_filename or safe_filename if "safe_upload_filename" in locals() else ""},
+        )
         all_parsed_claims.extend(parsed_claims)
 
         # LOSSQ_CANONICAL_UPLOAD_CLAIM_PURGE_V1
@@ -7068,6 +7146,15 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     if _lossq_upload_policy_like(profile_data.get("customer_number")):
         profile_data["customer_number"] = ""
 
+    lossq_debug_upload_snapshot(
+        "before_profile_upsert",
+        all_parsed_claims if "all_parsed_claims" in locals() else [],
+        profile_data if "profile_data" in locals() else {},
+        {
+            "total_saved": total_saved if "total_saved" in locals() else None,
+            "total_duplicates_skipped": total_duplicates_skipped if "total_duplicates_skipped" in locals() else None,
+        },
+    )
     profile_data = derive_exposure_inputs_from_policy_schedule(profile_data)
 
     # LOSSQ_PROFILE_DATA_EXPOSURE_SAVE_DEBUG_V1

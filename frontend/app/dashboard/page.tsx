@@ -4667,6 +4667,12 @@ if (isUploading) return;
       });
 
       const data = await safeJson(res);
+      // LOSSQ_FRONTEND_UPLOAD_ROOT_CAUSE_DEBUG_V1
+      console.log("LOSSQ_FRONTEND_UPLOAD_RESPONSE_DEBUG", {
+        status: res.status,
+        ok: res.ok,
+        data,
+      });
 
       if (res.status === 401 || res.status === 403) {
         clearSession();
@@ -5065,6 +5071,16 @@ if (isUploading) return;
       uploadedProfile.customer_number = lossqCleanAccountNumber(
         uploadedProfile.customer_number || uploadedProfile.account_number
       );
+      console.log("LOSSQ_FRONTEND_UPLOADED_PROFILE_DEBUG", {
+        account_number: uploadedProfile.account_number,
+        customer_number: uploadedProfile.customer_number,
+        policy_number: uploadedProfile.policy_number,
+        main_policy: uploadedProfile.main_policy,
+        policy_numbers: uploadedProfile.policy_numbers,
+        policies: uploadedProfile.policies,
+        claims: uploadedProfile.claims,
+        parsed_claims: uploadedProfile.parsed_claims,
+      });
 
       uploadedProfile.evaluation_date = getBestEvaluationDate(uploadedProfile);
 
