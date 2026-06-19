@@ -506,6 +506,26 @@ function StatCard({
   );
 }
 
+
+function lossqCleanAuditLogError(error: any): string {
+  const raw = String(error?.message || error || "").trim();
+
+  if (raw.includes("Audit Logs are only available")) {
+    return "Audit Logs are only available on the Agency and Founding Agency packages.";
+  }
+
+  const detailMatch = raw.match(/"detail"\s*:\s*"([^"]+)"/);
+  if (detailMatch?.[1]) {
+    return detailMatch[1];
+  }
+
+  if (raw.includes("403")) {
+    return "Audit Logs are only available on the Agency and Founding Agency packages.";
+  }
+
+  return raw || "Audit log could not be loaded.";
+}
+
 export default function AuditLogPage() {
   const router = useRouter();
 
@@ -578,7 +598,14 @@ export default function AuditLogPage() {
 
     if (!response.ok) {
       const body = await response.text().catch(() => "");
-      throw new Error(`${path} failed: ${response.status} ${body}`);
+      let cleanDetail = "";
+      try {
+        cleanDetail = JSON.parse(body)?.detail || "";
+      } catch {
+        cleanDetail = body;
+      }
+
+      throw new Error(cleanDetail || `Audit log request failed with status ${response.status}.`);
     }
 
     return response.json();
@@ -618,7 +645,7 @@ export default function AuditLogPage() {
         setSummary(null);
       }
     } catch (err: any) {
-      setError(err?.message || "Audit log could not be loaded.");
+      setError(lossqCleanAuditLogError(err));
       setEvents([]);
       setSummary(null);
     } finally {
@@ -659,7 +686,7 @@ export default function AuditLogPage() {
         if (response.status === 403) {
           setEvents([]);
           setSummary(null);
-          setError("Audit Logs are only included with the Agency and Founding Agency packages.");
+          setError("Audit Logs are only available on the Agency and Founding Agency packages.");
           setLoading(false);
           return;
         }
@@ -669,7 +696,7 @@ export default function AuditLogPage() {
         if (!canAccessAuditLogsFromBilling(billingData)) {
           setEvents([]);
           setSummary(null);
-          setError("Audit Logs are only included with the Agency and Founding Agency packages.");
+          setError("Audit Logs are only available on the Agency and Founding Agency packages.");
           setLoading(false);
           return;
         }
@@ -679,7 +706,7 @@ export default function AuditLogPage() {
       } catch (err: any) {
         setEvents([]);
         setSummary(null);
-        setError(err?.message || "Audit Log access could not be verified.");
+        setError(lossqCleanAuditLogError(err));
         setLoading(false);
       }
     }
@@ -894,8 +921,3 @@ export default function AuditLogPage() {
     </main>
   );
 }
-
-
-
-
-
