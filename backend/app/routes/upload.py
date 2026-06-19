@@ -2325,14 +2325,9 @@ def choose_upload_account_key(profile_data: dict, direct_profile: dict | None = 
         if cleaned and not is_bad_policy_key_for_upload(cleaned):
             return cleaned
 
-    policies = profile_data.get("policies") if isinstance(profile_data.get("policies"), list) else []
-    for item in policies:
-        if not isinstance(item, dict):
-            continue
-        cleaned = clean_profile_value(item.get("policy_number"))
-        if cleaned and not is_bad_policy_key_for_upload(cleaned):
-            return cleaned
-
+    # LOSSQ_DO_NOT_USE_POLICY_SCHEDULE_AS_ACCOUNT_KEY_V1
+    # Policies identify coverage. They are not account/customer numbers.
+    # Never use policy schedule rows to populate account_number.
     return ""
 
 
@@ -7037,8 +7032,19 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
     profile_account_key = choose_upload_account_key(profile_data, direct_profile)
 
-    if profile_account_key:
+    # LOSSQ_UPLOAD_ACCOUNT_NUMBER_MUST_NOT_BE_POLICY_V1
+    def _lossq_upload_value_looks_like_policy(value):
+        value = str(value or "").strip().upper()
+        return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
+
+    if profile_account_key and not _lossq_upload_value_looks_like_policy(profile_account_key):
         profile_data["account_number"] = profile_data.get("account_number") or profile_account_key
+
+    if _lossq_upload_value_looks_like_policy(profile_data.get("account_number")):
+        profile_data["account_number"] = ""
+
+    if _lossq_upload_value_looks_like_policy(profile_data.get("customer_number")):
+        profile_data["customer_number"] = ""
         profile_data["customer_number"] = (
             profile_data.get("customer_number")
             or profile_data.get("account_number")
