@@ -2621,6 +2621,60 @@ function lossqLineOfBusinessFromObject(obj: any): string {
 
 
 
+
+// LOSSQ_BETA_DASHBOARD_LABEL_V1
+function lossqFormatBetaDate(value: any): string {
+  if (!value) return "";
+
+  try {
+    const date = new Date(value);
+    if (Number.isNaN(date.getTime())) return "";
+    return date.toLocaleDateString(undefined, {
+      month: "short",
+      day: "numeric",
+      year: "numeric",
+    });
+  } catch {
+    return "";
+  }
+}
+
+function lossqIsBetaPlan(status: any): boolean {
+  const plan = String(status?.plan || status?.organization?.plan || "").trim().toLowerCase();
+  return plan === "beta" || plan === "beta_access" || plan === "early_access";
+}
+
+function lossqBetaAccessLabel(status: any): string {
+  if (!lossqIsBetaPlan(status)) return "";
+
+  const uploadLimit =
+    status?.upload_limit ??
+    status?.organization?.upload_limit ??
+    status?.limits?.upload_limit ??
+    "";
+
+  const expiresRaw =
+    status?.current_period_end ??
+    status?.organization?.current_period_end ??
+    status?.subscription?.current_period_end ??
+    "";
+
+  const expires = lossqFormatBetaDate(expiresRaw);
+
+  const pieces = ["Beta Access"];
+
+  if (uploadLimit !== "" && uploadLimit !== null && uploadLimit !== undefined) {
+    pieces.push(`${uploadLimit} uploads`);
+  }
+
+  if (expires) {
+    pieces.push(`Expires ${expires}`);
+  }
+
+  return pieces.join(" • ");
+}
+
+
 export default function DashboardPage() {
 
   useEffect(() => {
@@ -2750,6 +2804,7 @@ function normalizeProfileName(item: any) {
 
   const [message, setMessage] = useState("");
   const [billingStatus, setBillingStatus] = useState<any>({});
+  const betaAccessLabel = lossqBetaAccessLabel(billingStatus);
   const [billingLoaded, setBillingLoaded] = useState(false);
   const [showNewUserWelcome, setShowNewUserWelcome] = useState(false);
   const [newUserWelcomeName, setNewUserWelcomeName] = useState("");
@@ -7324,6 +7379,13 @@ const modelChartNarrative =
               <h1 className="text-4xl md:text-6xl font-black tracking-tight leading-tight break-words">
                 LossQ Dashboard
               </h1>
+
+          {betaAccessLabel && (
+            <div className="mt-3 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.18em] text-cyan-100">
+              {betaAccessLabel}
+            </div>
+          )}
+
 
               <p className="text-slate-300 mt-3 max-w-2xl">
                 Select a tool from the sidebar to analyze claims, renewal risk, underwriting decisions, reports, and carrier strategy.
