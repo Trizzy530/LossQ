@@ -369,6 +369,13 @@ export default function SettingsPage() {
             </a>
 
             <a
+              href="/beta-guide"
+              className="rounded-xl border border-blue-400/30 bg-blue-500/10 px-5 py-3 font-semibold text-blue-100 hover:bg-blue-500/20"
+            >
+              Beta Guide
+            </a>
+
+            <a
               href="/platform-admin"
               className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-5 py-3 font-semibold text-cyan-100 hover:bg-cyan-500/20"
             >
