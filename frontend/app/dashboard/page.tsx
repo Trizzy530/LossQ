@@ -6343,12 +6343,26 @@ function hasValidatedClaimData(claim: any) {
   );
 }
 
-// LOSSQ_VISIBLE_CLAIMS_BACKEND_ONLY_V1
-// Claims Analysis must display backend /claims rows only.
-// Do not fall back to current upload or last upload cache because those can carry stale policy/line values.
-const visibleClaims = blankWorkspaceMode ? [] : filteredVisibleClaims;
+// LOSSQ_VISIBLE_CLAIMS_BACKEND_ONLY_V2
+// Claims Analysis and dashboard cards must display backend /claims rows only.
+// filteredVisibleClaims is preferred, but if its local policy filter drops valid backend rows,
+// fall back to the backend claims state so saved claims still render after upload.
+const backendOnlyClaimsForDisplay = lossqFilterRealClaims(claims);
+const visibleClaims = blankWorkspaceMode
+  ? []
+  : filteredVisibleClaims.length > 0
+  ? filteredVisibleClaims
+  : backendOnlyClaimsForDisplay;
 
 const validatedVisibleClaims = visibleClaims.filter((claim: any) => hasValidatedClaimData(claim));
+// LOSSQ_VISIBLE_CLAIMS_RENDER_DEBUG_V1
+console.log("LOSSQ_VISIBLE_CLAIMS_RENDER_DEBUG", {
+  blankWorkspaceMode,
+  rawClaims: Array.isArray(claims) ? claims.length : 0,
+  filteredVisibleClaims: Array.isArray(filteredVisibleClaims) ? filteredVisibleClaims.length : 0,
+  visibleClaims: Array.isArray(visibleClaims) ? visibleClaims.length : 0,
+});
+
 const intelligenceClaims = validatedVisibleClaims.length > 0 ? validatedVisibleClaims : visibleClaims;
 const validatedClaimsAvailable = intelligenceClaims.length > 0;
 
