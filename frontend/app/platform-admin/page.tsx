@@ -141,6 +141,12 @@ export default function PlatformAdminPage() {
               Back to Dashboard
             </button>
             <button
+              onClick={() => router.push("/platform-admin/beta-feedback")}
+              className="rounded-xl border border-orange-400/30 px-4 py-2 text-sm font-bold text-orange-200 hover:bg-orange-400/10"
+            >
+              Beta Feedback
+            </button>
+            <button
               onClick={() => router.push("/platform-admin/beta-requests")}
               className="rounded-xl border border-cyan-400/30 px-4 py-2 text-sm font-bold text-cyan-200 hover:bg-cyan-400/10"
             >

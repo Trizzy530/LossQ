@@ -1,4 +1,4 @@
-from fastapi import APIRouter
+from fastapi import APIRouter, Depends
 from pydantic import BaseModel
 from sqlalchemy import text
 from typing import Optional
@@ -8,6 +8,7 @@ import os
 import urllib.request
 import urllib.error
 from app.database import SessionLocal
+from app.auth_utils import get_current_user
 
 router = APIRouter(prefix="/beta", tags=["Beta Notifications"])
 
@@ -120,6 +121,58 @@ def save_beta_request(payload: BetaNotifyRequest):
 
 
 
+
+
+
+# LOSSQ_BETA_FEEDBACK_TRACKER_V1
+class BetaFeedbackRequest(BaseModel):
+    message: str
+    feature: Optional[str] = "General"
+    page_url: Optional[str] = ""
+    severity: Optional[str] = "normal"
+
+
+def ensure_beta_feedback_table(db):
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS beta_feedback (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NULL,
+                organization_id INTEGER NULL,
+                email VARCHAR(320),
+                feature VARCHAR(160),
+                severity VARCHAR(50),
+                message TEXT NOT NULL,
+                page_url TEXT,
+                status VARCHAR(50) DEFAULT 'new',
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+
+    for column_sql in [
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS user_id INTEGER NULL",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS organization_id INTEGER NULL",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS email VARCHAR(320)",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS feature VARCHAR(160)",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS severity VARCHAR(50)",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS message TEXT",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS page_url TEXT",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'new'",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS notes TEXT",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    ]:
+        try:
+            db.execute(text(column_sql))
+        except Exception:
+            pass
+
+    db.commit()
 
 # LOSSQ_BETA_AUTO_REPLY_V1
 def send_beta_auto_reply(payload: BetaNotifyRequest):
@@ -332,3 +385,53 @@ async def beta_notify(payload: BetaNotifyRequest):
         "email": payload.email,
         "error": error if os.getenv("LOSSQ_DEBUG_EMAIL_ERRORS", "").lower() == "true" else "",
     }
+
+
+@router.post("/feedback")
+async def submit_beta_feedback(
+    payload: BetaFeedbackRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    db = SessionLocal()
+    try:
+        ensure_beta_feedback_table(db)
+
+        message = str(payload.message or "").strip()
+        if len(message) < 5:
+            return {
+                "ok": False,
+                "message": "Please enter more detail before submitting feedback.",
+            }
+
+        email = str(current_user.get("email") or "").strip().lower()
+        user_id = current_user.get("user_id")
+        organization_id = current_user.get("organization_id")
+
+        db.execute(
+            text(
+                """
+                INSERT INTO beta_feedback
+                    (user_id, organization_id, email, feature, severity, message, page_url, status)
+                VALUES
+                    (:user_id, :organization_id, :email, :feature, :severity, :message, :page_url, 'new')
+                """
+            ),
+            {
+                "user_id": user_id,
+                "organization_id": organization_id,
+                "email": email,
+                "feature": str(payload.feature or "General").strip()[:160],
+                "severity": str(payload.severity or "normal").strip().lower()[:50],
+                "message": message,
+                "page_url": str(payload.page_url or "").strip(),
+            },
+        )
+
+        db.commit()
+
+        return {
+            "ok": True,
+            "message": "Feedback submitted. Thank you for helping improve LossQ.",
+        }
+    finally:
+        db.close()

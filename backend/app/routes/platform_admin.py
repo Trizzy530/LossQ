@@ -934,3 +934,122 @@ def reject_beta_request(
         "request_id": request_id,
         "beta_status_email_sent": beta_status_email_sent,
     }
+
+
+# LOSSQ_PLATFORM_ADMIN_BETA_FEEDBACK_V1
+def ensure_platform_beta_feedback_table(db: Session):
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS beta_feedback (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NULL,
+                organization_id INTEGER NULL,
+                email VARCHAR(320),
+                feature VARCHAR(160),
+                severity VARCHAR(50),
+                message TEXT NOT NULL,
+                page_url TEXT,
+                status VARCHAR(50) DEFAULT 'new',
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+
+    for column_sql in [
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS user_id INTEGER NULL",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS organization_id INTEGER NULL",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS email VARCHAR(320)",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS feature VARCHAR(160)",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS severity VARCHAR(50)",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS message TEXT",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS page_url TEXT",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'new'",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS notes TEXT",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE beta_feedback ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    ]:
+        try:
+            db.execute(text(column_sql))
+        except Exception:
+            pass
+
+    db.commit()
+
+
+@router.get("/beta-feedback")
+def list_beta_feedback(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    require_platform_admin(current_user)
+    ensure_platform_beta_feedback_table(db)
+
+    rows = db.execute(
+        text(
+            """
+            SELECT id, user_id, organization_id, email, feature, severity, message,
+                   page_url, status, notes, created_at, updated_at
+            FROM beta_feedback
+            ORDER BY created_at DESC, id DESC
+            LIMIT 500
+            """
+        )
+    ).fetchall()
+
+    feedback = [row_to_dict(row) for row in rows]
+
+    return {
+        "feedback": feedback,
+        "count": len(feedback),
+    }
+
+
+@router.post("/beta-feedback/{feedback_id}/status")
+def update_beta_feedback_status(
+    feedback_id: int,
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    require_platform_admin(current_user)
+    ensure_platform_beta_feedback_table(db)
+
+    status = str(payload.get("status") or "").strip().lower()
+    notes = str(payload.get("notes") or "").strip()
+
+    allowed = {"new", "reviewing", "fixed", "closed"}
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail="Status must be one of: new, reviewing, fixed, closed.")
+
+    result = db.execute(
+        text(
+            """
+            UPDATE beta_feedback
+            SET status = :status,
+                notes = :notes,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :feedback_id
+            """
+        ),
+        {
+            "feedback_id": feedback_id,
+            "status": status,
+            "notes": notes,
+        },
+    )
+
+    db.commit()
+
+    if getattr(result, "rowcount", 0) == 0:
+        raise HTTPException(status_code=404, detail="Beta feedback not found.")
+
+    return {
+        "ok": True,
+        "message": "Beta feedback updated.",
+        "feedback_id": feedback_id,
+        "status": status,
+    }
