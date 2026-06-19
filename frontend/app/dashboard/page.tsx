@@ -3716,7 +3716,10 @@ if (activeProfile?.policy_number) {
         // Backend /claims is the only source of truth for Claims Analysis rows.
         // Do not fall back to current upload cache or last upload cache because those can carry stale policy/line values.
         if (myVersion === loadVersionRef.current) {
-          const cleanedServerClaims = lossqFilterRealClaims(serverMatches);
+          const cleanedServerClaims = lossqSafeDashboardClaimsFromBackend(
+        serverMatches,
+        "load-dashboard-claims-api"
+      );
           // LOSSQ_FRONTEND_CLAIMS_STATE_DEBUG_V1
           console.log("LOSSQ_FRONTEND_CLAIMS_STATE_DEBUG", {
             claimsUrl,
@@ -5152,7 +5155,10 @@ setLazyLoadedTools,
           ? await uploadClaimsResponse.json()
           : [];
 
-        const uploadCleanClaims = lossqFilterRealClaims(uploadClaimsJson);
+        const uploadCleanClaims = lossqSafeDashboardClaimsFromBackend(
+          uploadClaimsJson,
+          "upload-direct-claims-reload"
+        );
 
         // LOSSQ_DIRECT_SET_CLAIMS_AFTER_UPLOAD_V1
         console.log("LOSSQ_FRONTEND_DIRECT_CLAIMS_AFTER_UPLOAD", {
@@ -6343,11 +6349,40 @@ function hasValidatedClaimData(claim: any) {
   );
 }
 
+
+// LOSSQ_SAFE_DASHBOARD_CLAIMS_FROM_BACKEND_V1
+// Backend /claims rows are already organization-scoped saved claim records.
+// Keep the strict filter first, but do not let an over-strict frontend filter
+// hide valid saved backend claims from dashboard cards after upload.
+function lossqSafeDashboardClaimsFromBackend(rawClaims: any, sourceLabel = "claims-api") {
+  const rows = Array.isArray(rawClaims) ? rawClaims : [];
+  const strictRows = lossqFilterRealClaims(rows);
+
+  if (strictRows.length > 0 || rows.length === 0) {
+    return strictRows;
+  }
+
+  const fallbackRows = rows.filter((claim: any) => hasValidatedClaimData(claim));
+
+  console.warn("LOSSQ_SAFE_DASHBOARD_CLAIMS_FROM_BACKEND_FALLBACK", {
+    sourceLabel,
+    rawCount: rows.length,
+    strictCount: strictRows.length,
+    fallbackCount: fallbackRows.length,
+    sample: fallbackRows.slice(0, 3),
+  });
+
+  return fallbackRows;
+}
+
 // LOSSQ_VISIBLE_CLAIMS_BACKEND_ONLY_V2
 // Claims Analysis and dashboard cards must display backend /claims rows only.
 // filteredVisibleClaims is preferred, but if its local policy filter drops valid backend rows,
 // fall back to the backend claims state so saved claims still render after upload.
-const backendOnlyClaimsForDisplay = lossqFilterRealClaims(claims);
+const backendOnlyClaimsForDisplay = lossqSafeDashboardClaimsFromBackend(
+  claims,
+  "render-claims-state"
+);
 const visibleClaims = blankWorkspaceMode
   ? []
   : filteredVisibleClaims.length > 0
