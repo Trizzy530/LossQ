@@ -5105,6 +5105,25 @@ setLazyLoadedTools,
       uploadedProfile.account_number = lossqCleanAccountNumber(uploadedProfile.account_number);
       uploadedProfile.customer_number = lossqCleanAccountNumber(uploadedProfile.customer_number);
       setProfile(uploadedProfile);
+
+      // LOSSQ_RELOAD_BACKEND_CLAIMS_AFTER_UPLOAD_V1
+      // Upload response intentionally does not carry claim rows.
+      // Backend /claims is authoritative, so reload dashboard claims immediately.
+      const uploadedPolicyForClaimsReload = chooseSafePolicyNumber(
+        uploadedProfile?.policy_number,
+        ...(Array.isArray(uploadedProfile?.policies)
+          ? uploadedProfile.policies.map((p: any) => p?.policy_number)
+          : [])
+      );
+
+      if (uploadedPolicyForClaimsReload) {
+        console.log("LOSSQ_FRONTEND_RELOAD_CLAIMS_AFTER_UPLOAD", {
+          uploadedPolicyForClaimsReload,
+          policies: uploadedProfile?.policies,
+        });
+        await loadDashboard(uploadedPolicyForClaimsReload, true);
+      }
+
       // Uploaded profile becomes the active authority for this account.
       // This keeps old old/previous policy rows from appearing inside a new upload's schedule.
       setCachedProfiles([
