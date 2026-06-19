@@ -3021,12 +3021,13 @@ function normalizeProfileName(item: any) {
       if (!token || stopped) return;
 
       try {
+        // LOSSQ_SESSION_CHECK_CORS_SAFE_V1
+        // Keep this request simple. Extra Cache-Control / Pragma headers trigger
+        // stricter browser preflight checks and can fail CORS on Railway.
         const res = await fetch(`${API}/auth/me?session_check=${Date.now()}`, {
           method: "GET",
           headers: {
             Authorization: `Bearer ${token}`,
-            "Cache-Control": "no-cache",
-            Pragma: "no-cache",
           },
           cache: "no-store",
         });
