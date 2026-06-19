@@ -3322,6 +3322,69 @@ def lossq_v4_merge_csv_sections_before_save(file_path, parsed_claims, parsed_pro
 
 
 
+
+# LOSSQ_TRUE_ACCOUNT_NUMBER_FROM_UPLOAD_CSV_V1
+def lossq_true_account_number_value(value):
+    raw = re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+    if not raw:
+        return ""
+
+    compact = re.sub(r"[^A-Z0-9]+", "", raw.upper())
+
+    true_account_signal = any(token in compact for token in [
+        "ACCT",
+        "ACCOUNT",
+        "CUSTOMER",
+        "CLIENT",
+        "CUST",
+    ])
+
+    if true_account_signal:
+        return raw
+
+    return ""
+
+
+def lossq_extract_true_account_number_from_upload_csv(file_path):
+    import csv
+
+    if not str(file_path or "").lower().endswith(".csv"):
+        return ""
+
+    try:
+        with open(file_path, "r", encoding="utf-8-sig", errors="replace", newline="") as handle:
+            rows = list(csv.reader(handle))
+    except Exception:
+        return ""
+
+    def key(value):
+        return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+    account_labels = {
+        "accountnumber",
+        "accountno",
+        "accountid",
+        "customernumber",
+        "customerno",
+        "customerid",
+        "clientnumber",
+        "clientno",
+        "clientid",
+    }
+
+    for row in rows[:200]:
+        if len(row) < 2:
+            continue
+
+        if key(row[0]) in account_labels:
+            account_number = lossq_true_account_number_value(row[1])
+            if account_number:
+                return account_number
+
+    return ""
+
+
+
 def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: dict):
     extracted_policy_number = clean_profile_value(
         pick(raw, ["policy_number", "policy_no", "policy"], "")
@@ -6003,6 +6066,9 @@ def lossq_universal_profile_identity_policy_cleanup(profile):
     def looks_like_policy(value):
         value = clean(value).upper()
         if not value:
+            return False
+        # LOSSQ_TRUE_ACCOUNT_NUMBER_FROM_UPLOAD_CSV_V1
+        if lossq_true_account_number_value(value):
             return False
         return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
 
@@ -9126,19 +9192,33 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     )
 
     profile_account_key = choose_upload_account_key(profile_data, direct_profile)
+    # LOSSQ_TRUE_ACCOUNT_NUMBER_FROM_UPLOAD_CSV_V1
+    upload_true_account_number = lossq_extract_true_account_number_from_upload_csv(file_path)
+    if upload_true_account_number:
+        profile_data["account_number"] = upload_true_account_number
+        profile_data["customer_number"] = profile_data.get("customer_number") or upload_true_account_number
+        profile_account_key = upload_true_account_number
+
 
     # LOSSQ_UPLOAD_ACCOUNT_NUMBER_MUST_NOT_BE_POLICY_V1
     def _lossq_upload_value_looks_like_policy(value):
         value = str(value or "").strip().upper()
+
+        # LOSSQ_TRUE_ACCOUNT_NUMBER_LOCAL_POLICY_CHECK_V1
+        # Account/customer identifiers like WISC-ACCT-2026 are real account
+        # numbers and must not be blanked as policy-like values.
+        if lossq_true_account_number_value(value):
+            return False
+
         return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
 
     if profile_account_key and not _lossq_upload_value_looks_like_policy(profile_account_key):
         profile_data["account_number"] = profile_data.get("account_number") or profile_account_key
 
-    if _lossq_upload_value_looks_like_policy(profile_data.get("account_number")):
+    if _lossq_upload_value_looks_like_policy(profile_data.get("account_number")) and not lossq_true_account_number_value(profile_data.get("account_number")):
         profile_data["account_number"] = ""
 
-    if _lossq_upload_value_looks_like_policy(profile_data.get("customer_number")):
+    if _lossq_upload_value_looks_like_policy(profile_data.get("customer_number")) and not lossq_true_account_number_value(profile_data.get("customer_number")):
         profile_data["customer_number"] = ""
         profile_data["customer_number"] = (
             profile_data.get("customer_number")
@@ -9146,22 +9226,44 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             or profile_account_key
         )
 
+    # LOSSQ_TRUE_ACCOUNT_NUMBER_FROM_UPLOAD_CSV_V1_REAPPLY_AFTER_CLEANUP
+    upload_true_account_number_after_cleanup = lossq_extract_true_account_number_from_upload_csv(file_path)
+    if upload_true_account_number_after_cleanup:
+        profile_data["account_number"] = upload_true_account_number_after_cleanup
+        profile_data["customer_number"] = profile_data.get("customer_number") or upload_true_account_number_after_cleanup
+        profile_account_key = upload_true_account_number_after_cleanup
+
     # Main saved profile key should be the stable account key.
     # Real policy numbers stay in profile_data["policies"].
     if is_bad_policy_key_for_upload(profile_data.get("policy_number")):
         profile_data["policy_number"] = profile_account_key or primary_claim_policy_number or f"UPLOAD-{upload_session_id}"
 
 
-    # LOSSQ_DO_NOT_USE_POLICY_AS_ACCOUNT_NUMBER_V1
+    # LOSSQ_DO_NOT_USE_POLICY_AS_ACCOUNT_NUMBER_V2
     def _lossq_upload_policy_like(value):
         value = str(value or "").strip().upper()
+
+        # LOSSQ_TRUE_ACCOUNT_NUMBER_FINAL_POLICY_LIKE_GUARD_V1
+        # Account/customer identifiers like WISC-ACCT-2026 are valid account
+        # numbers. Do not blank them just because they contain letters, dashes,
+        # and digits.
+        if lossq_true_account_number_value(value):
+            return False
+
         return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
 
-    if _lossq_upload_policy_like(profile_data.get("account_number")):
+    if _lossq_upload_policy_like(profile_data.get("account_number")) and not lossq_true_account_number_value(profile_data.get("account_number")):
         profile_data["account_number"] = ""
 
-    if _lossq_upload_policy_like(profile_data.get("customer_number")):
+    if _lossq_upload_policy_like(profile_data.get("customer_number")) and not lossq_true_account_number_value(profile_data.get("customer_number")):
         profile_data["customer_number"] = ""
+
+    # LOSSQ_TRUE_ACCOUNT_NUMBER_FINAL_REAPPLY_AFTER_LAST_POLICY_CLEANUP_V1
+    upload_true_account_number_final_cleanup = lossq_extract_true_account_number_from_upload_csv(file_path)
+    if upload_true_account_number_final_cleanup:
+        profile_data["account_number"] = upload_true_account_number_final_cleanup
+        profile_data["customer_number"] = upload_true_account_number_final_cleanup
+        profile_account_key = upload_true_account_number_final_cleanup
 
     lossq_debug_upload_snapshot(
         "before_profile_upsert",
