@@ -2544,20 +2544,47 @@ function lossqSafeWritingCarrierDisplay(profileLike: any): string {
 }
 
 
-// LOSSQ_PRODUCING_AGENCY_DISPLAY_HELPER_V1
-// LOSSQ_PRODUCING_AGENCY_DISPLAY_UI_V1
+// LOSSQ_PRODUCING_AGENCY_DISPLAY_HELPER_V2
+// LOSSQ_PRODUCING_AGENCY_DISPLAY_UI_V2
+// Universal producer/agency display. Do not hardcode LossQ, a demo agency,
+// a carrier, or a specific customer. Prefer true producing agency values,
+// then fall back to the user's saved organization/company profile.
 function lossqProducingAgencyFromObject(obj: any): string {
+  const organization = obj?.organization || obj?.org || obj?.agency_profile || obj?.company_profile || {};
+  const billingOrganization =
+    obj?.billingStatus?.organization ||
+    obj?.billing_status?.organization ||
+    obj?.subscription?.organization ||
+    {};
+
   return lossqFirstValue(
     obj?.agency_name,
     obj?.producing_agency,
+    obj?.producingAgency,
     obj?.producer,
     obj?.agency,
     obj?.agencyName,
     obj?.broker,
     obj?.brokerage,
+    obj?.company_name,
+    obj?.organization_name,
+    obj?.organizationName,
+    obj?.org_name,
     obj?.["Producing Agency"],
     obj?.["Producer"],
-    obj?.["Agency Name"]
+    obj?.["Agency Name"],
+    obj?.["Company Name"],
+    obj?.["Organization Name"],
+    organization?.agency_name,
+    organization?.producing_agency,
+    organization?.company_name,
+    organization?.organization_name,
+    organization?.name,
+    billingOrganization?.agency_name,
+    billingOrganization?.producing_agency,
+    billingOrganization?.company_name,
+    billingOrganization?.organization_name,
+    billingOrganization?.name
   ) || "Agency Not Set";
 }
 
@@ -7693,9 +7720,17 @@ const modelChartNarrative =
                   <ProfileDetail label="Carrier" value={lossqSafeCarrierDisplay(displayProfile)} />
                   <ProfileDetail
                     label="Account Number"
-                    value={displayProfile?.account_number || displayProfile?.customer_number || "-"}
+                    value={lossqDisplayAccountNumber(displayProfile) || "-"}
                   />
-                  <ProfileDetail label="Producing Agency" value={lossqProducingAgencyFromObject(displayProfile)} />
+                  <ProfileDetail
+                    label="Producing Agency"
+                    value={lossqProducingAgencyFromObject({
+                      ...(billingStatus || {}),
+                      billingStatus,
+                      ...(profile || {}),
+                      ...(displayProfile || {}),
+                    })}
+                  />
                   <ProfileDetail label="Main Policy" value={mainPolicyNumber || "-"} />
                   <ProfileDetail label="Effective Date" value={lossqEffectiveDateFromObject(displayProfile) || lossqFirstPolicyEffectiveDate(policySchedule) || "Not set"} />
                   <ProfileDetail label="Expiration Date" value={lossqExpirationDateFromObject(displayProfile) || lossqFirstPolicyExpirationDate(policySchedule) || "Not set"} />
