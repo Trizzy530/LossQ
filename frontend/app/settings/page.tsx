@@ -316,7 +316,7 @@ export default function SettingsPage() {
   if (loading) {
     return (
       <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
-        
+
 
 <div className="text-center">
           <div className="text-4xl font-black mb-3">Loss<span className="text-blue-400">Q</span></div>
@@ -351,7 +351,7 @@ export default function SettingsPage() {
             <a href="/dashboard" className="rounded-xl border border-white/10 px-5 py-3 font-semibold text-slate-200 hover:bg-white/10">
               Back to Dashboard
             </a>
-            
+
             {/* LOSSQ_SETTINGS_HEADER_BUTTON_ROW_EXACT_V1 */}
             <a
               href="/settings/agency-profile"
@@ -366,6 +366,13 @@ export default function SettingsPage() {
               className="rounded-xl border border-emerald-400/30 bg-emerald-400/10 px-5 py-3 font-semibold text-emerald-100 hover:bg-emerald-400/20"
             >
               Billing & Subscription
+            </a>
+
+            <a
+              href="/platform-admin"
+              className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-5 py-3 font-semibold text-cyan-100 hover:bg-cyan-500/20"
+            >
+              Platform Admin
             </a>
 
             <a
