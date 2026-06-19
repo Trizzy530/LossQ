@@ -1859,17 +1859,8 @@ function clearDeletedProfileBrowserTraces(profileToDelete: any) {
     const itemText = JSON.stringify(item || "").toLowerCase();
 
     const keyMatch = itemKeys.some((key: string) => deleteKeys.includes(key));
-    const nameMatch =
-      profileText &&
-      itemText &&
-      (
-        (profileText.includes("summit ridge") && itemText.includes("summit ridge")) ||
-        (profileText.includes("cedar creek") && itemText.includes("cedar creek")) ||
-        (profileText.includes("blue ridge") && itemText.includes("blue ridge")) ||
-        (profileText.includes("granite") && itemText.includes("granite"))
-      );
 
-    return keyMatch || nameMatch;
+    return keyMatch;
   };
 
   try {

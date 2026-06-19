@@ -6037,6 +6037,271 @@ def lossq_universal_section_csv_claims_profile_repair_v2(file_path, parsed_claim
     return parsed_claims, parsed_profile
 
 
+
+
+# LOSSQ_UNIVERSAL_PROFILE_CLAIM_FINAL_NORMALIZER_V1
+def lossq_universal_profile_claim_final_normalizer(parsed_claims=None, parsed_profile=None):
+    """
+    Final universal normalizer after all CSV/PDF/XLSX repairs.
+    Keeps profile identity, producing agency, account number, policies, and claim rows consistent.
+    No carrier, account, customer, or demo-file hardcoding.
+    """
+    parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+    parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+
+    def clean(value):
+        return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+    def norm(value):
+        return re.sub(r"[^a-z0-9]+", "_", clean(value).lower()).strip("_")
+
+    def looks_like_policy(value):
+        value = clean(value).upper()
+        if not value:
+            return False
+        return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
+
+    def split_policy_numbers(value):
+        raw = clean(value)
+        if not raw:
+            return []
+
+        found = []
+        pieces = re.split(r"\s*(?:/|,|;|\||\band\b|\+)\s*", raw, flags=re.IGNORECASE)
+
+        for piece in pieces:
+            piece = clean(piece).upper()
+            matches = re.findall(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", piece)
+            for match in matches:
+                match = clean(match).upper().replace(" ", "-")
+                if match and match not in found:
+                    found.append(match)
+
+        return found
+
+    def money(value):
+        raw = clean(value)
+        if not raw:
+            return 0.0
+        neg = raw.startswith("(") and raw.endswith(")")
+        raw = raw.replace("$", "").replace(",", "").replace("(", "").replace(")", "")
+        raw = re.sub(r"[^0-9.\-]", "", raw)
+        if raw in {"", "-", ".", "-."}:
+            return 0.0
+        try:
+            amount = float(raw)
+            return -amount if neg else amount
+        except Exception:
+            return 0.0
+
+    def first_profile_value(*keys):
+        normalized = {norm(k): v for k, v in parsed_profile.items()}
+        for key in keys:
+            value = parsed_profile.get(key)
+            if clean(value):
+                return clean(value)
+
+            value = normalized.get(norm(key))
+            if clean(value):
+                return clean(value)
+
+        return ""
+
+    # Business / insured name.
+    insured_name = first_profile_value(
+        "business_name",
+        "insured_name",
+        "named_insured",
+        "insured",
+        "applicant",
+        "account_name",
+        "company_name",
+        "company",
+    )
+
+    if insured_name and insured_name.lower() not in {"business name not set", "not set", "unknown"}:
+        parsed_profile["business_name"] = insured_name
+        parsed_profile["insured_name"] = insured_name
+        parsed_profile["named_insured"] = insured_name
+
+    # Producing agency / broker.
+    producing_agency = first_profile_value(
+        "producing_agency",
+        "agency_name",
+        "agency",
+        "broker",
+        "brokerage",
+        "producer",
+        "producer_name",
+    )
+
+    if producing_agency and producing_agency.lower() not in {"agency not set", "not set", "unknown"}:
+        parsed_profile["producing_agency"] = producing_agency
+        parsed_profile["agency_name"] = producing_agency
+        parsed_profile["producer"] = producing_agency
+
+    # Policy numbers from policy fields and policy schedule.
+    policy_candidates = []
+    for key in [
+        "policy_number",
+        "main_policy",
+        "policy_numbers",
+        "account_number",
+        "customer_number",
+    ]:
+        value = parsed_profile.get(key)
+        if isinstance(value, list):
+            for item in value:
+                policy_candidates.extend(split_policy_numbers(item))
+        else:
+            policy_candidates.extend(split_policy_numbers(value))
+
+    policies = parsed_profile.get("policies")
+    if isinstance(policies, list):
+        for item in policies:
+            if isinstance(item, dict):
+                policy_candidates.extend(
+                    split_policy_numbers(
+                        item.get("policy_number")
+                        or item.get("policy")
+                        or item.get("number")
+                    )
+                )
+
+    policy_numbers = []
+    for policy in policy_candidates:
+        policy = clean(policy).upper()
+        if policy and policy not in policy_numbers:
+            policy_numbers.append(policy)
+
+    if policy_numbers:
+        parsed_profile["policy_number"] = policy_numbers[0]
+        parsed_profile["main_policy"] = policy_numbers[0]
+        parsed_profile["policy_numbers"] = policy_numbers
+
+    # Account number must not be a policy number.
+    account_number = clean(parsed_profile.get("account_number"))
+    if account_number and looks_like_policy(account_number):
+        parsed_profile["account_number"] = ""
+
+    customer_number = clean(parsed_profile.get("customer_number"))
+    if customer_number and looks_like_policy(customer_number):
+        parsed_profile["customer_number"] = ""
+
+    # Rebuild policy rows while preserving line/carrier/dates/counts already found.
+    if policy_numbers:
+        existing_rows = parsed_profile.get("policies") if isinstance(parsed_profile.get("policies"), list) else []
+        rebuilt = []
+
+        for policy in policy_numbers:
+            existing = None
+            for row in existing_rows:
+                if isinstance(row, dict) and clean(row.get("policy_number")).upper() == policy:
+                    existing = dict(row)
+                    break
+
+            if existing is None:
+                existing = {"policy_number": policy}
+
+            existing["policy_number"] = policy
+            existing["carrier"] = existing.get("carrier") or parsed_profile.get("carrier") or parsed_profile.get("carrier_name") or ""
+            existing["writing_carrier"] = existing.get("writing_carrier") or parsed_profile.get("writing_carrier") or parsed_profile.get("carrier_name") or ""
+            existing["effective_date"] = existing.get("effective_date") or parsed_profile.get("effective_date") or ""
+            existing["expiration_date"] = existing.get("expiration_date") or parsed_profile.get("expiration_date") or ""
+            rebuilt.append(existing)
+
+        parsed_profile["policies"] = rebuilt
+
+    # Normalize claim rows so DB save logic sees them as real claims.
+    normalized_claims = []
+
+    for claim in parsed_claims:
+        if not isinstance(claim, dict):
+            continue
+
+        claim = dict(claim)
+
+        claim_number = clean(
+            claim.get("claim_number")
+            or claim.get("claim #")
+            or claim.get("claim_no")
+            or claim.get("claim")
+            or claim.get("claim_id")
+        )
+
+        if not claim_number:
+            continue
+
+        paid = money(claim.get("paid") or claim.get("total_paid"))
+        reserve = money(claim.get("reserve") or claim.get("total_reserve"))
+        incurred = money(
+            claim.get("total_incurred")
+            or claim.get("incurred")
+            or claim.get("total")
+            or claim.get("gross_incurred")
+        )
+
+        if incurred <= 0 and (paid or reserve):
+            incurred = paid + reserve
+
+        claim["claim_number"] = claim_number
+        claim["paid"] = paid
+        claim["reserve"] = reserve
+        claim["total_incurred"] = incurred
+        claim["incurred"] = incurred
+
+        claim["date_of_loss"] = clean(
+            claim.get("date_of_loss")
+            or claim.get("loss_date")
+            or claim.get("date of loss")
+        )
+
+        claim["date_reported"] = clean(
+            claim.get("date_reported")
+            or claim.get("reported_date")
+            or claim.get("date reported")
+        )
+
+        claim["claim_status"] = clean(
+            claim.get("claim_status")
+            or claim.get("status")
+            or claim.get("open_closed")
+        )
+
+        claim["status"] = claim["claim_status"]
+
+        claim["line_of_business"] = clean(
+            claim.get("line_of_business")
+            or claim.get("line")
+            or claim.get("coverage")
+            or claim.get("lob")
+        )
+
+        if not clean(claim.get("policy_number")) and policy_numbers:
+            line = claim["line_of_business"].upper()
+            if "WC" in line or "WORK" in line:
+                claim["policy_number"] = next((p for p in policy_numbers if p.startswith("WC")), policy_numbers[0])
+            elif "GL" in line or "GENERAL" in line or "LIAB" in line:
+                claim["policy_number"] = next((p for p in policy_numbers if p.startswith(("GL", "CGL", "PL"))), policy_numbers[0])
+            else:
+                claim["policy_number"] = policy_numbers[0]
+
+        if insured_name:
+            claim["business_name"] = claim.get("business_name") or insured_name
+            claim["named_insured"] = claim.get("named_insured") or insured_name
+
+        if parsed_profile.get("carrier_name") or parsed_profile.get("writing_carrier"):
+            claim["carrier_name"] = claim.get("carrier_name") or parsed_profile.get("carrier_name") or parsed_profile.get("writing_carrier")
+            claim["writing_carrier"] = claim.get("writing_carrier") or parsed_profile.get("writing_carrier") or parsed_profile.get("carrier_name")
+
+        normalized_claims.append(claim)
+
+    if normalized_claims:
+        parsed_claims = normalized_claims
+
+    return parsed_claims, parsed_profile
+
+
 async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
     ensure_account_profile_columns(db)
@@ -6142,6 +6407,11 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
         # LOSSQ_FINAL_PROFILE_DATES_FROM_POLICIES_V1
         parsed_profile = lossq_final_profile_dates_from_policies(parsed_profile)
+        # LOSSQ_UNIVERSAL_PROFILE_CLAIM_FINAL_NORMALIZER_CALL_V1
+        parsed_claims, parsed_profile = lossq_universal_profile_claim_final_normalizer(
+            parsed_claims,
+            parsed_profile,
+        )
         parsed_profile = lossq_universal_profile_identity_policy_cleanup(parsed_profile)
         if upload_agency_name:
             parsed_profile = parsed_profile or {}
