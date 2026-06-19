@@ -1053,3 +1053,194 @@ def update_beta_feedback_status(
         "feedback_id": feedback_id,
         "status": status,
     }
+
+
+# LOSSQ_PLATFORM_ADMIN_BETA_ACTIVITY_V1
+@router.get("/beta-activity")
+def platform_beta_activity(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    require_platform_admin(current_user)
+
+    if not table_exists(db, "users"):
+        return {"beta_users": [], "count": 0, "message": "No users table found."}
+
+    user_columns = get_columns(db, "users")
+    org_columns = get_columns(db, "organizations") if table_exists(db, "organizations") else []
+
+    selected_user_columns = safe_select_columns(
+        user_columns,
+        [
+            "id",
+            "email",
+            "full_name",
+            "first_name",
+            "last_name",
+            "role",
+            "organization_id",
+            "created_at",
+            "last_login_at",
+            "is_active",
+        ],
+    )
+
+    if not selected_user_columns:
+        return {"beta_users": [], "count": 0, "message": "No usable user columns found."}
+
+    users = [
+        row_to_dict(row)
+        for row in db.execute(
+            text(f"SELECT {', '.join(selected_user_columns)} FROM users ORDER BY id DESC")
+        ).fetchall()
+    ]
+
+    orgs = {}
+    if org_columns:
+        selected_org_columns = safe_select_columns(
+            org_columns,
+            [
+                "id",
+                "name",
+                "company_name",
+                "organization_name",
+                "plan",
+                "subscription_status",
+                "upload_limit",
+                "user_limit",
+                "current_period_end",
+                "created_at",
+            ],
+        )
+
+        if selected_org_columns:
+            org_rows = db.execute(
+                text(f"SELECT {', '.join(selected_org_columns)} FROM organizations")
+            ).fetchall()
+            orgs = {row_to_dict(row).get("id"): row_to_dict(row) for row in org_rows}
+
+    feedback_counts = {}
+    if table_exists(db, "beta_feedback"):
+        try:
+            rows = db.execute(
+                text(
+                    """
+                    SELECT lower(email) AS email, COUNT(*) AS feedback_count
+                    FROM beta_feedback
+                    GROUP BY lower(email)
+                    """
+                )
+            ).fetchall()
+
+            feedback_counts = {
+                str(row_to_dict(row).get("email") or "").lower(): int(row_to_dict(row).get("feedback_count") or 0)
+                for row in rows
+            }
+        except Exception:
+            feedback_counts = {}
+
+    upload_counts_by_org = {}
+    upload_counts_by_user = {}
+
+    upload_table_candidates = [
+        "upload_history",
+        "uploads",
+        "loss_run_uploads",
+        "documents",
+    ]
+
+    for table_name in upload_table_candidates:
+        if not table_exists(db, table_name):
+            continue
+
+        columns = get_columns(db, table_name)
+
+        try:
+            if "organization_id" in columns:
+                rows = db.execute(
+                    text(f"SELECT organization_id, COUNT(*) AS upload_count FROM {table_name} GROUP BY organization_id")
+                ).fetchall()
+
+                for row in rows:
+                    data = row_to_dict(row)
+                    org_id = data.get("organization_id")
+                    upload_counts_by_org[org_id] = upload_counts_by_org.get(org_id, 0) + int(data.get("upload_count") or 0)
+
+            if "user_id" in columns:
+                rows = db.execute(
+                    text(f"SELECT user_id, COUNT(*) AS upload_count FROM {table_name} GROUP BY user_id")
+                ).fetchall()
+
+                for row in rows:
+                    data = row_to_dict(row)
+                    user_id = data.get("user_id")
+                    upload_counts_by_user[user_id] = upload_counts_by_user.get(user_id, 0) + int(data.get("upload_count") or 0)
+        except Exception:
+            pass
+
+    beta_users = []
+
+    for user in users:
+        org = orgs.get(user.get("organization_id")) or {}
+
+        plan = str(org.get("plan") or "").strip().lower()
+        subscription_status = str(org.get("subscription_status") or "").strip().lower()
+
+        is_beta = plan in {"beta", "beta_access", "early_access"} or subscription_status.startswith("beta")
+
+        if not is_beta:
+            continue
+
+        email = str(user.get("email") or "").strip().lower()
+        org_id = user.get("organization_id")
+
+        full_name = (
+            user.get("full_name")
+            or " ".join(
+                part
+                for part in [
+                    str(user.get("first_name") or "").strip(),
+                    str(user.get("last_name") or "").strip(),
+                ]
+                if part
+            )
+            or ""
+        )
+
+        uploads_used = int(upload_counts_by_user.get(user.get("id"), 0) or 0)
+        if uploads_used == 0 and org_id in upload_counts_by_org:
+            uploads_used = int(upload_counts_by_org.get(org_id, 0) or 0)
+
+        beta_users.append(
+            {
+                "user_id": user.get("id"),
+                "email": email,
+                "full_name": full_name,
+                "role": user.get("role"),
+                "is_active": user.get("is_active"),
+                "organization_id": org_id,
+                "organization_name": org.get("name") or org.get("company_name") or org.get("organization_name") or "",
+                "plan": org.get("plan"),
+                "subscription_status": org.get("subscription_status"),
+                "upload_limit": org.get("upload_limit"),
+                "user_limit": org.get("user_limit"),
+                "uploads_used": uploads_used,
+                "feedback_count": int(feedback_counts.get(email, 0) or 0),
+                "last_login_at": user.get("last_login_at"),
+                "registered_at": user.get("created_at"),
+                "beta_expires_at": org.get("current_period_end"),
+            }
+        )
+
+    beta_users.sort(
+        key=lambda item: (
+            str(item.get("last_login_at") or ""),
+            str(item.get("registered_at") or ""),
+        ),
+        reverse=True,
+    )
+
+    return {
+        "beta_users": beta_users,
+        "count": len(beta_users),
+    }
