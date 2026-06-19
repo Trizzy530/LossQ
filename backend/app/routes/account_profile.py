@@ -295,6 +295,22 @@ def normalize_policy_list(raw_policies: Any):
     return safe_policies
 
 
+
+
+# LOSSQ_ACCOUNT_PROFILE_ACCOUNT_NUMBER_POLICY_SANITIZER_V1
+def lossq_account_profile_looks_like_policy_number(value):
+    value = str(value or "").strip().upper()
+    if not value:
+        return False
+    return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
+
+
+def lossq_account_profile_clean_account_number(value):
+    value = str(value or "").strip()
+    if not value:
+        return ""
+    return "" if lossq_account_profile_looks_like_policy_number(value) else value
+
 def profile_to_dict(profile: AccountProfile):
     return {
         "id": getattr(profile, "id", None),
@@ -304,8 +320,8 @@ def profile_to_dict(profile: AccountProfile):
             getattr(profile, "writing_carrier", "") or getattr(profile, "carrier_name", "")
         ),
         "agency_name": clean_value(getattr(profile, "agency_name", "")),
-        "account_number": clean_value(getattr(profile, "account_number", "")),
-        "customer_number": clean_value(getattr(profile, "customer_number", "")),
+        "account_number": lossq_account_profile_clean_account_number(getattr(profile, "account_number", "")),
+        "customer_number": lossq_account_profile_clean_account_number(getattr(profile, "customer_number", "")),
         "producer_number": clean_value(getattr(profile, "producer_number", "")),
         "policy_number": clean_value(getattr(profile, "policy_number", "")),
         "effective_date": clean_value(getattr(profile, "effective_date", "")),

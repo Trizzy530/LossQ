@@ -1845,6 +1845,16 @@ function lossqCleanAccountNumber(value: any): string {
   return lossqLooksLikePolicyNumber(text) ? "" : text;
 }
 
+
+
+// LOSSQ_FRONTEND_ACCOUNT_NUMBER_DISPLAY_ONLY_REAL_ACCOUNT_V1
+function lossqDisplayAccountNumber(profileLike: any): string {
+  const accountNumber = lossqCleanAccountNumber(profileLike?.account_number);
+  const customerNumber = lossqCleanAccountNumber(profileLike?.customer_number);
+
+  return accountNumber || customerNumber || "";
+}
+
 function clearDeletedProfileBrowserTraces(profileToDelete: any) {
   // LOSSQ_HARD_DELETE_BROWSER_TRACES_V1
   // When a profile/file is deleted, remove every browser-side trace that can rehydrate it.
@@ -3762,7 +3772,7 @@ if (activeProfile?.policy_number) {
         getCachedSelectedPolicy() ||
           profile?.policy_number ||
           activeProfileRef.current?.policy_number ||
-          profile?.account_number ||
+          safeDisplayProfile?.account_number ||
           activeProfileRef.current?.account_number ||
           ""
       );
@@ -4047,7 +4057,7 @@ async function saveProfile() {
     writing_carrier: profile?.writing_carrier || profile?.carrier_name || "",
     agency_name: profile?.agency_name || "",
     account_number: lossqCleanAccountNumber(profile?.account_number),
-    customer_number: lossqCleanAccountNumber(profile?.customer_number || profile?.account_number),
+    customer_number: lossqCleanAccountNumber(safeDisplayProfile?.customer_number || safeDisplayProfile?.account_number),
     producer_number: profile?.producer_number || "",
     policy_number: profile?.policy_number || "",
     effective_date: profile?.effective_date || "",
@@ -4377,7 +4387,7 @@ function autoFillExposureInputsFromUpload() {
   // LOSSQ_EXPOSURE_AUTOFILL_HANDLER_FORCE_UI_UPDATE_V2
   const selectedPolicyForExposure = String(
     profile?.policy_number ||
-      profile?.account_number ||
+      safeDisplayProfile?.account_number ||
       displayProfile?.policy_number ||
       displayProfile?.account_number ||
       ""
@@ -4485,8 +4495,8 @@ async function saveExposureInputs() {
     // LOSSQ_EXPOSURE_INPUTS_BACKEND_SAVE_V1
     const selectedPolicy =
       profile?.policy_number ||
-      profile?.account_number ||
-      profile?.customer_number ||
+      safeDisplayProfile?.account_number ||
+      safeDisplayProfile?.customer_number ||
       getCachedSelectedPolicy();
 
     const extractedExposure = deriveExposureInputsFromPolicyRows(profile);
@@ -4501,10 +4511,10 @@ async function saveExposureInputs() {
       ...profile,
       ...autoExposureOnlyForBlankFields,
       policy_number: profile?.policy_number || selectedPolicy || "",
-      account_number: profile?.account_number || selectedPolicy || "",
+      account_number: safeDisplayProfile?.account_number || selectedPolicy || "",
       customer_number:
-        profile?.customer_number ||
-        profile?.account_number ||
+        safeDisplayProfile?.customer_number ||
+        safeDisplayProfile?.account_number ||
         selectedPolicy ||
         "",
     };
@@ -4705,10 +4715,10 @@ if (isUploading) return;
       mergedUploadProfile?.customer_number,
       primaryData?.account_number,
       primaryData?.customer_number,
-      primaryData?.account_profile?.account_number,
-      primaryData?.account_profile?.customer_number,
-      primaryData?.profile?.account_number,
-      primaryData?.profile?.customer_number
+      primaryData?.account_safeDisplayProfile?.account_number,
+      primaryData?.account_safeDisplayProfile?.customer_number,
+      primaryData?.safeDisplayProfile?.account_number,
+      primaryData?.safeDisplayProfile?.customer_number
     );
 
     const universalUploadPolicyDates = getUniversalUploadPolicyDates(
@@ -5019,8 +5029,8 @@ if (isUploading) return;
         mergedUploadProfile?.account_number,
         mergedUploadProfile?.customer_number,
         mergedUploadProfile?.policy_number,
-        primaryData?.account_profile?.account_number,
-        primaryData?.account_profile?.customer_number,
+        primaryData?.account_safeDisplayProfile?.account_number,
+        primaryData?.account_safeDisplayProfile?.customer_number,
         primaryData?.selected_policy_number,
         primaryData?.policy_number
       );
@@ -5040,8 +5050,8 @@ if (isUploading) return;
         primaryProfile?.customer_number,
         primaryData?.account_number,
         primaryData?.customer_number,
-        primaryData?.account_profile?.account_number,
-        primaryData?.account_profile?.customer_number,
+        primaryData?.account_safeDisplayProfile?.account_number,
+        primaryData?.account_safeDisplayProfile?.customer_number,
         mergedUploadProfile?.policy_number
       );
 
@@ -5112,10 +5122,10 @@ setLazyLoadedTools,
       mergedAccountKey,
       primaryData?.account_number,
       primaryData?.customer_number,
-      primaryData?.account_profile?.account_number,
-      primaryData?.account_profile?.customer_number,
-      primaryData?.profile?.account_number,
-      primaryData?.profile?.customer_number,
+      primaryData?.account_safeDisplayProfile?.account_number,
+      primaryData?.account_safeDisplayProfile?.customer_number,
+      primaryData?.safeDisplayProfile?.account_number,
+      primaryData?.safeDisplayProfile?.customer_number,
       primaryProfile?.policy_number,
       primaryData?.account_profile?.policy_number,
       primaryData?.profile?.policy_number,
@@ -5335,11 +5345,11 @@ function buildReportQuery() {
     params.set("policy_number", profile.policy_number);
   }
 
-  if (profile?.account_number) {
+  if (safeDisplayProfile?.account_number) {
     params.set("account_number", profile.account_number);
   }
 
-  if (profile?.customer_number) {
+  if (safeDisplayProfile?.customer_number) {
     params.set("customer_number", profile.customer_number);
   }
 
@@ -5463,9 +5473,9 @@ async function exportCarrierLossRun() {
       displayProfile?.policy_number ||
       profile?.policy_number ||
       displayProfile?.account_number ||
-      profile?.account_number ||
+      safeDisplayProfile?.account_number ||
       displayProfile?.customer_number ||
-      profile?.customer_number ||
+      safeDisplayProfile?.customer_number ||
       getCachedSelectedPolicy();
 
     const selectedName =
@@ -5643,9 +5653,9 @@ async function exportCarrierLossRun() {
       displayProfile?.policy_number ||
       profile?.policy_number ||
       displayProfile?.account_number ||
-      profile?.account_number ||
+      safeDisplayProfile?.account_number ||
       displayProfile?.customer_number ||
-      profile?.customer_number ||
+      safeDisplayProfile?.customer_number ||
       getCachedSelectedPolicy() ||
       "Not Set";
 
@@ -5830,7 +5840,7 @@ async function askCopilot(questionOverride?: string) {
       normalizePolicyNumber(copilotProfile?.policy_number) ||
       normalizePolicyNumber(copilotProfile?.account_number) ||
       normalizePolicyNumber(profile?.policy_number) ||
-      normalizePolicyNumber(profile?.account_number) ||
+      normalizePolicyNumber(safeDisplayProfile?.account_number) ||
       getCachedSelectedPolicy() ||
       "";
 
@@ -5955,6 +5965,12 @@ async function askCopilot(questionOverride?: string) {
     clearSession();
     router.replace("/login?fresh=1");
   }
+
+const safeDisplayProfile = {
+  ...(profile || {}),
+  account_number: lossqCleanAccountNumber(profile?.account_number),
+  customer_number: lossqCleanAccountNumber(profile?.customer_number),
+};
 
 const backendAccountProfile =
   summary?.account_profile ||
@@ -6096,8 +6112,8 @@ useEffect(() => {
 const safeDisplayAccountKey = chooseSafePolicyNumber(
   displayProfile?.account_number,
   displayProfile?.customer_number,
-  profile?.account_number,
-  profile?.customer_number,
+  safeDisplayProfile?.account_number,
+  safeDisplayProfile?.customer_number,
   displayProfile?.policy_number,
   profile?.policy_number
 );
@@ -6155,7 +6171,7 @@ const currentUploadClaims = Array.isArray(currentUploadReview?.claims)
 const currentUploadPolicySet = new Set(
   [
     currentUploadReview?.profile?.policy_number,
-    currentUploadReview?.profile?.account_number,
+    currentUploadReview?.safeDisplayProfile?.account_number,
     ...(Array.isArray(currentUploadReview?.policy_numbers)
       ? currentUploadReview.policy_numbers
       : []),
@@ -6187,7 +6203,7 @@ const lastUploadClaims = Array.isArray(lastUploadReview?.claims)
 const lastUploadPolicySet = new Set(
   [
     lastUploadReview?.profile?.policy_number,
-    lastUploadReview?.profile?.account_number,
+    lastUploadReview?.safeDisplayProfile?.account_number,
     ...(Array.isArray(lastUploadReview?.policies)
       ? lastUploadReview.policies.map((item: any) => item?.policy_number)
       : []),
@@ -7874,7 +7890,7 @@ const modelChartNarrative =
               <div className="rounded-3xl border border-blue-400/20 bg-blue-500/10 p-5 mb-8">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <ProfileDetail label="Account" value={displayProfile?.business_name || profile?.business_name || "-"} />
-                  <ProfileDetail label="Policy / Account" value={displayProfile?.policy_number || profile?.policy_number || displayProfile?.account_number || profile?.account_number || "-"} />
+                  <ProfileDetail label="Policy / Account" value={displayProfile?.policy_number || profile?.policy_number || displayProfile?.account_number || safeDisplayProfile?.account_number || "-"} />
                   <ProfileDetail label="Carrier" value={displayProfile?.carrier_name || profile?.carrier_name || "-"} />
                   <ProfileDetail label="Detected Lines" value={policySchedule.length > 0 ? `${policySchedule.length} line(s)` : "Manual Input"} />
                 </div>
