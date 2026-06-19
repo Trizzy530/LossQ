@@ -1830,6 +1830,21 @@ function mergeProfiles(existing: AnyObject[], incoming: AnyObject[]) {
 }
 
 
+
+
+// LOSSQ_FRONTEND_ACCOUNT_NUMBER_POLICY_SANITIZER_V1
+function lossqLooksLikePolicyNumber(value: any): boolean {
+  const text = String(value || "").trim().toUpperCase();
+  if (!text) return false;
+  return /\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b/.test(text);
+}
+
+function lossqCleanAccountNumber(value: any): string {
+  const text = String(value || "").trim();
+  if (!text) return "";
+  return lossqLooksLikePolicyNumber(text) ? "" : text;
+}
+
 function clearDeletedProfileBrowserTraces(profileToDelete: any) {
   // LOSSQ_HARD_DELETE_BROWSER_TRACES_V1
   // When a profile/file is deleted, remove every browser-side trace that can rehydrate it.
@@ -4031,10 +4046,10 @@ async function saveProfile() {
     carrier_name: profile?.carrier_name || "",
     writing_carrier: profile?.writing_carrier || profile?.carrier_name || "",
     agency_name: profile?.agency_name || "",
-    account_number: profile?.account_number || profile?.policy_number || "",
-    customer_number: profile?.customer_number || profile?.account_number || profile?.policy_number || "",
+    account_number: lossqCleanAccountNumber(profile?.account_number),
+    customer_number: lossqCleanAccountNumber(profile?.customer_number || profile?.account_number),
     producer_number: profile?.producer_number || "",
-    policy_number: profile?.policy_number || profile?.account_number || "",
+    policy_number: profile?.policy_number || "",
     effective_date: profile?.effective_date || "",
     expiration_date: profile?.expiration_date || "",
     evaluation_date: getBestEvaluationDate(profile) || "",
@@ -5031,14 +5046,15 @@ if (isUploading) return;
       );
 
       if (safeMainAccountKey) {
-        uploadedProfile.account_number = uploadedProfile.account_number || safeMainAccountKey;
-        uploadedProfile.customer_number =
-          uploadedProfile.customer_number ||
-          uploadedProfile.account_number ||
-          safeMainAccountKey;
-
         uploadedProfile.policy_number = safeMainAccountKey;
       }
+
+      // LOSSQ_UPLOAD_PROFILE_ACCOUNT_NUMBER_DISPLAY_FIX_V1
+      // Do not display or cache policy numbers as account/customer numbers.
+      uploadedProfile.account_number = lossqCleanAccountNumber(uploadedProfile.account_number);
+      uploadedProfile.customer_number = lossqCleanAccountNumber(
+        uploadedProfile.customer_number || uploadedProfile.account_number
+      );
 
       uploadedProfile.evaluation_date = getBestEvaluationDate(uploadedProfile);
 
@@ -5056,6 +5072,8 @@ setLazyLoadedTools,
         setLazyToolLoading,
       });
       setBlankWorkspaceMode(false);
+      uploadedProfile.account_number = lossqCleanAccountNumber(uploadedProfile.account_number);
+      uploadedProfile.customer_number = lossqCleanAccountNumber(uploadedProfile.customer_number);
       setProfile(uploadedProfile);
       // Uploaded profile becomes the active authority for this account.
       // This keeps old old/previous policy rows from appearing inside a new upload's schedule.
