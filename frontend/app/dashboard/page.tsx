@@ -2838,7 +2838,7 @@ function normalizeProfileName(item: any) {
 
   useEffect(() => {
     async function validateSession() {
-      const token = localStorage.getItem("lossq_token");
+      const token = sessionStorage.getItem("lossq_tab_token") || localStorage.getItem("lossq_token");
       const loginTime = localStorage.getItem("lossq_login_time");
 
       if (!token) {
@@ -2915,6 +2915,7 @@ function normalizeProfileName(item: any) {
 
   function clearSession() {
     localStorage.removeItem("lossq_token");
+    sessionStorage.removeItem("lossq_tab_token");
     localStorage.removeItem("lossq_user");
     localStorage.removeItem("lossq_login_time");
     sessionStorage.removeItem("lossq_welcome");

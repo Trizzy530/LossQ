@@ -191,6 +191,10 @@ export default function LoginPage() {
 
 clearLossQAccountCacheBeforeLogin();
 localStorage.setItem("lossq_token", token);
+        try {
+          const savedToken = data?.access_token || token || localStorage.getItem("lossq_token") || "";
+          if (savedToken) sessionStorage.setItem("lossq_tab_token", savedToken);
+        } catch {}
 localStorage.setItem("lossq_user", JSON.stringify(loginData?.user || { email: cleanEmail }));
 localStorage.setItem("lossq_login_time", Date.now().toString());
 

@@ -10,7 +10,16 @@ type AnyObject = Record<string, any>;
 
 function getToken() {
   if (typeof window === "undefined") return "";
-  return localStorage.getItem("lossq_token") || "";
+
+  const tabToken = sessionStorage.getItem("lossq_tab_token");
+  if (tabToken) return tabToken;
+
+  const localToken = localStorage.getItem("lossq_token") || "";
+  if (localToken) {
+    sessionStorage.setItem("lossq_tab_token", localToken);
+  }
+
+  return localToken;
 }
 
 function authHeaders() {

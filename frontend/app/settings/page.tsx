@@ -113,6 +113,7 @@ export default function SettingsPage() {
 
   function logout() {
     localStorage.removeItem("lossq_token");
+    sessionStorage.removeItem("lossq_tab_token");
     localStorage.removeItem("lossq_user");
     localStorage.removeItem("lossq_login_time");
     sessionStorage.removeItem("lossq_welcome");
