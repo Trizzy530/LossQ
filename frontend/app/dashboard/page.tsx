@@ -3716,7 +3716,15 @@ if (activeProfile?.policy_number) {
         // Backend /claims is the only source of truth for Claims Analysis rows.
         // Do not fall back to current upload cache or last upload cache because those can carry stale policy/line values.
         if (myVersion === loadVersionRef.current) {
-          setClaims(lossqFilterRealClaims(serverMatches));
+          const cleanedServerClaims = lossqFilterRealClaims(serverMatches);
+          // LOSSQ_FRONTEND_CLAIMS_STATE_DEBUG_V1
+          console.log("LOSSQ_FRONTEND_CLAIMS_STATE_DEBUG", {
+            claimsUrl,
+            serverClaimsCount: Array.isArray(serverClaims) ? serverClaims.length : 0,
+            cleanedServerClaimsCount: Array.isArray(cleanedServerClaims) ? cleanedServerClaims.length : 0,
+            sample: Array.isArray(cleanedServerClaims) ? cleanedServerClaims.slice(0, 3) : [],
+          });
+          setClaims(cleanedServerClaims);
         }
       } else {
         if (myVersion === loadVersionRef.current) {
@@ -4057,7 +4065,7 @@ async function saveProfile() {
     writing_carrier: profile?.writing_carrier || profile?.carrier_name || "",
     agency_name: profile?.agency_name || "",
     account_number: lossqCleanAccountNumber(profile?.account_number),
-    customer_number: lossqCleanAccountNumber(safeDisplayProfile?.customer_number || safeDisplayProfile?.account_number),
+    customer_number: lossqCleanAccountNumber(profile?.customer_number || profile?.account_number),
     producer_number: profile?.producer_number || "",
     policy_number: profile?.policy_number || "",
     effective_date: profile?.effective_date || "",
@@ -4455,17 +4463,11 @@ function autoFillExposureInputsFromUpload() {
         sourceProfile?.policy_number ||
         selectedPolicyForExposure ||
         "",
-      account_number:
-        prev?.account_number ||
-        sourceProfile?.account_number ||
-        selectedPolicyForExposure ||
-        "",
-      customer_number:
-        prev?.customer_number ||
-        sourceProfile?.customer_number ||
-        sourceProfile?.account_number ||
-        selectedPolicyForExposure ||
-        "",
+      // LOSSQ_EXPOSURE_ACCOUNT_FIELDS_ARE_NOT_POLICY_FIELDS_V2
+      account_number: lossqCleanAccountNumber(prev?.account_number || sourceProfile?.account_number),
+      customer_number: lossqCleanAccountNumber(
+        prev?.customer_number || sourceProfile?.customer_number || sourceProfile?.account_number
+      ),
     };
 
     Object.entries(extracted).forEach(([key, value]) => {
@@ -4511,12 +4513,11 @@ async function saveExposureInputs() {
       ...profile,
       ...autoExposureOnlyForBlankFields,
       policy_number: profile?.policy_number || selectedPolicy || "",
-      account_number: safeDisplayProfile?.account_number || selectedPolicy || "",
-      customer_number:
-        safeDisplayProfile?.customer_number ||
-        safeDisplayProfile?.account_number ||
-        selectedPolicy ||
-        "",
+      // LOSSQ_SAVE_EXPOSURE_ACCOUNT_FIELDS_ARE_NOT_POLICY_FIELDS_V2
+      account_number: lossqCleanAccountNumber(safeDisplayProfile?.account_number),
+      customer_number: lossqCleanAccountNumber(
+        safeDisplayProfile?.customer_number || safeDisplayProfile?.account_number
+      ),
     };
 
     if (
@@ -4736,12 +4737,11 @@ if (isUploading) return;
 
     const primaryProfile = {
       ...mergedUploadProfile,
-      account_number: mergedUploadProfile?.account_number || mergedAccountKey || "",
-      customer_number:
-        mergedUploadProfile?.customer_number ||
-        mergedUploadProfile?.account_number ||
-        mergedAccountKey ||
-        "",
+      // LOSSQ_PRIMARY_PROFILE_ACCOUNT_FIELDS_ARE_NOT_POLICY_FIELDS_V2
+      account_number: lossqCleanAccountNumber(mergedUploadProfile?.account_number),
+      customer_number: lossqCleanAccountNumber(
+        mergedUploadProfile?.customer_number || mergedUploadProfile?.account_number
+      ),
       policy_number: mergedAccountKey || chooseSafePolicyNumber(mergedUploadProfile?.policy_number) || "",
 
       effective_date:
@@ -5043,9 +5043,13 @@ if (isUploading) return;
 
       if (safeUploadedProfilePolicy) {
         uploadedProfile.policy_number = safeUploadedProfilePolicy;
-        uploadedProfile.account_number = uploadedProfile.account_number || safeUploadedProfilePolicy;
-        uploadedProfile.customer_number = uploadedProfile.customer_number || uploadedProfile.account_number || safeUploadedProfilePolicy;
       }
+
+      // LOSSQ_UPLOAD_ACCOUNT_FIELDS_ARE_NOT_POLICY_FIELDS_V2
+      uploadedProfile.account_number = lossqCleanAccountNumber(uploadedProfile.account_number);
+      uploadedProfile.customer_number = lossqCleanAccountNumber(
+        uploadedProfile.customer_number || uploadedProfile.account_number
+      );
 
 
       // LOSSQ_UPLOAD_PROFILE_FINAL_NORMALIZATION
@@ -7906,7 +7910,8 @@ const modelChartNarrative =
               <div className="rounded-3xl border border-blue-400/20 bg-blue-500/10 p-5 mb-8">
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <ProfileDetail label="Account" value={displayProfile?.business_name || profile?.business_name || "-"} />
-                  <ProfileDetail label="Policy / Account" value={displayProfile?.policy_number || profile?.policy_number || displayProfile?.account_number || safeDisplayProfile?.account_number || "-"} />
+                  <ProfileDetail label="Main Policy" value={displayProfile?.policy_number || profile?.policy_number || "-"} />
+                  <ProfileDetail label="Account Number" value={lossqDisplayAccountNumber(displayProfile) || lossqDisplayAccountNumber(profile) || "-"} />
                   <ProfileDetail label="Carrier" value={displayProfile?.carrier_name || profile?.carrier_name || "-"} />
                   <ProfileDetail label="Detected Lines" value={policySchedule.length > 0 ? `${policySchedule.length} line(s)` : "Manual Input"} />
                 </div>
