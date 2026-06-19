@@ -2850,6 +2850,12 @@ function normalizeProfileName(item: any) {
 
   const [message, setMessage] = useState("");
   const [billingStatus, setBillingStatus] = useState<any>({});
+
+  // LOSSQ_DASHBOARD_IDENTITY_ORGANIZATION_V1
+  // /auth/me returns the logged-in user's organization name and agency profile fields.
+  // Use it as the dashboard-wide producing agency fallback without hardcoding.
+  const [dashboardIdentity, setDashboardIdentity] = useState<any>({});
+
   const betaAccessLabel = lossqBetaAccessLabel(billingStatus);
   const [billingLoaded, setBillingLoaded] = useState(false);
   const [showNewUserWelcome, setShowNewUserWelcome] = useState(false);
@@ -3158,6 +3164,40 @@ function normalizeProfileName(item: any) {
     }
 
     loadBillingStatusForLimits();
+  }, [authReady]);
+
+  // LOSSQ_DASHBOARD_IDENTITY_ORGANIZATION_V1
+  useEffect(() => {
+    if (!authReady) return;
+
+    let stopped = false;
+
+    async function loadDashboardIdentity() {
+      try {
+        const res = await fetch(`${API}/auth/me`, {
+          method: "GET",
+          headers: authHeaders(),
+        });
+
+        const data = res.ok ? ((await safeJson(res)) || {}) : {};
+
+        if (!stopped) {
+          setDashboardIdentity(data);
+          console.log("LOSSQ_DASHBOARD_IDENTITY_ORGANIZATION_DEBUG", {
+            organization: data?.organization,
+            user: data?.user,
+          });
+        }
+      } catch {
+        if (!stopped) setDashboardIdentity({});
+      }
+    }
+
+    loadDashboardIdentity();
+
+    return () => {
+      stopped = true;
+    };
   }, [authReady]);
 
   function normalizeDashboardPlan(plan: any) {
@@ -7753,6 +7793,10 @@ const modelChartNarrative =
                     value={lossqProducingAgencyFromObject({
                       ...(billingStatus || {}),
                       billingStatus,
+                      dashboardIdentity,
+                      currentUser: dashboardIdentity?.user,
+                      organization: dashboardIdentity?.organization,
+                      ...(dashboardIdentity?.organization || {}),
                       ...(profile || {}),
                       ...(displayProfile || {}),
                     })}
