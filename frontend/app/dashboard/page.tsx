@@ -1840,9 +1840,9 @@ function lossqLooksLikePolicyNumber(value: any): boolean {
 }
 
 function lossqCleanAccountNumber(value: any): string {
-  // LOSSQ_ACCOUNT_NUMBER_DISPLAY_CLEANER_V2
-  // Account/customer numbers may contain ACCT, ACCOUNT, CUSTOMER, CLIENT, or CUST.
-  // Do not reject those just because they contain a dash and numbers.
+  // LOSSQ_ACCOUNT_NUMBER_DISPLAY_CLEANER_V3
+  // Account/customer/client numbers may contain ACCT, ACCOUNT, CUSTOMER, CLIENT,
+  // or CUST. Do not reject them just because they include dashes and numbers.
   const clean = String(value ?? "")
     .replace(/\ufeff/g, "")
     .replace(/\s+/g, " ")
@@ -1850,8 +1850,7 @@ function lossqCleanAccountNumber(value: any): string {
 
   if (!clean) return "";
 
-  const upper = clean.toUpperCase();
-  const compact = upper.replace(/[^A-Z0-9]+/g, "");
+  const compact = clean.toUpperCase().replace(/[^A-Z0-9]+/g, "");
 
   const trueAccountSignal =
     compact.includes("ACCT") ||
@@ -1878,10 +1877,20 @@ function lossqCleanAccountNumber(value: any): string {
 
 // LOSSQ_FRONTEND_ACCOUNT_NUMBER_DISPLAY_ONLY_REAL_ACCOUNT_V1
 function lossqDisplayAccountNumber(profileLike: any): string {
-  const accountNumber = lossqCleanAccountNumber(profileLike?.account_number);
-  const customerNumber = lossqCleanAccountNumber(profileLike?.customer_number);
-
-  return accountNumber || customerNumber || "";
+  // LOSSQ_ACCOUNT_NUMBER_DISPLAY_CLEANER_V3
+  return lossqCleanAccountNumber(
+    profileLike?.account_number ||
+      profileLike?.customer_number ||
+      profileLike?.accountNumber ||
+      profileLike?.customerNumber ||
+      profileLike?.client_number ||
+      profileLike?.clientNumber ||
+      profileLike?.account_id ||
+      profileLike?.customer_id ||
+      profileLike?.["Account Number"] ||
+      profileLike?.["Customer Number"] ||
+      profileLike?.["Client Number"]
+  );
 }
 
 function clearDeletedProfileBrowserTraces(profileToDelete: any) {
@@ -2196,13 +2205,12 @@ function lossqClaimNumberFromRow(row: any): string {
 }
 
 // LOSSQ_FRONTEND_CLAIM_FILTER_ACTIVE_V1
-function lossqFilterRealClaims<T = any>(rows: T[]): T[] {
-  if (!Array.isArray(rows)) return [];
-
-  return rows.filter((row: any) => {
-    const claimNumber = lossqClaimNumberFromRow(row);
-    return lossqLooksLikeRealClaim(claimNumber);
-  });
+function lossqFilterRealClaims(rows: any): any[] {
+  // LOSSQ_UNIVERSAL_VALID_BACKEND_CLAIM_FILTER_V1
+  // Use the universal backend-claim validator. This prevents specialty lines
+  // from being hidden on the dashboard.
+  const rawRows = Array.isArray(rows) ? rows : [];
+  return rawRows.filter((claim: any) => hasValidatedClaimData(claim));
 }
 
 function lossqDateValue(...values: unknown[]): string {
@@ -6416,52 +6424,67 @@ const lastUploadPolicySet = new Set(
 
 
 // LOSSQ_HAS_VALIDATED_CLAIM_DATA_HELPER_V1
-function hasValidatedClaimData(claim: any) {
+function hasValidatedClaimData(claim: any): boolean {
+  // LOSSQ_UNIVERSAL_VALID_BACKEND_CLAIM_FILTER_V1
+  // A backend-saved claim is valid when it has a real claim number plus
+  // at least one supporting claim field. Do not reject specialty lines like
+  // Liquor Liability, Cyber, Dealer Open Lot, Inland Marine, Cargo, D&O, EPLI,
+  // Professional Liability, Umbrella, Garage, or Property.
   if (!claim || typeof claim !== "object") return false;
 
-  const claimNumber = String(
+  const clean = (value: any) =>
+    String(value ?? "")
+      .replace(/\ufeff/g, "")
+      .replace(/\s+/g, " ")
+      .trim();
+
+  const key = (value: any) => clean(value).toUpperCase().replace(/[^A-Z0-9]+/g, "");
+
+  const claimNumber = clean(
     claim.claim_number ||
-    claim.claimNumber ||
-    claim.number ||
-    ""
-  ).trim();
-
-  const policyNumber = String(
-    claim.policy_number ||
-    claim.policyNumber ||
-    claim.policy_no ||
-    claim.policyNo ||
-    ""
-  ).trim();
-
-  const totalIncurred = Number(
-    claim.total_incurred ??
-    claim.totalIncurred ??
-    claim.incurred ??
-    0
+      claim.claimNumber ||
+      claim["Claim Number"] ||
+      claim["Claim #"] ||
+      claim.claim_id ||
+      claim.id
   );
 
-  const paidAmount = Number(
-    claim.paid_amount ??
-    claim.paidAmount ??
-    claim.paid ??
-    0
-  );
+  const claimKey = key(claimNumber);
 
-  const reserveAmount = Number(
-    claim.reserve_amount ??
-    claim.reserveAmount ??
-    claim.reserve ??
-    0
-  );
+  const blockedClaimNumbers = new Set([
+    "",
+    "CLAIM",
+    "CLAIMS",
+    "CLAIMNUMBER",
+    "CLAIMNO",
+    "CLAIMID",
+    "TOTAL",
+    "TOTALS",
+    "SUMMARY",
+    "LOSSSUMMARY",
+    "CLAIMSDETAIL",
+    "EXPOSUREPOLICYINFORMATION",
+    "POLICYINFORMATION",
+    "HEADER",
+    "FIELD",
+    "VALUE",
+  ]);
 
-  return Boolean(
-    claimNumber ||
-    policyNumber ||
-    totalIncurred > 0 ||
-    paidAmount > 0 ||
-    reserveAmount > 0
-  );
+  if (blockedClaimNumbers.has(claimKey)) return false;
+
+  const hasPolicy = Boolean(clean(claim.policy_number || claim.policyNumber || claim["Policy Number"]));
+  const hasLine = Boolean(clean(claim.line_of_business || claim.claim_type || claim.coverage || claim["Line of Business"]));
+  const hasStatus = Boolean(clean(claim.status || claim.claim_status || claim["Status"]));
+  const hasDate = Boolean(clean(claim.date_of_loss || claim.loss_date || claim.date_reported || claim["Date of Loss"]));
+  const hasDescription = Boolean(clean(claim.description || claim.cause_of_loss || claim["Description"]));
+  const hasClaimant = Boolean(clean(claim.claimant || claim.claimant_name || claim["Claimant"]));
+
+  const paid = Number(claim.paid_amount ?? claim.paid ?? claim["Paid"] ?? 0) || 0;
+  const reserve = Number(claim.reserve_amount ?? claim.reserve ?? claim["Reserve"] ?? 0) || 0;
+  const incurred = Number(claim.total_incurred ?? claim.incurred ?? claim["Total Incurred"] ?? 0) || 0;
+  const hasMoney = paid !== 0 || reserve !== 0 || incurred !== 0;
+
+  return hasPolicy || hasLine || hasStatus || hasDate || hasDescription || hasClaimant || hasMoney;
 }
 
 
