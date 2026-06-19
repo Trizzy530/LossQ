@@ -8,6 +8,7 @@ class Claim(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     claim_number = Column(String, index=True)
+    claimant = Column(String, nullable=True)
     policy_id = Column(Integer)
     policy_number = Column(String, index=True, nullable=True)
 
@@ -40,6 +41,6 @@ class Claim(Base):
     organization_id = Column(Integer, ForeignKey("organizations.id"))
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"))
     uploaded_at = Column(String)
-    
+
 is_deleted = Column(Boolean, default=False)
 deleted_at = Column(DateTime, nullable=True)

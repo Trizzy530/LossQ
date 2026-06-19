@@ -62,10 +62,36 @@ def ensure_claim_timeline_columns(db: Session):
         print(f"Claim timeline column check failed: {e}")
 
 
+
+# LOSSQ_CLAIMANT_COLUMN_ENSURE_V1
+def ensure_claimant_column(db):
+    try:
+        rows = db.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'claims'")).fetchall()
+        existing = {str(row[0]).lower() for row in rows}
+        if "claimant" not in existing:
+            db.execute(text("ALTER TABLE claims ADD COLUMN claimant VARCHAR"))
+            db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        try:
+            db.execute(text("ALTER TABLE claims ADD COLUMN claimant VARCHAR"))
+            db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+
 def claim_to_dict(claim: Claim):
     return {
         "id": getattr(claim, "id", None),
         "claim_number": clean_value(getattr(claim, "claim_number", "")),
+        "claimant": clean_value(getattr(claim, "claimant", "")),
+        "claimant_name": clean_value(getattr(claim, "claimant", "")),
         "policy_id": getattr(claim, "policy_id", None),
         "policy_number": clean_value(getattr(claim, "policy_number", "")),
         "line_of_business": clean_value(getattr(claim, "line_of_business", "")),
@@ -207,6 +233,7 @@ def get_claims(
     current_user: dict = Depends(get_current_user),
 ):
     ensure_claim_timeline_columns(db)
+    ensure_claimant_column(db)
     query = db.query(Claim).filter(Claim.organization_id == current_user["organization_id"])
 
     if policy_numbers:
@@ -256,6 +283,7 @@ def lookup_claim(
     current_user: dict = Depends(get_current_user),
 ):
     ensure_claim_timeline_columns(db)
+    ensure_claimant_column(db)
     query = db.query(Claim).filter(
         Claim.organization_id == current_user["organization_id"],
         func.upper(func.trim(Claim.claim_number)) == clean_value(claim_number).upper(),
@@ -275,6 +303,7 @@ def get_claim_detail(
     current_user: dict = Depends(get_current_user),
 ):
     ensure_claim_timeline_columns(db)
+    ensure_claimant_column(db)
     claim = db.query(Claim).filter(
         Claim.id == claim_id,
         Claim.organization_id == current_user["organization_id"],
@@ -315,6 +344,3 @@ def bulk_delete_claims(
     )
 
     return {"deleted": True, "claims_deleted": deleted}
-
-
-

@@ -2567,6 +2567,148 @@ def clean_cause_of_loss(value: Any):
     return text_value
 
 
+
+# LOSSQ_CLAIMANT_FROM_UPLOAD_ROW_V1
+def lossq_clean_claimant_value(value):
+    clean = re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+    if not clean:
+        return ""
+
+    key = re.sub(r"[^a-z0-9]+", "", clean.lower())
+    blocked = {
+        "",
+        "claimant",
+        "claimantname",
+        "name",
+        "na",
+        "n/a",
+        "none",
+        "null",
+        "unknown",
+        "unavailable",
+        "claim",
+        "claimnumber",
+        "policynumber",
+        "policy",
+        "status",
+        "description",
+        "totalincurred",
+        "paid",
+        "reserve",
+        "dateofloss",
+        "datereported",
+    }
+
+    if key in blocked:
+        return ""
+
+    if re.fullmatch(r"[$,\d.\s]+", clean):
+        return ""
+
+    if re.fullmatch(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}", clean):
+        return ""
+
+    return clean
+
+
+def lossq_extract_claimant_from_raw_claim(raw_claim):
+    if not isinstance(raw_claim, dict):
+        return ""
+
+    keys = [
+        "claimant",
+        "Claimant",
+        "claimant_name",
+        "Claimant Name",
+        "claimantName",
+        "injured_worker",
+        "Injured Worker",
+        "injured_party",
+        "Injured Party",
+        "injured_person",
+        "Injured Person",
+        "employee_name",
+        "Employee Name",
+        "worker_name",
+        "Worker Name",
+        "plaintiff",
+        "Plaintiff",
+        "party_name",
+        "Party Name",
+        "driver_name",
+        "Driver Name",
+        "customer_name",
+        "Customer Name",
+        "third_party_name",
+        "Third Party Name",
+    ]
+
+    for key in keys:
+        value = lossq_clean_claimant_value(raw_claim.get(key))
+        if value:
+            return value
+
+    for key, value in raw_claim.items():
+        key_clean = re.sub(r"[^a-z0-9]+", "", str(key or "").lower())
+        if any(token in key_clean for token in [
+            "claimant",
+            "injuredworker",
+            "injuredparty",
+            "injuredperson",
+            "employee",
+            "plaintiff",
+            "thirdparty",
+        ]):
+            cleaned = lossq_clean_claimant_value(value)
+            if cleaned:
+                return cleaned
+
+    return ""
+
+
+def lossq_apply_claimant_to_normalized_claim(normalized_claim, raw_claim):
+    if not isinstance(normalized_claim, dict):
+        return normalized_claim
+
+    current = lossq_clean_claimant_value(normalized_claim.get("claimant"))
+    if current:
+        return normalized_claim
+
+    claimant = lossq_extract_claimant_from_raw_claim(raw_claim)
+    if claimant:
+        normalized_claim["claimant"] = claimant
+        normalized_claim["claimant_name"] = claimant
+        print("LOSSQ_CLAIMANT_EXTRACTED_FROM_UPLOAD", {
+            "claim_number": str(normalized_claim.get("claim_number") or raw_claim.get("claim_number") or raw_claim.get("Claim #") or "")[:80],
+            "claimant": claimant[:120],
+        })
+
+    return normalized_claim
+
+
+# LOSSQ_CLAIMANT_COLUMN_ENSURE_V1
+def ensure_claimant_column(db):
+    try:
+        rows = db.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name = 'claims'")).fetchall()
+        existing = {str(row[0]).lower() for row in rows}
+        if "claimant" not in existing:
+            db.execute(text("ALTER TABLE claims ADD COLUMN claimant VARCHAR"))
+            db.commit()
+    except Exception:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        try:
+            db.execute(text("ALTER TABLE claims ADD COLUMN claimant VARCHAR"))
+            db.commit()
+        except Exception:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+
+
 def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: dict):
     extracted_policy_number = clean_profile_value(
         pick(raw, ["policy_number", "policy_no", "policy"], "")
@@ -7139,6 +7281,14 @@ async def save_uploaded_files(files, policy_number, db, current_user):
                 normalized=normalized,
                 raw_claim=claim_data,
             )
+
+            # LOSSQ_CLAIMANT_FROM_UPLOAD_ROW_V1
+            normalized = lossq_apply_claimant_to_normalized_claim(
+                normalized_claim=normalized,
+                raw_claim=claim_data,
+            )
+
+            normalized.pop("claimant_name", None)
 
             claim_number = str(normalized.get("claim_number") or "").strip().upper()
             policy_value = str(normalized.get("policy_number") or file_policy_number or "").strip().upper()
