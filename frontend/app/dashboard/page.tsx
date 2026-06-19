@@ -1897,7 +1897,10 @@ function clearDeletedProfileBrowserTraces(profileToDelete: any) {
   localStorage.removeItem(SELECTED_CLAIM_CACHE_KEY);
   localStorage.removeItem("lossq_last_upload_review");
 
-  sessionStorage.clear();
+  // Do not clear all sessionStorage here.
+  // It contains lossq_tab_token, and clearing it logs the user out before DELETE finishes.
+  sessionStorage.removeItem("lossq_welcome");
+  sessionStorage.removeItem("lossq_welcome_name");
 }
 
 
@@ -3984,12 +3987,8 @@ setLazyLoadedTools,
     setActiveTool("profiles");
   };
 
-  // Clear the UI immediately so charts and Recharts data arrays reset right away.
-  clearDeletedProfileBrowserTraces(profileToDelete);
-  clearCachedCurrentUpload();
-  clearCachedSelectedClaim();
-  clearCachedLastUploadReview();
-  removeProfileLocally();
+  // Do not clear local/profile state until backend confirms delete.
+  // Clearing browser traces first can remove the tab auth token and cause logout.
   setMessage(`Deleting ${profileLabel}...`);
 
   try {
@@ -4012,7 +4011,7 @@ setLazyLoadedTools,
 
     if (!res.ok || data?.deleted === false) {
       setMessage(
-        `Removed ${profileLabel} from workspace. Backend response: ${
+        `Could not delete ${profileLabel}. Backend response: ${
           data?.message || res.status
         }`
       );
@@ -4020,11 +4019,16 @@ setLazyLoadedTools,
     }
 
     clearDeletedProfileBrowserTraces(profileToDelete);
+    clearCachedCurrentUpload();
+    clearCachedSelectedClaim();
+    clearCachedLastUploadReview();
+    removeProfileLocally();
     resetActiveWorkspace();
     setActiveTool("profiles");
-    setMessage(`Deleted ${profileLabel}. All local upload traces were cleared.`);
+    await loadProfileList();
+    setMessage(`Deleted ${profileLabel}. All related local upload traces were cleared.`);
   } catch {
-    setMessage(`Deleted local profile ${profileLabel}. Backend delete unavailable.`);
+    setMessage(`Could not delete ${profileLabel}. Backend delete unavailable.`);
   }
 }
 
