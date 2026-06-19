@@ -124,6 +124,76 @@ def save_beta_request(payload: BetaNotifyRequest):
 
 
 
+
+
+# LOSSQ_BETA_EXIT_SURVEY_V1
+class BetaExitSurveyRequest(BaseModel):
+    overall_score: int
+    would_pay: Optional[str] = ""
+    likely_plan: Optional[str] = ""
+    most_valuable_feature: Optional[str] = ""
+    most_confusing_part: Optional[str] = ""
+    missing_feature: Optional[str] = ""
+    would_recommend: Optional[str] = ""
+    launch_blocker: Optional[str] = ""
+    additional_feedback: Optional[str] = ""
+    page_url: Optional[str] = ""
+
+
+def ensure_beta_exit_surveys_table(db):
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS beta_exit_surveys (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NULL,
+                organization_id INTEGER NULL,
+                email VARCHAR(320),
+                overall_score INTEGER,
+                would_pay VARCHAR(80),
+                likely_plan VARCHAR(120),
+                most_valuable_feature TEXT,
+                most_confusing_part TEXT,
+                missing_feature TEXT,
+                would_recommend VARCHAR(80),
+                launch_blocker TEXT,
+                additional_feedback TEXT,
+                page_url TEXT,
+                status VARCHAR(50) DEFAULT 'new',
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+
+    for column_sql in [
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS user_id INTEGER NULL",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS organization_id INTEGER NULL",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS email VARCHAR(320)",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS overall_score INTEGER",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS would_pay VARCHAR(80)",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS likely_plan VARCHAR(120)",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS most_valuable_feature TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS most_confusing_part TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS missing_feature TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS would_recommend VARCHAR(80)",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS launch_blocker TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS additional_feedback TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS page_url TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'new'",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS notes TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    ]:
+        try:
+            db.execute(text(column_sql))
+        except Exception:
+            pass
+
+    db.commit()
+
 # LOSSQ_BETA_FEEDBACK_TRACKER_V1
 class BetaFeedbackRequest(BaseModel):
     message: str
@@ -432,6 +502,72 @@ async def submit_beta_feedback(
         return {
             "ok": True,
             "message": "Feedback submitted. Thank you for helping improve LossQ.",
+        }
+    finally:
+        db.close()
+
+
+@router.post("/exit-survey")
+async def submit_beta_exit_survey(
+    payload: BetaExitSurveyRequest,
+    current_user: dict = Depends(get_current_user),
+):
+    db = SessionLocal()
+    try:
+        ensure_beta_exit_surveys_table(db)
+
+        score = int(payload.overall_score or 0)
+        if score < 1 or score > 10:
+            return {
+                "ok": False,
+                "message": "Overall score must be between 1 and 10.",
+            }
+
+        email = str(current_user.get("email") or "").strip().lower()
+        user_id = current_user.get("user_id")
+        organization_id = current_user.get("organization_id")
+
+        db.execute(
+            text(
+                """
+                INSERT INTO beta_exit_surveys
+                    (
+                        user_id, organization_id, email, overall_score, would_pay,
+                        likely_plan, most_valuable_feature, most_confusing_part,
+                        missing_feature, would_recommend, launch_blocker,
+                        additional_feedback, page_url, status
+                    )
+                VALUES
+                    (
+                        :user_id, :organization_id, :email, :overall_score, :would_pay,
+                        :likely_plan, :most_valuable_feature, :most_confusing_part,
+                        :missing_feature, :would_recommend, :launch_blocker,
+                        :additional_feedback, :page_url, 'new'
+                    )
+                """
+            ),
+            {
+                "user_id": user_id,
+                "organization_id": organization_id,
+                "email": email,
+                "overall_score": score,
+                "would_pay": str(payload.would_pay or "").strip()[:80],
+                "likely_plan": str(payload.likely_plan or "").strip()[:120],
+                "most_valuable_feature": str(payload.most_valuable_feature or "").strip(),
+                "most_confusing_part": str(payload.most_confusing_part or "").strip(),
+                "missing_feature": str(payload.missing_feature or "").strip(),
+                "would_recommend": str(payload.would_recommend or "").strip()[:80],
+                "launch_blocker": str(payload.launch_blocker or "").strip(),
+                "additional_feedback": str(payload.additional_feedback or "").strip(),
+                "page_url": str(payload.page_url or "").strip(),
+            },
+        )
+
+        db.commit()
+
+        return {
+            "ok": True,
+            "message": "Exit survey submitted. Thank you for helping shape LossQ.",
         }
     finally:
         db.close()

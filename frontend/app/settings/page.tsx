@@ -370,6 +370,13 @@ export default function SettingsPage() {
             </a>
 
             <a
+              href="/beta-exit-survey"
+              className="rounded-xl border border-purple-400/30 bg-purple-500/10 px-5 py-3 font-semibold text-purple-100 hover:bg-purple-500/20"
+            >
+              Exit Survey
+            </a>
+
+            <a
               href="/beta-feedback"
               className="rounded-xl border border-orange-400/30 bg-orange-500/10 px-5 py-3 font-semibold text-orange-100 hover:bg-orange-500/20"
             >

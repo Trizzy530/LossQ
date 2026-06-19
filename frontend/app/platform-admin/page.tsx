@@ -141,6 +141,12 @@ export default function PlatformAdminPage() {
               Back to Dashboard
             </button>
             <button
+              onClick={() => router.push("/platform-admin/beta-exit-surveys")}
+              className="rounded-xl border border-purple-400/30 px-4 py-2 text-sm font-bold text-purple-200 hover:bg-purple-400/10"
+            >
+              Exit Surveys
+            </button>
+            <button
               onClick={() => router.push("/platform-admin/beta-activity")}
               className="rounded-xl border border-emerald-400/30 px-4 py-2 text-sm font-bold text-emerald-200 hover:bg-emerald-400/10"
             >

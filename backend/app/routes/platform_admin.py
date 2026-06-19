@@ -1244,3 +1244,147 @@ def platform_beta_activity(
         "beta_users": beta_users,
         "count": len(beta_users),
     }
+
+
+# LOSSQ_PLATFORM_ADMIN_BETA_EXIT_SURVEYS_V1
+def ensure_platform_beta_exit_surveys_table(db: Session):
+    db.execute(
+        text(
+            """
+            CREATE TABLE IF NOT EXISTS beta_exit_surveys (
+                id SERIAL PRIMARY KEY,
+                user_id INTEGER NULL,
+                organization_id INTEGER NULL,
+                email VARCHAR(320),
+                overall_score INTEGER,
+                would_pay VARCHAR(80),
+                likely_plan VARCHAR(120),
+                most_valuable_feature TEXT,
+                most_confusing_part TEXT,
+                missing_feature TEXT,
+                would_recommend VARCHAR(80),
+                launch_blocker TEXT,
+                additional_feedback TEXT,
+                page_url TEXT,
+                status VARCHAR(50) DEFAULT 'new',
+                notes TEXT,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+            )
+            """
+        )
+    )
+
+    for column_sql in [
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS user_id INTEGER NULL",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS organization_id INTEGER NULL",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS email VARCHAR(320)",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS overall_score INTEGER",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS would_pay VARCHAR(80)",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS likely_plan VARCHAR(120)",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS most_valuable_feature TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS most_confusing_part TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS missing_feature TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS would_recommend VARCHAR(80)",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS launch_blocker TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS additional_feedback TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS page_url TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS status VARCHAR(50) DEFAULT 'new'",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS notes TEXT",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+        "ALTER TABLE beta_exit_surveys ADD COLUMN IF NOT EXISTS updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP",
+    ]:
+        try:
+            db.execute(text(column_sql))
+        except Exception:
+            pass
+
+    db.commit()
+
+
+@router.get("/beta-exit-surveys")
+def list_beta_exit_surveys(
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    require_platform_admin(current_user)
+    ensure_platform_beta_exit_surveys_table(db)
+
+    rows = db.execute(
+        text(
+            """
+            SELECT id, user_id, organization_id, email, overall_score, would_pay,
+                   likely_plan, most_valuable_feature, most_confusing_part,
+                   missing_feature, would_recommend, launch_blocker,
+                   additional_feedback, page_url, status, notes, created_at, updated_at
+            FROM beta_exit_surveys
+            ORDER BY created_at DESC, id DESC
+            LIMIT 500
+            """
+        )
+    ).fetchall()
+
+    surveys = [row_to_dict(row) for row in rows]
+
+    average_score = None
+    scores = [
+        int(item.get("overall_score") or 0)
+        for item in surveys
+        if int(item.get("overall_score") or 0) > 0
+    ]
+
+    if scores:
+        average_score = round(sum(scores) / len(scores), 1)
+
+    return {
+        "surveys": surveys,
+        "count": len(surveys),
+        "average_score": average_score,
+    }
+
+
+@router.post("/beta-exit-surveys/{survey_id}/status")
+def update_beta_exit_survey_status(
+    survey_id: int,
+    payload: dict = Body(default={}),
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    require_platform_admin(current_user)
+    ensure_platform_beta_exit_surveys_table(db)
+
+    status = str(payload.get("status") or "").strip().lower()
+    notes = str(payload.get("notes") or "").strip()
+
+    allowed = {"new", "reviewed", "follow_up", "closed"}
+    if status not in allowed:
+        raise HTTPException(status_code=400, detail="Status must be one of: new, reviewed, follow_up, closed.")
+
+    result = db.execute(
+        text(
+            """
+            UPDATE beta_exit_surveys
+            SET status = :status,
+                notes = :notes,
+                updated_at = CURRENT_TIMESTAMP
+            WHERE id = :survey_id
+            """
+        ),
+        {
+            "survey_id": survey_id,
+            "status": status,
+            "notes": notes,
+        },
+    )
+
+    db.commit()
+
+    if getattr(result, "rowcount", 0) == 0:
+        raise HTTPException(status_code=404, detail="Beta exit survey not found.")
+
+    return {
+        "ok": True,
+        "message": "Beta exit survey updated.",
+        "survey_id": survey_id,
+        "status": status,
+    }
