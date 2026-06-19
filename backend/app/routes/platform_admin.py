@@ -4,6 +4,9 @@ from fastapi import APIRouter, Depends, HTTPException, Body
 from sqlalchemy.orm import Session
 from sqlalchemy import inspect, text
 import os
+import json
+import urllib.request
+import urllib.error
 
 from app.database import SessionLocal
 from app.auth_utils import get_current_user
@@ -546,6 +549,104 @@ def revoke_beta_access(
     }
 
 
+
+
+# LOSSQ_BETA_STATUS_EMAILS_V1
+def send_beta_status_email(email: str, status: str):
+    clean_email = str(email or "").strip().lower()
+    clean_status = str(status or "").strip().lower()
+
+    if not clean_email or "@" not in clean_email:
+        return False
+
+    resend_api_key = os.getenv("RESEND_API_KEY", "").strip()
+    from_email = os.getenv("SMTP_FROM_EMAIL", "hello@lossq.com").strip()
+
+    if not resend_api_key or not from_email:
+        print(
+            "LOSSQ_BETA_STATUS_EMAIL_NOT_CONFIGURED:",
+            {"email": clean_email, "status": clean_status, "from_email": from_email, "has_resend_key": bool(resend_api_key)},
+        )
+        return False
+
+    if clean_status == "approved":
+        subject = "Your LossQ beta request was approved"
+        body = """Hi,
+
+Your LossQ beta request has been approved.
+
+Once your registered LossQ account is matched to this email address, our team can activate beta dashboard access.
+
+Best,
+LossQ Team
+hello@lossq.com
+"""
+    elif clean_status == "activated":
+        subject = "Your LossQ beta access is active"
+        body = """Hi,
+
+Your LossQ beta dashboard access is now active.
+
+You can log in here:
+
+https://www.lossq.com/login
+
+Best,
+LossQ Team
+hello@lossq.com
+"""
+    elif clean_status == "rejected":
+        subject = "LossQ beta request update"
+        body = """Hi,
+
+Thank you for your interest in LossQ.
+
+We are not opening beta access to this account yet. We may expand beta availability as additional testing slots become available.
+
+Best,
+LossQ Team
+hello@lossq.com
+"""
+    else:
+        return False
+
+    request_payload = {
+        "from": from_email,
+        "to": [clean_email],
+        "subject": subject,
+        "text": body,
+    }
+
+    request = urllib.request.Request(
+        "https://api.resend.com/emails",
+        data=json.dumps(request_payload).encode("utf-8"),
+        headers={
+            "Authorization": f"Bearer {resend_api_key}",
+            "Content-Type": "application/json",
+            "User-Agent": "LossQ/1.0 (https://www.lossq.com; hello@lossq.com)",
+        },
+        method="POST",
+    )
+
+    try:
+        with urllib.request.urlopen(request, timeout=20) as response:
+            response_body = response.read().decode("utf-8", errors="replace")
+            print(
+                "LOSSQ_BETA_STATUS_EMAIL_SENT:",
+                {"email": clean_email, "status": clean_status, "http_status": response.status, "response": response_body[:500]},
+            )
+            return 200 <= response.status < 300
+    except urllib.error.HTTPError as exc:
+        error_body = exc.read().decode("utf-8", errors="replace")
+        print(
+            "LOSSQ_BETA_STATUS_EMAIL_HTTP_ERROR:",
+            {"email": clean_email, "status": clean_status, "http_status": exc.code, "body": error_body[:1000]},
+        )
+        return False
+    except Exception as exc:
+        print("LOSSQ_BETA_STATUS_EMAIL_ERROR:", {"email": clean_email, "status": clean_status, "error": str(exc)[:500]})
+        return False
+
 # LOSSQ_PLATFORM_ADMIN_BETA_REQUESTS_V1
 def ensure_platform_beta_requests_table(db: Session):
     db.execute(
@@ -726,11 +827,15 @@ def approve_beta_request(
         )
         db.commit()
 
+        # LOSSQ_BETA_APPROVED_EMAIL_SEND_V1
+        beta_status_email_sent = send_beta_status_email(email, "approved")
+
         return {
             "ok": True,
             "status": "approved",
-            "message": "Beta request approved. User must register before dashboard access can be activated.",
+            "message": "Beta request approved. Access can be activated after the registered account is matched to this email.",
             "email": email,
+            "beta_status_email_sent": beta_status_email_sent,
         }
 
     organization = _lossq_apply_beta_access_to_org(
@@ -758,6 +863,9 @@ def approve_beta_request(
 
     db.commit()
 
+    # LOSSQ_BETA_ACTIVATED_EMAIL_SEND_V1
+    beta_status_email_sent = send_beta_status_email(email, "activated")
+
     return {
         "ok": True,
         "status": "activated",
@@ -767,6 +875,7 @@ def approve_beta_request(
         "days": days,
         "upload_limit": upload_limit,
         "user_limit": user_limit,
+        "beta_status_email_sent": beta_status_email_sent,
     }
 
 
@@ -781,6 +890,12 @@ def reject_beta_request(
     ensure_platform_beta_requests_table(db)
 
     note = str(payload.get("note") or "Rejected by platform admin.").strip()
+
+    request_rows = db.execute(
+        text("SELECT email FROM beta_requests WHERE id = :request_id LIMIT 1"),
+        {"request_id": request_id},
+    ).fetchall()
+    request_email = str(row_to_dict(request_rows[0]).get("email") or "").strip().lower() if request_rows else ""
 
     result = db.execute(
         text(
@@ -801,9 +916,13 @@ def reject_beta_request(
     if getattr(result, "rowcount", 0) == 0:
         raise HTTPException(status_code=404, detail="Beta request not found.")
 
+    # LOSSQ_BETA_REJECTED_EMAIL_SEND_V1
+    beta_status_email_sent = send_beta_status_email(request_email, "rejected") if request_email else False
+
     return {
         "ok": True,
         "status": "rejected",
         "message": "Beta request rejected.",
         "request_id": request_id,
+        "beta_status_email_sent": beta_status_email_sent,
     }
