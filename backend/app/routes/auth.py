@@ -226,7 +226,7 @@ def rotate_active_session(user: User):
     return session_id
 
 
-def enforce_active_session(payload: dict, user: User):
+def enforce_active_session(payload: dict, user: User, db: Session = None):
     """
     Prevents account sharing by allowing only the newest login session.
     Old tokens are rejected after a new login rotates active_session_id.
@@ -240,6 +240,24 @@ def enforce_active_session(payload: dict, user: User):
         return True
 
     if not token_session_id or str(token_session_id) != str(active_session_id):
+        # LOSSQ_SINGLE_SESSION_AUDIT_REJECTED_V1
+        if db is not None:
+            try:
+                record_audit_event(
+                    db,
+                    current_user=audit_actor(user),
+                    action="single_session_rejected",
+                    resource_type="user_session",
+                    resource_id=str(user.id),
+                    details={
+                        "event": "old_session_rejected",
+                        "reason": "account_signed_in_elsewhere",
+                        "token_session_present": bool(token_session_id),
+                    },
+                )
+            except Exception as exc:
+                print("LOSSQ_SINGLE_SESSION_AUDIT_REJECTED_ERROR:", str(exc)[:300])
+
         raise HTTPException(
             status_code=401,
             detail="Session expired because this account was signed in somewhere else.",
@@ -412,7 +430,7 @@ def get_current_user(
         raise HTTPException(status_code=403, detail="User account is disabled")
 
     # LOSSQ_SINGLE_ACTIVE_SESSION_ENFORCE_V1
-    enforce_active_session(payload, user)
+    enforce_active_session(payload, user, db)
 
     return user
 
@@ -618,11 +636,23 @@ def login_user(data: LoginRequest, request: Request, db: Session = Depends(get_d
     if not bool(user.is_active):
         raise HTTPException(status_code=403, detail="User account is disabled")
 
+    previous_session_id = getattr(user, "active_session_id", None)
+
     user.last_login_at = datetime.utcnow()
     # LOSSQ_SINGLE_ACTIVE_SESSION_LOGIN_ROTATE_V1
     rotate_active_session(user)
     db.commit()
     db.refresh(user)
+
+    # LOSSQ_SINGLE_SESSION_AUDIT_LOGIN_REPLACED_V1
+    login_audit_details = audit_user_details(
+        user,
+        {
+            "event": "login_success",
+            "single_session_enforced": True,
+            "replaced_existing_session": bool(previous_session_id),
+        },
+    )
 
     record_audit_event(
         db,
@@ -630,7 +660,7 @@ def login_user(data: LoginRequest, request: Request, db: Session = Depends(get_d
         action="user_login",
         resource_type="user",
         resource_id=str(user.id),
-        details=audit_user_details(user, {"event": "login_success"}),
+        details=login_audit_details,
         request=request,
     )
 

@@ -7,6 +7,7 @@ from sqlalchemy import text
 
 from app.database import SessionLocal
 from app.models.user import User
+from app.services.audit import record_audit_event
 
 load_dotenv()
 
@@ -74,6 +75,28 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         # Backward-compatible for users who have not logged in since deployment.
         if active_session_id:
             if not token_session_id or str(token_session_id) != str(active_session_id):
+                # LOSSQ_SINGLE_SESSION_AUTH_UTILS_AUDIT_REJECTED_V1
+                try:
+                    record_audit_event(
+                        db,
+                        current_user={
+                            "email": user.email,
+                            "user_id": user.id,
+                            "role": user.role,
+                            "organization_id": user.organization_id,
+                        },
+                        action="single_session_rejected",
+                        resource_type="user_session",
+                        resource_id=str(user.id),
+                        details={
+                            "event": "old_session_rejected",
+                            "reason": "account_signed_in_elsewhere",
+                            "token_session_present": bool(token_session_id),
+                        },
+                    )
+                except Exception as exc:
+                    print("LOSSQ_SINGLE_SESSION_AUTH_UTILS_AUDIT_REJECTED_ERROR:", str(exc)[:300])
+
                 raise HTTPException(
                     status_code=401,
                     detail="Session expired because this account was signed in somewhere else.",
@@ -88,4 +111,3 @@ def get_current_user(credentials: HTTPAuthorizationCredentials = Depends(securit
         }
     finally:
         db.close()
-

@@ -344,8 +344,15 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
             : "Create your agency account."}
         </p>
 
+        {mode === "login" && typeof window !== "undefined" && new URLSearchParams(window.location.search).get("expired") === "shared" && (
+          <div className="mb-4 rounded-2xl border border-amber-400/40 bg-amber-400/10 p-4 text-sm font-semibold text-amber-100">
+            Session expired because this account was signed in somewhere else.
+          </div>
+        )}
+
         {mode === "register" && (
-          <div className="grid grid-cols-3 gap-2 mb-6">
+
+        <div className="grid grid-cols-3 gap-2 mb-6">
             <div className={`h-2 rounded-full ${step >= 1 ? "bg-blue-500" : "bg-slate-700"}`} />
             <div className={`h-2 rounded-full ${step >= 2 ? "bg-blue-500" : "bg-slate-700"}`} />
             <div className="h-2 rounded-full bg-slate-700" />
