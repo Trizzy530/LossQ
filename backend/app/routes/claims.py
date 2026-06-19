@@ -111,8 +111,8 @@ def claim_to_dict(claim: Claim):
     return {
         "id": getattr(claim, "id", None),
         "claim_number": clean_value(getattr(claim, "claim_number", "")),
-        "claimant": clean_value(getattr(claim, "claimant", "")),
-        "claimant_name": clean_value(getattr(claim, "claimant", "")),
+        "claimant": clean_value(getattr(claim, "claimant", "") or getattr(claim, "claimant_type", "")),
+        "claimant_name": clean_value(getattr(claim, "claimant", "") or getattr(claim, "claimant_type", "")),
         "policy_id": getattr(claim, "policy_id", None),
         "policy_number": clean_value(getattr(claim, "policy_number", "")),
         "line_of_business": clean_value(getattr(claim, "line_of_business", "")),

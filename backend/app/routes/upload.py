@@ -6341,6 +6341,565 @@ def lossq_universal_section_csv_claims_profile_repair_v2(file_path, parsed_claim
 
 
 
+
+# LOSSQ_UNIVERSAL_CSV_SECTION_OVERLAY_V2
+def lossq_universal_csv_section_overlay_v2(file_path, parsed_claims=None, parsed_profile=None):
+    """
+    Universal section-table overlay for CSV loss runs.
+
+    Fixes:
+    - Account Number / Customer Number stays account number, not policy number.
+    - CLAIMS DETAIL rows are preserved, including specialty lines like Liquor Liability.
+    - Claimant, Jurisdiction/State, Adjuster/Examiner are carried into saved claim rows.
+    - Exposure / policy rows populate profile exposures and policy schedule.
+    """
+    import csv
+    import re
+
+    parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+    parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+
+    if not str(file_path or "").lower().endswith(".csv"):
+        return parsed_claims, parsed_profile
+
+    try:
+        with open(file_path, "r", encoding="utf-8-sig", errors="replace", newline="") as handle:
+            rows = list(csv.reader(handle))
+    except Exception:
+        return parsed_claims, parsed_profile
+
+    def clean(value):
+        return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+    def k(value):
+        return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+    def good(value):
+        raw = clean(value)
+        return bool(raw and raw.lower() not in {"-", "na", "n/a", "none", "null", "unknown"})
+
+    def is_account_like(value):
+        raw = clean(value).upper()
+        return bool(re.search(r"\b(ACCT|ACCOUNT|CUSTOMER|CLIENT|CUST)\b", raw) or "ACCT" in raw)
+
+    def is_policy_like(value):
+        raw = clean(value).upper()
+        if not raw or is_account_like(raw):
+            return False
+        if not re.search(r"\d", raw):
+            return False
+        if re.search(r"\b(GL|BOP|WC|AUTO|CA|AL|LIQ|LIQUOR|PROP|CP|UMB|UM|IM|CARGO|GAR|DOL|CY|EPL|DO|PL)\b", raw):
+            return True
+        if "-" in raw and len(raw) >= 6:
+            return True
+        return False
+
+    def to_money(value):
+        raw = clean(value)
+        if not raw:
+            return ""
+        temp = raw.replace("$", "").replace(",", "").replace("(", "-").replace(")", "")
+        try:
+            return float(temp)
+        except Exception:
+            return raw
+
+    def to_bool(value):
+        raw = clean(value).lower()
+        if raw in {"yes", "y", "true", "1", "litigated", "attorney", "suit"}:
+            return True
+        if raw in {"no", "n", "false", "0", "none", "-", "na", "n/a", ""}:
+            return False
+        return bool(raw)
+
+    def map_row(headers, row):
+        mapped = {}
+        for idx, header in enumerate(headers):
+            header_key = k(header)
+            if header_key:
+                mapped[header_key] = clean(row[idx]) if idx < len(row) else ""
+        return mapped
+
+    def first(row_map, *labels):
+        for label in labels:
+            value = row_map.get(k(label), "")
+            if good(value):
+                return clean(value)
+        return ""
+
+    def first_money(row_map, *labels):
+        value = first(row_map, *labels)
+        return to_money(value) if value != "" else ""
+
+    # -----------------------------
+    # Account information label/value rows.
+    # -----------------------------
+    profile_labels = {
+        "businessname": "business_name",
+        "accountname": "business_name",
+        "namedinsured": "business_name",
+        "insured": "business_name",
+        "insuredname": "business_name",
+        "accountnumber": "account_number",
+        "accountno": "account_number",
+        "accountid": "account_number",
+        "customernumber": "customer_number",
+        "customerno": "customer_number",
+        "customerid": "customer_number",
+        "clientnumber": "customer_number",
+        "clientno": "customer_number",
+        "producingagency": "agency_name",
+        "producingagent": "agency_name",
+        "agency": "agency_name",
+        "agencyname": "agency_name",
+        "broker": "agency_name",
+        "brokerage": "agency_name",
+        "producer": "producer",
+        "producername": "producer",
+        "carrier": "carrier_name",
+        "writingcarrier": "writing_carrier",
+        "evaluationdate": "evaluation_date",
+        "valuationdate": "evaluation_date",
+        "asofdate": "evaluation_date",
+        "industry": "industry",
+        "state": "state",
+    }
+
+    for row in rows[:200]:
+        if len(row) < 2:
+            continue
+
+        label_key = k(row[0])
+        value = clean(row[1])
+        field = profile_labels.get(label_key)
+
+        if field and good(value):
+            parsed_profile[field] = value
+
+    if parsed_profile.get("account_number"):
+        parsed_profile["customer_number"] = parsed_profile.get("customer_number") or parsed_profile.get("account_number")
+
+    if parsed_profile.get("customer_number") and not parsed_profile.get("account_number"):
+        parsed_profile["account_number"] = parsed_profile.get("customer_number")
+
+    if parsed_profile.get("agency_name"):
+        parsed_profile["producing_agency"] = parsed_profile.get("producing_agency") or parsed_profile.get("agency_name")
+        parsed_profile["producer"] = parsed_profile.get("producer") or parsed_profile.get("agency_name")
+
+    if parsed_profile.get("producer") and not parsed_profile.get("agency_name"):
+        parsed_profile["agency_name"] = parsed_profile.get("producer")
+        parsed_profile["producing_agency"] = parsed_profile.get("producer")
+
+    for row in rows[:200]:
+        if len(row) >= 2 and k(row[0]) in {"policyperiod", "policyterm", "coverageperiod"}:
+            period = clean(row[1])
+            dates = re.findall(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b", period)
+            if len(dates) >= 2:
+                parsed_profile["effective_date"] = parsed_profile.get("effective_date") or dates[0]
+                parsed_profile["expiration_date"] = parsed_profile.get("expiration_date") or dates[1]
+
+    # -----------------------------
+    # Table finder.
+    # -----------------------------
+    def find_header(required_groups, preferred_sections=None):
+        preferred_sections = preferred_sections or []
+        section_seen = not preferred_sections
+
+        for idx, row in enumerate(rows):
+            row_text = " ".join(clean(cell).lower() for cell in row if clean(cell))
+            row_keys = {k(cell) for cell in row if clean(cell)}
+
+            if preferred_sections and any(token in row_text for token in preferred_sections):
+                section_seen = True
+                continue
+
+            if not section_seen:
+                continue
+
+            if all(any(option in row_keys for option in group) for group in required_groups):
+                return idx, row
+
+        return None, []
+
+    # -----------------------------
+    # Exposure / policy table.
+    # -----------------------------
+    exposure_idx, exposure_headers = find_header(
+        [
+            {"policynumber", "policyno", "policy"},
+            {"lineofbusiness", "coverage", "policytype", "lob", "currentpremium", "exposurebasis"},
+        ],
+        ["exposure", "policy information", "policy schedule"],
+    )
+
+    exposure_rows = []
+    if exposure_idx is not None:
+        for row in rows[exposure_idx + 1:]:
+            row_text = " ".join(clean(cell).lower() for cell in row if clean(cell))
+
+            if not any(clean(cell) for cell in row):
+                break
+
+            if any(stop in row_text for stop in ["claims detail", "claim detail", "loss summary", "underwriting notes"]):
+                break
+
+            rm = map_row(exposure_headers, row)
+            policy_number = first(rm, "Policy Number", "Policy No", "Policy")
+            line = first(rm, "Line of Business", "Coverage", "Policy Type", "LOB")
+
+            if not is_policy_like(policy_number) and not line:
+                continue
+
+            exposure = {
+                "policy_number": policy_number,
+                "policy_type": line,
+                "line_of_business": line,
+                "carrier": first(rm, "Carrier", "Writing Carrier") or parsed_profile.get("carrier_name", ""),
+                "effective_date": first(rm, "Effective Date", "Policy Effective Date"),
+                "expiration_date": first(rm, "Expiration Date", "Policy Expiration Date"),
+                "exposure_basis": first(rm, "Exposure Basis", "Basis"),
+                "exposure_value": first(rm, "Exposure Value", "Exposure"),
+                "payroll": first_money(rm, "Payroll"),
+                "revenue": first_money(rm, "Revenue", "Sales", "Gross Sales"),
+                "employee_count": first_money(rm, "Employee Count", "Employees"),
+                "vehicle_count": first_money(rm, "Vehicle Count", "Vehicles", "Autos"),
+                "driver_count": first_money(rm, "Driver Count", "Drivers"),
+                "property_tiv": first_money(rm, "Property TIV", "TIV", "Total Insured Value"),
+                "current_premium": first_money(rm, "Current Premium"),
+                "expiring_premium": first_money(rm, "Expiring Premium"),
+                "target_renewal_premium": first_money(rm, "Target Renewal Premium"),
+            }
+
+            exposure_rows.append({key: value for key, value in exposure.items() if value not in ("", None)})
+
+    # -----------------------------
+    # Claims detail table.
+    # -----------------------------
+    claim_idx, claim_headers = find_header(
+        [
+            {"claimnumber", "claimno", "claim", "claimid"},
+            {"policynumber", "policyno", "policy", "totalincurred", "paid", "reserve"},
+        ],
+        ["claims detail", "claim detail", "claims"],
+    )
+
+    csv_claims = []
+    if claim_idx is not None:
+        for row in rows[claim_idx + 1:]:
+            row_text = " ".join(clean(cell).lower() for cell in row if clean(cell))
+
+            if not any(clean(cell) for cell in row):
+                break
+
+            if any(stop in row_text for stop in ["underwriting notes", "loss summary", "exposure / policy", "account information"]):
+                break
+
+            rm = map_row(claim_headers, row)
+            claim_number = first(rm, "Claim Number", "Claim #", "Claim No", "Claim ID", "Claim")
+            policy_number = first(rm, "Policy Number", "Policy No", "Policy")
+
+            if not good(claim_number):
+                continue
+
+            claim_key = k(claim_number)
+            if claim_key in {"claimnumber", "claimno", "claimid", "claim"}:
+                continue
+
+            claim = {
+                "claim_number": claim_number,
+                "policy_number": policy_number,
+                "line_of_business": first(rm, "Line of Business", "Coverage", "Policy Type", "LOB"),
+                "claim_type": first(rm, "Line of Business", "Coverage", "Policy Type", "LOB"),
+                "claimant": first(rm, "Claimant", "Claimant Name", "Injured Worker", "Injured Party", "Employee Name", "Plaintiff", "Customer Name", "Third Party Name"),
+                "jurisdiction_state": first(rm, "Jurisdiction/State", "Jurisdiction", "State", "Venue State", "Loss State"),
+                "venue_state": first(rm, "Jurisdiction/State", "Jurisdiction", "State", "Venue State", "Loss State"),
+                "adjuster": first(rm, "Adjuster", "Adjuster/Examiner", "Examiner", "Claim Adjuster", "Claim Examiner", "File Handler"),
+                "examiner": first(rm, "Examiner", "Adjuster/Examiner", "Adjuster", "Claim Examiner", "File Handler"),
+                "date_of_loss": first(rm, "Date of Loss", "Loss Date"),
+                "date_reported": first(rm, "Date Reported", "Reported Date"),
+                "date_closed": first(rm, "Date Closed", "Closed Date"),
+                "status": first(rm, "Status", "Claim Status"),
+                "cause_of_loss": first(rm, "Cause of Loss", "Loss Cause", "Cause"),
+                "description": first(rm, "Description", "Loss Description", "Narrative"),
+                "paid_amount": first_money(rm, "Paid", "Paid Amount", "Total Paid"),
+                "reserve_amount": first_money(rm, "Reserve", "Reserve Amount", "Outstanding Reserve"),
+                "total_incurred": first_money(rm, "Total Incurred", "Incurred", "Gross Incurred", "Net Incurred"),
+                "litigation": to_bool(first(rm, "Litigation", "Litigated")),
+                "attorney_assigned": to_bool(first(rm, "Attorney Assigned", "Attorney", "Counsel")),
+            }
+
+            csv_claims.append({key: value for key, value in claim.items() if value not in ("", None)})
+
+    # -----------------------------
+    # Merge parsed claims + CSV section claims.
+    # -----------------------------
+    merged = []
+    seen = {}
+
+    def merge_key(claim):
+        claim_number = clean(claim.get("claim_number") or claim.get("Claim Number") or claim.get("claim #")).upper()
+        policy_number = clean(claim.get("policy_number") or claim.get("Policy Number") or claim.get("policy")).upper()
+        return f"{claim_number}|{policy_number}"
+
+    for claim in parsed_claims:
+        if isinstance(claim, dict):
+            target = dict(claim)
+            merged.append(target)
+            seen[merge_key(target)] = target
+
+    overlay_fields = [
+        "policy_number",
+        "line_of_business",
+        "claim_type",
+        "claimant",
+        "jurisdiction_state",
+        "venue_state",
+        "adjuster",
+        "examiner",
+        "date_of_loss",
+        "date_reported",
+        "date_closed",
+        "status",
+        "cause_of_loss",
+        "description",
+        "paid_amount",
+        "reserve_amount",
+        "total_incurred",
+        "litigation",
+        "attorney_assigned",
+    ]
+
+    added_claims = 0
+    updated_claims = 0
+
+    for csv_claim in csv_claims:
+        mk = merge_key(csv_claim)
+
+        if mk in seen:
+            target = seen[mk]
+            for field in overlay_fields:
+                value = csv_claim.get(field)
+                if value not in ("", None):
+                    if field in {"claimant", "jurisdiction_state", "venue_state", "adjuster", "examiner"} or not target.get(field):
+                        target[field] = value
+            updated_claims += 1
+        else:
+            target = dict(csv_claim)
+            merged.append(target)
+            seen[mk] = target
+            added_claims += 1
+
+    parsed_claims = merged
+
+    # -----------------------------
+    # Exposures and policy schedule.
+    # -----------------------------
+    if exposure_rows:
+        parsed_profile["exposures"] = exposure_rows
+        parsed_profile["exposure_inputs"] = {"exposure_rows": exposure_rows}
+
+        def nums(field):
+            values = []
+            for exposure in exposure_rows:
+                try:
+                    value = exposure.get(field)
+                    if value not in ("", None):
+                        values.append(float(value))
+                except Exception:
+                    pass
+            return values
+
+        for field in ["current_premium", "expiring_premium", "target_renewal_premium"]:
+            values = nums(field)
+            if values:
+                parsed_profile[field] = sum(values)
+                parsed_profile["exposure_inputs"][field] = sum(values)
+
+        for field in ["payroll", "revenue", "employee_count", "vehicle_count", "driver_count", "property_tiv"]:
+            values = nums(field)
+            if values:
+                parsed_profile[field] = max(values)
+                parsed_profile["exposure_inputs"][field] = max(values)
+
+    claim_counts = {}
+    claim_totals = {}
+    claim_lines = {}
+
+    for claim in parsed_claims:
+        policy_number = clean(claim.get("policy_number")).upper()
+        if not is_policy_like(policy_number):
+            continue
+
+        claim_counts[policy_number] = claim_counts.get(policy_number, 0) + 1
+
+        try:
+            claim_totals[policy_number] = claim_totals.get(policy_number, 0.0) + float(claim.get("total_incurred") or 0)
+        except Exception:
+            pass
+
+        line = clean(claim.get("line_of_business") or claim.get("claim_type"))
+        if line:
+            claim_lines[policy_number] = line
+
+    policies_by_number = {}
+
+    existing_policies = parsed_profile.get("policies") if isinstance(parsed_profile.get("policies"), list) else []
+    for policy in existing_policies:
+        if not isinstance(policy, dict):
+            continue
+
+        policy_number = clean(policy.get("policy_number") or policy.get("Policy Number")).upper()
+        if is_policy_like(policy_number):
+            policies_by_number[policy_number] = dict(policy)
+
+    for exposure in exposure_rows:
+        policy_number = clean(exposure.get("policy_number")).upper()
+        if not is_policy_like(policy_number):
+            continue
+
+        policy = policies_by_number.get(policy_number, {})
+        policy.update({
+            "policy_number": exposure.get("policy_number"),
+            "policy_type": exposure.get("policy_type") or exposure.get("line_of_business") or claim_lines.get(policy_number) or policy.get("policy_type"),
+            "line_of_business": exposure.get("line_of_business") or exposure.get("policy_type") or claim_lines.get(policy_number) or policy.get("line_of_business"),
+            "carrier": exposure.get("carrier") or policy.get("carrier") or parsed_profile.get("carrier_name"),
+            "effective_date": exposure.get("effective_date") or policy.get("effective_date") or parsed_profile.get("effective_date"),
+            "expiration_date": exposure.get("expiration_date") or policy.get("expiration_date") or parsed_profile.get("expiration_date"),
+            "claim_count": claim_counts.get(policy_number, policy.get("claim_count", 0)),
+            "total_incurred": claim_totals.get(policy_number, policy.get("total_incurred", 0)),
+            "current_premium": exposure.get("current_premium") or policy.get("current_premium"),
+            "expiring_premium": exposure.get("expiring_premium") or policy.get("expiring_premium"),
+            "target_renewal_premium": exposure.get("target_renewal_premium") or policy.get("target_renewal_premium"),
+        })
+        policies_by_number[policy_number] = policy
+
+    # Add policy schedule rows from claims even if an exposure row is absent.
+    for policy_number, count in claim_counts.items():
+        if policy_number not in policies_by_number:
+            policies_by_number[policy_number] = {
+                "policy_number": policy_number,
+                "policy_type": claim_lines.get(policy_number, ""),
+                "line_of_business": claim_lines.get(policy_number, ""),
+                "carrier": parsed_profile.get("carrier_name") or parsed_profile.get("writing_carrier"),
+                "effective_date": parsed_profile.get("effective_date"),
+                "expiration_date": parsed_profile.get("expiration_date"),
+                "claim_count": count,
+                "total_incurred": claim_totals.get(policy_number, 0),
+            }
+
+    if policies_by_number:
+        parsed_profile["policies"] = list(policies_by_number.values())
+        parsed_profile["policy_schedule"] = parsed_profile["policies"]
+
+        first_policy = parsed_profile["policies"][0].get("policy_number")
+        current_main = parsed_profile.get("policy_number") or parsed_profile.get("main_policy")
+
+        if not is_policy_like(current_main):
+            parsed_profile["policy_number"] = first_policy
+            parsed_profile["main_policy"] = first_policy
+
+    # Never let account/customer number overwrite policy fields.
+    for field in ["policy_number", "main_policy"]:
+        if parsed_profile.get(field) and is_account_like(parsed_profile.get(field)):
+            first_policy = ""
+            for policy in parsed_profile.get("policies") or []:
+                candidate = policy.get("policy_number") if isinstance(policy, dict) else ""
+                if is_policy_like(candidate):
+                    first_policy = candidate
+                    break
+            parsed_profile[field] = first_policy
+
+    print("LOSSQ_UNIVERSAL_CSV_SECTION_OVERLAY_V2", {
+        "csv_claims": len(csv_claims),
+        "added_claims": added_claims,
+        "updated_claims": updated_claims,
+        "exposure_rows": len(exposure_rows),
+        "account_number": str(parsed_profile.get("account_number") or "")[:80],
+        "policy_number": str(parsed_profile.get("policy_number") or "")[:80],
+    })
+
+    return parsed_claims, parsed_profile
+
+
+# LOSSQ_CLAIM_DETAIL_FIELDS_FROM_UPLOAD_ROW_V2
+def lossq_claim_detail_clean_v2(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+
+def lossq_claim_detail_key_v2(value):
+    return re.sub(r"[^a-z0-9]+", "", lossq_claim_detail_clean_v2(value).lower())
+
+
+def lossq_claim_detail_first_v2(raw_claim, *labels):
+    if not isinstance(raw_claim, dict):
+        return ""
+
+    label_keys = {lossq_claim_detail_key_v2(label) for label in labels}
+
+    for key, value in raw_claim.items():
+        if lossq_claim_detail_key_v2(key) in label_keys:
+            clean_value = lossq_claim_detail_clean_v2(value)
+            if clean_value and clean_value.lower() not in {"-", "na", "n/a", "none", "null", "unknown"}:
+                return clean_value
+
+    return ""
+
+
+def lossq_apply_claim_detail_fields_to_normalized_claim_v2(normalized_claim, raw_claim):
+    if not isinstance(normalized_claim, dict):
+        return normalized_claim
+
+    claimant = lossq_claim_detail_first_v2(
+        raw_claim,
+        "claimant",
+        "claimant name",
+        "injured worker",
+        "injured party",
+        "employee name",
+        "plaintiff",
+        "customer name",
+        "third party name",
+    )
+
+    jurisdiction_state = lossq_claim_detail_first_v2(
+        raw_claim,
+        "jurisdiction/state",
+        "jurisdiction",
+        "state",
+        "venue state",
+        "loss state",
+    )
+
+    adjuster = lossq_claim_detail_first_v2(
+        raw_claim,
+        "adjuster",
+        "adjuster/examiner",
+        "examiner",
+        "claim adjuster",
+        "claim examiner",
+        "file handler",
+    )
+
+    if claimant:
+        normalized_claim["claimant"] = claimant
+
+    if jurisdiction_state:
+        normalized_claim["jurisdiction_state"] = jurisdiction_state
+        normalized_claim["venue_state"] = normalized_claim.get("venue_state") or jurisdiction_state
+
+    if adjuster:
+        normalized_claim["adjuster"] = adjuster
+        normalized_claim["examiner"] = normalized_claim.get("examiner") or adjuster
+
+    normalized_claim.pop("claimant_name", None)
+    normalized_claim.pop("jurisdiction", None)
+    normalized_claim.pop("state", None)
+    normalized_claim.pop("adjuster_examiner", None)
+
+    return normalized_claim
+
+
+
 # LOSSQ_UNIVERSAL_CSV_ACCOUNT_EXPOSURE_CLAIM_DETAIL_OVERLAY_V1
 def lossq_universal_csv_account_exposure_claim_detail_overlay(file_path, parsed_claims=None, parsed_profile=None):
     """
@@ -7632,8 +8191,22 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         file_account_key_for_claims = ""
 
         claim_policy_number = ""
+        # LOSSQ_UNIVERSAL_CSV_SECTION_OVERLAY_V2
+        parsed_claims, parsed_profile = lossq_universal_csv_section_overlay_v2(
+            file_path=file_path,
+            parsed_claims=parsed_claims,
+            parsed_profile=parsed_profile,
+        )
+
         # LOSSQ_BETA_FILTER_AND_PURGE_BEFORE_SAVE_V1
         parsed_claims, lossq_beta_removed_rows = lossq_beta_filter_claim_rows(parsed_claims)
+
+        # LOSSQ_UNIVERSAL_CSV_SECTION_OVERLAY_V2_REAPPLY_AFTER_BETA
+        parsed_claims, parsed_profile = lossq_universal_csv_section_overlay_v2(
+            file_path=file_path,
+            parsed_claims=parsed_claims,
+            parsed_profile=parsed_profile,
+        )
 
 
     # LOSSQ_UNIVERSAL_CLAIM_NUMBER_FILTER_V1
@@ -7813,6 +8386,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             normalized.pop("jurisdiction", None)
             normalized.pop("state", None)
             normalized.pop("adjuster_examiner", None)
+
+            # LOSSQ_CLAIM_DETAIL_FIELDS_FROM_UPLOAD_ROW_V2
+            normalized = lossq_apply_claim_detail_fields_to_normalized_claim_v2(normalized, claim_data)
 
             claim_number = str(normalized.get("claim_number") or "").strip().upper()
             policy_value = str(normalized.get("policy_number") or file_policy_number or "").strip().upper()
