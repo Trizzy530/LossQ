@@ -2901,8 +2901,14 @@ function normalizeProfileName(item: any) {
 
     let stopped = false;
 
+    // LOSSQ_FRONTEND_TAB_TOKEN_SNAPSHOT_V1
+    // Keep the token that this dashboard tab opened with.
+    // This prevents another tab/window in the same browser profile from overwriting
+    // localStorage and making the old tab appear valid.
+    const tabToken = localStorage.getItem("lossq_token");
+
     async function checkActiveSession() {
-      const token = getToken();
+      const token = tabToken;
 
       if (!token || stopped) return;
 
