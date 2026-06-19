@@ -5392,6 +5392,33 @@ def lossq_universal_section_csv_claims_profile_repair(file_path, parsed_claims=N
     parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
     parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
 
+    # LOSSQ_PROFILE_AGENCY_FIELD_NORMALIZE_V1
+    # Normalize any file-parsed producer/agency value into agency_name so the
+    # account profile save and dashboard display use the uploaded file as source.
+    def _lossq_profile_agency_clean(value):
+        return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+    profile_agency_value = _lossq_profile_agency_clean(
+        parsed_profile.get("agency_name")
+        or parsed_profile.get("producing_agency")
+        or parsed_profile.get("producingAgency")
+        or parsed_profile.get("producer")
+        or parsed_profile.get("producer_name")
+        or parsed_profile.get("agency")
+        or parsed_profile.get("agencyName")
+        or parsed_profile.get("broker")
+        or parsed_profile.get("brokerage")
+        or parsed_profile.get("agent")
+        or parsed_profile.get("agent_name")
+        or parsed_profile.get("prepared_by")
+        or parsed_profile.get("contact_name")
+    )
+
+    if profile_agency_value:
+        parsed_profile["agency_name"] = profile_agency_value
+        parsed_profile["producing_agency"] = profile_agency_value
+
+
     if not str(file_path or "").lower().endswith(".csv"):
         return parsed_claims, parsed_profile
 
@@ -6024,6 +6051,122 @@ def lossq_universal_section_csv_claims_profile_repair_v2(file_path, parsed_claim
     # If this was truly a section CSV and claims were found, trust the section parser.
     if repaired_claims:
         parsed_claims = repaired_claims
+
+    # LOSSQ_CSV_PRODUCING_AGENCY_PROFILE_EXTRACTION_V1
+    # Pull Producing Agency / Producer from the uploaded CSV/loss run itself.
+    # Do not use the user's company profile, organization name, carrier name, or demo fallback.
+    try:
+        agency_labels = [
+            "producing agency",
+            "producing agent",
+            "producer",
+            "producer name",
+            "agency",
+            "agency name",
+            "broker",
+            "broker name",
+            "brokerage",
+            "broker of record",
+            "agent",
+            "agent name",
+            "prepared by",
+            "contact",
+            "contact name",
+        ]
+
+        csv_producing_agency = ""
+
+        if callable(locals().get("profile_first")):
+            csv_producing_agency = profile_first(*agency_labels)
+
+        def _lossq_csv_agency_clean(value):
+            return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+        def _lossq_csv_agency_key(value):
+            return re.sub(r"[^a-z0-9]+", "", _lossq_csv_agency_clean(value).lower())
+
+        agency_keys = {_lossq_csv_agency_key(label) for label in agency_labels}
+
+        blocked_values = {
+            "",
+            "claimsdetail",
+            "losssummary",
+            "exposurepolicyinformation",
+            "policyinformation",
+            "claim",
+            "claims",
+            "claimnumber",
+            "policy",
+            "policynumber",
+            "carrier",
+            "writingcarrier",
+            "insured",
+            "insuredname",
+            "namedinsured",
+            "date",
+            "value",
+            "field",
+        }
+
+        def _lossq_csv_agency_good_value(value):
+            clean_value = _lossq_csv_agency_clean(value)
+            value_key = _lossq_csv_agency_key(clean_value)
+            if not clean_value:
+                return False
+            if value_key in agency_keys or value_key in blocked_values:
+                return False
+            if len(clean_value) < 2:
+                return False
+            return True
+
+        if not csv_producing_agency and isinstance(rows, list):
+            # Same-row label/value, example: Producing Agency, ABC Agency
+            for row in rows[:120]:
+                cleaned_row = [_lossq_csv_agency_clean(cell) for cell in row]
+                for idx, cell in enumerate(cleaned_row):
+                    if _lossq_csv_agency_key(cell) in agency_keys:
+                        for value in cleaned_row[idx + 1:]:
+                            if _lossq_csv_agency_good_value(value):
+                                csv_producing_agency = value
+                                break
+                    if csv_producing_agency:
+                        break
+                if csv_producing_agency:
+                    break
+
+        if not csv_producing_agency and isinstance(rows, list):
+            # Header row style, example:
+            # Producing Agency, Carrier, Policy Number
+            # ABC Agency, Zenith, WC-123
+            for row_index, row in enumerate(rows[:80]):
+                header_keys = [_lossq_csv_agency_key(cell) for cell in row]
+                if not any(key in agency_keys for key in header_keys):
+                    continue
+
+                for idx, header_key in enumerate(header_keys):
+                    if header_key not in agency_keys:
+                        continue
+
+                    for next_row in rows[row_index + 1: row_index + 6]:
+                        if idx < len(next_row):
+                            candidate = _lossq_csv_agency_clean(next_row[idx])
+                            if _lossq_csv_agency_good_value(candidate):
+                                csv_producing_agency = candidate
+                                break
+                    if csv_producing_agency:
+                        break
+                if csv_producing_agency:
+                    break
+
+        if csv_producing_agency:
+            parsed_profile["agency_name"] = csv_producing_agency
+            parsed_profile["producing_agency"] = csv_producing_agency
+            parsed_profile["producer"] = csv_producing_agency
+            print("LOSSQ_CSV_PRODUCING_AGENCY_EXTRACTED", {
+                "agency_name": csv_producing_agency[:120]
+            })
+    except Exception as exc:
+        print("LOSSQ_CSV_PRODUCING_AGENCY_EXTRACTION_ERROR", str(exc)[:200])
 
     # Never let account number become a policy bundle.
     if parsed_profile.get("account_number") and looks_like_policy(parsed_profile.get("account_number")):

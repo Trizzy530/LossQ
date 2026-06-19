@@ -7786,14 +7786,11 @@ const modelChartNarrative =
                   <ProfileDetail
                     label="Producing Agency"
                     value={lossqProducingAgencyFromObject({
-                      ...(billingStatus || {}),
-                      billingStatus,
+                      // LOSSQ_PRODUCING_AGENCY_FROM_UPLOAD_PROFILE_ONLY_V1
+                      // Account Snapshot should reflect the uploaded file/profile,
+                      // not the user's Company Profile or organization fallback.
                       ...(profile || {}),
                       ...(displayProfile || {}),
-                      dashboardIdentity,
-                      currentUser: dashboardIdentity?.user,
-                      organization: dashboardIdentity?.organization,
-                      ...(dashboardIdentity?.organization || {}),
                     })}
                   />
                   <ProfileDetail label="Main Policy" value={mainPolicyNumber || "-"} />
