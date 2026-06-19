@@ -1840,9 +1840,38 @@ function lossqLooksLikePolicyNumber(value: any): boolean {
 }
 
 function lossqCleanAccountNumber(value: any): string {
-  const text = String(value || "").trim();
-  if (!text) return "";
-  return lossqLooksLikePolicyNumber(text) ? "" : text;
+  // LOSSQ_ACCOUNT_NUMBER_DISPLAY_CLEANER_V2
+  // Account/customer numbers may contain ACCT, ACCOUNT, CUSTOMER, CLIENT, or CUST.
+  // Do not reject those just because they contain a dash and numbers.
+  const clean = String(value ?? "")
+    .replace(/\ufeff/g, "")
+    .replace(/\s+/g, " ")
+    .trim();
+
+  if (!clean) return "";
+
+  const upper = clean.toUpperCase();
+  const compact = upper.replace(/[^A-Z0-9]+/g, "");
+
+  const trueAccountSignal =
+    compact.includes("ACCT") ||
+    compact.includes("ACCOUNT") ||
+    compact.includes("CUSTOMER") ||
+    compact.includes("CLIENT") ||
+    compact.includes("CUST");
+
+  if (trueAccountSignal) {
+    return clean;
+  }
+
+  const policyPrefixPattern =
+    /^(GL|WC|BOP|AUTO|CA|AL|LIQ|LIQUOR|PROP|CP|UMB|UM|IM|CARGO|GAR|DOL|CY|CYBER|EPL|EPLI|DO|D&O|PL)[-_ ]?\d/i;
+
+  if (policyPrefixPattern.test(clean)) {
+    return "";
+  }
+
+  return clean;
 }
 
 
@@ -6440,25 +6469,27 @@ function hasValidatedClaimData(claim: any) {
 // Backend /claims rows are already organization-scoped saved claim records.
 // Keep the strict filter first, but do not let an over-strict frontend filter
 // hide valid saved backend claims from dashboard cards after upload.
-function lossqSafeDashboardClaimsFromBackend(rawClaims: any, sourceLabel = "claims-api") {
-  const rows = Array.isArray(rawClaims) ? rawClaims : [];
-  const strictRows = lossqFilterRealClaims(rows);
+function lossqSafeDashboardClaimsFromBackend(rows: any, sourceLabel = "claims-api"): any[] {
+  // LOSSQ_SAFE_DASHBOARD_CLAIMS_FROM_BACKEND_V2
+  // Keep all valid backend-saved claims. The strict frontend filter can drop valid
+  // specialty lines such as Liquor Liability, Cyber, Dealer Open Lot, Inland Marine,
+  // Cargo, Professional Liability, D&O, EPLI, and other universal commercial lines.
+  const rawRows = Array.isArray(rows) ? rows : [];
+  const strictRows = lossqFilterRealClaims(rawRows);
+  const fallbackRows = rawRows.filter((claim: any) => hasValidatedClaimData(claim));
 
-  if (strictRows.length > 0 || rows.length === 0) {
-    return strictRows;
+  if (fallbackRows.length > strictRows.length) {
+    console.warn("LOSSQ_SAFE_DASHBOARD_CLAIMS_FROM_BACKEND_FALLBACK", {
+      sourceLabel,
+      rawCount: rawRows.length,
+      strictCount: strictRows.length,
+      fallbackCount: fallbackRows.length,
+    });
+
+    return fallbackRows;
   }
 
-  const fallbackRows = rows.filter((claim: any) => hasValidatedClaimData(claim));
-
-  console.warn("LOSSQ_SAFE_DASHBOARD_CLAIMS_FROM_BACKEND_FALLBACK", {
-    sourceLabel,
-    rawCount: rows.length,
-    strictCount: strictRows.length,
-    fallbackCount: fallbackRows.length,
-    sample: fallbackRows.slice(0, 3),
-  });
-
-  return fallbackRows;
+  return strictRows;
 }
 
 // LOSSQ_VISIBLE_CLAIMS_BACKEND_ONLY_V2
