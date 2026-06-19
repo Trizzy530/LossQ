@@ -1,4 +1,5 @@
 import re
+import uuid
 import os
 import resend
 from datetime import datetime, timedelta
@@ -167,6 +168,9 @@ def ensure_security_columns(db: Session):
     add_column("users", "is_email_verified", "BOOLEAN DEFAULT FALSE")
     add_column("users", "is_active", "BOOLEAN DEFAULT TRUE")
     add_column("users", "last_login_at", "TIMESTAMP")
+    # LOSSQ_SINGLE_ACTIVE_SESSION_DB_COLUMNS_V1
+    add_column("users", "active_session_id", "VARCHAR")
+    add_column("users", "active_session_started_at", "TIMESTAMP")
     add_column("users", "created_at", "TIMESTAMP")
     add_column("users", "updated_at", "TIMESTAMP")
 
@@ -210,6 +214,40 @@ def create_token(data: dict, minutes: int):
     return jwt.encode(to_encode, SECRET_KEY, algorithm=ALGORITHM)
 
 
+# LOSSQ_SINGLE_ACTIVE_SESSION_HELPERS_V1
+def rotate_active_session(user: User):
+    """
+    Rotates the user's active session id.
+    Any older JWT for this user becomes invalid once this is saved.
+    """
+    session_id = uuid.uuid4().hex
+    user.active_session_id = session_id
+    user.active_session_started_at = datetime.utcnow()
+    return session_id
+
+
+def enforce_active_session(payload: dict, user: User):
+    """
+    Prevents account sharing by allowing only the newest login session.
+    Old tokens are rejected after a new login rotates active_session_id.
+    """
+    active_session_id = getattr(user, "active_session_id", None)
+    token_session_id = payload.get("session_id")
+
+    # Backward-compatible: users with no stored active session can keep working
+    # until their next login rotates a session id.
+    if not active_session_id:
+        return True
+
+    if not token_session_id or str(token_session_id) != str(active_session_id):
+        raise HTTPException(
+            status_code=401,
+            detail="Session expired because this account was signed in somewhere else.",
+        )
+
+    return True
+
+
 def create_access_token(user: User):
     return create_token(
         {
@@ -217,6 +255,8 @@ def create_access_token(user: User):
             "user_id": user.id,
             "role": user.role or "user",
             "organization_id": user.organization_id,
+            # LOSSQ_SINGLE_ACTIVE_SESSION_TOKEN_V1
+            "session_id": getattr(user, "active_session_id", None),
         },
         ACCESS_TOKEN_EXPIRE_MINUTES,
     )
@@ -370,6 +410,9 @@ def get_current_user(
 
     if not bool(user.is_active):
         raise HTTPException(status_code=403, detail="User account is disabled")
+
+    # LOSSQ_SINGLE_ACTIVE_SESSION_ENFORCE_V1
+    enforce_active_session(payload, user)
 
     return user
 
@@ -527,6 +570,11 @@ def register_user(data: RegisterRequest, request: Request, db: Session = Depends
         request=request,
     )
 
+    # LOSSQ_SINGLE_ACTIVE_SESSION_REGISTER_ROTATE_V1
+    rotate_active_session(new_user)
+    db.commit()
+    db.refresh(new_user)
+
     access_token = create_access_token(new_user)
 
     verify_token = create_token({"sub": new_user.email, "type": "email_verify"}, VERIFY_TOKEN_EXPIRE_MINUTES)
@@ -571,7 +619,10 @@ def login_user(data: LoginRequest, request: Request, db: Session = Depends(get_d
         raise HTTPException(status_code=403, detail="User account is disabled")
 
     user.last_login_at = datetime.utcnow()
+    # LOSSQ_SINGLE_ACTIVE_SESSION_LOGIN_ROTATE_V1
+    rotate_active_session(user)
     db.commit()
+    db.refresh(user)
 
     record_audit_event(
         db,
@@ -788,6 +839,11 @@ def accept_invite(data: AcceptInviteRequest, request: Request, db: Session = Dep
         request=request,
     )
 
+    # LOSSQ_SINGLE_ACTIVE_SESSION_INVITE_ROTATE_V1
+    rotate_active_session(new_user)
+    db.commit()
+    db.refresh(new_user)
+
     token = create_access_token(new_user)
     return {"message": "Invite accepted.", "access_token": token, "token_type": "bearer", "session_timeout_minutes": ACCESS_TOKEN_EXPIRE_MINUTES, "user": public_user(new_user)}
 
@@ -907,6 +963,8 @@ def reset_password(data: ResetPasswordRequest, request: Request, db: Session = D
         raise HTTPException(status_code=404, detail="User not found")
     user.password_hash = hash_valid_password(data.new_password)
     user.updated_at = datetime.utcnow()
+    # LOSSQ_SINGLE_ACTIVE_SESSION_RESET_PASSWORD_ROTATE_V1
+    rotate_active_session(user)
     db.commit()
 
     record_audit_event(
@@ -1311,4 +1369,3 @@ def organization_support_lookup(
         "organization_count": 1,
         "scope": "organization",
     }
-
