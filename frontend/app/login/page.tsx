@@ -164,6 +164,7 @@ export default function LoginPage() {
 
     if (params.get("fresh") === "1") {
       localStorage.removeItem("lossq_token");
+        sessionStorage.removeItem("lossq_tab_token");
       localStorage.removeItem("lossq_user");
       localStorage.removeItem("lossq_login_time");
       sessionStorage.removeItem("lossq_welcome");
@@ -191,8 +192,9 @@ export default function LoginPage() {
 
 clearLossQAccountCacheBeforeLogin();
 localStorage.setItem("lossq_token", token);
+        sessionStorage.setItem("lossq_tab_token", token);
         try {
-          const savedToken = token || localStorage.getItem("lossq_token") || "";
+          const savedToken = token || "";
           if (savedToken) sessionStorage.setItem("lossq_tab_token", savedToken);
         } catch {}
 localStorage.setItem("lossq_user", JSON.stringify(loginData?.user || { email: cleanEmail }));

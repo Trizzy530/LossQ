@@ -10,16 +10,7 @@ const API =
 
 function getToken() {
   if (typeof window === "undefined") return "";
-
-  const tabToken = sessionStorage.getItem("lossq_tab_token");
-  if (tabToken) return tabToken;
-
-  const localToken = localStorage.getItem("lossq_token") || "";
-  if (localToken) {
-    sessionStorage.setItem("lossq_tab_token", localToken);
-  }
-
-  return localToken;
+  return sessionStorage.getItem("lossq_tab_token") || "";
 }
 
 async function readApiError(response: Response) {
