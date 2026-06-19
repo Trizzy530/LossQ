@@ -297,38 +297,26 @@ export default function LandingPage() {
           </p>
 
           {!joined ? (
-            <>
-              <div className="signup-form">
-                <input
-                  type="email"
-                  placeholder="your@agency.com"
-                  value={email}
-                  onChange={(e) => setEmail(e.target.value)}
-                />
+            <div className="signup-form">
+              <input
+                type="email"
+                placeholder="your@agency.com"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+              />
 
-                <button onClick={handleSignup} disabled={joining}>
-                  {joining ? "Joining..." : "Join Beta"}
-                </button>
-              </div>
-
-              {joinMessage ? (
-                <p className="success-msg show">{joinMessage}</p>
-              ) : null}
-            </>
+              <button onClick={handleSignup} disabled={joining}>
+                {joining ? "Joining..." : "Join Beta"}
+              </button>
+            </div>
           ) : (
             <p className="success-msg show">
-              ✓ You're on the list. We'll be in touch shortly.
+              Success: You're on the list. We'll be in touch shortly.
             </p>
           )}
 
-          {joined ? (
-            <p className="success-msg show">
-              ✓ {joinMessage || "You&apos;re on the list. We&apos;ll be in touch shortly."}
-            </p>
-          ) : null}
-
           <p className="form-note">
-            No credit card required · Founder pricing available
+            No credit card required - Founder pricing available
           </p>
         </div>
       </section>
