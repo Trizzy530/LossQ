@@ -5117,11 +5117,53 @@ setLazyLoadedTools,
       );
 
       if (uploadedPolicyForClaimsReload) {
+        const uploadClaimPolicyKeys = Array.from(
+          new Set(
+            [
+              uploadedPolicyForClaimsReload,
+              ...(Array.isArray(uploadedProfile?.policies)
+                ? uploadedProfile.policies.map((p: any) => p?.policy_number)
+                : []),
+            ]
+              .map((item: any) => normalizePolicyNumber(item))
+              .filter(Boolean)
+          )
+        );
+
+        const uploadClaimsUrl =
+          uploadClaimPolicyKeys.length > 0
+            ? `${API}/claims/?policy_numbers=${encodeURIComponent(uploadClaimPolicyKeys.join(","))}`
+            : `${API}/claims/`;
+
         console.log("LOSSQ_FRONTEND_RELOAD_CLAIMS_AFTER_UPLOAD", {
           uploadedPolicyForClaimsReload,
+          uploadClaimPolicyKeys,
+          uploadClaimsUrl,
           policies: uploadedProfile?.policies,
         });
-        await loadDashboard(uploadedPolicyForClaimsReload, true);
+
+        const uploadClaimsResponse = await fetch(uploadClaimsUrl, {
+          headers: {
+            Authorization: `Bearer ${getToken() || ""}`,
+          },
+        });
+
+        const uploadClaimsJson: any[] = uploadClaimsResponse.ok
+          ? await uploadClaimsResponse.json()
+          : [];
+
+        const uploadCleanClaims = lossqFilterRealClaims(uploadClaimsJson);
+
+        // LOSSQ_DIRECT_SET_CLAIMS_AFTER_UPLOAD_V1
+        console.log("LOSSQ_FRONTEND_DIRECT_CLAIMS_AFTER_UPLOAD", {
+          ok: uploadClaimsResponse.ok,
+          status: uploadClaimsResponse.status,
+          rawCount: Array.isArray(uploadClaimsJson) ? uploadClaimsJson.length : 0,
+          cleanedCount: Array.isArray(uploadCleanClaims) ? uploadCleanClaims.length : 0,
+          sample: Array.isArray(uploadCleanClaims) ? uploadCleanClaims.slice(0, 3) : [],
+        });
+
+        setClaims(uploadCleanClaims);
       }
 
       // Uploaded profile becomes the active authority for this account.
