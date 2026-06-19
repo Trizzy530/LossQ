@@ -62,6 +62,7 @@ export default function AcceptInvitePage() {
       }
 
       localStorage.setItem("lossq_token", data.access_token);
+      sessionStorage.setItem("lossq_tab_token", data.access_token);
       localStorage.setItem("lossq_login_time", Date.now().toString());
       localStorage.setItem("lossq_user", JSON.stringify(data.user || {}));
 

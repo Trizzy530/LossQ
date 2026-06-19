@@ -2923,7 +2923,7 @@ function normalizeProfileName(item: any) {
 
   function getToken() {
     if (typeof window === "undefined") return null;
-    return localStorage.getItem("lossq_token");
+    return sessionStorage.getItem("lossq_tab_token");
   }
 
   function authHeaders(): Record<string, string> {
@@ -2961,7 +2961,7 @@ function normalizeProfileName(item: any) {
     // Keep the token that this dashboard tab opened with.
     // This prevents another tab/window in the same browser profile from overwriting
     // localStorage and making the old tab appear valid.
-    const tabToken = localStorage.getItem("lossq_token");
+    const tabToken = sessionStorage.getItem("lossq_tab_token");
 
     async function checkActiveSession() {
       const token = tabToken;
@@ -3235,7 +3235,7 @@ function normalizeProfileName(item: any) {
     let lastWrite = 0;
 
     function hasActiveToken() {
-      return Boolean(localStorage.getItem("lossq_token"));
+      return Boolean(sessionStorage.getItem("lossq_tab_token"));
     }
 
     function expireIdleSession() {
@@ -3681,7 +3681,7 @@ if (activeProfile?.policy_number) {
 
       const claimsResponse = await fetch(claimsUrl, {
         headers: {
-          Authorization: `Bearer ${localStorage.getItem("lossq_token") || ""}`,
+          Authorization: `Bearer ${getToken() || ""}`,
         },
       });
 

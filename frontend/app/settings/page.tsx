@@ -103,7 +103,7 @@ export default function SettingsPage() {
 
   function getToken() {
     if (typeof window === "undefined") return null;
-    return localStorage.getItem("lossq_token");
+    return sessionStorage.getItem("lossq_tab_token");
   }
 
   function authHeaders(): Record<string, string> {
