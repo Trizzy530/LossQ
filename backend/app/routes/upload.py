@@ -3367,9 +3367,26 @@ def parse_file(file_path: str, filename: str):
     # LOSSQ_LABEL_BASED_PDF_PRIORITY_V1
     try:
       label_pdf_claims, label_pdf_profile = lossq_parse_label_based_pdf_loss_run_v1(file_path)
-      if label_pdf_claims:
+
+      # LOSSQ_LABEL_PDF_RETURN_NO_CLAIMS_PROFILE_V2
+      label_pdf_no_claims_profile = (
+        isinstance(label_pdf_profile, dict)
+        and (
+          label_pdf_profile.get("lossq_no_claims_pdf_detected")
+          or label_pdf_profile.get("loss_run_status") == "No claims reported"
+        )
+        and isinstance(label_pdf_profile.get("policies") or label_pdf_profile.get("policy_schedule"), list)
+      )
+
+      if label_pdf_claims or label_pdf_no_claims_profile:
         # LOSSQ_LABEL_BASED_PDF_PRIORITY_POLICY_DISPLAY_CLEANUP_V2
         label_pdf_claims, label_pdf_profile = lossq_clean_policy_schedule_display_names_v2(label_pdf_claims, label_pdf_profile)
+        print("LOSSQ_LABEL_PDF_PRIORITY_RETURN_V2:", {
+          "claims": len(label_pdf_claims or []),
+          "no_claims_profile": bool(label_pdf_no_claims_profile),
+          "business_name": label_pdf_profile.get("business_name") if isinstance(label_pdf_profile, dict) else "",
+          "policy_count": len((label_pdf_profile.get("policies") or label_pdf_profile.get("policy_schedule") or [])) if isinstance(label_pdf_profile, dict) else 0,
+        })
         return label_pdf_claims, label_pdf_profile
     except Exception as label_pdf_exc:
       print("LOSSQ_LABEL_BASED_PDF_PARSE_ERROR:", str(label_pdf_exc)[:500])
