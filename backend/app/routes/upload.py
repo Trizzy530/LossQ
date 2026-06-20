@@ -1345,6 +1345,11 @@ def _lossq_live_extract_section_based_csv(file_path):
         "account information": "account",
         "policy schedule": "policies",
         "exposure inputs": "exposures",
+        "exposure information": "exposures",
+        "exposure / policy information": "policies",
+        "exposure and policy information": "policies",
+        "premium worksheet": "policies",
+        "policy information": "policies",
         "claim detail": "claims",
         "loss summary": "summary",
         "underwriting notes": "notes",
@@ -1448,6 +1453,7 @@ def _lossq_live_extract_section_based_csv(file_path):
             carrier_header_aliases = {"carrier", "writing carrier", "insurer", "company"}
             premium_header_aliases = {"premium", "annual premium", "current premium", "written premium"}
             exposure_basis_aliases = {"exposure basis", "basis", "exposure"}
+            exposure_value_aliases = {"exposure value", "exposure amount", "value", "basis value"}
             expiring_premium_aliases = {"expiring premium", "prior premium", "current term premium"}
             target_renewal_aliases = {"target renewal premium", "target premium", "renewal premium"}
 
@@ -1493,6 +1499,7 @@ def _lossq_live_extract_section_based_csv(file_path):
 
             current_premium = _get_by_alias(row, premium_header_aliases, 5)
             exposure_basis = _get_by_alias(row, exposure_basis_aliases, 6)
+            exposure_value = _get_by_alias(row, exposure_value_aliases, None)
             expiring_premium = _get_by_alias(row, expiring_premium_aliases, None)
             target_renewal = _get_by_alias(row, target_renewal_aliases, None)
 
@@ -1510,6 +1517,7 @@ def _lossq_live_extract_section_based_csv(file_path):
                 "expiration": expiration,
                 "expirationDate": expiration,
                 "exposure_basis": exposure_basis,
+                "exposure_value": exposure_value,
                 "current_premium": current_premium,
                 "premium": current_premium,
                 "expiring_premium": expiring_premium,
@@ -1640,12 +1648,71 @@ def _lossq_live_extract_section_based_csv(file_path):
         account["effective"] = account["effective_date"]
         account["expiration"] = account["expiration_date"]
 
+    # LOSSQ_SECTION_CSV_EXPOSURE_POLICY_INFO_ROLLUP_V1
+    # Universal rollup for CSV sections such as EXPOSURE / POLICY INFORMATION,
+    # POLICY INFORMATION, PREMIUM WORKSHEET, or POLICY SCHEDULE.
+    def _lossq_section_money(value):
+        try:
+            raw = str(value or "").replace("$", "").replace(",", "").strip()
+            if raw in {"", "-", "None", "none", "null"}:
+                return 0.0
+            return float(raw)
+        except Exception:
+            return 0.0
+
+    def _lossq_section_fmt_money(value):
+        try:
+            amount = float(value or 0)
+        except Exception:
+            amount = 0.0
+        if amount <= 0:
+            return ""
+        if amount.is_integer():
+            return str(int(amount))
+        return f"{amount:.2f}"
+
+    if policies:
+        current_total = sum(_lossq_section_money(p.get("current_premium") or p.get("premium")) for p in policies)
+        expiring_total = sum(_lossq_section_money(p.get("expiring_premium")) for p in policies)
+        target_total = sum(_lossq_section_money(p.get("target_renewal_premium")) for p in policies)
+
+        if current_total and not exposures.get("Current Premium"):
+            exposures["Current Premium"] = _lossq_section_fmt_money(current_total)
+        if expiring_total and not exposures.get("Expiring Premium"):
+            exposures["Expiring Premium"] = _lossq_section_fmt_money(expiring_total)
+        if target_total and not exposures.get("Target Renewal Premium"):
+            exposures["Target Renewal Premium"] = _lossq_section_fmt_money(target_total)
+
+        for policy in policies:
+            basis = str(policy.get("exposure_basis") or "").strip()
+            value = str(policy.get("exposure_value") or "").strip()
+            basis_key = basis.lower()
+
+            if not value:
+                continue
+
+            if "payroll" in basis_key and not exposures.get("Payroll"):
+                exposures["Payroll"] = value
+            elif ("revenue" in basis_key or "sales" in basis_key or "receipts" in basis_key) and not exposures.get("Revenue / Sales"):
+                exposures["Revenue / Sales"] = value
+            elif "employee" in basis_key and not exposures.get("Employee Count"):
+                exposures["Employee Count"] = value
+            elif "vehicle" in basis_key and not exposures.get("Vehicle Count"):
+                exposures["Vehicle Count"] = value
+            elif "driver" in basis_key and not exposures.get("Driver Count"):
+                exposures["Driver Count"] = value
+            elif ("tiv" in basis_key or "insured value" in basis_key or "property" in basis_key) and not exposures.get("Property TIV"):
+                exposures["Property TIV"] = value
+
     if exposures:
         account["exposure_inputs"] = exposures
         account["exposures"] = exposures
         account["current_premium"] = exposures.get("Current Premium", "")
+        account["expiring_premium"] = exposures.get("Expiring Premium", "")
+        account["target_renewal_premium"] = exposures.get("Target Renewal Premium", "")
         account["payroll"] = exposures.get("Payroll", "")
         account["revenue"] = exposures.get("Revenue / Sales", "")
+        account["sales"] = exposures.get("Revenue / Sales", "")
         account["employee_count"] = exposures.get("Employee Count", "")
         account["vehicle_count"] = exposures.get("Vehicle Count", "")
         account["driver_count"] = exposures.get("Driver Count", "")
