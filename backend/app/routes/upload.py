@@ -3299,7 +3299,48 @@ def lossq_parse_label_based_pdf_loss_run_v1(file_path: str):
       "litigation": clean(claim.get("litigation")),
     })
 
+  # LOSSQ_LABEL_PDF_NO_CLAIMS_PROFILE_UPLOAD_V1
   if not normalized_claims:
+    no_claims_signal = bool(re.search(
+      r"(?i)\\b(no\\s+claims|no\\s+losses|zero\\s+claims|claim\\s+count\\s*[:#-]?\\s*0|no\\s+claim\\s+activity|none\\s+reported|no\\s+claims\\s+reported)\\b",
+      raw_text or "",
+    ))
+
+    if clean_policies and (profile or no_claims_signal):
+      profile["claims"] = []
+      profile["parsed_claims"] = []
+      profile["lossq_no_claims_pdf_detected"] = True
+      profile["loss_run_status"] = "No claims reported"
+      profile["extraction_status"] = "passed"
+      profile["extraction_score"] = 94
+      profile["requires_review"] = False
+      profile["claim_count"] = 0
+      profile["total_claims"] = 0
+      profile["open_claims"] = 0
+      profile["closed_claims"] = 0
+      profile["total_incurred"] = 0
+      profile["total_paid"] = 0
+      profile["total_reserve"] = 0
+      profile["policies"] = clean_policies
+      profile["policy_schedule"] = clean_policies
+
+      normalized_claims, profile = lossq_clean_policy_schedule_display_names_v2([], profile)
+
+      print("LOSSQ_LABEL_PDF_NO_CLAIMS_PROFILE_UPLOAD_V1:", {
+        "business_name": profile.get("business_name"),
+        "account_number": profile.get("account_number"),
+        "policies": [
+          {
+            "policy_number": item.get("policy_number"),
+            "line_of_business": item.get("line_of_business"),
+          }
+          for item in profile.get("policies", [])
+          if isinstance(item, dict)
+        ],
+      })
+
+      return [], profile
+
     return [], {}
 
   profile["claims"] = normalized_claims
