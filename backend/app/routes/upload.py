@@ -2612,10 +2612,14 @@ def parse_file(file_path: str, filename: str):
         if section_claims or section_profile.get("account_number") or section_profile.get("business_name"):
             return section_claims, section_profile
 
-        # LOSSQ_CLEAN_FLAT_CSV_PRIORITY_V1
-        clean_flat_claims, clean_flat_profile = lossq_parse_clean_flat_csv_v1(file_path)
-        if clean_flat_claims:
-            return clean_flat_claims, clean_flat_profile
+        # LOSSQ_CLEAN_FLAT_CSV_PRIORITY_SAFE_V2
+        # Clean flat CSVs should not fall into older parser paths that can 500.
+        try:
+            clean_flat_claims, clean_flat_profile = lossq_parse_clean_flat_csv_v1(file_path)
+            if clean_flat_claims:
+                return clean_flat_claims, clean_flat_profile
+        except Exception as exc:
+            print("LOSSQ_CLEAN_FLAT_CSV_PARSE_ERROR:", str(exc)[:500])
 
         if parse_claims_from_excel:
             claims = parse_claims_from_excel(file_path)
@@ -4417,6 +4421,8 @@ async def upload_loss_run(
         raise
     except Exception as e:
         print("LOSSQ_UPLOAD_ERROR_TRACE:", traceback.format_exc())
+        # LOSSQ_UPLOAD_PROCESSING_FAILED_ROOT_CAUSE_V1
+        print("LOSSQ_UPLOAD_PROCESSING_FAILED_ROOT_CAUSE:", str(e)[:1000])
         raise HTTPException(
             status_code=500,
             detail={

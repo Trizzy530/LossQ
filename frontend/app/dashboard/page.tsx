@@ -4,8 +4,12 @@
 // LOSSQ_MANUAL_EXPOSURE_INPUTS_FRONTEND_REDEPLOY_V2
 
 import { useRouter } from "next/navigation";
+
+
 import { useEffect, useState, useRef, type ReactNode } from "react";
 import {
+
+
   BarChart,
   Bar,
   LineChart,
@@ -22,6 +26,15 @@ import {
 
 const API =
   process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
+
+// LOSSQ_CLEAN_UPLOAD_ERROR_MESSAGE_V1
+function lossqCleanUploadErrorMessage(status?: any): string {
+  if (status === 401 || status === 403) {
+    return "Your session expired. Please log in again.";
+  }
+  return "Upload failed. Please try another file or contact support.";
+}
+
 
 const SESSION_TIMEOUT_MS = 1000 * 60 * 60 * 24;
 const PROFILE_CACHE_KEY = "lossq_account_profiles";
@@ -176,7 +189,6 @@ const LOSSQ_FEATURE_LABELS: Record<string, string> = {
 };
 
 
-
 type AnyObject = Record<string, any>;
 
 type ToolKey =
@@ -210,7 +222,6 @@ function objectToChartData(data: Record<string, number>) {
     value: Number(value || 0),
   }));
 }
-
 
 
 function isBadPolicyNumberValue(value: any) {
@@ -392,11 +403,6 @@ function getUniversalUploadPolicyDates(...sources: any[]) {
 
   return found;
 }
-
-
-
-
-
 
 
 // LOSSQ_EXACT_UPLOAD_DATE_FORCE_MERGE_V1
@@ -1830,8 +1836,6 @@ function mergeProfiles(existing: AnyObject[], incoming: AnyObject[]) {
 }
 
 
-
-
 // LOSSQ_FRONTEND_ACCOUNT_NUMBER_POLICY_SANITIZER_V1
 
 // LOSSQ_FRONTEND_ACTUAL_POLICY_ONLY_HELPER_V1
@@ -1903,7 +1907,6 @@ function lossqCleanAccountNumber(value: any): string {
 
   return clean;
 }
-
 
 
 // LOSSQ_FRONTEND_ACCOUNT_NUMBER_DISPLAY_ONLY_REAL_ACCOUNT_V1
@@ -2016,7 +2019,6 @@ function clearDeletedProfileBrowserTraces(profileToDelete: any) {
 }
 
 
-
 // LOSSQ_CLEAR_DASHBOARD_TENANT_CACHE_V1
 function clearLossQDashboardTenantCache() {
   if (typeof window === "undefined") return;
@@ -2047,8 +2049,6 @@ function clearLossQDashboardTenantCache() {
     }
   });
 }
-
-
 
 
 // LOSSQ_EXTRACTION_REVIEW_BANNER_V1
@@ -2182,8 +2182,6 @@ function LossQExtractionReviewBanner({ profile }: { profile: any }) {
     </div>
   );
 }
-
-
 
 
 // LOSSQ_FRONTEND_BETA_GUARDRAILS_V1
@@ -2382,13 +2380,11 @@ function lossqHumanUploadError(error: any): string {
   const text = lossqCleanText(detail);
 
   if (!text || text.toLowerCase().includes("failed to fetch")) {
-    return "Upload failed before completion. The backend may be redeploying, offline, or rejected the file. Check that /docs loads, then try again.";
+    return "Upload failed. Please try another file or contact support.";
   }
 
   return text;
 }
-
-
 
 
 // LOSSQ_EVALUATION_DATE_ALERT_BADGE_V1
@@ -2620,10 +2616,6 @@ function EvaluationDateAlertBadge({ profileLike, policyRows }: { profileLike: an
 }
 
 
-
-
-
-
 // LOSSQ_SAFE_CARRIER_DISPLAY_V1
 function lossqBadCarrierDisplayValue(value: any): boolean {
   const clean = lossqCleanText(value).toLowerCase();
@@ -2840,8 +2832,6 @@ function lossqLineOfBusinessFromObject(obj: any): string {
 }
 
 
-
-
 // LOSSQ_BETA_DASHBOARD_LABEL_V1
 function lossqFormatBetaDate(value: any): string {
   if (!value) return "";
@@ -2934,11 +2924,7 @@ export default function DashboardPage() {
   };
 
 
-
   const [activeTool, setActiveTool] = useState<ToolKey>("overview");
-
-
-
 
 
 // LOSSQ_CLAIM_ANALYSIS_SORTABLE_TABLE_V1
@@ -3249,7 +3235,6 @@ function normalizeProfileName(item: any) {
       document.removeEventListener("visibilitychange", handleVisibilityChange);
     };
   }, []);
-
 
 
   // LOSSQ_NAMED_WELCOME_BANNER_V1
@@ -4986,7 +4971,7 @@ if (isUploading) return;
       }
 
       if (!res.ok) {
-        setMessage(`Upload failed. Backend returned ${res.status}: ${JSON.stringify(data)}`);
+        setMessage(lossqCleanUploadErrorMessage(res?.status));
         return;
       }
 
@@ -5559,7 +5544,6 @@ setLazyLoadedTools,
     );
 
 
-
     // LOSSQ_FORCE_COMBINED_POLICY_DATES_V1
     const forcedUploadDates = getUniversalUploadPolicyDates(
       uploadResults,
@@ -5644,11 +5628,7 @@ setLazyLoadedTools,
       );
     }, 6000);
   } catch (error: any) {
-    setMessage(
-      `Upload failed before completion. Backend may have crashed. Error: ${
-        error?.message || "Unknown error"
-      }`
-    );
+    setMessage(lossqCleanUploadErrorMessage());
   } finally {
     setIsUploading(false);
   }
@@ -5697,7 +5677,6 @@ async function downloadPdf(url: string, filename: string, init?: RequestInit) {
 
   window.URL.revokeObjectURL(objectUrl);
 }
-
 
 
 // LOSSQ_REPORT_CURRENT_ACCOUNT_ONLY_FRONTEND_V1
@@ -5767,8 +5746,6 @@ function buildReportQuery() {
   const query = params.toString();
   return query ? `?${query}` : "";
 }
-
-
 
 
 function buildReportPayload() {
@@ -6160,7 +6137,6 @@ async function exportCarrierLossRun() {
   }
 
 
-
 // LOSSQ_COPILOT_ACCOUNT_POLICY_SET_PAYLOAD_V1
 function lossqCopilotPolicyNumbersFromProfile(profileLike: any): string[] {
   const values = [
@@ -6183,8 +6159,6 @@ function lossqCopilotPolicyNumbersFromProfile(profileLike: any): string[] {
     )
   );
 }
-
-
 
 
 // LOSSQ_COPILOT_ACCOUNT_POLICY_SET_PAYLOAD_SAFE_V2
@@ -6517,8 +6491,6 @@ useEffect(() => {
 ]);
 
 
-
-
 // LOSSQ_FINAL_BAD_POLICY_DISPLAY_GUARDRAIL
 const safeDisplayAccountKey = chooseSafePolicyNumber(
   displayProfile?.account_number,
@@ -6624,10 +6596,6 @@ const lastUploadPolicySet = new Set(
 );
 
 
-
-
-
-
 // LOSSQ_SAFE_DASHBOARD_CLAIMS_FROM_BACKEND_V1
 // Backend /claims rows are already organization-scoped saved claim records.
 // Keep the strict filter first, but do not let an over-strict frontend filter
@@ -6670,7 +6638,6 @@ const visibleClaims = blankWorkspaceMode
   : filteredVisibleClaims.length > 0
   ? filteredVisibleClaims
   : backendOnlyClaimsForDisplay;
-
 
 
 const validatedVisibleClaims = lossqFilterRealClaims(visibleClaims);
@@ -7904,7 +7871,6 @@ const modelChartNarrative =
           )}
 
 
-
           <div className="lg:hidden glass-panel p-3 mb-6 overflow-x-auto sticky top-3 z-40">
             <div className="flex gap-2 min-w-max">
               <MobileToolButton active={activeTool === "overview"} onClick={() => changeActiveTool("overview")}>Overview</MobileToolButton>
@@ -8206,7 +8172,6 @@ const modelChartNarrative =
 
             </>
           )}
-
 
 
           {activeTool === "profiles" && (
