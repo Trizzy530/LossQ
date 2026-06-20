@@ -1704,6 +1704,86 @@ def _lossq_live_extract_section_based_csv(file_path):
             elif ("tiv" in basis_key or "insured value" in basis_key or "property" in basis_key) and not exposures.get("Property TIV"):
                 exposures["Property TIV"] = value
 
+    # LOSSQ_SECTION_CSV_MISSING_EXPOSURE_FIELD_FALLBACK_V1
+    # Final universal pass across raw CSV cells for count/property fields that may appear
+    # outside the formal Field/Value exposure section or inside policy/exposure schedules.
+    def _lossq_section_label_key(value):
+        return re.sub(r"[^a-z0-9]", "", str(value or "").strip().lower())
+
+    def _lossq_section_clean_exposure_value(value):
+        raw = str(value or "").replace("$", "").replace(",", "").strip()
+        if raw in {"", "-", "None", "none", "null"}:
+            return ""
+        return raw
+
+    exposure_label_map = {
+        "employeecount": "Employee Count",
+        "employees": "Employee Count",
+        "numberofemployees": "Employee Count",
+        "fte": "Employee Count",
+        "fulltimeemployees": "Employee Count",
+
+        "vehiclecount": "Vehicle Count",
+        "vehicles": "Vehicle Count",
+        "numberofvehicles": "Vehicle Count",
+        "powerunits": "Vehicle Count",
+
+        "drivercount": "Driver Count",
+        "drivers": "Driver Count",
+        "numberofdrivers": "Driver Count",
+
+        "propertytiv": "Property TIV",
+        "tiv": "Property TIV",
+        "totalinsuredvalue": "Property TIV",
+        "totalinsurablevalue": "Property TIV",
+        "propertyvalue": "Property TIV",
+        "buildingvalue": "Building Value",
+        "buildinglimit": "Building Value",
+        "contentsvalue": "Contents Value",
+        "bpp": "Contents Value",
+        "businesspersonalproperty": "Contents Value",
+    }
+
+    for raw_row in rows:
+        cells = [_lossq_live_clean_cell(cell) for cell in raw_row]
+        for idx, cell in enumerate(cells):
+            key = _lossq_section_label_key(cell)
+            mapped_label = exposure_label_map.get(key)
+            if not mapped_label:
+                continue
+
+            value = ""
+            if idx + 1 < len(cells):
+                value = _lossq_section_clean_exposure_value(cells[idx + 1])
+
+            # Support rows like: Line, Policy, Carrier, Period, State, Premium, Exposure Basis, Exposure Value
+            if not value and idx + 2 < len(cells):
+                value = _lossq_section_clean_exposure_value(cells[idx + 2])
+
+            if value and not exposures.get(mapped_label):
+                exposures[mapped_label] = value
+
+    # Also infer property/employee values from policy rows where exposure_basis/exposure_value were captured.
+    for policy in policies:
+        basis = str(policy.get("exposure_basis") or "").strip().lower()
+        value = _lossq_section_clean_exposure_value(policy.get("exposure_value"))
+
+        if not value:
+            continue
+
+        if ("employee" in basis or basis in {"fte", "staff", "headcount"}) and not exposures.get("Employee Count"):
+            exposures["Employee Count"] = value
+        elif ("vehicle" in basis or "power unit" in basis) and not exposures.get("Vehicle Count"):
+            exposures["Vehicle Count"] = value
+        elif "driver" in basis and not exposures.get("Driver Count"):
+            exposures["Driver Count"] = value
+        elif ("tiv" in basis or "insured value" in basis or "property value" in basis or basis == "property") and not exposures.get("Property TIV"):
+            exposures["Property TIV"] = value
+        elif "building" in basis and not exposures.get("Building Value"):
+            exposures["Building Value"] = value
+        elif ("contents" in basis or "bpp" in basis or "business personal property" in basis) and not exposures.get("Contents Value"):
+            exposures["Contents Value"] = value
+
     if exposures:
         account["exposure_inputs"] = exposures
         account["exposures"] = exposures
@@ -1713,10 +1793,13 @@ def _lossq_live_extract_section_based_csv(file_path):
         account["payroll"] = exposures.get("Payroll", "")
         account["revenue"] = exposures.get("Revenue / Sales", "")
         account["sales"] = exposures.get("Revenue / Sales", "")
+        account["receipts"] = exposures.get("Revenue / Sales", "")
         account["employee_count"] = exposures.get("Employee Count", "")
         account["vehicle_count"] = exposures.get("Vehicle Count", "")
         account["driver_count"] = exposures.get("Driver Count", "")
         account["property_tiv"] = exposures.get("Property TIV", "")
+        account["building_value"] = exposures.get("Building Value", "")
+        account["contents_value"] = exposures.get("Contents Value", "")
 
     if loss_summary:
         account["loss_summary"] = loss_summary
