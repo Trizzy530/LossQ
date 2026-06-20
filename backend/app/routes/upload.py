@@ -2607,19 +2607,22 @@ def parse_file(file_path: str, filename: str):
     # LOSSQ_DO_NOT_PARSE_XLSX_AS_CSV_V1
     # XLSX files are ZIP workbooks and must not be read by csv.reader.
     if lower_name.endswith(".csv"):
-        # LOSSQ_SECTION_CSV_PRIORITY_V1
+        # LOSSQ_CSV_PARSE_ORDER_V3
+        # Important: clean flat CSVs may still expose account/profile fields.
+        # Do not return a profile-only section result before trying the clean flat parser.
         section_claims, section_profile = _lossq_live_extract_section_based_csv(file_path)
-        if section_claims or section_profile.get("account_number") or section_profile.get("business_name"):
+        if section_claims:
             return section_claims, section_profile
 
-        # LOSSQ_CLEAN_FLAT_CSV_PRIORITY_SAFE_V2
-        # Clean flat CSVs should not fall into older parser paths that can 500.
         try:
             clean_flat_claims, clean_flat_profile = lossq_parse_clean_flat_csv_v1(file_path)
             if clean_flat_claims:
                 return clean_flat_claims, clean_flat_profile
         except Exception as exc:
             print("LOSSQ_CLEAN_FLAT_CSV_PARSE_ERROR:", str(exc)[:500])
+
+        if section_profile.get("account_number") or section_profile.get("business_name"):
+            return section_claims, section_profile
 
         if parse_claims_from_excel:
             claims = parse_claims_from_excel(file_path)

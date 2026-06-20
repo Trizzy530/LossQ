@@ -3009,6 +3009,18 @@ function normalizeProfileName(item: any) {
 
 
   const [message, setMessage] = useState("");
+
+  // LOSSQ_AUTO_CLEAR_MESSAGE_AFTER_5_SECONDS_V1
+  useEffect(() => {
+    if (!message) return;
+
+    const timer = window.setTimeout(() => {
+      setMessage("");
+    }, 5000);
+
+    return () => window.clearTimeout(timer);
+  }, [message]);
+
   const [billingStatus, setBillingStatus] = useState<any>({});
 
   // LOSSQ_DASHBOARD_IDENTITY_ORGANIZATION_V1
