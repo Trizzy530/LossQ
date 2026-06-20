@@ -4307,9 +4307,22 @@ setLazyLoadedTools,
       ok: Boolean(res?.ok),
     });
 
+    // LOSSQ_DELETE_PROFILE_404_ALREADY_DELETED_SUCCESS_V1
+    // If every delete key ends with 404, treat it as already deleted.
+    // This prevents a false error when backend deletion succeeded under an earlier key
+    // or the profile was already removed by the time the final retry ran.
     if (!res || !res.ok) {
-      setMessage(`Could not delete ${profileLabel}. Backend response: ${lastStatus || "unavailable"}`);
-      return;
+      if (lastStatus === 404) {
+        console.log("LOSSQ_DELETE_PROFILE_ALREADY_DELETED_SUCCESS", {
+          profileLabel,
+          profileId,
+          deleteKeys,
+          lastStatus,
+        });
+      } else {
+        setMessage(`Could not delete ${profileLabel}. Backend response: ${lastStatus || "unavailable"}`);
+        return;
+      }
     }
 
     clearDeletedProfileBrowserTraces(profileToDelete);
