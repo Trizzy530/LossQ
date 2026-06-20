@@ -9163,6 +9163,76 @@ def lossq_looks_like_policy_but_not_account(value):
     return False
 
 
+
+
+# LOSSQ_CSV_TRUE_INSURED_NAME_HELPER_V1
+def lossq_extract_true_insured_name_from_upload_csv(file_path):
+    """
+    Reads the actual insured/business name from a clean flat CSV row.
+    Prevents header labels like 'Account Number' from being saved as insured.
+    """
+    import csv
+    import re
+
+    def clean(value):
+        return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+    def key(value):
+        return re.sub(r"[^a-z0-9]", "", clean(value).lower())
+
+    insured_aliases = {
+        "businessname",
+        "namedinsured",
+        "insured",
+        "insuredname",
+        "accountname",
+        "clientname",
+        "customername",
+    }
+
+    blocked_values = {
+        "account number",
+        "customer number",
+        "client number",
+        "policy number",
+        "line of business",
+        "carrier",
+        "producing agency",
+        "business name",
+        "named insured",
+        "insured",
+    }
+
+    try:
+        for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+            try:
+                with open(file_path, "r", newline="", encoding=encoding, errors="ignore") as handle:
+                    reader = csv.DictReader(handle)
+                    for row in reader:
+                        lookup = {key(k): clean(v) for k, v in (row or {}).items()}
+
+                        for alias in insured_aliases:
+                            value = clean(lookup.get(alias))
+                            if not value:
+                                continue
+
+                            if value.lower() in blocked_values:
+                                continue
+
+                            if value.upper().startswith(("ACCT", "ACCOUNT", "POLICY")):
+                                continue
+
+                            if len(value) >= 3:
+                                return value
+                break
+            except Exception:
+                continue
+    except Exception:
+        return ""
+
+    return ""
+
+
 async def save_uploaded_files(files, policy_number, db, current_user):
     ensure_claim_timeline_columns(db)
     ensure_claim_detail_columns(db)
@@ -9770,6 +9840,35 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     if upload_true_account_number_final_cleanup:
         profile_data["account_number"] = upload_true_account_number_final_cleanup
         profile_data["customer_number"] = upload_true_account_number_final_cleanup
+
+    # LOSSQ_TRUE_INSURED_NAME_FINAL_REAPPLY_AFTER_HEADER_CLEANUP_V1
+    # Protect clean flat CSV uploads from saving header labels like "Account Number" as insured.
+    def _lossq_bad_insured_name_value(value):
+        bad = str(value or "").strip().lower()
+        return bad in {
+            "",
+            "account number",
+            "customer number",
+            "client number",
+            "policy number",
+            "line of business",
+            "carrier",
+            "producing agency",
+            "business name",
+            "named insured",
+            "insured",
+        }
+
+    upload_true_insured_name_final_cleanup = lossq_extract_true_insured_name_from_upload_csv(file_path)
+    if upload_true_insured_name_final_cleanup and (
+        _lossq_bad_insured_name_value(profile_data.get("business_name"))
+        or _lossq_bad_insured_name_value(profile_data.get("insured_name"))
+        or _lossq_bad_insured_name_value(profile_data.get("named_insured"))
+    ):
+        profile_data["business_name"] = upload_true_insured_name_final_cleanup
+        profile_data["insured_name"] = upload_true_insured_name_final_cleanup
+        profile_data["named_insured"] = upload_true_insured_name_final_cleanup
+
         profile_account_key = upload_true_account_number_final_cleanup
 
     lossq_debug_upload_snapshot(
