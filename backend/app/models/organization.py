@@ -6,7 +6,7 @@ class Organization(Base):
     __tablename__ = "organizations"
 
     id = Column(Integer, primary_key=True, index=True)
-    name = Column(String, unique=True, nullable=False)
+    name = Column(String, nullable=False)  # LOSSQ_ORG_NAME_NOT_UNIQUE_V1
 
     # Account ownership and team limits
     user_limit = Column(Integer, default=5, nullable=False)

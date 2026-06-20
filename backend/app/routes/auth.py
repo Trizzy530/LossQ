@@ -511,6 +511,64 @@ def lossq_save_register_intake_fields(db, organization_id, data):
             pass
 
 
+
+
+# LOSSQ_ALLOW_DUPLICATE_ORG_NAMES_HELPER_V1
+def lossq_allow_duplicate_organization_names(db):
+    """
+    Organization names are display labels, not security boundaries.
+    Multiple separate customers may legally have the same or similar name.
+    Data isolation must be handled by organization_id, not Organization.name.
+    """
+    try:
+        dialect = ""
+        try:
+            dialect = db.get_bind().dialect.name
+        except Exception:
+            dialect = ""
+
+        # Railway production uses Postgres. Drop any old unique constraint/index
+        # on organizations.name so same-name organizations can register separately.
+        if dialect == "postgresql":
+            db.execute(text("""
+DO $$
+DECLARE r record;
+BEGIN
+    IF to_regclass('public.organizations') IS NULL THEN
+        RETURN;
+    END IF;
+
+    FOR r IN
+        SELECT conname
+        FROM pg_constraint
+        WHERE conrelid = 'public.organizations'::regclass
+          AND contype = 'u'
+          AND pg_get_constraintdef(oid) ILIKE '%(name)%'
+    LOOP
+        EXECUTE format('ALTER TABLE public.organizations DROP CONSTRAINT IF EXISTS %I', r.conname);
+    END LOOP;
+
+    FOR r IN
+        SELECT schemaname, indexname
+        FROM pg_indexes
+        WHERE tablename = 'organizations'
+          AND indexdef ILIKE '%UNIQUE%'
+          AND indexdef ILIKE '%(name)%'
+    LOOP
+        EXECUTE format('DROP INDEX IF EXISTS %I.%I', r.schemaname, r.indexname);
+    END LOOP;
+END $$;
+            """))
+            db.commit()
+
+    except Exception as exc:
+        try:
+            db.rollback()
+        except Exception:
+            pass
+        print("LOSSQ_ALLOW_DUPLICATE_ORG_NAMES_WARNING:", str(exc)[:500])
+
+
 @router.post("/register")
 def register_user(data: RegisterRequest, request: Request, db: Session = Depends(get_db)):
     # LOSSQ_PUBLIC_REGISTER_ADMIN_NOT_OWNER_V1
@@ -525,26 +583,20 @@ def register_user(data: RegisterRequest, request: Request, db: Session = Depends
     if existing_user:
         raise HTTPException(status_code=400, detail="Email already registered")
 
-    organization = db.query(Organization).filter(Organization.name == organization_name).first()
+    # LOSSQ_ALLOW_SAME_ORG_NAME_DIFFERENT_OWNER_REGISTER_V1
+    # Do not block public registration just because another organization has the same name.
+    # User email remains unique. Each customer gets a separate organization_id.
+    lossq_allow_duplicate_organization_names(db)
 
-    if not organization:
-        # LOSSQ_REGISTER_CLEAN_DB_SESSION_BEFORE_ORG_INSERT_V1
-        lossq_safe_db_rollback(db)
+    # Clean any aborted transaction before inserting the new org.
+    lossq_safe_db_rollback(db)
 
-        organization = Organization(name=organization_name, user_limit=5)
-        db.add(organization)
+    organization = Organization(name=organization_name, user_limit=5)
+    db.add(organization)
+    db.commit()
+    db.refresh(organization)
 
-        db.commit()
-        db.refresh(organization)
-        new_role = "admin"
-    else:
-        existing_org_users = db.query(User).filter(User.organization_id == organization.id).count()
-        if existing_org_users > 0:
-            raise HTTPException(
-                status_code=403,
-                detail="This organization already exists. Ask the owner or admin to invite you.",
-            )
-        new_role = "admin"
+    new_role = "admin"
 
     new_user = User(
         email=clean_email,
