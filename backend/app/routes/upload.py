@@ -2748,6 +2748,7 @@ def lossq_clean_policy_schedule_display_names_v2(claims, profile):
 
     if cleaned_policies:
         profile["policies"] = cleaned_policies
+        profile["policy_schedule"] = cleaned_policies
 
         first_policy_number = clean(cleaned_policies[0].get("policy_number"))
         if first_policy_number:
@@ -2765,6 +2766,201 @@ def lossq_clean_policy_schedule_display_names_v2(claims, profile):
     })
 
     return cleaned_claims, profile
+
+
+
+
+# LOSSQ_LABEL_PDF_POLICY_SCHEDULE_REBUILD_V4
+def lossq_rebuild_label_pdf_policy_schedule_v4(raw_text, carrier="", effective_date="", expiration_date=""):
+  """
+  Rebuilds policy schedule directly from the POLICY SCHEDULE section of a
+  text-readable PDF. This prevents Account Number values from becoming policy
+  rows and fills missing coverage names from clear policy prefixes.
+  """
+  import re
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+  def money_text(value):
+    raw = clean(value).replace("$", "").replace(",", "")
+    if raw in {"", "-", "None", "none", "null"}:
+      return ""
+    return raw
+
+  def compact(value):
+    return re.sub(r"[^A-Z0-9]", "", clean(value).upper())
+
+  def looks_like_account_number(value):
+    raw = clean(value).upper()
+    key = compact(value)
+    if not key:
+      return False
+    if key.startswith(("ACCT", "ACCOUNT", "CUST", "CUSTOMER", "CLIENT")):
+      return True
+    if "ACCT" in key or "ACCOUNT" in key or "CUSTOMER" in key or "CLIENT" in key:
+      return True
+    if re.search(r"\b(ACCT|ACCOUNT|CUSTOMER|CLIENT)\b", raw):
+      return True
+    return False
+
+  def infer_lob(policy_number, current_lob=""):
+    current_lob = clean(current_lob)
+    if current_lob and current_lob.upper() not in {"UNKNOWN", "N/A", "NA", "NONE", "NULL", "NOT SET", "POLICY", "COVERAGE"}:
+      return current_lob
+
+    key = compact(policy_number)
+
+    prefix_map = [
+      ("BOP", "Businessowners Policy"),
+      ("GL", "General Liability"),
+      ("WC", "Workers Compensation"),
+      ("PROP", "Property"),
+      ("CP", "Commercial Property"),
+      ("UMB", "Umbrella"),
+      ("UM", "Umbrella"),
+      ("GAR", "Garage Liability"),
+      ("DOL", "Dealers Open Lot"),
+      ("AUTO", "Commercial Auto"),
+      ("CA", "Commercial Auto"),
+      ("PL", "Professional Liability"),
+      ("EPLI", "Employment Practices Liability"),
+      ("CY", "Cyber Liability"),
+      ("CARGO", "Motor Truck Cargo"),
+      ("IM", "Inland Marine"),
+      ("DO", "Directors & Officers"),
+      ("DNO", "Directors & Officers"),
+      ("LIQ", "Liquor Liability"),
+    ]
+
+    for prefix, label in prefix_map:
+      if key.startswith(prefix):
+        return label
+
+    return ""
+
+  source = str(raw_text or "")
+  match = re.search(
+    r"\bPOLICY SCHEDULE\b([\s\S]*?)(?:\bLOSS SUMMARY\b|\bCLAIM DETAIL\b|\bBROKER RECOMMENDATION\b|$)",
+    source,
+    flags=re.I,
+  )
+
+  if not match:
+    return []
+
+  section = match.group(1)
+  lines = [clean(line) for line in section.splitlines() if clean(line)]
+
+  policies = []
+  current = None
+
+  field_map = {
+    "policy number": "policy_number",
+    "line of business": "line_of_business",
+    "coverage": "line_of_business",
+    "policy type": "line_of_business",
+    "policy line": "line_of_business",
+    "carrier": "carrier",
+    "writing carrier": "carrier",
+    "effective date": "effective_date",
+    "effective": "effective_date",
+    "expiration date": "expiration_date",
+    "expiration": "expiration_date",
+    "current premium": "current_premium",
+    "expiring premium": "expiring_premium",
+    "target renewal premium": "target_renewal_premium",
+    "exposure basis": "exposure_basis",
+    "exposure value": "exposure_value",
+    "employee count": "employee_count",
+    "vehicle count": "vehicle_count",
+    "driver count": "driver_count",
+    "property tiv": "property_tiv",
+  }
+
+  for line in lines:
+    m = re.match(r"^([^:]{2,80})\s*:\s*(.*)$", line)
+    if not m:
+      continue
+
+    label = clean(m.group(1)).lower()
+    value = clean(m.group(2))
+
+    if label == "policy number":
+      if current and current.get("policy_number"):
+        policies.append(current)
+      current = {"policy_number": value}
+      continue
+
+    if current is not None and label in field_map:
+      current[field_map[label]] = value
+
+  if current and current.get("policy_number"):
+    policies.append(current)
+
+  rebuilt = []
+  seen = set()
+
+  for policy in policies:
+    policy_number = clean(policy.get("policy_number"))
+
+    if not policy_number or looks_like_account_number(policy_number):
+      continue
+
+    key = compact(policy_number)
+    if not key or key in seen:
+      continue
+
+    seen.add(key)
+
+    lob = infer_lob(policy_number, policy.get("line_of_business"))
+    if not lob:
+      lob = "Unknown"
+
+    policy_carrier = clean(policy.get("carrier")) or clean(carrier)
+    policy_effective = clean(policy.get("effective_date")) or clean(effective_date)
+    policy_expiration = clean(policy.get("expiration_date")) or clean(expiration_date)
+
+    rebuilt.append({
+      "policy_number": policy_number,
+      "policyNumber": policy_number,
+      "line_of_business": lob,
+      "policy_type": lob,
+      "policyType": lob,
+      "coverage": lob,
+      "coverage_line": lob,
+      "coverageType": lob,
+      "policy_line": lob,
+      "line": lob,
+      "lob": lob,
+      "carrier": policy_carrier,
+      "carrier_name": policy_carrier,
+      "writing_carrier": policy_carrier,
+      "effective_date": policy_effective,
+      "effective": policy_effective,
+      "expiration_date": policy_expiration,
+      "expiration": policy_expiration,
+      "current_premium": money_text(policy.get("current_premium")),
+      "premium": money_text(policy.get("current_premium")),
+      "expiring_premium": money_text(policy.get("expiring_premium")),
+      "target_renewal_premium": money_text(policy.get("target_renewal_premium")),
+      "exposure_basis": clean(policy.get("exposure_basis")),
+      "exposure_value": money_text(policy.get("exposure_value")),
+      "employee_count": money_text(policy.get("employee_count")),
+      "vehicle_count": money_text(policy.get("vehicle_count")),
+      "driver_count": money_text(policy.get("driver_count")),
+      "property_tiv": money_text(policy.get("property_tiv")),
+    })
+
+  if rebuilt:
+    print("LOSSQ_LABEL_PDF_POLICY_SCHEDULE_REBUILD_V4:", {
+      "policies": [
+        {"policy_number": item.get("policy_number"), "line_of_business": item.get("line_of_business")}
+        for item in rebuilt
+      ]
+    })
+
+  return rebuilt
 
 
 # LOSSQ_LABEL_BASED_PDF_LOSS_RUN_PARSER_V1
@@ -2960,9 +3156,16 @@ def lossq_parse_label_based_pdf_loss_run_v1(file_path: str):
       "property_tiv": money_text(policy.get("property_tiv")),
     })
 
+  # LOSSQ_LABEL_PDF_POLICY_SCHEDULE_REBUILD_CALL_V4
+  rebuilt_pdf_policies = lossq_rebuild_label_pdf_policy_schedule_v4(raw_text, carrier, effective_date, expiration_date)
+  if rebuilt_pdf_policies:
+    clean_policies = rebuilt_pdf_policies
+
   if clean_policies:
     profile["policies"] = clean_policies
+    profile["policy_schedule"] = clean_policies
     profile["policy_number"] = clean_policies[0].get("policy_number", "")
+    profile["main_policy_number"] = clean_policies[0].get("policy_number", "")
 
   # Exposure rollup.
   exposure_inputs = {}
