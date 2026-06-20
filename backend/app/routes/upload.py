@@ -1456,6 +1456,14 @@ def _lossq_live_extract_section_based_csv(file_path):
             exposure_value_aliases = {"exposure value", "exposure amount", "value", "basis value"}
             expiring_premium_aliases = {"expiring premium", "prior premium", "current term premium"}
             target_renewal_aliases = {"target renewal premium", "target premium", "renewal premium"}
+            payroll_aliases = {"payroll", "annual payroll", "estimated payroll"}
+            revenue_aliases = {"revenue", "revenue sales", "revenue / sales", "sales", "gross sales", "receipts", "gross receipts"}
+            employee_count_aliases = {"employee count", "employees", "number of employees"}
+            vehicle_count_aliases = {"vehicle count", "vehicles", "number of vehicles", "power units"}
+            driver_count_aliases = {"driver count", "drivers", "number of drivers"}
+            property_tiv_aliases = {"property tiv", "tiv", "total insured value", "total insurable value", "property value"}
+            building_value_aliases = {"building value", "building limit"}
+            contents_value_aliases = {"contents value", "bpp", "business personal property"}
 
             if any(h in policy_header_aliases for h in lower_row) and any(h in line_header_aliases for h in lower_row):
                 policy_header_seen = True
@@ -1502,6 +1510,14 @@ def _lossq_live_extract_section_based_csv(file_path):
             exposure_value = _get_by_alias(row, exposure_value_aliases, None)
             expiring_premium = _get_by_alias(row, expiring_premium_aliases, None)
             target_renewal = _get_by_alias(row, target_renewal_aliases, None)
+            payroll = _get_by_alias(row, payroll_aliases, None)
+            revenue = _get_by_alias(row, revenue_aliases, None)
+            employee_count = _get_by_alias(row, employee_count_aliases, None)
+            vehicle_count = _get_by_alias(row, vehicle_count_aliases, None)
+            driver_count = _get_by_alias(row, driver_count_aliases, None)
+            property_tiv = _get_by_alias(row, property_tiv_aliases, None)
+            building_value = _get_by_alias(row, building_value_aliases, None)
+            contents_value = _get_by_alias(row, contents_value_aliases, None)
 
             policy = {
                 "line_of_business": lob,
@@ -1522,6 +1538,16 @@ def _lossq_live_extract_section_based_csv(file_path):
                 "premium": current_premium,
                 "expiring_premium": expiring_premium,
                 "target_renewal_premium": target_renewal,
+                "payroll": payroll,
+                "revenue": revenue,
+                "sales": revenue,
+                "receipts": revenue,
+                "employee_count": employee_count,
+                "vehicle_count": vehicle_count,
+                "driver_count": driver_count,
+                "property_tiv": property_tiv,
+                "building_value": building_value,
+                "contents_value": contents_value,
             }
             policies.append(policy)
             continue
@@ -1704,175 +1730,83 @@ def _lossq_live_extract_section_based_csv(file_path):
             elif ("tiv" in basis_key or "insured value" in basis_key or "property" in basis_key) and not exposures.get("Property TIV"):
                 exposures["Property TIV"] = value
 
-    # LOSSQ_SECTION_CSV_MISSING_EXPOSURE_FIELD_FALLBACK_V1
-    # Final universal pass across raw CSV cells for count/property fields that may appear
-    # outside the formal Field/Value exposure section or inside policy/exposure schedules.
-    def _lossq_section_label_key(value):
-        return re.sub(r"[^a-z0-9]", "", str(value or "").strip().lower())
-
-    def _lossq_section_clean_exposure_value(value):
+    # LOSSQ_SECTION_CSV_PRECISE_POLICY_EXPOSURE_ROLLUP_V1
+    # Tight extraction: only use values from named columns or correctly paired
+    # Exposure Basis / Exposure Value on the same policy row. Never use nearby
+    # header labels as values.
+    def _lossq_precise_clean_number(value):
         raw = str(value or "").replace("$", "").replace(",", "").strip()
         if raw in {"", "-", "None", "none", "null"}:
             return ""
+        if not re.search(r"\d", raw):
+            return ""
         return raw
 
-    exposure_label_map = {
-        "employeecount": "Employee Count",
-        "employees": "Employee Count",
-        "numberofemployees": "Employee Count",
-        "fte": "Employee Count",
-        "fulltimeemployees": "Employee Count",
+    def _lossq_precise_money_float(value):
+        raw = _lossq_precise_clean_number(value)
+        if not raw:
+            return 0.0
+        try:
+            return float(raw)
+        except Exception:
+            return 0.0
 
-        "vehiclecount": "Vehicle Count",
-        "vehicles": "Vehicle Count",
-        "numberofvehicles": "Vehicle Count",
-        "powerunits": "Vehicle Count",
+    def _lossq_precise_money_text(value):
+        try:
+            amount = float(value or 0)
+        except Exception:
+            amount = 0.0
+        if amount <= 0:
+            return ""
+        return str(int(amount)) if amount.is_integer() else f"{amount:.2f}"
 
-        "drivercount": "Driver Count",
-        "drivers": "Driver Count",
-        "numberofdrivers": "Driver Count",
+    def _lossq_set_first_exposure(label, value):
+        cleaned = _lossq_precise_clean_number(value)
+        if cleaned and not exposures.get(label):
+            exposures[label] = cleaned
 
-        "propertytiv": "Property TIV",
-        "tiv": "Property TIV",
-        "totalinsuredvalue": "Property TIV",
-        "totalinsurablevalue": "Property TIV",
-        "propertyvalue": "Property TIV",
-        "buildingvalue": "Building Value",
-        "buildinglimit": "Building Value",
-        "contentsvalue": "Contents Value",
-        "bpp": "Contents Value",
-        "businesspersonalproperty": "Contents Value",
-    }
+    if policies:
+        current_total = sum(_lossq_precise_money_float(p.get("current_premium") or p.get("premium")) for p in policies)
+        expiring_total = sum(_lossq_precise_money_float(p.get("expiring_premium")) for p in policies)
+        target_total = sum(_lossq_precise_money_float(p.get("target_renewal_premium")) for p in policies)
 
-    for raw_row in rows:
-        cells = [_lossq_live_clean_cell(cell) for cell in raw_row]
-        for idx, cell in enumerate(cells):
-            key = _lossq_section_label_key(cell)
-            mapped_label = exposure_label_map.get(key)
-            if not mapped_label:
+        if current_total:
+            exposures["Current Premium"] = exposures.get("Current Premium") or _lossq_precise_money_text(current_total)
+        if expiring_total:
+            exposures["Expiring Premium"] = exposures.get("Expiring Premium") or _lossq_precise_money_text(expiring_total)
+        if target_total:
+            exposures["Target Renewal Premium"] = exposures.get("Target Renewal Premium") or _lossq_precise_money_text(target_total)
+
+        for policy in policies:
+            _lossq_set_first_exposure("Payroll", policy.get("payroll"))
+            _lossq_set_first_exposure("Revenue / Sales", policy.get("revenue") or policy.get("sales") or policy.get("receipts"))
+            _lossq_set_first_exposure("Employee Count", policy.get("employee_count"))
+            _lossq_set_first_exposure("Vehicle Count", policy.get("vehicle_count"))
+            _lossq_set_first_exposure("Driver Count", policy.get("driver_count"))
+            _lossq_set_first_exposure("Property TIV", policy.get("property_tiv"))
+            _lossq_set_first_exposure("Building Value", policy.get("building_value"))
+            _lossq_set_first_exposure("Contents Value", policy.get("contents_value"))
+
+            basis = str(policy.get("exposure_basis") or "").strip().lower()
+            exposure_value = _lossq_precise_clean_number(policy.get("exposure_value"))
+
+            if not exposure_value:
                 continue
 
-            value = ""
-            if idx + 1 < len(cells):
-                value = _lossq_section_clean_exposure_value(cells[idx + 1])
-
-            # Support rows like: Line, Policy, Carrier, Period, State, Premium, Exposure Basis, Exposure Value
-            if not value and idx + 2 < len(cells):
-                value = _lossq_section_clean_exposure_value(cells[idx + 2])
-
-            if value and not exposures.get(mapped_label):
-                exposures[mapped_label] = value
-
-    # Also infer property/employee values from policy rows where exposure_basis/exposure_value were captured.
-    for policy in policies:
-        basis = str(policy.get("exposure_basis") or "").strip().lower()
-        value = _lossq_section_clean_exposure_value(policy.get("exposure_value"))
-
-        if not value:
-            continue
-
-        if ("employee" in basis or basis in {"fte", "staff", "headcount"}) and not exposures.get("Employee Count"):
-            exposures["Employee Count"] = value
-        elif ("vehicle" in basis or "power unit" in basis) and not exposures.get("Vehicle Count"):
-            exposures["Vehicle Count"] = value
-        elif "driver" in basis and not exposures.get("Driver Count"):
-            exposures["Driver Count"] = value
-        elif ("tiv" in basis or "insured value" in basis or "property value" in basis or basis == "property") and not exposures.get("Property TIV"):
-            exposures["Property TIV"] = value
-        elif "building" in basis and not exposures.get("Building Value"):
-            exposures["Building Value"] = value
-        elif ("contents" in basis or "bpp" in basis or "business personal property" in basis) and not exposures.get("Contents Value"):
-            exposures["Contents Value"] = value
-
-    # LOSSQ_SECTION_CSV_EXPOSURE_VALUE_SANITIZER_V1
-    # Do not allow label/header words to be saved as exposure values.
-    # Example bad shift: Employee Count = "Vehicle Count", Property TIV = "Current Premium".
-    exposure_value_label_words = {
-        "current premium",
-        "expiring premium",
-        "target renewal premium",
-        "payroll",
-        "revenue",
-        "revenue / sales",
-        "receipts",
-        "employee count",
-        "employees",
-        "vehicle count",
-        "vehicles",
-        "driver count",
-        "drivers",
-        "property tiv",
-        "tiv",
-        "building value",
-        "contents value",
-        "exposure basis",
-        "exposure value",
-        "policy number",
-        "line of business",
-        "carrier",
-        "state",
-    }
-
-    def _lossq_exposure_value_is_bad(value):
-        raw = str(value or "").strip()
-        key = re.sub(r"[^a-z0-9/ ]", "", raw.lower()).strip()
-        compact = re.sub(r"[^a-z0-9]", "", raw.lower())
-
-        if not raw:
-            return True
-
-        if key in exposure_value_label_words:
-            return True
-
-        if compact in {re.sub(r"[^a-z0-9]", "", item) for item in exposure_value_label_words}:
-            return True
-
-        # Count and money exposure values should contain at least one digit.
-        if not re.search(r"\d", raw):
-            return True
-
-        return False
-
-    for label in [
-        "Employee Count",
-        "Vehicle Count",
-        "Driver Count",
-        "Property TIV",
-        "Building Value",
-        "Contents Value",
-        "Current Premium",
-        "Expiring Premium",
-        "Target Renewal Premium",
-        "Payroll",
-        "Revenue / Sales",
-    ]:
-        if _lossq_exposure_value_is_bad(exposures.get(label)):
-            exposures.pop(label, None)
-
-    # Refill from policy schedule rows where Exposure Basis and Exposure Value are correctly paired.
-    for policy in policies:
-        basis = str(policy.get("exposure_basis") or "").strip().lower()
-        value = _lossq_section_clean_exposure_value(policy.get("exposure_value"))
-
-        if _lossq_exposure_value_is_bad(value):
-            continue
-
-        if ("payroll" in basis) and not exposures.get("Payroll"):
-            exposures["Payroll"] = value
-        elif ("revenue" in basis or "sales" in basis or "receipt" in basis) and not exposures.get("Revenue / Sales"):
-            exposures["Revenue / Sales"] = value
-        elif ("employee" in basis or basis in {"fte", "staff", "headcount"}) and not exposures.get("Employee Count"):
-            exposures["Employee Count"] = value
-        elif ("vehicle" in basis or "power unit" in basis) and not exposures.get("Vehicle Count"):
-            exposures["Vehicle Count"] = value
-        elif "driver" in basis and not exposures.get("Driver Count"):
-            exposures["Driver Count"] = value
-        elif ("tiv" in basis or "insured value" in basis or "property value" in basis or basis == "property") and not exposures.get("Property TIV"):
-            exposures["Property TIV"] = value
-        elif "building" in basis and not exposures.get("Building Value"):
-            exposures["Building Value"] = value
-        elif ("contents" in basis or "bpp" in basis or "business personal property" in basis) and not exposures.get("Contents Value"):
-            exposures["Contents Value"] = value
+            if "payroll" in basis:
+                _lossq_set_first_exposure("Payroll", exposure_value)
+            elif "employee" in basis:
+                _lossq_set_first_exposure("Employee Count", exposure_value)
+            elif "vehicle" in basis or "power unit" in basis:
+                _lossq_set_first_exposure("Vehicle Count", exposure_value)
+            elif "driver" in basis:
+                _lossq_set_first_exposure("Driver Count", exposure_value)
+            elif "tiv" in basis or "insured value" in basis or "property value" in basis:
+                _lossq_set_first_exposure("Property TIV", exposure_value)
+            elif "building" in basis or "contents" in basis:
+                _lossq_set_first_exposure("Property TIV", exposure_value)
+            elif "revenue" in basis or "sales" in basis or "receipt" in basis:
+                _lossq_set_first_exposure("Revenue / Sales", exposure_value)
 
     if exposures:
         account["exposure_inputs"] = exposures
