@@ -9129,12 +9129,38 @@ def lossq_is_true_account_identifier(value):
 
 
 def lossq_looks_like_policy_but_not_account(value):
+    # LOSSQ_POLICY_ACCOUNT_RECURSION_FIX_V2
+    # This helper must never call itself. It only decides whether a value
+    # looks like a policy number while protecting true account/customer IDs.
+    import re
+
     text = str(value or "").strip().upper()
     if not text:
         return False
+
+    compact = re.sub(r"[^A-Z0-9]", "", text)
+
     if lossq_is_true_account_identifier(text):
         return False
-    return lossq_looks_like_policy_but_not_account(text)
+
+    if re.search(r"\b(ACCT|ACCOUNT|CUST|CUSTOMER|CLIENT)\b", text):
+        return False
+
+    if compact.startswith(("ACCT", "ACCOUNT", "CUST", "CUSTOMER", "CLIENT")):
+        return False
+
+    policy_prefix_pattern = r"^(GL|WC|CA|AUTO|BOP|PROP|CP|LIQ|UMB|UM|PL|EPLI|CY|CARGO|IM|DO|DNO|BPP)[-_/ ]?\d"
+
+    if re.match(policy_prefix_pattern, text):
+        return True
+
+    if re.match(r"^(POL|POLICY)[-_/ ]?\d", text):
+        return True
+
+    if re.search(r"[A-Z]", text) and re.search(r"\d", text) and re.search(r"[-_/]", text):
+        return True
+
+    return False
 
 
 async def save_uploaded_files(files, policy_number, db, current_user):
