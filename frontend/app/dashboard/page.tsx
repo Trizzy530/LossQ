@@ -4240,29 +4240,75 @@ setLazyLoadedTools,
   setMessage(`Deleting ${profileLabel}...`);
 
   try {
-    const deleteUrl = profileId
-      ? `${API}/account-profile/id/${encodeURIComponent(String(profileId))}?delete_claims=true`
-      : `${API}/account-profile/?policy_number=${encodeURIComponent(policyNumber)}&delete_claims=true`;
+    // LOSSQ_DELETE_PROFILE_ID_THEN_KEY_FALLBACK_V1
+    // Try stale/saved profile id first, then fall back to main policy, child policies,
+    // account number, and customer number before showing a 404.
+    const deleteKeys = Array.from(
+      new Set(
+        [
+          policyNumber,
+          profileToDelete?.policy_number,
+          ...(Array.isArray(profileToDelete?.policies)
+            ? profileToDelete.policies.map((p: any) => p?.policy_number)
+            : []),
+          profileToDelete?.account_number,
+          profileToDelete?.customer_number,
+        ]
+          .map((item: any) => String(item || "").trim())
+          .filter(Boolean)
+      )
+    );
 
-    const res = await fetch(deleteUrl, {
-      method: "DELETE",
-      headers: authHeaders(),
-    });
+    const deleteUrls = [
+      ...(profileId
+        ? [`${API}/account-profile/id/${encodeURIComponent(String(profileId))}?delete_claims=true`]
+        : []),
+      ...deleteKeys.map(
+        (key) =>
+          `${API}/account-profile/?policy_number=${encodeURIComponent(key)}&delete_claims=true`
+      ),
+    ];
 
-    if (res.status === 401 || res.status === 403) {
-      clearSession();
-      router.replace("/login?expired=1");
-      return;
+    let res: Response | null = null;
+    let lastStatus = 0;
+    let usedDeleteUrl = "";
+
+    for (const candidateUrl of deleteUrls) {
+      usedDeleteUrl = candidateUrl;
+
+      res = await fetch(candidateUrl, {
+        method: "DELETE",
+        headers: authHeaders(),
+      });
+
+      lastStatus = res.status;
+
+      if (res.status === 401 || res.status === 403) {
+        clearSession();
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if (res.ok) {
+        break;
+      }
+
+      if (res.status !== 404) {
+        break;
+      }
     }
 
-    const data = await safeJson(res);
+    console.log("LOSSQ_DELETE_PROFILE_RESULT_DEBUG", {
+      profileLabel,
+      profileId,
+      deleteKeys,
+      usedDeleteUrl,
+      lastStatus,
+      ok: Boolean(res?.ok),
+    });
 
-    if (!res.ok || data?.deleted === false) {
-      setMessage(
-        `Could not delete ${profileLabel}. Backend response: ${
-          data?.message || res.status
-        }`
-      );
+    if (!res || !res.ok) {
+      setMessage(`Could not delete ${profileLabel}. Backend response: ${lastStatus || "unavailable"}`);
       return;
     }
 
