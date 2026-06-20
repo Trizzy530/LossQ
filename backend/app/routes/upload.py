@@ -6070,7 +6070,7 @@ def lossq_universal_profile_identity_policy_cleanup(profile):
         # LOSSQ_TRUE_ACCOUNT_NUMBER_FROM_UPLOAD_CSV_V1
         if lossq_true_account_number_value(value):
             return False
-        return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
+        return lossq_looks_like_policy_but_not_account(value)
 
     def split_policy_values(value):
         value = clean(value)
@@ -6277,7 +6277,7 @@ def lossq_universal_section_csv_claims_profile_repair(file_path, parsed_claims=N
         value = clean(value).upper()
         if not value:
             return False
-        return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
+        return lossq_looks_like_policy_but_not_account(value)
 
     def split_policies(value):
         value = clean(value)
@@ -6614,7 +6614,7 @@ def lossq_universal_section_csv_claims_profile_repair_v2(file_path, parsed_claim
         value = clean(value).upper()
         if not value:
             return False
-        return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
+        return lossq_looks_like_policy_but_not_account(value)
 
     def split_policy_numbers(value):
         raw = clean(value)
@@ -8063,7 +8063,7 @@ def lossq_universal_profile_claim_final_normalizer(parsed_claims=None, parsed_pr
         value = clean(value).upper()
         if not value:
             return False
-        return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
+        return lossq_looks_like_policy_but_not_account(value)
 
     def split_policy_numbers(value):
         raw = clean(value)
@@ -8533,7 +8533,7 @@ def lossq_force_section_csv_claims_before_save(file_path, parsed_claims=None, pa
         profile["evaluation_date"] = evaluation_date
 
     account_number = first_label("account number", "account no", "customer number", "client number")
-    if account_number and not split_policy_numbers(account_number):
+    if account_number and (lossq_is_true_account_identifier(account_number) or not split_policy_numbers(account_number)):
         profile["account_number"] = account_number
     else:
         profile["account_number"] = ""
@@ -8687,6 +8687,30 @@ def lossq_debug_upload_snapshot(stage, parsed_claims=None, parsed_profile=None, 
         })
     except Exception as exc:
         print("LOSSQ_UPLOAD_DEBUG_SNAPSHOT_FAILED:", str(exc)[:500])
+
+
+
+
+# LOSSQ_TRUE_ACCOUNT_IDENTIFIER_HELPER_V1
+def lossq_is_true_account_identifier(value):
+    text = str(value or "").strip().upper()
+    if not text:
+        return False
+
+    # Universal account/customer/client identifiers should never be treated as policies.
+    return bool(
+        re.search(r"\b(ACCT|ACCOUNT|CUST|CUSTOMER|CLIENT)\b", text)
+        or re.search(r"[-_ ](ACCT|ACCOUNT|CUST|CUSTOMER|CLIENT)[-_ ]", text)
+    )
+
+
+def lossq_looks_like_policy_but_not_account(value):
+    text = str(value or "").strip().upper()
+    if not text:
+        return False
+    if lossq_is_true_account_identifier(text):
+        return False
+    return lossq_looks_like_policy_but_not_account(text)
 
 
 async def save_uploaded_files(files, policy_number, db, current_user):
@@ -9210,7 +9234,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         if lossq_true_account_number_value(value):
             return False
 
-        return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
+        return lossq_looks_like_policy_but_not_account(value)
 
     if profile_account_key and not _lossq_upload_value_looks_like_policy(profile_account_key):
         profile_data["account_number"] = profile_data.get("account_number") or profile_account_key
@@ -9250,7 +9274,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         if lossq_true_account_number_value(value):
             return False
 
-        return bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
+        return lossq_looks_like_policy_but_not_account(value)
 
     if _lossq_upload_policy_like(profile_data.get("account_number")) and not lossq_true_account_number_value(profile_data.get("account_number")):
         profile_data["account_number"] = ""

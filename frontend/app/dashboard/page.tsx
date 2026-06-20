@@ -1836,6 +1836,16 @@ function mergeProfiles(existing: AnyObject[], incoming: AnyObject[]) {
 function lossqLooksLikePolicyNumber(value: any): boolean {
   const text = String(value || "").trim().toUpperCase();
   if (!text) return false;
+
+  // LOSSQ_FRONTEND_TRUE_ACCOUNT_IDENTIFIER_EXCEPTION_V1
+  // Account/customer/client identifiers are not policy numbers.
+  if (
+    /\b(ACCT|ACCOUNT|CUST|CUSTOMER|CLIENT)\b/.test(text) ||
+    /[-_ ](ACCT|ACCOUNT|CUST|CUSTOMER|CLIENT)[-_ ]/.test(text)
+  ) {
+    return false;
+  }
+
   return /\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b/.test(text);
 }
 
@@ -5386,7 +5396,6 @@ setLazyLoadedTools,
       // Uploaded profile becomes the active authority for this account.
       // This keeps old old/previous policy rows from appearing inside a new upload's schedule.
       setCachedProfiles([
-        uploadedProfile,
         ...getCachedProfiles().filter((item: any) => {
           const uploadedKeys = [
             mergedUploadProfile?.policy_number,
@@ -7867,10 +7876,6 @@ const modelChartNarrative =
                     value={lossqResolvedAccountNumberForDisplay(
                       displayProfile,
                       profile,
-                      uploadedProfile,
-                      uploadedProfile?.profile,
-                      uploadedProfile?.account_profile,
-                      uploadedProfile?.accountProfile
                     ) || "-"}
                   />
                   <ProfileDetail
@@ -8213,10 +8218,6 @@ const modelChartNarrative =
                     value={lossqResolvedAccountNumberForDisplay(
                       displayProfile,
                       profile,
-                      uploadedProfile,
-                      uploadedProfile?.profile,
-                      uploadedProfile?.account_profile,
-                      uploadedProfile?.accountProfile
                     ) || "-"}
                   />
                   <ProfileDetail label="Carrier" value={displayProfile?.carrier_name || profile?.carrier_name || "-"} />
