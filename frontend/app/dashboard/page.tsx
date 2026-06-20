@@ -5477,6 +5477,15 @@ setLazyLoadedTools,
       ]);
 
       updateProfileList([uploadedProfile]);
+
+      // LOSSQ_REFRESH_PROFILE_LIST_AFTER_UPLOAD_SAVE_V1
+      // Backend upload/upsert is the source of truth. Refresh the saved profile list
+      // immediately after upload so newly saved profiles stay visible after refresh/delete.
+      try {
+        await loadProfileList();
+      } catch (profileRefreshError) {
+        console.log("LOSSQ_PROFILE_LIST_REFRESH_AFTER_UPLOAD_FAILED", profileRefreshError);
+      }
     }
 
     // Show the freshly parsed claim rows immediately. loadDashboard may fetch
