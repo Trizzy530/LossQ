@@ -433,3 +433,75 @@ def get_account_profile_by_policy(policy_number: str, current_user: dict = Depen
         raise HTTPException(status_code=404, detail="Account profile not found")
     finally:
         db.close()
+
+
+
+# LOSSQ_PERSISTENT_ACCOUNT_PROFILE_DELETE_BY_ID_V1
+@router.delete("/id/{profile_id}")
+def delete_account_profile_by_id(
+    profile_id: int,
+    delete_claims: bool = False,
+    db: Session = Depends(get_db),
+    current_user: dict = Depends(get_current_user),
+):
+    """
+    Permanently deletes an account profile for the current organization.
+    This fixes profiles reappearing after refresh because frontend-only deletion
+    is not enough.
+    """
+    org_id = current_user.get("organization_id")
+
+    profile = (
+        db.query(AccountProfile)
+        .filter(
+            AccountProfile.id == profile_id,
+            AccountProfile.organization_id == org_id,
+        )
+        .first()
+    )
+
+    if not profile:
+        return {
+            "ok": True,
+            "deleted": False,
+            "already_deleted": True,
+            "profile_id": profile_id,
+        }
+
+    policy_number = str(getattr(profile, "policy_number", "") or "").strip()
+    account_number = str(getattr(profile, "account_number", "") or "").strip()
+    business_name = str(getattr(profile, "business_name", "") or "").strip()
+
+    claims_deleted = 0
+
+    if delete_claims:
+        claim_query = db.query(Claim).filter(Claim.organization_id == org_id)
+
+        if policy_number:
+            claims_deleted += (
+                claim_query.filter(Claim.policy_number == policy_number)
+                .delete(synchronize_session=False)
+            )
+
+        if account_number:
+            claims_deleted += (
+                db.query(Claim)
+                .filter(
+                    Claim.organization_id == org_id,
+                    Claim.account_number == account_number,
+                )
+                .delete(synchronize_session=False)
+            )
+
+    db.delete(profile)
+    db.commit()
+
+    return {
+        "ok": True,
+        "deleted": True,
+        "profile_id": profile_id,
+        "policy_number": policy_number,
+        "account_number": account_number,
+        "business_name": business_name,
+        "claims_deleted": claims_deleted,
+    }
