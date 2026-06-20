@@ -4959,9 +4959,248 @@ def derive_exposure_inputs_from_policy_schedule(profile_data: dict):
   return profile_data
 
 
+
+
+# LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_V6
+def lossq_sanitize_profile_policies_before_upsert_v6(profile_data: dict):
+  """
+  Final account-profile save cleaner.
+  Removes account/customer identifiers from policy schedules and restores missing
+  policy line names from policy prefixes before AccountProfile.policies is saved.
+  """
+  import json
+  import re
+
+  if not isinstance(profile_data, dict):
+    return profile_data
+
+  profile_data = dict(profile_data)
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+  def compact(value):
+    return re.sub(r"[^A-Z0-9]", "", clean(value).upper())
+
+  def is_account_identifier(value):
+    raw = clean(value).upper()
+    key = compact(value)
+    if not key:
+      return False
+    if key.startswith(("ACCT", "ACCOUNT", "CUST", "CUSTOMER", "CLIENT")):
+      return True
+    if "ACCT" in key or "ACCOUNT" in key or "CUSTOMER" in key or "CLIENT" in key:
+      return True
+    if re.search(r"\b(ACCT|ACCOUNT|CUSTOMER|CLIENT)\b", raw):
+      return True
+    return False
+
+  def is_generic_line(value):
+    value = clean(value).upper()
+    return value in {"", "UNKNOWN", "N/A", "NA", "NONE", "NULL", "NOT SET", "POLICY", "COVERAGE", "-"}
+
+  def infer_lob(policy_number, current_lob=""):
+    current_lob = clean(current_lob)
+    if current_lob and not is_generic_line(current_lob):
+      return current_lob
+
+    key = compact(policy_number)
+    prefix_map = [
+      ("BOP", "Businessowners Policy"),
+      ("GL", "General Liability"),
+      ("WC", "Workers Compensation"),
+      ("PROP", "Property"),
+      ("CP", "Commercial Property"),
+      ("UMB", "Umbrella"),
+      ("UM", "Umbrella"),
+      ("GAR", "Garage Liability"),
+      ("DOL", "Dealers Open Lot"),
+      ("AUTO", "Commercial Auto"),
+      ("CA", "Commercial Auto"),
+      ("PL", "Professional Liability"),
+      ("EPLI", "Employment Practices Liability"),
+      ("CY", "Cyber Liability"),
+      ("CARGO", "Motor Truck Cargo"),
+      ("IM", "Inland Marine"),
+      ("DO", "Directors & Officers"),
+      ("DNO", "Directors & Officers"),
+      ("LIQ", "Liquor Liability"),
+    ]
+
+    for prefix, label in prefix_map:
+      if key.startswith(prefix):
+        return label
+
+    return ""
+
+  def rows_from(value):
+    if isinstance(value, list):
+      return value
+
+    if isinstance(value, str):
+      try:
+        loaded = json.loads(value)
+        return loaded if isinstance(loaded, list) else []
+      except Exception:
+        return []
+
+    return []
+
+  raw_rows = []
+
+  for source_key in ["policies", "policy_schedule"]:
+    raw_rows.extend(rows_from(profile_data.get(source_key)))
+
+  policy_numbers = profile_data.get("policy_numbers")
+  if isinstance(policy_numbers, str):
+    policy_numbers = [item.strip() for item in policy_numbers.split(",") if item.strip()]
+
+  if isinstance(policy_numbers, list):
+    for policy_number in policy_numbers:
+      raw_rows.append({"policy_number": policy_number})
+
+  by_key = {}
+
+  for row in raw_rows:
+    if isinstance(row, str):
+      row = {"policy_number": row}
+
+    if not isinstance(row, dict):
+      continue
+
+    policy_number = clean(
+      row.get("policy_number")
+      or row.get("policyNumber")
+      or row.get("policy_no")
+      or row.get("policy")
+      or row.get("number")
+    )
+
+    if not policy_number or is_account_identifier(policy_number):
+      continue
+
+    key = compact(policy_number)
+    if not key:
+      continue
+
+    existing = by_key.get(key, {})
+    merged = dict(existing)
+
+    for k, v in row.items():
+      if v not in ("", None, [], {}):
+        merged[k] = v
+
+    current_line = (
+      merged.get("line_of_business")
+      or merged.get("policy_type")
+      or merged.get("policyType")
+      or merged.get("coverage")
+      or merged.get("coverage_line")
+      or merged.get("coverageType")
+      or merged.get("policy_line")
+      or merged.get("lob")
+      or merged.get("line")
+    )
+
+    lob = infer_lob(policy_number, current_line)
+    if not lob:
+      lob = "Unknown"
+
+    carrier = clean(
+      merged.get("carrier")
+      or merged.get("carrier_name")
+      or merged.get("writing_carrier")
+      or profile_data.get("carrier_name")
+      or profile_data.get("writing_carrier")
+    )
+
+    effective = clean(
+      merged.get("effective_date")
+      or merged.get("effective")
+      or profile_data.get("effective_date")
+      or profile_data.get("effective")
+    )
+
+    expiration = clean(
+      merged.get("expiration_date")
+      or merged.get("expiration")
+      or profile_data.get("expiration_date")
+      or profile_data.get("expiration")
+    )
+
+    merged["policy_number"] = policy_number
+    merged["policyNumber"] = policy_number
+    merged["line_of_business"] = lob
+    merged["policy_type"] = lob
+    merged["policyType"] = lob
+    merged["coverage"] = lob
+    merged["coverage_line"] = lob
+    merged["coverageType"] = lob
+    merged["policy_line"] = lob
+    merged["line"] = lob
+    merged["lob"] = lob
+
+    if carrier:
+      merged["carrier"] = carrier
+      merged["carrier_name"] = carrier
+      merged["writing_carrier"] = carrier
+
+    if effective:
+      merged["effective_date"] = effective
+      merged["effective"] = effective
+
+    if expiration:
+      merged["expiration_date"] = expiration
+      merged["expiration"] = expiration
+
+    by_key[key] = merged
+
+  cleaned_policies = list(by_key.values())
+
+  if cleaned_policies:
+    profile_data["policies"] = cleaned_policies
+    profile_data["policy_schedule"] = cleaned_policies
+    profile_data["policy_numbers"] = [
+      item.get("policy_number")
+      for item in cleaned_policies
+      if item.get("policy_number")
+    ]
+
+    current_policy = clean(
+      profile_data.get("policy_number")
+      or profile_data.get("main_policy")
+      or profile_data.get("main_policy_number")
+    )
+
+    if not current_policy or is_account_identifier(current_policy):
+      first_policy = cleaned_policies[0].get("policy_number", "")
+      profile_data["policy_number"] = first_policy
+      profile_data["main_policy"] = first_policy
+      profile_data["main_policy_number"] = first_policy
+
+  print("LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_V6:", {
+    "policy_numbers": profile_data.get("policy_numbers"),
+    "policies": [
+      {
+        "policy_number": item.get("policy_number"),
+        "line_of_business": item.get("line_of_business"),
+      }
+      for item in cleaned_policies
+    ],
+  })
+
+  return profile_data
+
+
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
+  # LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_CALL_V6
+  profile_data = lossq_sanitize_profile_policies_before_upsert_v6(profile_data)
+
   policy_number = clean_profile_value(
-    profile_data.get("policy_number") or profile_data.get("account_number")
+    profile_data.get("policy_number")
+    or profile_data.get("main_policy")
+    or profile_data.get("main_policy_number")
+    or profile_data.get("account_number")
   )
 
   if not policy_number:
@@ -5786,7 +6025,7 @@ def lossq_beta_collect_upload_policy_keys(parsed_profile, parsed_claims, fallbac
       keys.add(value)
 
   if isinstance(parsed_profile, dict):
-    for name in ["policy_number", "account_number", "customer_number", "main_policy_number"]:
+    for name in ["policy_number", "main_policy_number", "main_policy"]:
       add(parsed_profile.get(name))
 
     policies = parsed_profile.get("policies") or parsed_profile.get("policy_schedule") or []
