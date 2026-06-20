@@ -340,3 +340,96 @@ def lossq_account_profile_clean_account_number(value):
         return ""
 
     return clean
+
+
+# LOSSQ_ACCOUNT_PROFILE_ALL_ROUTE_V1
+def lossq_account_profile_to_dict(profile):
+    policies = parse_json_value(getattr(profile, "policies", None), [])
+    validation = parse_json_value(getattr(profile, "validation", None), {})
+
+    return {
+        "id": getattr(profile, "id", None),
+        "business_name": clean_value(getattr(profile, "business_name", "")),
+        "insured": clean_value(getattr(profile, "business_name", "")),
+        "named_insured": clean_value(getattr(profile, "business_name", "")),
+        "carrier_name": clean_value(getattr(profile, "carrier_name", "")),
+        "writing_carrier": clean_value(getattr(profile, "writing_carrier", "") or getattr(profile, "carrier_name", "")),
+        "agency_name": clean_value(getattr(profile, "agency_name", "")),
+        "account_number": lossq_account_profile_clean_account_number(getattr(profile, "account_number", "")),
+        "customer_number": lossq_account_profile_clean_account_number(getattr(profile, "customer_number", "")),
+        "producer_number": clean_value(getattr(profile, "producer_number", "")),
+        "policy_number": clean_value(getattr(profile, "policy_number", "")),
+        "effective_date": clean_value(getattr(profile, "effective_date", "")),
+        "expiration_date": clean_value(getattr(profile, "expiration_date", "")),
+        "evaluation_date": clean_value(getattr(profile, "evaluation_date", "")),
+        "line_of_business": clean_value(getattr(profile, "line_of_business", "")),
+        "current_premium": clean_value(getattr(profile, "current_premium", "")),
+        "expiring_premium": clean_value(getattr(profile, "expiring_premium", "")),
+        "target_renewal_premium": clean_value(getattr(profile, "target_renewal_premium", "")),
+        "state": clean_value(getattr(profile, "state", "")),
+        "class_code": clean_value(getattr(profile, "class_code", "")),
+        "class_codes": clean_value(getattr(profile, "class_codes", "")),
+        "payroll": clean_value(getattr(profile, "payroll", "")),
+        "revenue": clean_value(getattr(profile, "revenue", "")),
+        "sales": clean_value(getattr(profile, "sales", "")),
+        "employee_count": clean_value(getattr(profile, "employee_count", "")),
+        "vehicle_count": clean_value(getattr(profile, "vehicle_count", "")),
+        "driver_count": clean_value(getattr(profile, "driver_count", "")),
+        "property_tiv": clean_value(getattr(profile, "property_tiv", "")),
+        "policies": normalize_policy_list(policies),
+        "validation": validation if isinstance(validation, dict) else {},
+        "raw_text_preview": clean_value(getattr(profile, "raw_text_preview", "")),
+        "created_at": str(getattr(profile, "created_at", "") or ""),
+        "updated_at": str(getattr(profile, "updated_at", "") or ""),
+    }
+
+
+@router.get("/all")
+def list_account_profiles(current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        ensure_account_profile_columns(db)
+
+        organization_id = current_user.get("organization_id") if isinstance(current_user, dict) else None
+        query = db.query(AccountProfile)
+
+        if organization_id is not None:
+            query = query.filter(AccountProfile.organization_id == organization_id)
+
+        profiles = query.order_by(AccountProfile.id.desc()).all()
+        return [lossq_account_profile_to_dict(profile) for profile in profiles]
+    finally:
+        db.close()
+
+
+@router.get("/policy/{policy_number}")
+def get_account_profile_by_policy(policy_number: str, current_user: dict = Depends(get_current_user)):
+    db = SessionLocal()
+    try:
+        ensure_account_profile_columns(db)
+
+        organization_id = current_user.get("organization_id") if isinstance(current_user, dict) else None
+        key = clean_value(policy_number)
+
+        query = db.query(AccountProfile)
+        if organization_id is not None:
+            query = query.filter(AccountProfile.organization_id == organization_id)
+
+        profiles = query.all()
+
+        for profile in profiles:
+            profile_keys = [
+                clean_value(getattr(profile, "policy_number", "")),
+                clean_value(getattr(profile, "account_number", "")),
+                clean_value(getattr(profile, "customer_number", "")),
+            ]
+
+            for policy in normalize_policy_list(getattr(profile, "policies", None)):
+                profile_keys.append(clean_value(policy.get("policy_number", "")))
+
+            if key and key.upper() in {item.upper() for item in profile_keys if item}:
+                return lossq_account_profile_to_dict(profile)
+
+        raise HTTPException(status_code=404, detail="Account profile not found")
+    finally:
+        db.close()

@@ -1833,6 +1833,27 @@ function mergeProfiles(existing: AnyObject[], incoming: AnyObject[]) {
 
 
 // LOSSQ_FRONTEND_ACCOUNT_NUMBER_POLICY_SANITIZER_V1
+
+// LOSSQ_FRONTEND_ACTUAL_POLICY_ONLY_HELPER_V1
+function lossqLooksLikeAccountIdentifier(value: any): boolean {
+  const text = String(value || "").trim().toUpperCase();
+  if (!text) return false;
+  return (
+    /\b(ACCT|ACCOUNT|CUST|CUSTOMER|CLIENT)\b/.test(text) ||
+    /[-_ ](ACCT|ACCOUNT|CUST|CUSTOMER|CLIENT)[-_ ]/.test(text)
+  );
+}
+
+function lossqChooseActualPolicyNumber(...values: any[]): string {
+  for (const value of values) {
+    const text = normalizePolicyNumber(value);
+    if (!text) continue;
+    if (lossqLooksLikeAccountIdentifier(text)) continue;
+    if (lossqLooksLikePolicyNumber(text)) return text;
+  }
+  return "";
+}
+
 function lossqLooksLikePolicyNumber(value: any): boolean {
   const text = String(value || "").trim().toUpperCase();
   if (!text) return false;
@@ -5334,6 +5355,20 @@ if (isUploading) return;
         uploadedProfile.customer_number || uploadedProfile.account_number
       );
 
+      // LOSSQ_UPLOADED_PROFILE_POLICY_ACCOUNT_SAFETY_NET_V1
+      if (lossqLooksLikeAccountIdentifier(uploadedProfile.policy_number)) {
+        const actualUploadedPolicy = lossqChooseActualPolicyNumber(
+          ...(Array.isArray(uploadedProfile?.policies)
+            ? uploadedProfile.policies.map((p: any) => p?.policy_number)
+            : []),
+          primaryProfile?.policy_number,
+          primaryData?.policy_number
+        );
+        if (actualUploadedPolicy) {
+          uploadedProfile.policy_number = actualUploadedPolicy;
+        }
+      }
+
 
       // LOSSQ_UPLOAD_PROFILE_FINAL_NORMALIZATION
       const safeMainAccountKey = chooseSafePolicyNumber(
@@ -5491,17 +5526,18 @@ setLazyLoadedTools,
     // Show the freshly parsed claim rows immediately. loadDashboard may fetch
     // LOSSQ_BACKEND_TRUTH_CLAIM_ROWS_V2: do not overwrite backend claims with upload response rows.
 
-    const uploadedPolicyNumber = chooseSafePolicyNumber(
-      primaryProfile?.account_number,
-      primaryProfile?.customer_number,
-      mergedAccountKey,
-      primaryData?.account_number,
-      primaryData?.customer_number,
-      primaryData?.account_safeDisplayProfile?.account_number,
-      primaryData?.account_safeDisplayProfile?.customer_number,
-      primaryData?.safeDisplayProfile?.account_number,
-      primaryData?.safeDisplayProfile?.customer_number,
+    // LOSSQ_UPLOAD_RELOAD_POLICY_NUMBER_MUST_NOT_BE_ACCOUNT_NUMBER_V1
+    const uploadedPolicyNumber = lossqChooseActualPolicyNumber(
+      ...(Array.isArray(allUploadProfiles)
+        ? allUploadProfiles.flatMap((item: any) =>
+            Array.isArray(item?.policies)
+              ? item.policies.map((p: any) => p?.policy_number)
+              : []
+          )
+        : []),
       primaryProfile?.policy_number,
+      primaryData?.policy_number,
+      mergedAccountKey,
       primaryData?.account_profile?.policy_number,
       primaryData?.profile?.policy_number,
       primaryData?.selected_policy_number,
