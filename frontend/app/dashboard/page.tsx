@@ -1893,6 +1893,33 @@ function lossqDisplayAccountNumber(profileLike: any): string {
   );
 }
 
+
+function lossqResolvedAccountNumberForDisplay(...sources: any[]): string {
+  // LOSSQ_RESOLVED_ACCOUNT_NUMBER_DISPLAY_V1
+  // The upload response can carry the true account number even when the
+  // selected display profile has not refreshed yet.
+  const expandedSources: any[] = [];
+
+  for (const source of sources) {
+    if (!source) continue;
+
+    expandedSources.push(source);
+
+    if (source?.profile) expandedSources.push(source.profile);
+    if (source?.account_profile) expandedSources.push(source.account_profile);
+    if (source?.accountProfile) expandedSources.push(source.accountProfile);
+    if (source?.uploadedProfile) expandedSources.push(source.uploadedProfile);
+  }
+
+  for (const source of expandedSources) {
+    const accountNumber = lossqDisplayAccountNumber(source);
+    if (accountNumber) return accountNumber;
+  }
+
+  return "";
+}
+
+
 function clearDeletedProfileBrowserTraces(profileToDelete: any) {
   // LOSSQ_HARD_DELETE_BROWSER_TRACES_V1
   // When a profile/file is deleted, remove every browser-side trace that can rehydrate it.
@@ -7837,7 +7864,14 @@ const modelChartNarrative =
                   <ProfileDetail label="Carrier" value={lossqSafeCarrierDisplay(displayProfile)} />
                   <ProfileDetail
                     label="Account Number"
-                    value={lossqDisplayAccountNumber(displayProfile) || lossqDisplayAccountNumber(profile) || "-"}
+                    value={lossqResolvedAccountNumberForDisplay(
+                      displayProfile,
+                      profile,
+                      uploadedProfile,
+                      uploadedProfile?.profile,
+                      uploadedProfile?.account_profile,
+                      uploadedProfile?.accountProfile
+                    ) || "-"}
                   />
                   <ProfileDetail
                     label="Producing Agency"
@@ -8174,7 +8208,17 @@ const modelChartNarrative =
                 <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
                   <ProfileDetail label="Account" value={displayProfile?.business_name || profile?.business_name || "-"} />
                   <ProfileDetail label="Main Policy" value={displayProfile?.policy_number || profile?.policy_number || "-"} />
-                  <ProfileDetail label="Account Number" value={lossqDisplayAccountNumber(displayProfile) || lossqDisplayAccountNumber(profile) || "-"} />
+                  <ProfileDetail
+                    label="Account Number"
+                    value={lossqResolvedAccountNumberForDisplay(
+                      displayProfile,
+                      profile,
+                      uploadedProfile,
+                      uploadedProfile?.profile,
+                      uploadedProfile?.account_profile,
+                      uploadedProfile?.accountProfile
+                    ) || "-"}
+                  />
                   <ProfileDetail label="Carrier" value={displayProfile?.carrier_name || profile?.carrier_name || "-"} />
                   <ProfileDetail label="Detected Lines" value={policySchedule.length > 0 ? `${policySchedule.length} line(s)` : "Manual Input"} />
                 </div>
