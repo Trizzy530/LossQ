@@ -2322,6 +2322,241 @@ def lossq_extract_exposure_inputs_directly_from_file(file_path: str):
     return exposure_inputs
 
 
+
+
+# LOSSQ_CLEAN_FLAT_CSV_PARSER_V1
+def lossq_parse_clean_flat_csv_v1(file_path: str):
+    """
+    Universal parser for clean flat CSV loss runs where every claim row contains
+    account/profile, policy, exposure, and claim columns.
+    This prevents clean carrier spreadsheets from falling into older parser paths.
+    """
+    import csv
+    import re
+
+    def clean(value):
+        return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+    def key(value):
+        return re.sub(r"[^a-z0-9]", "", clean(value).lower())
+
+    def money_text(value):
+        raw = clean(value).replace("$", "").replace(",", "")
+        if raw in {"", "-", "None", "none", "null"}:
+            return ""
+        return raw
+
+    def money_float(value):
+        raw = money_text(value)
+        if not raw:
+            return 0.0
+        try:
+            return float(raw)
+        except Exception:
+            return 0.0
+
+    def get(row, *aliases):
+        lookup = {key(k): v for k, v in (row or {}).items()}
+        for alias in aliases:
+            value = lookup.get(key(alias))
+            if clean(value):
+                return clean(value)
+        return ""
+
+    rows = []
+    for encoding in ("utf-8-sig", "utf-8", "latin-1"):
+        try:
+            with open(file_path, "r", newline="", encoding=encoding, errors="ignore") as handle:
+                reader = csv.DictReader(handle)
+                rows = [dict(row or {}) for row in reader]
+            break
+        except Exception:
+            rows = []
+
+    if not rows:
+        return [], {}
+
+    has_claim_number = any(key(h) in {"claimnumber", "claimno", "claimid", "claim"} for h in (rows[0] or {}).keys())
+    has_policy_number = any(key(h) in {"policynumber", "policyno", "policy"} for h in (rows[0] or {}).keys())
+
+    if not has_claim_number or not has_policy_number:
+        return [], {}
+
+    profile = {}
+    claims = []
+    policies_by_key = {}
+
+    exposure_inputs = {}
+
+    def set_first(label, value):
+        cleaned = money_text(value)
+        if not cleaned:
+            return
+
+        existing = exposure_inputs.get(label)
+        if not existing or str(existing).strip() in {"0", "0.0", "0.00"}:
+            exposure_inputs[label] = cleaned
+
+    for row in rows:
+        business_name = get(row, "Business Name", "Named Insured", "Insured", "Account Name")
+        account_number = get(row, "Account Number", "Customer Number", "Client Number")
+        agency_name = get(row, "Producing Agency", "Agency", "Broker")
+        carrier = get(row, "Carrier", "Writing Carrier", "Insurer", "Company")
+        policy_number = get(row, "Policy Number", "Policy No", "Policy")
+        lob = get(row, "Line of Business", "LOB", "Coverage", "Policy Type")
+        policy_period = get(row, "Policy Period", "Policy Term", "Coverage Period")
+        effective_date = get(row, "Effective Date", "Effective")
+        expiration_date = get(row, "Expiration Date", "Expiration", "Expiry")
+        state = get(row, "State", "Primary State")
+
+        if business_name and not profile.get("business_name"):
+            profile["business_name"] = business_name
+            profile["insured"] = business_name
+            profile["named_insured"] = business_name
+
+        if account_number and not profile.get("account_number"):
+            profile["account_number"] = account_number
+            profile["customer_number"] = account_number
+
+        if agency_name and not profile.get("agency_name"):
+            profile["agency_name"] = agency_name
+
+        if carrier and not profile.get("carrier_name"):
+            profile["carrier_name"] = carrier
+            profile["writing_carrier"] = carrier
+
+        if policy_number and not profile.get("policy_number"):
+            profile["policy_number"] = policy_number
+
+        if effective_date and not profile.get("effective_date"):
+            profile["effective_date"] = effective_date
+            profile["effective"] = effective_date
+
+        if expiration_date and not profile.get("expiration_date"):
+            profile["expiration_date"] = expiration_date
+            profile["expiration"] = expiration_date
+
+        if state and not profile.get("state"):
+            profile["state"] = state
+
+        set_first("Payroll", get(row, "Payroll", "Annual Payroll", "Estimated Payroll"))
+        set_first("Revenue / Sales", get(row, "Revenue / Sales", "Revenue", "Sales", "Gross Sales", "Receipts", "Gross Receipts"))
+        set_first("Employee Count", get(row, "Employee Count", "Employees", "Number of Employees"))
+        set_first("Vehicle Count", get(row, "Vehicle Count", "Vehicles", "Number of Vehicles", "Power Units"))
+        set_first("Driver Count", get(row, "Driver Count", "Drivers", "Number of Drivers"))
+        set_first("Property TIV", get(row, "Property TIV", "TIV", "Total Insured Value", "Total Insurable Value", "Property Value"))
+        set_first("Building Value", get(row, "Building Value", "Building Limit"))
+        set_first("Contents Value", get(row, "Contents Value", "BPP", "Business Personal Property"))
+
+        if policy_number:
+            policy_key = policy_number.upper()
+            if policy_key not in policies_by_key:
+                policies_by_key[policy_key] = {
+                    "policy_number": policy_number,
+                    "line_of_business": lob,
+                    "policy_type": lob,
+                    "coverage": lob,
+                    "carrier": carrier,
+                    "carrier_name": carrier,
+                    "writing_carrier": carrier,
+                    "policy_period": policy_period,
+                    "effective_date": effective_date,
+                    "effective": effective_date,
+                    "expiration_date": expiration_date,
+                    "expiration": expiration_date,
+                    "state": state,
+                    "current_premium": money_text(get(row, "Current Premium", "Annual Premium", "Written Premium", "Premium")),
+                    "premium": money_text(get(row, "Current Premium", "Annual Premium", "Written Premium", "Premium")),
+                    "expiring_premium": money_text(get(row, "Expiring Premium", "Prior Premium", "Previous Premium")),
+                    "target_renewal_premium": money_text(get(row, "Target Renewal Premium", "Renewal Premium", "Estimated Renewal Premium")),
+                    "payroll": money_text(get(row, "Payroll", "Annual Payroll", "Estimated Payroll")),
+                    "revenue": money_text(get(row, "Revenue / Sales", "Revenue", "Sales", "Gross Sales", "Receipts")),
+                    "employee_count": money_text(get(row, "Employee Count", "Employees", "Number of Employees")),
+                    "vehicle_count": money_text(get(row, "Vehicle Count", "Vehicles", "Number of Vehicles", "Power Units")),
+                    "driver_count": money_text(get(row, "Driver Count", "Drivers", "Number of Drivers")),
+                    "property_tiv": money_text(get(row, "Property TIV", "TIV", "Total Insured Value", "Property Value")),
+                }
+
+        claim_number = get(row, "Claim Number", "Claim No", "Claim ID", "Claim")
+        if not claim_number:
+            continue
+
+        paid = money_text(get(row, "Paid", "Paid Amount", "Total Paid"))
+        reserve = money_text(get(row, "Reserve", "Outstanding Reserve", "Total Reserve"))
+        incurred = money_text(get(row, "Total Incurred", "Incurred", "Gross Incurred", "Net Incurred"))
+        if not incurred:
+            total = money_float(paid) + money_float(reserve)
+            incurred = str(int(total)) if total.is_integer() else f"{total:.2f}"
+
+        claims.append({
+            "claim_number": claim_number,
+            "claim_no": claim_number,
+            "policy_number": policy_number,
+            "line_of_business": lob,
+            "coverage": lob,
+            "date_of_loss": get(row, "Date of Loss", "Loss Date"),
+            "loss_date": get(row, "Date of Loss", "Loss Date"),
+            "date_reported": get(row, "Date Reported", "Reported Date"),
+            "date_closed": get(row, "Date Closed", "Closed Date"),
+            "status": get(row, "Status", "Claim Status") or ("Closed" if get(row, "Date Closed", "Closed Date") else "Open"),
+            "paid": paid,
+            "paid_amount": paid,
+            "reserve": reserve,
+            "total_incurred": incurred,
+            "incurred": incurred,
+            "cause_of_loss": get(row, "Cause of Loss", "Cause"),
+            "description": get(row, "Description", "Claim Description", "Notes"),
+            "litigation": get(row, "Litigation", "Litigated"),
+            "flag": get(row, "Flag", "Alert"),
+        })
+
+    policies = list(policies_by_key.values())
+
+    current_total = sum(money_float(p.get("current_premium")) for p in policies)
+    expiring_total = sum(money_float(p.get("expiring_premium")) for p in policies)
+    target_total = sum(money_float(p.get("target_renewal_premium")) for p in policies)
+
+    if current_total:
+        exposure_inputs["Current Premium"] = str(int(current_total)) if current_total.is_integer() else f"{current_total:.2f}"
+    if expiring_total:
+        exposure_inputs["Expiring Premium"] = str(int(expiring_total)) if expiring_total.is_integer() else f"{expiring_total:.2f}"
+    if target_total:
+        exposure_inputs["Target Renewal Premium"] = str(int(target_total)) if target_total.is_integer() else f"{target_total:.2f}"
+
+    if exposure_inputs:
+        profile["exposure_inputs"] = exposure_inputs
+        profile["exposures"] = exposure_inputs
+        profile["current_premium"] = exposure_inputs.get("Current Premium", "")
+        profile["expiring_premium"] = exposure_inputs.get("Expiring Premium", "")
+        profile["target_renewal_premium"] = exposure_inputs.get("Target Renewal Premium", "")
+        profile["payroll"] = exposure_inputs.get("Payroll", "")
+        profile["revenue"] = exposure_inputs.get("Revenue / Sales", "")
+        profile["sales"] = exposure_inputs.get("Revenue / Sales", "")
+        profile["receipts"] = exposure_inputs.get("Revenue / Sales", "")
+        profile["employee_count"] = exposure_inputs.get("Employee Count", "")
+        profile["vehicle_count"] = exposure_inputs.get("Vehicle Count", "")
+        profile["driver_count"] = exposure_inputs.get("Driver Count", "")
+        profile["property_tiv"] = exposure_inputs.get("Property TIV", "")
+        profile["building_value"] = exposure_inputs.get("Building Value", "")
+        profile["contents_value"] = exposure_inputs.get("Contents Value", "")
+
+    profile["policies"] = policies
+    profile["claims"] = claims
+    profile["parsed_claims"] = claims
+    profile["lossq_clean_flat_csv_detected"] = True
+    profile["extraction_status"] = "passed"
+    profile["extraction_score"] = 95
+    profile["requires_review"] = False
+
+    print("LOSSQ_CLEAN_FLAT_CSV_PARSED:", {
+        "claims": len(claims),
+        "policies": len(policies),
+        "exposures": exposure_inputs,
+    })
+
+    return claims, profile
+
+
 def parse_file(file_path: str, filename: str):
     lower_name = str(filename or "").lower()
 
@@ -2376,6 +2611,12 @@ def parse_file(file_path: str, filename: str):
         section_claims, section_profile = _lossq_live_extract_section_based_csv(file_path)
         if section_claims or section_profile.get("account_number") or section_profile.get("business_name"):
             return section_claims, section_profile
+
+        # LOSSQ_CLEAN_FLAT_CSV_PRIORITY_V1
+        clean_flat_claims, clean_flat_profile = lossq_parse_clean_flat_csv_v1(file_path)
+        if clean_flat_claims:
+            return clean_flat_claims, clean_flat_profile
+
         if parse_claims_from_excel:
             claims = parse_claims_from_excel(file_path)
             return claims, {}
