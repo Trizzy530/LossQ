@@ -10291,13 +10291,20 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
       try:
         # LOSSQ_UPLOAD_LOOP_PARSED_CLAIMS_ALIAS_V1
-        parsed_claims = claims if isinstance(claims, list) else []
+        parsed_claims = locals().get("parsed_claims", locals().get("claims", [])) if isinstance(locals().get("parsed_claims", locals().get("claims", [])), list) else []
         lower_upload_name = str(safe_upload_filename or safe_filename or "").lower()
         if lower_upload_name.endswith(".csv"):
           if "lossq_parse_clean_flat_csv_v1" in globals():
             rescue_claims, rescue_profile = lossq_parse_clean_flat_csv_v1(file_path)
 
           if not rescue_claims:
+            # LOSSQ_UPLOAD_LOOP_PARSED_CLAIMS_ALIAS_V2
+            parsed_claims = locals().get("parsed_claims", locals().get("claims", []))
+            if not isinstance(parsed_claims, list):
+              parsed_claims = []
+            parsed_profile = locals().get("parsed_profile", locals().get("profile", {}))
+            if not isinstance(parsed_profile, dict):
+              parsed_profile = {}
             rescue_claims, rescue_profile = lossq_clean_standard_csv_override(
               file_path,
               [],
