@@ -9197,14 +9197,47 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             parsed_profile = lossq_global_profile_cleanup(parsed_profile)
             parsed_profile = lossq_global_profile_cleanup(parsed_profile)
         except Exception as exc:
-            raise HTTPException(
-                status_code=400,
-                detail={
-                    "message": "Loss run could not be parsed cleanly. Please upload a valid PDF, Excel, or CSV loss run.",
-                    "error": str(exc)[:300],
-                    "stage": "parse_file",
-                },
-            )
+            # LOSSQ_UPLOAD_LOOP_CLEAN_FLAT_CSV_RESCUE_V1
+            # If the old/general parser fails on a clean flat CSV, rescue it here
+            # instead of failing the entire upload.
+            rescue_claims = []
+            rescue_profile = {}
+
+            try:
+                lower_upload_name = str(safe_upload_filename or safe_filename or "").lower()
+                if lower_upload_name.endswith(".csv"):
+                    if "lossq_parse_clean_flat_csv_v1" in globals():
+                        rescue_claims, rescue_profile = lossq_parse_clean_flat_csv_v1(file_path)
+
+                    if not rescue_claims:
+                        rescue_claims, rescue_profile = lossq_clean_standard_csv_override(
+                            file_path,
+                            [],
+                            {},
+                        )
+
+                    if rescue_claims:
+                        parsed_claims = rescue_claims
+                        parsed_profile = rescue_profile or {}
+                        print("LOSSQ_UPLOAD_LOOP_CLEAN_FLAT_CSV_RESCUED:", {
+                            "claims": len(parsed_claims or []),
+                            "profile_keys": list((parsed_profile or {}).keys())[:20],
+                        })
+                    else:
+                        print("LOSSQ_UPLOAD_LOOP_CLEAN_FLAT_CSV_RESCUE_EMPTY:", str(exc)[:500])
+                        raise exc
+                else:
+                    raise exc
+            except Exception as rescue_exc:
+                print("LOSSQ_UPLOAD_LOOP_CLEAN_FLAT_CSV_RESCUE_FAILED:", str(rescue_exc)[:1000])
+                raise HTTPException(
+                    status_code=400,
+                    detail={
+                        "message": "Loss run could not be parsed cleanly. Please upload a valid PDF, Excel, or CSV loss run.",
+                        "error": str(rescue_exc)[:300],
+                        "stage": "parse_file",
+                    },
+                )
 
         # LOSSQ_UNIVERSAL_SECTION_CSV_CLAIMS_PROFILE_REPAIR_CALL_V1
         parsed_claims, parsed_profile = lossq_universal_section_csv_claims_profile_repair(
