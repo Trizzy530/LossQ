@@ -10290,6 +10290,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
       rescue_profile = {}
 
       try:
+        # LOSSQ_UPLOAD_LOOP_PARSED_CLAIMS_ALIAS_V1
+        parsed_claims = claims if isinstance(claims, list) else []
         lower_upload_name = str(safe_upload_filename or safe_filename or "").lower()
         if lower_upload_name.endswith(".csv"):
           if "lossq_parse_clean_flat_csv_v1" in globals():
