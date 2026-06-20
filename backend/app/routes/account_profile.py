@@ -295,8 +295,6 @@ def normalize_policy_list(raw_policies: Any):
     return safe_policies
 
 
-
-
 # LOSSQ_ACCOUNT_PROFILE_ACCOUNT_NUMBER_POLICY_SANITIZER_V1
 
 
@@ -435,73 +433,106 @@ def get_account_profile_by_policy(policy_number: str, current_user: dict = Depen
         db.close()
 
 
-
-# LOSSQ_PERSISTENT_ACCOUNT_PROFILE_DELETE_BY_ID_V1
+# LOSSQ_PERSISTENT_ACCOUNT_PROFILE_DELETE_BY_ID_V4_SINGLE_ROUTE
 @router.delete("/id/{profile_id}")
 def delete_account_profile_by_id(
     profile_id: int,
     delete_claims: bool = False,
-    db: Session = Depends(get_db),
     current_user: dict = Depends(get_current_user),
 ):
     """
     Permanently deletes an account profile for the current organization.
-    This fixes profiles reappearing after refresh because frontend-only deletion
-    is not enough.
+    This is the only active /account-profile/id/{profile_id} delete route.
+    Claim cleanup is best-effort and cannot block profile deletion.
     """
-    org_id = current_user.get("organization_id")
+    db = SessionLocal()
+    try:
+        ensure_account_profile_columns(db)
 
-    profile = (
-        db.query(AccountProfile)
-        .filter(
-            AccountProfile.id == profile_id,
-            AccountProfile.organization_id == org_id,
-        )
-        .first()
-    )
+        organization_id = current_user.get("organization_id") if isinstance(current_user, dict) else None
 
-    if not profile:
+        query = db.query(AccountProfile).filter(AccountProfile.id == profile_id)
+
+        if organization_id is not None and hasattr(AccountProfile, "organization_id"):
+            query = query.filter(AccountProfile.organization_id == organization_id)
+
+        profile = query.first()
+
+        if not profile:
+            return {
+                "ok": True,
+                "deleted": False,
+                "already_deleted": True,
+                "profile_id": profile_id,
+            }
+
+        policy_number = clean_value(getattr(profile, "policy_number", ""))
+        business_name = clean_value(getattr(profile, "business_name", ""))
+        account_number = lossq_account_profile_clean_account_number(getattr(profile, "account_number", ""))
+        customer_number = lossq_account_profile_clean_account_number(getattr(profile, "customer_number", ""))
+
+        policy_numbers = set()
+        for value in [policy_number]:
+            if value:
+                policy_numbers.add(value)
+
+        try:
+            for policy in normalize_policy_list(getattr(profile, "policies", None)):
+                child_policy = clean_value(policy.get("policy_number", ""))
+                if child_policy:
+                    policy_numbers.add(child_policy)
+        except Exception as policy_exc:
+            print("LOSSQ_PROFILE_DELETE_POLICY_LIST_PARSE_WARNING:", str(policy_exc)[:500])
+
+        # Delete the profile first so it cannot reappear in Saved Profiles after refresh.
+        db.delete(profile)
+        db.commit()
+
+        claims_deleted = 0
+        claim_cleanup_error = ""
+
+        if delete_claims:
+            try:
+                claim_query = db.query(Claim)
+
+                if organization_id is not None and hasattr(Claim, "organization_id"):
+                    claim_query = claim_query.filter(Claim.organization_id == organization_id)
+
+                if policy_numbers:
+                    claims_deleted += (
+                        claim_query
+                        .filter(Claim.policy_number.in_(list(policy_numbers)))
+                        .delete(synchronize_session=False)
+                    )
+
+                db.commit()
+            except Exception as claim_exc:
+                db.rollback()
+                claim_cleanup_error = str(claim_exc)[:500]
+                print("LOSSQ_PROFILE_DELETE_CLAIM_CLEANUP_WARNING:", claim_cleanup_error)
+
         return {
             "ok": True,
-            "deleted": False,
-            "already_deleted": True,
+            "deleted": True,
             "profile_id": profile_id,
+            "business_name": business_name,
+            "account_number": account_number,
+            "customer_number": customer_number,
+            "policy_number": policy_number,
+            "policy_numbers": list(policy_numbers),
+            "claims_deleted": claims_deleted,
+            "claim_cleanup_error": claim_cleanup_error,
         }
 
-    policy_number = str(getattr(profile, "policy_number", "") or "").strip()
-    account_number = str(getattr(profile, "account_number", "") or "").strip()
-    business_name = str(getattr(profile, "business_name", "") or "").strip()
-
-    claims_deleted = 0
-
-    if delete_claims:
-        claim_query = db.query(Claim).filter(Claim.organization_id == org_id)
-
-        if policy_number:
-            claims_deleted += (
-                claim_query.filter(Claim.policy_number == policy_number)
-                .delete(synchronize_session=False)
-            )
-
-        if account_number:
-            claims_deleted += (
-                db.query(Claim)
-                .filter(
-                    Claim.organization_id == org_id,
-                    Claim.account_number == account_number,
-                )
-                .delete(synchronize_session=False)
-            )
-
-    db.delete(profile)
-    db.commit()
-
-    return {
-        "ok": True,
-        "deleted": True,
-        "profile_id": profile_id,
-        "policy_number": policy_number,
-        "account_number": account_number,
-        "business_name": business_name,
-        "claims_deleted": claims_deleted,
-    }
+    except Exception as exc:
+        db.rollback()
+        print("LOSSQ_PROFILE_DELETE_ROUTE_ERROR:", str(exc)[:1000])
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Profile delete failed.",
+                "error": str(exc)[:300],
+            },
+        )
+    finally:
+        db.close()
