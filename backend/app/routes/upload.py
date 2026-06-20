@@ -1784,6 +1784,96 @@ def _lossq_live_extract_section_based_csv(file_path):
         elif ("contents" in basis or "bpp" in basis or "business personal property" in basis) and not exposures.get("Contents Value"):
             exposures["Contents Value"] = value
 
+    # LOSSQ_SECTION_CSV_EXPOSURE_VALUE_SANITIZER_V1
+    # Do not allow label/header words to be saved as exposure values.
+    # Example bad shift: Employee Count = "Vehicle Count", Property TIV = "Current Premium".
+    exposure_value_label_words = {
+        "current premium",
+        "expiring premium",
+        "target renewal premium",
+        "payroll",
+        "revenue",
+        "revenue / sales",
+        "receipts",
+        "employee count",
+        "employees",
+        "vehicle count",
+        "vehicles",
+        "driver count",
+        "drivers",
+        "property tiv",
+        "tiv",
+        "building value",
+        "contents value",
+        "exposure basis",
+        "exposure value",
+        "policy number",
+        "line of business",
+        "carrier",
+        "state",
+    }
+
+    def _lossq_exposure_value_is_bad(value):
+        raw = str(value or "").strip()
+        key = re.sub(r"[^a-z0-9/ ]", "", raw.lower()).strip()
+        compact = re.sub(r"[^a-z0-9]", "", raw.lower())
+
+        if not raw:
+            return True
+
+        if key in exposure_value_label_words:
+            return True
+
+        if compact in {re.sub(r"[^a-z0-9]", "", item) for item in exposure_value_label_words}:
+            return True
+
+        # Count and money exposure values should contain at least one digit.
+        if not re.search(r"\d", raw):
+            return True
+
+        return False
+
+    for label in [
+        "Employee Count",
+        "Vehicle Count",
+        "Driver Count",
+        "Property TIV",
+        "Building Value",
+        "Contents Value",
+        "Current Premium",
+        "Expiring Premium",
+        "Target Renewal Premium",
+        "Payroll",
+        "Revenue / Sales",
+    ]:
+        if _lossq_exposure_value_is_bad(exposures.get(label)):
+            exposures.pop(label, None)
+
+    # Refill from policy schedule rows where Exposure Basis and Exposure Value are correctly paired.
+    for policy in policies:
+        basis = str(policy.get("exposure_basis") or "").strip().lower()
+        value = _lossq_section_clean_exposure_value(policy.get("exposure_value"))
+
+        if _lossq_exposure_value_is_bad(value):
+            continue
+
+        if ("payroll" in basis) and not exposures.get("Payroll"):
+            exposures["Payroll"] = value
+        elif ("revenue" in basis or "sales" in basis or "receipt" in basis) and not exposures.get("Revenue / Sales"):
+            exposures["Revenue / Sales"] = value
+        elif ("employee" in basis or basis in {"fte", "staff", "headcount"}) and not exposures.get("Employee Count"):
+            exposures["Employee Count"] = value
+        elif ("vehicle" in basis or "power unit" in basis) and not exposures.get("Vehicle Count"):
+            exposures["Vehicle Count"] = value
+        elif "driver" in basis and not exposures.get("Driver Count"):
+            exposures["Driver Count"] = value
+        elif ("tiv" in basis or "insured value" in basis or "property value" in basis or basis == "property") and not exposures.get("Property TIV"):
+            exposures["Property TIV"] = value
+        elif "building" in basis and not exposures.get("Building Value"):
+            exposures["Building Value"] = value
+        elif ("contents" in basis or "bpp" in basis or "business personal property" in basis) and not exposures.get("Contents Value"):
+            exposures["Contents Value"] = value
+
     if exposures:
         account["exposure_inputs"] = exposures
         account["exposures"] = exposures
