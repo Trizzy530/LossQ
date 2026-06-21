@@ -2317,12 +2317,27 @@ function HumanizedUnderwritingNarrativeCard({
    </div>
 
    <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-2">
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-     <h4 className="font-semibold text-white">Account Story</h4>
-     <p className="mt-3 text-sm leading-6 text-slate-200">
+    {/* LOSSQ_HUMANIZED_ACCOUNT_STORY_DROPDOWN_V1 */}
+    <details className="group rounded-2xl border border-white/10 bg-white/5 p-4">
+     <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
+      <div>
+       <h4 className="font-semibold text-white">Account Story</h4>
+       <p className="mt-1 text-xs text-slate-400">
+        Click to expand the humanized account narrative.
+       </p>
+      </div>
+      <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-blue-200 group-open:hidden">
+       Expand
+      </span>
+      <span className="hidden rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-blue-200 group-open:inline">
+       Collapse
+      </span>
+     </summary>
+
+     <p className="mt-4 text-sm leading-6 text-slate-200">
       {humanizedNarrative.account_story || "No account story generated yet."}
      </p>
-    </div>
+    </details>
 
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
      <h4 className="font-semibold text-white">Broker Positioning</h4>
