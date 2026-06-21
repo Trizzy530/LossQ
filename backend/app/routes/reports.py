@@ -9467,7 +9467,7 @@ def lossq_append_full_exposure_inputs_v1(story, styles, profile):
         ["Professional Revenue", lossq_report_money_display(profile.get("professional_revenue"))],
         ["Exposure Change %", lossq_report_percent_display(profile.get("exposure_change_percent"))],
         ["Operations / Business Description", lossq_report_display(profile.get("operations") or profile.get("business_description"))],
-        ["Exposure Basis", lossq_report_display(profile.get("exposure_basis"))],
+        ["Exposure Basis", lossq_pdf_format_exposure_basis_v1(profile.get("exposure_basis"))],
         ["Underwriter Notes", lossq_report_display(profile.get("underwriter_notes"))],
     ]
 
@@ -9634,6 +9634,265 @@ def lossq_pdf_clean_text_value_v1(value, forecast=None):
     return value
 
 
+
+# LOSSQ_PDF_HUMAN_UNDERWRITING_FIXTURES_V1
+def lossq_pdf_is_generic_packet_text_v1(value):
+    text = str(value or "").strip().lower()
+    if not text or text in {"-", "none", "null"}:
+        return True
+
+    generic_phrases = [
+        "market the account with a broker narrative",
+        "no ai underwriting summary was available",
+        "renewal drivers were not scored",
+        "submission readiness is pending final review",
+        "no scored readiness deductions were available",
+        "claim-level requirements should be finalized",
+        "to move this submission toward full readiness",
+    ]
+
+    return any(phrase in text for phrase in generic_phrases)
+
+
+def lossq_pdf_format_exposure_basis_v1(value):
+    import re
+
+    raw = str(value or "").strip()
+    if not raw:
+        return "-"
+
+    parts = [part.strip() for part in raw.split("|") if part.strip()]
+    if not parts:
+        parts = [raw]
+
+    formatted = []
+    money_labels = {
+        "payroll",
+        "revenue",
+        "sales",
+        "premium",
+        "tiv",
+        "limit",
+        "deductible",
+        "retention",
+        "receipts",
+    }
+
+    for part in parts:
+        if ":" not in part:
+            formatted.append(part)
+            continue
+
+        label, raw_value = part.split(":", 1)
+        label = label.strip()
+        raw_value = raw_value.strip()
+        label_key = label.lower()
+
+        numeric = re.sub(r"[^0-9.\-]", "", raw_value)
+        if numeric:
+            try:
+                number = float(numeric)
+                if any(word in label_key for word in money_labels):
+                    display = f"${number:,.0f}"
+                elif number.is_integer():
+                    display = f"{int(number):,}"
+                else:
+                    display = f"{number:,.2f}"
+                formatted.append(f"{label}: {display}")
+                continue
+            except Exception:
+                pass
+
+        formatted.append(f"{label}: {raw_value}")
+
+    return " | ".join(formatted) if formatted else "-"
+
+
+def lossq_pdf_claims_for_story_v1(ctx):
+    claims = []
+    try:
+        claims = list((ctx or {}).get("claims") or [])
+    except Exception:
+        claims = []
+
+    def sort_key(claim):
+        try:
+            is_open = 0 if lossq_pdf_claim_is_open(claim) else 1
+            reserve = lossq_pdf_claim_reserve(claim)
+            incurred = lossq_pdf_claim_incurred(claim)
+            return (is_open, -reserve, -incurred)
+        except Exception:
+            return (9, 0, 0)
+
+    return sorted(claims, key=sort_key)
+
+
+def lossq_pdf_human_broker_narrative_v1(ctx):
+    ctx = ctx if isinstance(ctx, dict) else {}
+    profile = ctx.get("profile") if isinstance(ctx.get("profile"), dict) else {}
+    metrics = ctx.get("metrics") if isinstance(ctx.get("metrics"), dict) else {}
+    carrier_match = ctx.get("carrier_match") if isinstance(ctx.get("carrier_match"), dict) else {}
+
+    insured = (
+        profile.get("business_name")
+        or profile.get("insured")
+        or profile.get("named_insured")
+        or "the account"
+    )
+
+    total_claims = int(metrics.get("total_claims") or 0)
+    open_claims = int(metrics.get("open_claims") or 0)
+    total_incurred = dollars(metrics.get("total_incurred") or 0)
+    total_reserve = dollars(metrics.get("total_reserve") or 0)
+    recommended = carrier_match.get("recommended_carrier") or "the best-fit markets"
+
+    claims = lossq_pdf_claims_for_story_v1(ctx)
+    open_focus = [claim for claim in claims if lossq_pdf_claim_is_open(claim)][:2]
+
+    if open_focus:
+        focus_bits = []
+        for claim in open_focus:
+            focus_bits.append(
+                f"{lossq_pdf_claim_number_text(claim)} ({lossq_pdf_claim_line_text(claim)}, "
+                f"{dollars(lossq_pdf_claim_reserve(claim))} reserve)"
+            )
+        focus_sentence = (
+            "Lead the submission with current adjuster notes, reserve rationale, expected resolution timing, "
+            f"and corrective action for {' and '.join(focus_bits)}."
+        )
+    else:
+        focus_sentence = (
+            "Lead the submission with a clean no-open-claim narrative, final paid confirmation, and corrective actions for the largest losses."
+        )
+
+    if open_claims:
+        posture = f"{open_claims} open claims and {total_reserve} in outstanding reserves"
+    else:
+        posture = "no open claims and no outstanding reserves"
+
+    return (
+        f"Market {insured} as a moderate renewal story with {total_claims} validated claims, "
+        f"{total_incurred} total incurred, and {posture}. {focus_sentence} "
+        f"Approach {recommended} first, then use specialty or program markets if the reserve documentation is not complete."
+    )
+
+
+def lossq_pdf_human_readiness_deductions_v1(ctx):
+    ctx = ctx if isinstance(ctx, dict) else {}
+    metrics = ctx.get("metrics") if isinstance(ctx.get("metrics"), dict) else {}
+    profile = ctx.get("profile") if isinstance(ctx.get("profile"), dict) else {}
+
+    open_claims = int(metrics.get("open_claims") or 0)
+    total_reserve = dollars(metrics.get("total_reserve") or 0)
+    claims = lossq_pdf_claims_for_story_v1(ctx)
+
+    items = []
+
+    if open_claims:
+        items.append(
+            f"Open-claim documentation remains the main readiness gap: {open_claims} open claims need adjuster status, reserve rationale, and expected resolution timing."
+        )
+
+    if total_reserve != "$0":
+        items.append(
+            f"Reserve support is needed before preferred-market release because outstanding reserves total {total_reserve}."
+        )
+
+    if claims:
+        largest = claims[0]
+        items.append(
+            f"The largest claim, {lossq_pdf_claim_number_text(largest)}, should include a short cause-of-loss narrative and corrective action note."
+        )
+
+    missing_exposure = []
+    for field, label in [
+        ("payroll", "payroll"),
+        ("revenue", "revenue"),
+        ("vehicle_count", "vehicle count"),
+        ("employee_count", "employee count"),
+        ("current_premium", "current premium"),
+    ]:
+        if not profile.get(field):
+            missing_exposure.append(label)
+
+    if missing_exposure:
+        items.append(
+            "Exposure support should be completed or confirmed for " + ", ".join(missing_exposure[:4]) + "."
+        )
+
+    if not items:
+        items.append(
+            "No material readiness deductions were identified. Keep current-valued loss runs, exposure basis, and claim narratives attached before final release."
+        )
+
+    return items
+
+
+def lossq_pdf_human_to_reach_100_v1(ctx):
+    ctx = ctx if isinstance(ctx, dict) else {}
+    claims = lossq_pdf_claims_for_story_v1(ctx)
+    open_claims = [claim for claim in claims if lossq_pdf_claim_is_open(claim)]
+
+    items = [
+        "Attach current-valued loss runs showing valuation date, policy period, paid, reserve, and total incurred.",
+        "Confirm exposure basis with premium, payroll, revenue, employees, vehicles, and location detail where applicable.",
+    ]
+
+    if open_claims:
+        items.append(
+            "For each open claim, attach adjuster status, reserve rationale, expected resolution timing, and litigation/counsel status if applicable."
+        )
+
+    if claims:
+        items.append(
+            "Add a short corrective-action note for the largest or most recent claims so the underwriter can see how recurrence risk was reduced."
+        )
+
+    return items
+
+
+def lossq_pdf_apply_human_underwriting_fixtures_v1(ctx):
+    ctx = ctx if isinstance(ctx, dict) else {}
+
+    summary = ctx.get("summary") if isinstance(ctx.get("summary"), dict) else {}
+    intelligence = ctx.get("intelligence") if isinstance(ctx.get("intelligence"), dict) else {}
+
+    human_broker = lossq_pdf_human_broker_narrative_v1(ctx)
+
+    for section in (summary, intelligence):
+        if lossq_pdf_is_generic_packet_text_v1(section.get("broker_recommendation")):
+            section["broker_recommendation"] = human_broker
+        if lossq_pdf_is_generic_packet_text_v1(section.get("marketing_narrative")):
+            section["marketing_narrative"] = human_broker
+        if lossq_pdf_is_generic_packet_text_v1(section.get("market_strategy")):
+            section["market_strategy"] = human_broker
+
+    ctx["summary"] = summary
+    ctx["intelligence"] = intelligence
+
+    readiness = ctx.get("readiness") if isinstance(ctx.get("readiness"), dict) else {}
+    if not readiness:
+        readiness = ctx.get("submission_readiness") if isinstance(ctx.get("submission_readiness"), dict) else {}
+
+    existing_deductions = readiness.get("score_deductions") or readiness.get("readiness_deductions") or readiness.get("deductions")
+    if not existing_deductions or lossq_pdf_is_generic_packet_text_v1(" ".join([str(x) for x in existing_deductions]) if isinstance(existing_deductions, list) else existing_deductions):
+        readiness["score_deductions"] = lossq_pdf_human_readiness_deductions_v1(ctx)
+
+    existing_to_100 = readiness.get("to_reach_100") or readiness.get("recommended_actions")
+    if not existing_to_100 or lossq_pdf_is_generic_packet_text_v1(" ".join([str(x) for x in existing_to_100]) if isinstance(existing_to_100, list) else existing_to_100):
+        readiness["to_reach_100"] = lossq_pdf_human_to_reach_100_v1(ctx)
+
+    if lossq_pdf_is_generic_packet_text_v1(readiness.get("readiness_summary")):
+        readiness["readiness_summary"] = (
+            "The submission is close to market-ready, but open-claim status, reserve rationale, exposure basis, "
+            "and corrective-action notes should be finalized before broad carrier release."
+        )
+
+    ctx["readiness"] = readiness
+    ctx["submission_readiness"] = readiness
+    return ctx
+
+
 def lossq_pdf_clean_packet_context_v1(ctx):
     ctx = ctx if isinstance(ctx, dict) else {}
     forecast = ctx.get("forecast") or ctx.get("premium_forecast") or {}
@@ -9664,6 +9923,7 @@ def lossq_pdf_clean_packet_context_v1(ctx):
         if isinstance(section, dict):
             ctx[section_key] = lossq_pdf_clean_text_value_v1(section, forecast)
 
+    ctx = lossq_pdf_apply_human_underwriting_fixtures_v1(ctx)
     return ctx
 
 
