@@ -7767,19 +7767,54 @@ def make_doc(title: str):
 
 
 # LOSSQ_PDF_PARAGRAPH_HELPER_BACKWARD_COMPAT_V1
+# LOSSQ_PDF_PACKET_LANGUAGE_CLEANUP_V1
+def lossq_pdf_clean_paragraph_text_v1(text):
+    import re
+
+    value = str(text or "")
+
+    replacements = {
+        "???": "'",
+        "???": "'",
+        "???": '"',
+        "??": '"',
+        "??\x9d": '"',
+        "???": "-",
+        "???": "-",
+        "?": "",
+        "\ufeff": "",
+        "&lt;br/&gt;": "\n",
+        "&lt;br /&gt;": "\n",
+        "&lt;br&gt;": "\n",
+        "<br/>": "\n",
+        "<br />": "\n",
+        "<br>": "\n",
+        "\\n": "\n",
+        "\\r": "\n",
+    }
+
+    for old, new in replacements.items():
+        value = value.replace(old, new)
+
+    value = re.sub(r"\n{3,}", "\n\n", value)
+    value = re.sub(r"[ \t]{2,}", " ", value)
+    return value.strip()
+
+
 def p(text, styles=None):
+    clean_text = lossq_pdf_clean_paragraph_text_v1(text)
+
     try:
         if styles is not None:
-            return Paragraph(safe_text(text), styles["LossQBody"])
+            return Paragraph(safe_text(clean_text), styles["LossQBody"])
     except Exception:
         pass
 
     try:
         fallback_styles = getSampleStyleSheet()
-        return Paragraph(safe_text(text), fallback_styles["BodyText"])
+        return Paragraph(safe_text(clean_text), fallback_styles["BodyText"])
     except Exception:
-        return Paragraph(safe_text(text), getSampleStyleSheet()["Normal"])
-
+        return Paragraph(safe_text(clean_text), getSampleStyleSheet()["Normal"])
 
 def subtitle(text, styles):
     return Paragraph(safe_text(text), styles["LossQSubtitle"])
@@ -8862,7 +8897,7 @@ def lossq_add_carrier_cover_letter_page(story, styles, ctx, profile=None, policy
     current_user = current_user or lossq_get_active_pdf_user() or {}
     agency = lossq_pdf_best_agency_info(db, current_user)
 
-    prepared_by = lossq_pdf_current_user_report_created_by(current_user)
+    prepared_by = lossq_pdf_prepared_by_name_v1(db, current_user)
     prepared_email = lossq_pdf_current_user_email(current_user)
 
     insured = (
@@ -9140,7 +9175,7 @@ class LossQReportBarChart(Flowable):
         if not self.rows:
             c.setFont("Helvetica", 7.2)
             c.setFillColor(colors.HexColor("#64748B"))
-            c.drawString(0.16 * inch, H / 2, "No chartable values available.")
+            c.drawString(0.16 * inch, H / 2, "Readiness deduction chart was not displayed because scored readiness deductions were not available.")
             c.restoreState()
             return
 
@@ -9241,13 +9276,19 @@ def lossq_append_pdf_charts_v1(story, styles, claims, readiness):
         "severity, reserve development, line concentration, and submission readiness."
     ))
 
+    readiness_deduction_rows = lossq_chart_readiness_deduction_rows(readiness)
+
     chart_blocks = [
         LossQReportBarChart("Open vs. Closed Claims", lossq_chart_claim_status_rows(claims), value_prefix=""),
         LossQReportBarChart("Paid vs. Outstanding Reserve", lossq_chart_paid_reserve_rows(claims), value_prefix="$"),
         LossQReportBarChart("Total Incurred by Line of Business", lossq_chart_incurred_by_line_rows(claims), value_prefix="$"),
         LossQReportBarChart("Top Claims by Total Incurred", lossq_chart_top_claim_rows(claims), value_prefix="$"),
-        LossQReportBarChart("Submission Readiness Deductions", lossq_chart_readiness_deduction_rows(readiness), value_prefix=""),
     ]
+
+    if readiness_deduction_rows:
+        chart_blocks.append(
+            LossQReportBarChart("Submission Readiness Deductions", readiness_deduction_rows, value_prefix="")
+        )
 
     for chart in chart_blocks:
         story.append(KeepTogether([chart, Spacer(1, 0.08 * inch)]))
@@ -9279,7 +9320,7 @@ def lossq_append_submission_readiness_detail_v1(story, styles, readiness):
         readiness.get("to_reach_100")
         or readiness.get("recommended_actions")
         or readiness.get("required_actions"),
-        "No specific 100% readiness path was returned. Confirm current loss runs, complete exposure inputs, and add open-claim narratives before release."
+        "To move this submission toward full readiness, confirm current-valued loss runs, complete exposure inputs, document open-claim status, explain reserve rationale, and add claim-specific corrective actions."
     ).replace("\\n", "<br/>")))
 
     story.append(heading("Claim-Level Underwriter Requirements", styles))
@@ -9299,7 +9340,7 @@ def lossq_append_submission_readiness_detail_v1(story, styles, readiness):
 
     story.append(p(lossq_report_list_text(
         claim_items,
-        "No claim-level underwriter requirements were returned."
+        "Claim-level requirements should be finalized before release, with priority on open claims, reserve rationale, adjuster status, expected resolution timing, and corrective actions."
     ).replace("\\n", "<br/>")))
 
     story.append(heading("Score Deductions", styles))
@@ -9307,7 +9348,7 @@ def lossq_append_submission_readiness_detail_v1(story, styles, readiness):
         readiness.get("score_deductions")
         or readiness.get("readiness_deductions")
         or readiness.get("deductions"),
-        "No score deductions were returned."
+        "No scored readiness deductions were available from the readiness engine at the time this packet was generated."
     ).replace("\\n", "<br/>")))
 
     story.append(heading("Required Documents", styles))
@@ -9347,6 +9388,171 @@ def lossq_append_full_exposure_inputs_v1(story, styles, profile):
         "Underwriters should compare claim frequency and severity against revenue, payroll, employee count, vehicle count, locations, limits, premium, and other rating basis fields where available. "
         "Any missing exposure fields should be completed before broad market release."
     ))
+
+
+def lossq_pdf_is_email_v1(value):
+    text = str(value or "").strip()
+    return "@" in text and "." in text
+
+
+def lossq_pdf_prepared_by_name_v1(db=None, current_user=None):
+    current_user = current_user or lossq_get_active_pdf_user() or {}
+
+    try:
+        agency = lossq_pdf_best_agency_info(db, current_user) or {}
+    except Exception:
+        agency = {}
+
+    candidates = [
+        agency.get("contact_name"),
+        agency.get("agency_contact_name"),
+        agency.get("producer_name"),
+        agency.get("account_user_name"),
+        agency.get("primary_contact"),
+        lossq_pdf_actual_user_name(current_user, agency),
+        lossq_pdf_current_user_report_created_by(current_user),
+    ]
+
+    for candidate in candidates:
+        text = lossq_pdf_clean_display(candidate)
+        if text and not lossq_pdf_is_email_v1(text):
+            return text
+
+    email = lossq_pdf_current_user_email(current_user)
+    return email if email and email != "-" else "Account User"
+
+
+def lossq_pdf_policy_number_only_v1(value):
+    text = str(value or "").strip()
+    upper = text.upper()
+
+    if not text:
+        return ""
+    if "ACCT" in upper or "ACCOUNT" in upper or "CUSTOMER" in upper or "CLIENT" in upper:
+        return ""
+    if "-" not in text and not any(char.isdigit() for char in text):
+        return ""
+
+    return text
+
+
+def lossq_pdf_policy_numbers_display_v1(policy_numbers_used, fallback=None):
+    values = []
+
+    for item in policy_numbers_used or []:
+        clean_item = lossq_pdf_policy_number_only_v1(item)
+        if clean_item and clean_item not in values:
+            values.append(clean_item)
+
+    fallback_clean = lossq_pdf_policy_number_only_v1(fallback)
+    if not values and fallback_clean:
+        values.append(fallback_clean)
+
+    return ", ".join(values) if values else "-"
+
+
+def lossq_pdf_readiness_score_display_v1(readiness):
+    readiness = readiness if isinstance(readiness, dict) else {}
+
+    score = (
+        readiness.get("readiness_score")
+        if readiness.get("readiness_score") not in (None, "")
+        else readiness.get("submission_readiness_score")
+    )
+
+    if score in (None, "", "-", "None", "null"):
+        return "Pending"
+
+    try:
+        return f"{int(float(score))}/100"
+    except Exception:
+        text = str(score).strip()
+        if text.endswith("/100"):
+            return text
+        return f"{text}/100" if text else "Pending"
+
+
+def lossq_pdf_forecast_percent_v1(forecast):
+    forecast = forecast if isinstance(forecast, dict) else {}
+
+    for key in ("expected_increase_percent", "expected_change_percent", "increase_percent", "change_percent"):
+        value = forecast.get(key)
+        if value in (None, "", "-"):
+            continue
+        try:
+            return float(str(value).replace("%", "").strip())
+        except Exception:
+            continue
+
+    return None
+
+
+def lossq_pdf_pricing_band_v1(forecast):
+    pct_value = lossq_pdf_forecast_percent_v1(forecast)
+
+    if pct_value is None:
+        return ""
+
+    if pct_value >= 55:
+        return "+55% or higher / non-renewal watch"
+    if pct_value >= 35:
+        return "+35% to +55%"
+    if pct_value >= 15:
+        return "+15% to +35%"
+    if pct_value >= 5:
+        return "+5% to +15%"
+    if pct_value <= -5:
+        return "possible decrease or flat renewal"
+    return "flat to +5%"
+
+
+def lossq_pdf_clean_pricing_sentence_v1(text, forecast):
+    import re
+
+    value = str(text or "")
+    band = lossq_pdf_pricing_band_v1(forecast)
+
+    if not band:
+        return value
+
+    clean_sentence = f"Expected pricing pressure is {band}."
+    value = re.sub(r"Expected pricing pressure is [^.]+\\.", clean_sentence, value)
+    value = re.sub(r"Expected pricing action is [^.]+\\.", clean_sentence, value)
+
+    return value
+
+
+def lossq_pdf_clean_packet_context_v1(ctx):
+    ctx = ctx if isinstance(ctx, dict) else {}
+    forecast = ctx.get("forecast") or ctx.get("premium_forecast") or {}
+    summary = ctx.get("summary") or ctx.get("intelligence") or {}
+
+    if isinstance(summary, dict):
+        band = lossq_pdf_pricing_band_v1(forecast)
+        if band:
+            for key in (
+                "expected_premium_impact",
+                "expected_pricing_pressure",
+                "expected_pricing_action",
+                "pricing_pressure",
+                "pricing_action",
+                "premium_impact",
+            ):
+                summary[key] = band
+
+        for key in (
+            "renewal_summary",
+            "executive_summary",
+            "summary",
+            "broker_recommendation",
+            "premium_summary",
+        ):
+            if isinstance(summary.get(key), str):
+                summary[key] = lossq_pdf_clean_pricing_sentence_v1(summary.get(key), forecast)
+
+    ctx["summary"] = summary
+    return ctx
+
 
 def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=None, report_kind="executive", db=None, current_user=None):
     """
@@ -9407,7 +9613,7 @@ def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=Non
         ["Account Number", lossq_report_display(profile.get("account_number") or profile.get("customer_number"))],
         ["Selected Policy / Account Key", lossq_report_display(effective_policy)],
         ["Policy Period", f"{lossq_report_display(profile.get('effective_date'))} to {lossq_report_display(profile.get('expiration_date'))}"],
-        ["Policy Numbers Used", ", ".join([str(x) for x in policy_numbers_used]) if policy_numbers_used else lossq_report_display(effective_policy)],
+        ["Policy Numbers Used", lossq_pdf_policy_numbers_display_v1(policy_numbers_used, effective_policy)],
         ["Data Quality", lossq_report_display(quality.get("status") or quality.get("data_quality_status") or ("Credible" if quality.get("is_credible") else ""))],
         ["Claims Used", lossq_report_display(metrics.get("total_claims") or len(claims))],
         ["Open Claims", lossq_report_display(metrics.get("open_claims"))],
@@ -9468,20 +9674,20 @@ def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=Non
         ["Carrier Match Score", f"{lossq_report_display(carrier_match.get('recommended_score'))}/100"],
         ["Expected Renewal Premium", lossq_report_money_display(forecast.get("expected_renewal_premium"))],
         ["Expected Premium Change", lossq_report_percent_display(forecast.get("expected_increase_percent") or forecast.get("expected_change_percent"))],
-        ["Submission Readiness", f"{lossq_report_display(readiness.get('readiness_score') or readiness.get('submission_readiness_score'))}/100"],
+        ["Submission Readiness", lossq_pdf_readiness_score_display_v1(readiness)],
     ]
     story.append(table(engine_rows, widths=[1.95 * inch, 4.75 * inch], header=True, font_size=7.0, header_color=NAVY))
 
     story.append(heading("Renewal Drivers", styles))
     story.append(p(lossq_report_list_text(
         intelligence.get("renewal_drivers") or intelligence.get("recommended_actions"),
-        "No renewal drivers were returned by the dashboard engines."
+        "Renewal drivers were not scored in the current packet. Review claim frequency, open reserves, severity, exposure basis, and corrective actions before market release."
     ).replace("\\n", "<br/>")))
 
     story.append(heading("Carrier Concerns", styles))
     story.append(p(lossq_report_list_text(
         intelligence.get("carrier_concerns") or decision.get("underwriting_concerns") or readiness.get("missing_items"),
-        "No carrier concerns were returned by the dashboard engines."
+        "Carrier concerns were not scored in the current packet. Review open claims, reserve development, claim severity, missing exposure fields, and required supplementals."
     ).replace("\\n", "<br/>")))
 
     story.append(heading("Carrier Appetite and Market Match Detail", styles))
@@ -9513,7 +9719,7 @@ def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=Non
         readiness.get("readiness_summary")
         or readiness.get("submission_summary")
         or readiness.get("summary")
-        or "No submission readiness narrative was available."
+        or "Submission readiness is pending final review. Before release, confirm current-valued loss runs, exposure basis, open-claim status, reserve rationale, and claim-specific corrective actions."
     ))
     readiness_items = readiness.get("missing_items") or readiness.get("required_items") or readiness.get("recommended_actions") or []
     if readiness_items:
@@ -10015,6 +10221,7 @@ def lossq_add_pdf_cover_letter_page(story, styles, ctx, report_title="LossQ Repo
 def build_executive_pdf_response(ctx, policy_number=None, db=None, current_user=None):
     lossq_set_active_pdf_context(db=db, current_user=current_user)
     ctx = lossq_report_normalize_ctx(ctx)
+    ctx = lossq_pdf_clean_packet_context_v1(ctx)  # LOSSQ_PDF_PACKET_CONTEXT_CLEANUP_CALL_V1
     profile = ctx["profile"]
     metrics = ctx["metrics"]
     summary = ctx["summary"]
@@ -10278,6 +10485,7 @@ def executive_report_pdf(
 def build_carrier_packet_pdf_response(ctx, policy_number=None, db=None, current_user=None):
     lossq_set_active_pdf_context(db=db, current_user=current_user)
     ctx = lossq_report_normalize_ctx(ctx)
+    ctx = lossq_pdf_clean_packet_context_v1(ctx)  # LOSSQ_PDF_PACKET_CONTEXT_CLEANUP_CALL_V1
     profile = ctx["profile"]
     metrics = ctx["metrics"]
     summary = ctx["summary"]
