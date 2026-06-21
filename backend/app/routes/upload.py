@@ -501,7 +501,7 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
       "date_closed": get(row, "Date Closed", "Closed Date"),
       "status": status,
       "cause_of_loss": get(row, "Cause of Loss", "Loss Cause", "Description"),
-      "description": get(row, "Description", "Loss Description", "Cause of Loss"),
+      "description": get(row, "Claim Notes", "Loss Notes", "Notes", "Narrative", "Claim Description", "Description", "Loss Description", "Cause of Loss"),
       "claimant_name": get(row, "Claimant", "Claimant Name"),
       "paid_amount": get(row, "Paid", "Paid Amount", "Total Paid"),
       "reserve_amount": get(row, "Reserve", "Reserve Amount", "Outstanding Reserve"),
@@ -2503,7 +2503,7 @@ def lossq_parse_clean_flat_csv_v1(file_path: str):
       "total_incurred": incurred,
       "incurred": incurred,
       "cause_of_loss": get(row, "Cause of Loss", "Cause"),
-      "description": get(row, "Description", "Claim Description", "Notes"),
+      "description": get(row, "Claim Notes", "Loss Notes", "Notes", "Narrative", "Claim Description", "Description", "Loss Description"),
       "litigation": get(row, "Litigation", "Litigated"),
       "flag": get(row, "Flag", "Alert"),
     })
@@ -3249,6 +3249,14 @@ def lossq_parse_label_based_pdf_loss_run_v1(file_path: str):
     "cause of loss": "cause_of_loss",
     "cause": "cause_of_loss",
     "description": "description",
+    "claim notes": "description",
+    "claim note": "description",
+    "loss notes": "description",
+    "loss note": "description",
+    "notes": "description",
+    "narrative": "description",
+    "claim narrative": "description",
+    "loss narrative": "description",
     "litigation": "litigation",
   }
 
@@ -4052,6 +4060,7 @@ def lossq_pdf_clean_table_claim_repair_v1(file_path, parsed_claims=None, parsed_
 
   return parsed_claims, parsed_profile
 
+# LOSSQ_CLAIM_NOTES_TO_DESCRIPTION_V1
 # LOSSQ_PDF_FULL_CLAIM_BLOCK_EXTRACT_BEFORE_SAVE_V1
 def lossq_pdf_full_claim_block_extract_before_save_v1(file_path, parsed_claims=None, parsed_profile=None):
   """
@@ -4184,7 +4193,7 @@ def lossq_pdf_full_claim_block_extract_before_save_v1(file_path, parsed_claims=N
       ("reserveamount", r"Reserve\s+Amount|Total\s+Reserve|Reserve"),
       ("totalincurred", r"Total\s+Incurred|Gross\s+Incurred|Net\s+Incurred|Incurred"),
       ("causeofloss", r"Cause\s+of\s+Loss|Cause"),
-      ("description", r"Claim\s+Description|Description"),
+      ("description", r"Claim\s+Notes|Loss\s+Notes|Claim\s+Description|Loss\s+Description|Description|Narrative|Notes"),
       ("litigation", r"Litigation|Litigated"),
     ]
 
@@ -5897,7 +5906,7 @@ def lossq_v4_parse_csv_sections(file_path):
         "date_closed": lossq_v4_first(row_map, "Date Closed", "Closed Date"),
         "status": lossq_v4_first(row_map, "Status", "Claim Status"),
         "cause_of_loss": lossq_v4_first(row_map, "Cause of Loss", "Loss Cause", "Cause"),
-        "description": lossq_v4_first(row_map, "Description", "Loss Description", "Narrative"),
+        "description": lossq_v4_first(row_map, "Claim Notes", "Loss Notes", "Notes", "Narrative", "Claim Description", "Description", "Loss Description"),
         "paid_amount": lossq_v4_money(lossq_v4_first(row_map, "Paid", "Paid Amount", "Total Paid")),
         "reserve_amount": lossq_v4_money(lossq_v4_first(row_map, "Reserve", "Reserve Amount", "Outstanding Reserve")),
         "total_incurred": lossq_v4_money(lossq_v4_first(row_map, "Total Incurred", "Incurred", "Gross Incurred", "Net Incurred")),
@@ -6187,7 +6196,7 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
     "open_days": open_days,
     "claim_age": claim_age,
     "status": status,
-    "description": pick(raw, ["description", "claim_description", "narrative"]),
+    "description": pick(raw, ["description", "loss_description", "claim_description", "claim_notes", "loss_notes", "notes", "narrative", "Claim Notes", "Loss Notes", "Notes", "Narrative", "Claim Description", "Description", "Loss Description"]),
     "paid_amount": float(pick(raw, ["paid_amount", "paid", "total_paid"], 0) or 0),
     "reserve_amount": float(
       pick(raw, ["reserve_amount", "reserve", "outstanding_reserve"], 0) or 0
