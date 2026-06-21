@@ -10266,6 +10266,14 @@ def lossq_extract_true_insured_name_from_upload_csv(file_path):
 
 
 async def save_uploaded_files(files, policy_number, db, current_user):
+  # LOSSQ_SAVE_UPLOADED_FILES_SAFE_DEFAULTS_V1
+  # Initialize shared parse variables inside the actual upload save loop.
+  # This protects PDF, CSV, XLSX, and XLS from undefined rescue variables.
+  parsed_claims = []
+  parsed_profile = {}
+  rescue_claims = []
+  rescue_profile = {}
+
   ensure_claim_timeline_columns(db)
   ensure_claim_detail_columns(db)
   ensure_account_profile_columns(db)
