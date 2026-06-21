@@ -10316,6 +10316,24 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
           if not rescue_claims:
             # LOSSQ_UPLOAD_LOOP_PARSED_CLAIMS_ALIAS_V2
+            # LOSSQ_UPLOAD_LOOP_CSV_RESCUE_ONLY_FOR_CSV_V5
+            _lossq_upload_file_obj = locals().get("file", None)
+            _lossq_original_filename = getattr(_lossq_upload_file_obj, "filename", "")
+            _lossq_current_upload_name = str(
+              locals().get("safe_upload_filename")
+              or locals().get("safe_filename")
+              or _lossq_original_filename
+              or locals().get("filename", "")
+              or locals().get("file_path", "")
+            ).lower()
+
+            if not _lossq_current_upload_name.endswith(".csv"):
+              print("LOSSQ_UPLOAD_LOOP_SKIP_CSV_RESCUE_FOR_NON_CSV_V5:", {
+                "filename": _lossq_current_upload_name,
+                "error": str(exc)[:500],
+              })
+              raise exc
+
             parsed_claims = locals().get("parsed_claims", locals().get("claims", []))
             if not isinstance(parsed_claims, list):
               parsed_claims = []
