@@ -5656,6 +5656,234 @@ def lossq_clean_exposure_limits_field(profile_data: dict):
   return profile_data
 
 
+
+
+# LOSSQ_FINAL_PROFILE_DATA_BUSINESS_NAME_REPAIR_V3
+def lossq_final_profile_data_business_name_repair_v3(file_path, profile_data=None, direct_profile=None):
+  """
+  Final account-profile business-name repair after extract_profile_data().
+
+  This fixes the Account Snapshot when the parser captured label text such as:
+  - / Business Name
+  - Business Name
+  - Named Insured / Business Name
+
+  Universal only. No customer, carrier, or demo-file hardcoding.
+  """
+  import os
+  import re
+
+  profile_data = profile_data if isinstance(profile_data, dict) else {}
+  direct_profile = direct_profile if isinstance(direct_profile, dict) else {}
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
+
+  def compact(value):
+    return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+  def clean_business(value):
+    value = clean(value)
+
+    value = re.sub(
+      r"(?i)^\s*(?:business\s+name|named\s+insured|insured|insured\s*/\s*business\s*name|account\s+name|applicant|entity|company\s+name)\s*[:#\-\/]*\s*",
+      "",
+      value,
+    )
+
+    value = re.sub(
+      r"(?i)\s+(?:loss\s+run\s+report|loss\s+run|report|pdf|document)\s*$",
+      "",
+      value,
+    )
+
+    return clean(value)
+
+  def is_bad(value):
+    k = compact(value)
+    return k in {
+      "",
+      "businessname",
+      "businessnamenotset",
+      "namedinsured",
+      "insured",
+      "insuredname",
+      "insuredbusinessname",
+      "namedinsuredbusinessname",
+      "accountname",
+      "accountnamebusinessname",
+      "applicant",
+      "entity",
+      "companyname",
+      "unknown",
+      "notset",
+      "na",
+      "none",
+      "null",
+    }
+
+  def good(value):
+    value = clean_business(value)
+    if is_bad(value):
+      return ""
+
+    low = value.lower()
+    blocked = [
+      "loss run",
+      "policy schedule",
+      "claim detail",
+      "claim block",
+      "claim number",
+      "policy number",
+      "line of business",
+      "coverage",
+      "loss summary",
+      "paid amount",
+      "reserve amount",
+      "total incurred",
+      "date of loss",
+      "effective date",
+      "expiration date",
+      "evaluation date",
+      "valuation date",
+      "account number",
+      "customer number",
+      "carrier",
+      "writing carrier",
+      "producer",
+      "producing agency",
+    ]
+
+    if any(part in low for part in blocked):
+      return ""
+
+    if len(value) < 4 or len(value) > 140:
+      return ""
+
+    return value
+
+  def read_pdf_text():
+    parts = [
+      profile_data.get("raw_text"),
+      profile_data.get("raw_text_preview"),
+      profile_data.get("ocr_text"),
+      profile_data.get("document_text"),
+      direct_profile.get("raw_text"),
+      direct_profile.get("raw_text_preview"),
+      direct_profile.get("ocr_text"),
+      direct_profile.get("document_text"),
+    ]
+
+    if str(file_path or "").lower().endswith(".pdf"):
+      try:
+        from pypdf import PdfReader
+        reader = PdfReader(file_path)
+        parts.append("\n".join((page.extract_text() or "") for page in reader.pages))
+      except Exception as exc:
+        print("LOSSQ_FINAL_PROFILE_DATA_BUSINESS_NAME_REPAIR_READ_ERROR_V3:", str(exc)[:200])
+
+    return "\n".join(str(part or "") for part in parts if part)
+
+  raw_text = read_pdf_text()
+  lines = [clean(line) for line in raw_text.splitlines()]
+  lines = [line for line in lines if line]
+
+  candidates = []
+
+  # Same-line labels.
+  same_line = re.compile(
+    r"(?i)^\s*(?:named\s+insured|insured\s*/\s*business\s*name|insured|business\s+name|account\s+name|applicant|entity|company\s+name)\s*[:#\-]\s*(.+?)\s*$"
+  )
+
+  for line in lines:
+    m = same_line.match(line)
+    if m:
+      candidate = good(m.group(1))
+      if candidate:
+        candidates.append(candidate)
+
+  # Label on one line, value on next lines.
+  label_keys = {
+    "namedinsured",
+    "insured",
+    "businessname",
+    "accountname",
+    "applicant",
+    "entity",
+    "companyname",
+    "insuredbusinessname",
+    "namedinsuredbusinessname",
+  }
+
+  for idx, line in enumerate(lines):
+    if compact(line) in label_keys:
+      for j in range(idx + 1, min(idx + 10, len(lines))):
+        candidate = good(lines[j])
+        if candidate:
+          candidates.append(candidate)
+          break
+
+  # Entity suffix fallback from document text.
+  normalized_text = re.sub(r"\s+", " ", raw_text or "").strip()
+  entity_pattern = re.compile(
+    r"(?is)\b([A-Z][A-Za-z0-9&.,'’\- ]{2,110}?\s+"
+    r"(?:LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|Co\.?|Company|PLLC|LP|LLP|Group|Services|Service|Agency|Associates|Partners|Enterprises|Holdings))\b"
+  )
+
+  for match in entity_pattern.finditer(normalized_text):
+    candidate = good(match.group(1))
+    if candidate:
+      candidates.append(candidate)
+
+  # Filename fallback only if no document candidate exists.
+  if not candidates:
+    try:
+      base = os.path.basename(str(file_path or ""))
+      base = re.sub(r"\.[a-zA-Z0-9]+$", "", base)
+      base = re.sub(r"(?i)\b(lossq|loss|run|messy|clean|ready|submission|pdf|csv|xlsx|xls|test|v\d+|parser|friendly)\b", " ", base)
+      base = re.sub(r"[_\-]+", " ", base)
+      base = re.sub(r"\s+", " ", base).strip()
+      candidate = good(base.title())
+      if candidate:
+        candidates.append(candidate)
+    except Exception:
+      pass
+
+  current = (
+    profile_data.get("business_name")
+    or profile_data.get("named_insured")
+    or profile_data.get("insured_name")
+    or profile_data.get("account_name")
+  )
+
+  business_name = ""
+  for candidate in candidates:
+    candidate = good(candidate)
+    if candidate:
+      business_name = candidate
+      break
+
+  # If current value is only a label, replace it.
+  if business_name and (is_bad(current) or clean_business(current) != business_name):
+    for target in [profile_data, direct_profile]:
+      target["business_name"] = business_name
+      target["named_insured"] = business_name
+      target["insured_name"] = business_name
+      target["account_name"] = business_name
+
+  # If no candidate was found, at least remove the bad label so UI does not show it.
+  if not business_name and is_bad(current):
+    for field in ["business_name", "named_insured", "insured_name", "account_name"]:
+      profile_data[field] = ""
+
+  print("LOSSQ_FINAL_PROFILE_DATA_BUSINESS_NAME_REPAIR_V3:", {
+    "business_name": profile_data.get("business_name"),
+    "candidate_count": len(candidates),
+    "current_before": current,
+  })
+
+  return profile_data, direct_profile
+
 def extract_profile_data(
   parsed_claims: list[dict],
   fallback_policy_number: str,
@@ -11760,6 +11988,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     or clean_input_policy
     or f"UPLOAD-{upload_session_id}",
     direct_profile=direct_profile,
+  )
+
+  # LOSSQ_FINAL_PROFILE_DATA_BUSINESS_NAME_REPAIR_CALL_V3
+  profile_data, direct_profile = lossq_final_profile_data_business_name_repair_v3(
+    file_path,
+    profile_data,
+    direct_profile,
   )
 
   if not profile_data.get("policy_number"):
