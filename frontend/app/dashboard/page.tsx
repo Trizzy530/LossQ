@@ -2139,6 +2139,244 @@ function lossqExtractionQualityFromProfile(profile: any) {
  };
 }
 
+
+// LOSSQ_HUMANIZED_NARRATIVE_CARD_V1
+function HumanizedUnderwritingNarrativeCard({
+ profile,
+ claims,
+ policies,
+ exposureInputs,
+}: {
+ profile: any;
+ claims: any[];
+ policies: any[];
+ exposureInputs: any;
+}) {
+ const [humanizedNarrative, setHumanizedNarrative] = useState<any>(null);
+ const [humanizedLoading, setHumanizedLoading] = useState(false);
+ const [humanizedError, setHumanizedError] = useState("");
+
+ const safeClaims = Array.isArray(claims) ? claims : [];
+ const safePolicies = Array.isArray(policies) ? policies : [];
+
+ const narrativeSignature = JSON.stringify({
+  profileId: profile?.id || "",
+  businessName: profile?.business_name || profile?.named_insured || "",
+  policyNumber: profile?.policy_number || profile?.main_policy || "",
+  policyNumbers: Array.isArray(profile?.policy_numbers) ? profile.policy_numbers : [],
+  claimCount: safeClaims.length,
+  claimKeys: safeClaims.slice(0, 20).map((claim: any) => [
+   claim?.claim_number || claim?.claimNo || claim?.id || "",
+   claim?.policy_number || "",
+   claim?.total_incurred || claim?.incurred || "",
+   claim?.status || claim?.claim_status || "",
+  ]),
+  policyCount: safePolicies.length,
+ });
+
+ useEffect(() => {
+  let cancelled = false;
+
+  async function loadHumanizedNarrative() {
+   const hasProfile =
+    profile?.business_name ||
+    profile?.named_insured ||
+    profile?.insured_name ||
+    profile?.policy_number ||
+    profile?.main_policy;
+
+   if (!hasProfile && safeClaims.length === 0 && safePolicies.length === 0) {
+    setHumanizedNarrative(null);
+    setHumanizedError("");
+    return;
+   }
+
+   setHumanizedLoading(true);
+   setHumanizedError("");
+
+   try {
+    const token =
+     (typeof window !== "undefined" &&
+      (
+       localStorage.getItem("token") ||
+       localStorage.getItem("lossq_token") ||
+       localStorage.getItem("auth_token") ||
+       sessionStorage.getItem("token") ||
+       sessionStorage.getItem("lossq_token") ||
+       ""
+      )) ||
+     "";
+
+    const response = await fetch(`${API}/humanized/narrative`, {
+     method: "POST",
+     headers: {
+      "Content-Type": "application/json",
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+     },
+     body: JSON.stringify({
+      profile: profile || {},
+      claims: safeClaims,
+      policies: safePolicies,
+      exposure_inputs: exposureInputs || {},
+      source_context: "dashboard_overview",
+     }),
+    });
+
+    const data = await safeJson(response);
+
+    if (!response.ok) {
+     throw new Error(data?.detail || data?.message || "Humanized narrative could not be generated.");
+    }
+
+    if (!cancelled) {
+     setHumanizedNarrative(data || null);
+    }
+   } catch (error: any) {
+    if (!cancelled) {
+     setHumanizedNarrative(null);
+     setHumanizedError(error?.message || "Humanized narrative is temporarily unavailable.");
+    }
+   } finally {
+    if (!cancelled) {
+     setHumanizedLoading(false);
+    }
+   }
+  }
+
+  loadHumanizedNarrative();
+
+  return () => {
+   cancelled = true;
+  };
+ }, [narrativeSignature]);
+
+ const renderList = (items: any[]) => {
+  const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
+
+  if (safeItems.length === 0) {
+   return <p className="text-sm text-slate-400">No items generated yet.</p>;
+  }
+
+  return (
+   <ul className="mt-3 space-y-2 text-sm text-slate-200">
+    {safeItems.map((item: any, index: number) => (
+     <li key={`${String(item)}-${index}`} className="flex gap-2">
+      <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-300" />
+      <span>{String(item)}</span>
+     </li>
+    ))}
+   </ul>
+  );
+ };
+
+ if (humanizedLoading && !humanizedNarrative) {
+  return (
+   <div className="mt-8 rounded-3xl border border-blue-400/20 bg-blue-500/10 p-5">
+    <p className="text-xs uppercase tracking-[0.25em] text-blue-300">Humanized Underwriting Narrative</p>
+    <h3 className="mt-2 text-xl font-bold text-white">Drafting account narrative...</h3>
+    <p className="mt-2 text-sm text-slate-300">
+     LossQ is translating the account profile, policy schedule, claims, and exposure inputs into underwriting language.
+    </p>
+   </div>
+  );
+ }
+
+ if (humanizedError && !humanizedNarrative) {
+  return (
+   <div className="mt-8 rounded-3xl border border-amber-400/20 bg-amber-500/10 p-5">
+    <p className="text-xs uppercase tracking-[0.25em] text-amber-300">Humanized Narrative</p>
+    <h3 className="mt-2 text-lg font-bold text-white">Narrative temporarily unavailable</h3>
+    <p className="mt-2 text-sm text-slate-300">{humanizedError}</p>
+   </div>
+  );
+ }
+
+ if (!humanizedNarrative) return null;
+
+ return (
+  <div className="mt-8 rounded-3xl border border-blue-400/20 bg-slate-950/60 p-5">
+   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+    <div>
+     <p className="text-xs uppercase tracking-[0.25em] text-blue-300">
+      Humanized Underwriting Narrative
+     </p>
+     <h3 className="mt-2 text-2xl font-bold text-white">
+      Account story, underwriter view, and broker positioning
+     </h3>
+     <p className="mt-2 max-w-4xl text-sm text-slate-300">
+      AI draft generated from the selected account profile, policy schedule, claims, and exposure inputs. Review before sending to a carrier.
+     </p>
+    </div>
+
+    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
+     <p className="text-slate-400">Risk Level</p>
+     <p className="text-lg font-bold text-white">
+      {humanizedNarrative?.account_snapshot?.risk_level || "Not Rated"}
+     </p>
+    </div>
+   </div>
+
+   <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-2">
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+     <h4 className="font-semibold text-white">Account Story</h4>
+     <p className="mt-3 text-sm leading-6 text-slate-200">
+      {humanizedNarrative.account_story || "No account story generated yet."}
+     </p>
+    </div>
+
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+     <h4 className="font-semibold text-white">Broker Positioning</h4>
+     <p className="mt-3 text-sm leading-6 text-slate-200">
+      {humanizedNarrative.broker_positioning || "No broker positioning generated yet."}
+     </p>
+    </div>
+
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+     <h4 className="font-semibold text-white">Underwriter View</h4>
+     {renderList(humanizedNarrative.underwriter_view)}
+    </div>
+
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+     <h4 className="font-semibold text-white">Carrier Concerns</h4>
+     {renderList(humanizedNarrative.carrier_concerns)}
+    </div>
+
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 xl:col-span-2">
+     <h4 className="font-semibold text-white">Claim Narrative</h4>
+     <p className="mt-3 text-sm leading-6 text-slate-200">
+      {humanizedNarrative.claim_narrative || "No claim narrative generated yet."}
+     </p>
+    </div>
+
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+     <h4 className="font-semibold text-white">Recommended Human Action</h4>
+     {renderList(humanizedNarrative.corrective_actions)}
+    </div>
+
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+     <h4 className="font-semibold text-white">Confidence Notes</h4>
+     {renderList(humanizedNarrative.confidence_notes)}
+    </div>
+
+    <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-4 xl:col-span-2">
+     <h4 className="font-semibold text-white">Carrier-Ready Summary</h4>
+     <p className="mt-3 text-sm leading-6 text-slate-100">
+      {humanizedNarrative.carrier_ready_summary || "No carrier-ready summary generated yet."}
+     </p>
+    </div>
+
+    <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4 xl:col-span-2">
+     <h4 className="font-semibold text-amber-100">AI Draft - Review Before Sending</h4>
+     <p className="mt-3 text-sm leading-6 text-amber-50/90">
+      {humanizedNarrative.human_review_note ||
+       "LossQ generated this draft from uploaded data. Review all details before sending to a carrier."}
+     </p>
+    </div>
+   </div>
+  </div>
+ );
+}
+
 function LossQExtractionReviewBanner({ profile }: { profile: any }) {
  const { score, status, warnings, criticalIssues, requiresReview } =
   lossqExtractionQualityFromProfile(profile);
@@ -8156,6 +8394,18 @@ const modelChartNarrative =
         </div>
 
         <EvaluationDateAlertBadge profileLike={displayProfile} policyRows={policySchedule} />
+
+         <HumanizedUnderwritingNarrativeCard
+          profile={displayProfile || profile || {}}
+          claims={claims || []}
+          policies={policySchedule || []}
+          exposureInputs={{
+           ...(deriveExposureInputsFromPolicyRows(displayProfile) || {}),
+           ...((displayProfile && typeof displayProfile.exposure_inputs === "object" ? displayProfile.exposure_inputs : {}) || {}),
+          }}
+         />
+
+
 
         {policySchedule.length > 0 && (
          <div className="mt-8 rounded-3xl border border-white/10 bg-slate-950/50 p-5">
