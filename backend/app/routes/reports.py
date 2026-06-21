@@ -7766,8 +7766,19 @@ def make_doc(title: str):
     return buffer, doc, styles
 
 
-def p(text, styles):
-    return Paragraph(safe_text(text), styles["LossQBody"])
+# LOSSQ_PDF_PARAGRAPH_HELPER_BACKWARD_COMPAT_V1
+def p(text, styles=None):
+    try:
+        if styles is not None:
+            return Paragraph(safe_text(text), styles["LossQBody"])
+    except Exception:
+        pass
+
+    try:
+        fallback_styles = getSampleStyleSheet()
+        return Paragraph(safe_text(text), fallback_styles["BodyText"])
+    except Exception:
+        return Paragraph(safe_text(text), getSampleStyleSheet()["Normal"])
 
 
 def subtitle(text, styles):
