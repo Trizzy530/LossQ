@@ -15802,14 +15802,27 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     def _lossq_excel_good_account_number_v1(value):
       raw = _lossq_excel_clean_v1(value)
       low = raw.lower()
+      upper = raw.upper()
+
       if not raw:
         return ""
+
       if any(item in low for item in ["insurance", "carrier", "company", "co.", "mutual", "policy schedule", "claim detail"]):
         return ""
+
       if not any(char.isdigit() for char in raw):
         return ""
-      if _lossq_excel_re.search(r"-\d{5,}$", raw.upper()) and not _lossq_excel_re.search(r"-\d{4}-", raw.upper()):
+
+      # LOSSQ_EXCEL_ACCOUNT_EXPOSURE_FINAL_BEFORE_UPSERT_V2
+      # Account numbers commonly end in 4-6 digits, so do not reject values that
+      # clearly identify account/customer/client numbers.
+      account_tokens = ["ACCT", "ACCOUNT", "CUST", "CUSTOMER", "CLIENT", "CLNT"]
+      if any(token in upper for token in account_tokens):
+        return raw
+
+      if _lossq_excel_re.search(r"-\d{5,}$", upper) and not _lossq_excel_re.search(r"-\d{4}-", upper):
         return ""
+
       return raw
 
     def _lossq_excel_normal_date_v1(value):
@@ -15937,6 +15950,145 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         profile_data["carrier_name"] = final_carrier_name
         profile_data["writing_carrier"] = final_carrier_name
         profile_data["carrier"] = final_carrier_name
+
+      # LOSSQ_EXCEL_EXPOSURE_INPUTS_FINAL_BEFORE_UPSERT_V2
+      # Pull Excel two-column Exposure Inputs sheet directly into top-level
+      # profile exposure fields and exposure_inputs aliases.
+      excel_exposure_values = {}
+
+      exposure_alias_map = {
+        "annualrevenue": "revenue",
+        "revenue": "revenue",
+        "sales": "revenue",
+        "receipts": "revenue",
+        "payroll": "payroll",
+        "employeecount": "employee_count",
+        "employees": "employee_count",
+        "vehiclecount": "vehicle_count",
+        "vehicles": "vehicle_count",
+        "drivercount": "driver_count",
+        "drivers": "driver_count",
+        "warehouselocations": "location_count",
+        "locationcount": "location_count",
+        "locations": "location_count",
+        "currentpremiumtotal": "current_premium",
+        "currentpremium": "current_premium",
+        "premiumtotal": "current_premium",
+        "targetrenewalpremium": "target_renewal_premium",
+        "targetpremium": "target_renewal_premium",
+        "installcrews": "unit_count",
+        "unitcount": "unit_count",
+        "annualstops": "annual_stops",
+      }
+
+      exposure_label_map = {
+        "revenue": "Revenue / Sales",
+        "payroll": "Payroll",
+        "employee_count": "Employee Count",
+        "vehicle_count": "Vehicle Count",
+        "driver_count": "Driver Count",
+        "location_count": "Location Count",
+        "current_premium": "Current Premium",
+        "target_renewal_premium": "Target Renewal Premium",
+        "unit_count": "Unit Count",
+        "annual_stops": "Annual Stops",
+      }
+
+      def _lossq_excel_money_or_count_v2(value):
+        raw = _lossq_excel_clean_v1(value)
+        if not raw:
+          return ""
+        cleaned = raw.replace("$", "").replace(",", "").strip()
+        return cleaned
+
+      for worksheet in workbook.worksheets:
+        sheet_name_key = _lossq_excel_key_v1(worksheet.title)
+
+        if "exposure" not in sheet_name_key:
+          continue
+
+        for row in worksheet.iter_rows(values_only=True):
+          values = [_lossq_excel_clean_v1(cell) for cell in row]
+          if len(values) < 2:
+            continue
+
+          left = values[0]
+          right = values[1]
+          field = exposure_alias_map.get(_lossq_excel_key_v1(left))
+
+          if not field:
+            continue
+
+          value = _lossq_excel_money_or_count_v2(right)
+          if value:
+            excel_exposure_values[field] = value
+
+      if excel_exposure_values:
+        exposure_inputs = profile_data.get("exposure_inputs")
+        if not isinstance(exposure_inputs, dict):
+          exposure_inputs = {}
+
+        exposure_rows = exposure_inputs.get("exposure_rows")
+        if not isinstance(exposure_rows, list):
+          exposure_rows = []
+
+        for exposure_field, exposure_value in excel_exposure_values.items():
+          if not exposure_value:
+            continue
+
+          profile_data[exposure_field] = exposure_value
+
+          if exposure_field == "revenue":
+            profile_data["sales"] = exposure_value
+            profile_data["annual_revenue"] = exposure_value
+            profile_data["receipts"] = exposure_value
+            exposure_inputs["Revenue / Sales"] = exposure_value
+            exposure_inputs["Sales"] = exposure_value
+            exposure_inputs["Annual Revenue"] = exposure_value
+            exposure_inputs["Receipts"] = exposure_value
+
+          elif exposure_field == "location_count":
+            profile_data["locations"] = exposure_value
+            profile_data["locationCount"] = exposure_value
+            exposure_inputs["Location Count"] = exposure_value
+            exposure_inputs["Locations"] = exposure_value
+
+          else:
+            exposure_label = exposure_label_map.get(exposure_field)
+            if exposure_label:
+              exposure_inputs[exposure_label] = exposure_value
+
+          exposure_rows.append({
+            "field": exposure_field,
+            "label": exposure_label_map.get(exposure_field, exposure_field),
+            "value": exposure_value,
+            "source": "excel_exposure_inputs_sheet",
+          })
+
+        exposure_inputs["exposure_rows"] = exposure_rows
+        profile_data["exposure_inputs"] = exposure_inputs
+
+        basis_parts = []
+        for basis_field in ["revenue", "payroll", "employee_count", "vehicle_count", "driver_count", "location_count", "current_premium", "target_renewal_premium"]:
+          basis_value = profile_data.get(basis_field)
+          if basis_value:
+            basis_parts.append(f"{basis_field}: {basis_value}")
+
+        if basis_parts:
+          profile_data["exposure_basis"] = " | ".join(basis_parts)
+
+      print("LOSSQ_EXCEL_EXPOSURE_INPUTS_FINAL_BEFORE_UPSERT_V2:", {
+        "account_number": profile_data.get("account_number"),
+        "current_premium": profile_data.get("current_premium"),
+        "target_renewal_premium": profile_data.get("target_renewal_premium"),
+        "revenue": profile_data.get("revenue"),
+        "payroll": profile_data.get("payroll"),
+        "employee_count": profile_data.get("employee_count"),
+        "vehicle_count": profile_data.get("vehicle_count"),
+        "driver_count": profile_data.get("driver_count"),
+        "location_count": profile_data.get("location_count"),
+      })
+
 
       if excel_profile_values.get("effective_date"):
         profile_data["effective_date"] = excel_profile_values["effective_date"]
