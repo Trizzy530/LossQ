@@ -4156,11 +4156,52 @@ def lossq_pdf_full_claim_block_extract_before_save_v1(file_path, parsed_claims=N
             return candidate
     return ""
 
+  # LOSSQ_PDF_SAME_LINE_CLAIM_BLOCK_VALUES_V1
   def values_from_block(block_lines):
     result = {}
 
-    # Convert label/value lines into normalized dictionary.
+    def set_result(field_key, value):
+      value = clean(value)
+      if value and not result.get(field_key):
+        result[field_key] = value
+
+    # Universal support for PDFs rendered from table blocks:
+    # Claim Number X Policy Number Y
+    # Line of Business X Claim Status Y
+    # Date of Loss X Paid Amount Y
+    # Reserve Amount X Total Incurred Y
+    joined = clean(" ".join(block_lines))
+
+    label_patterns = [
+      ("claimnumber", r"Claim\s*(?:Number|No\.?|#|ID)"),
+      ("policynumber", r"Policy\s*(?:Number|No\.?|#)"),
+      ("lineofbusiness", r"Line\s+of\s+Business|Coverage|Policy\s+Type|LOB"),
+      ("claimstatus", r"Claim\s+Status|Status"),
+      ("dateofloss", r"Date\s+of\s+Loss|Loss\s+Date"),
+      ("datereported", r"Date\s+Reported|Reported\s+Date"),
+      ("dateclosed", r"Date\s+Closed|Closed\s+Date"),
+      ("paidamount", r"Paid\s+Amount|Total\s+Paid|Paid"),
+      ("reserveamount", r"Reserve\s+Amount|Total\s+Reserve|Reserve"),
+      ("totalincurred", r"Total\s+Incurred|Gross\s+Incurred|Net\s+Incurred|Incurred"),
+      ("causeofloss", r"Cause\s+of\s+Loss|Cause"),
+      ("description", r"Claim\s+Description|Description"),
+      ("litigation", r"Litigation|Litigated"),
+    ]
+
+    all_labels = "|".join(f"(?:{pattern})" for _, pattern in label_patterns)
+
+    for field_key, label_pattern in label_patterns:
+      pattern = re.compile(
+        rf"(?i)\b(?:{label_pattern})\b\s*[:#-]?\s*(?P<value>.*?)(?=\s+(?:{all_labels})\b|$)"
+      )
+      match = pattern.search(joined)
+      if match:
+        set_result(field_key, match.group("value"))
+
+    # Preserve existing colon and next-line behavior.
     idx = 0
+    known_label_keys = {field_key for field_key, _ in label_patterns}
+
     while idx < len(block_lines):
       line = clean(block_lines[idx])
       if not line:
@@ -4169,36 +4210,25 @@ def lossq_pdf_full_claim_block_extract_before_save_v1(file_path, parsed_claims=N
 
       same = re.match(r"^\s*([^:]{2,80})\s*:\s*(.+?)\s*$", line)
       if same:
-        result[key(same.group(1))] = clean(same.group(2))
+        label_key = key(same.group(1))
+        set_result(label_key, same.group(2))
         idx += 1
         continue
 
-      # label on one line, value on the next non-empty line
       label_key = key(line.rstrip(":"))
-      if label_key:
-        next_value = ""
+      if label_key in known_label_keys:
         for j in range(idx + 1, min(idx + 4, len(block_lines))):
           candidate = clean(block_lines[j])
           if not candidate:
             continue
-          # stop if next line is another label
-          if key(candidate.rstrip(":")) in {
-            "claimnumber", "policynumber", "lineofbusiness", "coverage", "policytype",
-            "dateofloss", "lossdate", "datereported", "reporteddate", "dateclosed",
-            "status", "claimstatus", "paid", "paidamount", "reserve", "reserveamount",
-            "totalincurred", "grossincurred", "netincurred", "causeofloss", "cause",
-            "description", "litigation"
-          }:
+          if key(candidate.rstrip(":")) in known_label_keys:
             break
-          next_value = candidate
+          set_result(label_key, candidate)
           break
-        if next_value:
-          result[label_key] = next_value
 
       idx += 1
 
     return result
-
   # Build claim blocks. Prefer explicit Claim Block sections.
   block_starts = []
   for i, line in enumerate(lines):
@@ -4318,6 +4348,189 @@ def lossq_pdf_full_claim_block_extract_before_save_v1(file_path, parsed_claims=N
     parsed_profile["total_reserve"] = sum(money(c.get("reserve_amount")) for c in extracted_claims)
     parsed_profile["total_incurred"] = sum(money(c.get("total_incurred")) for c in extracted_claims)
 
+  # LOSSQ_PDF_SAME_LINE_CLAIM_BLOCK_PROFILE_POLICY_REPAIR_V1
+  def pdf_label_value(label_names):
+    labels = "|".join(re.escape(item) for item in label_names)
+    patterns = [
+      rf"(?im)^\s*(?:{labels})\s*(?:[:#-])\s*(.+?)\s*$",
+      rf"(?is)\b(?:{labels})\b\s*(?:[:#-])?\s*\n\s*(.+?)\s*(?:\n|$)",
+    ]
+
+    for pattern in patterns:
+      match = re.search(pattern, raw_text)
+      if match:
+        value = clean(match.group(1))
+        if value:
+          return value
+
+    return ""
+
+  carrier_name = pdf_label_value(["Writing Carrier", "Carrier", "Carrier Name", "Insurance Carrier"])
+  if carrier_name and key(carrier_name) not in {"carrier", "writingcarrier", "notset", "unknown", "na", "none"}:
+    parsed_profile["carrier_name"] = carrier_name
+    parsed_profile["writing_carrier"] = carrier_name
+    parsed_profile["carrier"] = carrier_name
+
+  def normalize_policy_date(value):
+    raw = clean(value)
+    match = re.search(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}", raw)
+    if not match:
+      return raw
+    parts = re.split(r"[/-]", match.group(0))
+    if len(parts) != 3:
+      return raw
+    month, day, year = parts
+    if len(year) == 2:
+      year = "20" + year
+    try:
+      return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    except Exception:
+      return raw
+
+  def line_from_policy_prefix(policy_number, fallback=""):
+    fallback = clean(fallback)
+    if fallback:
+      return fallback
+
+    raw = clean(policy_number).upper()
+    prefix = raw.split("-")[0] if "-" in raw else raw.split("_")[0] if "_" in raw else raw
+
+    mapping = {
+      "GL": "General Liability",
+      "CGL": "General Liability",
+      "WC": "Workers Compensation",
+      "BOP": "Businessowners Policy",
+      "UMB": "Umbrella",
+      "UM": "Umbrella",
+      "EXCESS": "Umbrella",
+      "LIQ": "Liquor Liability",
+      "LIQUOR": "Liquor Liability",
+      "AUTO": "Commercial Auto",
+      "CA": "Commercial Auto",
+      "GAR": "Garage Liability",
+      "DOL": "Dealers Open Lot",
+      "CP": "Commercial Property",
+      "PROP": "Property",
+      "CY": "Cyber Liability",
+      "CYBER": "Cyber Liability",
+      "PL": "Professional Liability",
+      "EPLI": "Employment Practices Liability",
+      "DO": "Directors & Officers",
+      "DNO": "Directors & Officers",
+      "IM": "Inland Marine",
+      "CARGO": "Motor Truck Cargo",
+    }
+    return mapping.get(prefix, "")
+
+  policy_id_pattern = r"[A-Z0-9]{2,}(?:[-_][A-Z0-9]{2,}){2,9}"
+  date_pattern = r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"
+  money_pattern = r"\$?\(?-?\d[\d,]*(?:\.\d{1,2})?\)?"
+
+  def policy_like(value):
+    raw = clean(value).upper()
+    if not raw or not re.search(r"\d", raw):
+      return False
+    if any(token in raw for token in ["ACCT", "ACCOUNT", "CUSTOMER", "CUST", "CLIENT"]):
+      return False
+    return bool(re.search(r"^[A-Z0-9]{2,}(?:[-_][A-Z0-9]{2,}){2,9}$", raw))
+
+  schedule_rows = []
+  schedule_match = re.search(
+    r"(?is)\bPOLICY\s+SCHEDULE\b[\s\S]*?(?=\bEXPOSURE\b|\bCLAIM\s+DETAIL\b|\bCLAIMS\s+DETAIL\b|\bLOSS\s+SUMMARY\b|$)",
+    raw_text,
+  )
+
+  if schedule_match:
+    for schedule_line in [clean(item) for item in schedule_match.group(0).splitlines() if clean(item)]:
+      if re.search(r"(?i)^policy\s*(?:#|number|no\.)", schedule_line):
+        continue
+
+      row = re.match(rf"^(?P<policy>{policy_id_pattern})\s+(?P<rest>.+)$", schedule_line)
+      if not row:
+        continue
+
+      policy_number = clean(row.group("policy")).upper()
+      if not policy_like(policy_number):
+        continue
+
+      rest = clean(row.group("rest"))
+      date_match = re.search(
+        rf"(?P<eff>{date_pattern})\s+(?P<exp>{date_pattern})(?:\s+(?P<premium>{money_pattern}))?",
+        rest,
+      )
+
+      if date_match:
+        line_of_business = line_from_policy_prefix(policy_number, rest[:date_match.start()])
+        effective_date = normalize_policy_date(date_match.group("eff"))
+        expiration_date = normalize_policy_date(date_match.group("exp"))
+        current_premium = money(date_match.group("premium"))
+      else:
+        line_of_business = line_from_policy_prefix(policy_number, rest)
+        effective_date = ""
+        expiration_date = ""
+        current_premium = 0.0
+
+      schedule_rows.append({
+        "policy_number": policy_number,
+        "policy_type": line_of_business,
+        "line_of_business": line_of_business,
+        "coverage": line_of_business,
+        "carrier": carrier_name,
+        "carrier_name": carrier_name,
+        "writing_carrier": carrier_name,
+        "effective_date": effective_date,
+        "expiration_date": expiration_date,
+        "current_premium": current_premium,
+        "claim_count": 0,
+        "total_incurred": 0.0,
+      })
+
+  final_claims = parsed_claims if isinstance(parsed_claims, list) else []
+  claim_counts = {}
+  claim_totals = {}
+
+  for claim in final_claims:
+    if not isinstance(claim, dict):
+      continue
+
+    policy_number = clean(claim.get("policy_number") or claim.get("Policy Number")).upper()
+    if not policy_like(policy_number):
+      continue
+
+    claim_counts[policy_number] = claim_counts.get(policy_number, 0) + 1
+    claim_totals[policy_number] = claim_totals.get(policy_number, 0.0) + money(claim.get("total_incurred"))
+
+  if schedule_rows:
+    existing = parsed_profile.get("policy_schedule") or parsed_profile.get("policies") or []
+    merged = {}
+
+    if isinstance(existing, list):
+      for item in existing:
+        if not isinstance(item, dict):
+          continue
+
+        policy_number = clean(item.get("policy_number") or item.get("Policy Number")).upper()
+        if policy_like(policy_number):
+          merged[policy_number] = dict(item)
+
+    for row in schedule_rows:
+      policy_number = row["policy_number"]
+      target = merged.get(policy_number, {})
+      target.update({k: v for k, v in row.items() if v not in ("", None)})
+      target["claim_count"] = claim_counts.get(policy_number, 0)
+      target["total_incurred"] = claim_totals.get(policy_number, 0.0)
+
+      if carrier_name:
+        target["carrier"] = carrier_name
+        target["carrier_name"] = carrier_name
+        target["writing_carrier"] = carrier_name
+
+      merged[policy_number] = target
+
+    policies = list(merged.values())
+    parsed_profile["policy_schedule"] = policies
+    parsed_profile["policies"] = policies
+    parsed_profile["policy_numbers"] = [item.get("policy_number") for item in policies if item.get("policy_number")]
   print("LOSSQ_PDF_FULL_CLAIM_BLOCK_EXTRACT_BEFORE_SAVE_V1:", {
     "existing_claims": len(parsed_profile.get("claims") or []),
     "extracted_claims": len(extracted_claims),
