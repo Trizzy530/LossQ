@@ -7437,12 +7437,6 @@ def lossq_sanitize_profile_policies_before_upsert_v6(profile_data: dict):
   return profile_data
 
 
-# LOSSQ_EXCEL_POLICY_SCHEDULE_BEFORE_PROFILE_SAVE_CALL_V2
-profile_data = lossq_excel_policy_schedule_before_profile_save_v2(
-  file_path,
-  profile_data,
-  locals().get("all_parsed_claims", locals().get("parsed_claims", [])),
-)
 
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
   # LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_CALL_V6
