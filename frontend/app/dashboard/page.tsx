@@ -2140,7 +2140,9 @@ function lossqExtractionQualityFromProfile(profile: any) {
 }
 
 
+
 // LOSSQ_HUMANIZED_NARRATIVE_CARD_V1
+// LOSSQ_HUMANIZED_NARRATIVE_SECTION_DROPDOWN_V1
 function HumanizedUnderwritingNarrativeCard({
  profile,
  claims,
@@ -2294,50 +2296,44 @@ function HumanizedUnderwritingNarrativeCard({
  if (!humanizedNarrative) return null;
 
  return (
-  <div className="mt-8 rounded-3xl border border-blue-400/20 bg-slate-950/60 p-5">
-   <div className="flex flex-col gap-3 md:flex-row md:items-start md:justify-between">
+  <details className="group mt-8 rounded-3xl border border-blue-400/20 bg-slate-950/60 p-5">
+   <summary className="flex cursor-pointer list-none flex-col gap-3 md:flex-row md:items-start md:justify-between">
     <div>
      <p className="text-xs uppercase tracking-[0.25em] text-blue-300">
       Humanized Underwriting Narrative
      </p>
      <h3 className="mt-2 text-2xl font-bold text-white">
-      Account story, underwriter view, and broker positioning
+      Carrier-ready language and human review notes
      </h3>
      <p className="mt-2 max-w-4xl text-sm text-slate-300">
-      AI draft generated from the selected account profile, policy schedule, claims, and exposure inputs. Review before sending to a carrier.
+      Optional AI-drafted language for submissions. This section is collapsed so it does not compete with Renewal Risk.
      </p>
     </div>
 
-    <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
-     <p className="text-slate-400">Risk Level</p>
-     <p className="text-lg font-bold text-white">
-      {humanizedNarrative?.account_snapshot?.risk_level || "Not Rated"}
-     </p>
+    <div className="flex flex-col gap-3 md:items-end">
+     <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
+      <p className="text-slate-400">Risk Level</p>
+      <p className="text-lg font-bold text-white">
+       {humanizedNarrative?.account_snapshot?.risk_level || "Not Rated"}
+      </p>
+     </div>
+
+     <span className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-blue-200 group-open:hidden">
+      Expand narrative
+     </span>
+     <span className="hidden rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-blue-200 group-open:inline">
+      Collapse narrative
+     </span>
     </div>
-   </div>
+   </summary>
 
    <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-2">
-    {/* LOSSQ_HUMANIZED_ACCOUNT_STORY_DROPDOWN_V1 */}
-    <details className="group rounded-2xl border border-white/10 bg-white/5 p-4">
-     <summary className="flex cursor-pointer list-none items-center justify-between gap-4">
-      <div>
-       <h4 className="font-semibold text-white">Account Story</h4>
-       <p className="mt-1 text-xs text-slate-400">
-        Click to expand the humanized account narrative.
-       </p>
-      </div>
-      <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-blue-200 group-open:hidden">
-       Expand
-      </span>
-      <span className="hidden rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-semibold text-blue-200 group-open:inline">
-       Collapse
-      </span>
-     </summary>
-
-     <p className="mt-4 text-sm leading-6 text-slate-200">
+    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
+     <h4 className="font-semibold text-white">Account Story</h4>
+     <p className="mt-3 text-sm leading-6 text-slate-200">
       {humanizedNarrative.account_story || "No account story generated yet."}
      </p>
-    </details>
+    </div>
 
     <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
      <h4 className="font-semibold text-white">Broker Positioning</h4>
@@ -2388,7 +2384,7 @@ function HumanizedUnderwritingNarrativeCard({
      </p>
     </div>
    </div>
-  </div>
+  </details>
  );
 }
 
