@@ -10075,6 +10075,25 @@ def build_executive_pdf_response(ctx, policy_number=None, db=None, current_user=
     for index, action in enumerate(actions, start=1):
         story.append(p(f"{index}. {action}", styles))
 
+    # LOSSQ_EXECUTIVE_PDF_DASHBOARD_PACKET_SECTIONS_CALL_V1
+    story.append(PageBreak())
+    try:
+        lossq_append_dashboard_packet_sections(
+            story,
+            styles,
+            ctx,
+            policy_number,
+            report_kind="executive",
+            db=db,
+            current_user=current_user,
+        )
+    except Exception as exc:
+        try:
+            story.append(heading("Dashboard Intelligence Detail", styles))
+            story.append(p(f"Dashboard intelligence detail could not be fully rendered in this executive report. Fallback report was generated. Reason: {type(exc).__name__}", styles))
+        except Exception:
+            pass
+
     story.append(Spacer(1, 10))
     story.append(Paragraph("Disclaimer: This report is generated from available claim and account data inside LossQ. All figures should be reviewed against current carrier loss runs and confirmed before formal submission.", styles["SmallMuted"]))
 
