@@ -2094,6 +2094,104 @@ function clearLossQDashboardTenantCache() {
 // LOSSQ_EXTRACTION_REVIEW_BANNER_V1
 
 // LOSSQ_RENEWAL_RISK_INSURED_QUESTIONS_V1
+
+// LOSSQ_RENEWAL_RISK_PREMIUM_ALIGNMENT_V1
+function lossqMoneyDisplayFromAny(value: any) {
+ const raw = String(value ?? "").replace(/[$,]/g, "").trim();
+ const number = Number(raw);
+
+ if (!Number.isFinite(number) || number <= 0) return "";
+
+ return `$${Math.round(number).toLocaleString()}`;
+}
+
+function lossqPercentDisplayFromAny(value: any) {
+ if (value === null || value === undefined || value === "") return "";
+
+ const raw = String(value).trim();
+
+ if (!raw) return "";
+ if (raw.includes("%")) return raw;
+
+ const number = Number(raw);
+
+ if (!Number.isFinite(number)) return "";
+
+ return `${Math.round(number)}%`;
+}
+
+function lossqCleanRenewalSummaryPricingConflict(summaryText: any) {
+ return String(summaryText || "")
+  .replace(/\s*Expected pricing pressure is[^.]*\./gi, "")
+  .replace(/\s*Expected pricing pressure[^.]*\./gi, "")
+  .replace(/\s*Pricing pressure is[^.]*\./gi, "")
+  .replace(/\s*Expected pricing is[^.]*\./gi, "")
+  .replace(/\s*\+\d+%\s*to\s*\+\d+%[^.]*\./gi, "")
+  .replace(/\s+/g, " ")
+  .trim();
+}
+
+function lossqPremiumForecastAlignmentText(forecastLike: any) {
+ const currentPremium = lossqMoneyDisplayFromAny(
+  forecastLike?.current_premium ||
+   forecastLike?.currentPremium ||
+   forecastLike?.current
+ );
+
+ const expectedRenewal = lossqMoneyDisplayFromAny(
+  forecastLike?.expected_renewal_premium ||
+   forecastLike?.expectedRenewalPremium ||
+   forecastLike?.target_renewal_premium ||
+   forecastLike?.targetRenewalPremium
+ );
+
+ const expectedIncrease = lossqPercentDisplayFromAny(
+  forecastLike?.expected_increase_percent ||
+   forecastLike?.expectedIncreasePercent ||
+   forecastLike?.increase_percent ||
+   forecastLike?.increasePercent
+ );
+
+ const likelyRange = String(
+  forecastLike?.likely_range_percent ||
+   forecastLike?.likelyRangePercent ||
+   forecastLike?.likely_range ||
+   forecastLike?.likelyRange ||
+   ""
+ ).trim();
+
+ const pieces: string[] = [];
+
+ if (currentPremium) pieces.push(`current premium is ${currentPremium}`);
+ if (expectedRenewal) pieces.push(`expected renewal premium is ${expectedRenewal}`);
+ if (expectedIncrease) pieces.push(`expected change is ${expectedIncrease}`);
+ if (likelyRange && likelyRange !== "-") pieces.push(`likely range is ${likelyRange}`);
+
+ if (pieces.length === 0) return "";
+
+ return `Premium Forecast is the pricing source of truth for this account: ${pieces.join(", ")}.`;
+}
+
+function lossqRenewalOverviewAlignedWithPremium(summaryLike: any, forecastLike: any) {
+ const baseSummary = lossqCleanRenewalSummaryPricingConflict(
+  summaryLike?.renewal_summary ||
+   summaryLike?.summary ||
+   summaryLike?.carrier_narrative ||
+   ""
+ );
+
+ const premiumAlignment = lossqPremiumForecastAlignmentText(forecastLike);
+
+ if (baseSummary && premiumAlignment) {
+  return `${baseSummary} ${premiumAlignment}`;
+ }
+
+ if (baseSummary) return baseSummary;
+ if (premiumAlignment) return premiumAlignment;
+
+ return "Upload claims and generate renewal risk to create an executive renewal overview.";
+}
+
 function lossqQuestionsToAskInsured(profileLike: any, claimsLike: any[] = [], policiesLike: any[] = []) {
  const safeClaims = Array.isArray(claimsLike) ? claimsLike : [];
  const safePolicies = Array.isArray(policiesLike) ? policiesLike : [];
@@ -8746,7 +8844,7 @@ const modelChartNarrative =
          <MetricCard title="Open Claims" value={openClaimsDisplay} />
          <MetricCard title="Total Incurred" value={totalIncurredDisplay} />
          <MetricCard
-          title="Renewal Probability"
+          title="Estimated Renewal Probability"
           value={
            effectiveDecision?.renewal_probability != null
             ? `${effectiveDecision.renewal_probability}%`
@@ -8754,17 +8852,24 @@ const modelChartNarrative =
           }
          />
         </div>
+
+        <div className="mt-6 rounded-3xl border border-blue-400/20 bg-blue-500/10 p-5">
+         <p className="text-xs uppercase tracking-[0.25em] text-blue-300">
+          How to read these numbers
+         </p>
+         <p className="mt-2 text-sm leading-6 text-slate-200">
+          Renewal Score and Renewal Probability are related, but they are not the same metric. Renewal Score reflects the account's underwriting risk quality. Estimated Renewal Probability reflects the likelihood of renewal or market acceptance based on the underwriting profile.
+         </p>
+         <p className="mt-2 text-sm leading-6 text-slate-300">
+          Pricing guidance shown in Renewal Risk should align with Premium Forecast. {lossqPremiumForecastAlignmentText(effectivePremiumForecast) || "Premium Forecast will become the pricing source of truth once current premium or exposure inputs are available."}
+         </p>
+        </div>
        </div>
 
        <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
         <TextCard
          title="Executive Renewal Overview"
-         text={
-          effectiveSummary?.renewal_summary ||
-          effectiveSummary?.summary ||
-          effectiveSummary?.carrier_narrative ||
-          "Upload claims and generate renewal risk to create an executive renewal overview."
-         }
+         text={lossqRenewalOverviewAlignedWithPremium(effectiveSummary, effectivePremiumForecast)}
         />
 
         <TextCard
