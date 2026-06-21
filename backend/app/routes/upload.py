@@ -15754,6 +15754,217 @@ async def save_uploaded_files(files, policy_number, db, current_user):
   except Exception as preamble_profile_exc:
     print("LOSSQ_FLAT_CSV_PREAMBLE_BEFORE_PROFILE_UPSERT_V2_ERROR:", str(preamble_profile_exc)[:500])
 
+
+  # LOSSQ_EXCEL_ACCOUNT_PROFILE_FINAL_BEFORE_UPSERT_V1
+  # Final Excel-only account snapshot repair placed directly before profile save.
+  # This prevents later filename/carrier fallback from overwriting the account
+  # profile fields after the policy schedule has already been repaired.
+  try:
+    import re as _lossq_excel_re
+    import datetime as _lossq_excel_dt
+
+    def _lossq_excel_clean_v1(value):
+      if isinstance(value, (_lossq_excel_dt.datetime, _lossq_excel_dt.date)):
+        return value.strftime("%m/%d/%Y")
+      return _lossq_excel_re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|")
+
+    def _lossq_excel_key_v1(value):
+      return _lossq_excel_re.sub(r"[^a-z0-9]+", "", _lossq_excel_clean_v1(value).lower())
+
+    def _lossq_excel_good_business_v1(value):
+      raw = _lossq_excel_clean_v1(value)
+      low = raw.lower()
+      if not raw or len(raw) < 3:
+        return ""
+      bad = [
+        "lossq",
+        ".xlsx",
+        ".xls",
+        "field",
+        "value",
+        "policy schedule",
+        "claim detail",
+        "exposure inputs",
+        "loss summary",
+        "account number",
+        "policy number",
+        "claim number",
+        "writing carrier",
+        "carrier",
+        "effective date",
+        "expiration date",
+        "current premium",
+      ]
+      if any(item in low for item in bad):
+        return ""
+      return raw
+
+    def _lossq_excel_good_account_number_v1(value):
+      raw = _lossq_excel_clean_v1(value)
+      low = raw.lower()
+      if not raw:
+        return ""
+      if any(item in low for item in ["insurance", "carrier", "company", "co.", "mutual", "policy schedule", "claim detail"]):
+        return ""
+      if not any(char.isdigit() for char in raw):
+        return ""
+      if _lossq_excel_re.search(r"-\d{5,}$", raw.upper()) and not _lossq_excel_re.search(r"-\d{4}-", raw.upper()):
+        return ""
+      return raw
+
+    def _lossq_excel_normal_date_v1(value):
+      raw = _lossq_excel_clean_v1(value)
+      if not raw:
+        return ""
+      match = _lossq_excel_re.search(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b", raw)
+      if match:
+        month, day, year = match.groups()
+        if len(year) == 2:
+          year = "20" + year
+        return f"{int(month):02d}/{int(day):02d}/{int(year):04d}"
+      match = _lossq_excel_re.search(r"\b(\d{4})[/-](\d{1,2})[/-](\d{1,2})\b", raw)
+      if match:
+        year, month, day = match.groups()
+        return f"{int(month):02d}/{int(day):02d}/{int(year):04d}"
+      return ""
+
+    def _lossq_excel_period_v1(value):
+      raw = _lossq_excel_clean_v1(value)
+      dates = _lossq_excel_re.findall(
+        r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b",
+        raw,
+      )
+      if len(dates) >= 2:
+        return _lossq_excel_normal_date_v1(dates[0]), _lossq_excel_normal_date_v1(dates[1])
+      return "", ""
+
+    if isinstance(profile_data, dict) and str(file_path or "").lower().endswith((".xlsx", ".xls")):
+      excel_profile_values = {}
+
+      alias_map = {
+        "namedinsured": "business_name",
+        "insured": "business_name",
+        "insuredname": "business_name",
+        "accountname": "business_name",
+        "businessname": "business_name",
+        "companyname": "business_name",
+        "accountnumber": "account_number",
+        "accountno": "account_number",
+        "account": "account_number",
+        "customernumber": "account_number",
+        "clientnumber": "account_number",
+        "writingcarrier": "carrier_name",
+        "carrier": "carrier_name",
+        "carriername": "carrier_name",
+        "insurancecarrier": "carrier_name",
+        "policyperiod": "policy_period",
+        "policyterm": "policy_period",
+        "coverageperiod": "policy_period",
+        "effectivedate": "effective_date",
+        "expirationdate": "expiration_date",
+        "evaluationdate": "evaluation_date",
+        "valuationdate": "evaluation_date",
+        "asofdate": "evaluation_date",
+        "lossrundate": "evaluation_date",
+      }
+
+      if str(file_path or "").lower().endswith(".xlsx"):
+        from openpyxl import load_workbook as _lossq_excel_load_workbook
+        workbook = _lossq_excel_load_workbook(file_path, data_only=True, read_only=True)
+
+        for worksheet in workbook.worksheets:
+          sheet_name_key = _lossq_excel_key_v1(worksheet.title)
+
+          # Prefer Account/Profile sheets, but allow field/value rows anywhere.
+          prefer_sheet = ("account" in sheet_name_key or "profile" in sheet_name_key)
+
+          for row in worksheet.iter_rows(values_only=True):
+            values = [_lossq_excel_clean_v1(cell) for cell in row]
+            if len(values) < 2:
+              continue
+
+            left = values[0]
+            right = values[1]
+            field = alias_map.get(_lossq_excel_key_v1(left))
+
+            if not field or not right:
+              continue
+
+            if not prefer_sheet and field in {"business_name", "account_number"}:
+              continue
+
+            if field == "business_name":
+              good_value = _lossq_excel_good_business_v1(right)
+              if good_value:
+                excel_profile_values[field] = good_value
+
+            elif field == "account_number":
+              good_value = _lossq_excel_good_account_number_v1(right)
+              if good_value:
+                excel_profile_values[field] = good_value
+
+            elif field == "carrier_name":
+              good_value = _lossq_excel_clean_v1(right)
+              if good_value and not _lossq_excel_good_account_number_v1(good_value):
+                excel_profile_values[field] = good_value
+
+            elif field == "policy_period":
+              start_date, end_date = _lossq_excel_period_v1(right)
+              if start_date and end_date:
+                excel_profile_values["effective_date"] = start_date
+                excel_profile_values["expiration_date"] = end_date
+
+            elif field in {"effective_date", "expiration_date", "evaluation_date"}:
+              good_value = _lossq_excel_normal_date_v1(right)
+              if good_value:
+                excel_profile_values[field] = good_value
+
+      final_business_name = _lossq_excel_good_business_v1(excel_profile_values.get("business_name"))
+      if final_business_name:
+        profile_data["business_name"] = final_business_name
+        profile_data["insured_name"] = final_business_name
+        profile_data["named_insured"] = final_business_name
+        profile_data["account_name"] = final_business_name
+        profile_data["insured"] = final_business_name
+
+      final_account_number = _lossq_excel_good_account_number_v1(excel_profile_values.get("account_number"))
+      if final_account_number:
+        profile_data["account_number"] = final_account_number
+        profile_data["customer_number"] = final_account_number
+
+      final_carrier_name = _lossq_excel_clean_v1(excel_profile_values.get("carrier_name"))
+      if final_carrier_name:
+        profile_data["carrier_name"] = final_carrier_name
+        profile_data["writing_carrier"] = final_carrier_name
+        profile_data["carrier"] = final_carrier_name
+
+      if excel_profile_values.get("effective_date"):
+        profile_data["effective_date"] = excel_profile_values["effective_date"]
+
+      if excel_profile_values.get("expiration_date"):
+        profile_data["expiration_date"] = excel_profile_values["expiration_date"]
+
+      if excel_profile_values.get("evaluation_date"):
+        profile_data["evaluation_date"] = excel_profile_values["evaluation_date"]
+        profile_data["valuation_date"] = excel_profile_values["evaluation_date"]
+
+      try:
+        profile_account_key = profile_data.get("account_number") or profile_account_key
+      except Exception:
+        pass
+
+      print("LOSSQ_EXCEL_ACCOUNT_PROFILE_FINAL_BEFORE_UPSERT_V1:", {
+        "business_name": profile_data.get("business_name"),
+        "account_number": profile_data.get("account_number"),
+        "carrier_name": profile_data.get("carrier_name"),
+        "effective_date": profile_data.get("effective_date"),
+        "expiration_date": profile_data.get("expiration_date"),
+        "evaluation_date": profile_data.get("evaluation_date"),
+      })
+
+  except Exception as excel_final_profile_exc:
+    print("LOSSQ_EXCEL_ACCOUNT_PROFILE_FINAL_BEFORE_UPSERT_V1_ERROR:", str(excel_final_profile_exc)[:500])
+
   lossq_debug_upload_snapshot(
     "before_profile_upsert",
     all_parsed_claims if "all_parsed_claims" in locals() else [],
