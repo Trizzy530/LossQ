@@ -5461,6 +5461,15 @@ async def upload_loss_run(
   db: Session = Depends(get_db),
   current_user: dict = Depends(require_permission("upload")),
 ):
+  # LOSSQ_UPLOAD_ROUTE_SAFE_DEFAULTS_V1
+  # Initialize shared upload parse variables for every accepted file type.
+  # This prevents PDF/XLSX/XLS paths from falling into rescue handling
+  # with undefined parsed_claims / parsed_profile variables.
+  parsed_claims = []
+  parsed_profile = {}
+  rescue_claims = []
+  rescue_profile = {}
+
   # LOSSQ_UPLOAD_ROUTE_ERROR_REDACTED_V1
   try:
     await validate_upload_file_security(file)
