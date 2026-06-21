@@ -664,6 +664,147 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
     parsed_profile["evaluation_date"] = evaluation_date
     parsed_profile["valuation_date"] = evaluation_date
 
+  # LOSSQ_FLAT_CSV_PREAMBLE_EXPOSURE_INPUTS_V1
+  # Extract exposure/rating-basis values from clean flat CSV rows that have
+  # metadata preamble above the actual table header. No customer/carrier hardcoding.
+  def first_table_value(*aliases):
+    for row in rows:
+      value = get(row, *aliases)
+      value = good_profile_value(value)
+      if value:
+        return value
+    return ""
+
+  def money_number(value):
+    raw = clean(value)
+    if not raw:
+      return 0.0
+    raw = raw.replace("$", "").replace(",", "").replace("(", "-").replace(")", "")
+    raw = re.sub(r"[^0-9.\-]+", "", raw)
+    try:
+      return float(raw or 0)
+    except Exception:
+      return 0.0
+
+  def clean_numeric_text(value):
+    raw = clean(value)
+    if not raw:
+      return ""
+    numeric = raw.replace("$", "").replace(",", "").strip()
+    return numeric
+
+  def money_display(value):
+    amount = money_number(value)
+    if amount <= 0:
+      return ""
+    return str(int(amount)) if float(amount).is_integer() else f"{amount:.2f}"
+
+  revenue_value = first_table_value(
+    "Annual Revenue",
+    "Revenue",
+    "Sales",
+    "Gross Sales",
+    "Receipts",
+    "Total Revenue",
+    "Revenue / Sales",
+  )
+  payroll_value = first_table_value("Payroll", "Annual Payroll", "Total Payroll")
+  employee_count_value = first_table_value("Employee Count", "Employees", "Number of Employees")
+  location_count_value = first_table_value("Location Count", "Locations", "Number of Locations")
+  liquor_sales_value = first_table_value("Liquor Sales", "Alcohol Sales", "Beer Wine Liquor Sales")
+
+  premium_by_policy = {}
+  for exposure_row in rows:
+    exposure_policy = get(exposure_row, "Policy Number", "Policy No", "Policy #", "policy_number", "policy")
+    exposure_premium = get(
+      exposure_row,
+      "Current Premium",
+      "Annual Premium",
+      "Premium",
+      "Written Premium",
+      "Policy Premium",
+    )
+    exposure_policy_key = clean(exposure_policy).upper()
+    exposure_premium_amount = money_number(exposure_premium)
+    if exposure_policy_key and exposure_premium_amount > 0:
+      premium_by_policy[exposure_policy_key] = exposure_premium_amount
+
+  current_premium_total = sum(premium_by_policy.values())
+
+  exposure_inputs = parsed_profile.get("exposure_inputs")
+  if not isinstance(exposure_inputs, dict):
+    exposure_inputs = {}
+
+  exposure_rows = parsed_profile.get("exposures")
+  if not isinstance(exposure_rows, list):
+    exposure_rows = []
+
+  def set_exposure(field, value, label=None, money_field=False):
+    value = clean(value)
+    if not value:
+      return
+
+    if money_field:
+      normalized = money_display(value)
+    else:
+      normalized = clean_numeric_text(value) or value
+
+    if not normalized:
+      return
+
+    parsed_profile[field] = normalized
+
+    if label:
+      exposure_inputs[label] = normalized
+
+    exposure_rows.append({
+      "field": field,
+      "label": label or field,
+      "value": normalized,
+      "source": "flat_csv_preamble_table",
+    })
+
+  set_exposure("revenue", revenue_value, "Revenue / Sales", money_field=True)
+  set_exposure("sales", revenue_value, "Sales", money_field=True)
+  set_exposure("annual_revenue", revenue_value, "Annual Revenue", money_field=True)
+  set_exposure("payroll", payroll_value, "Payroll", money_field=True)
+  set_exposure("employee_count", employee_count_value, "Employee Count")
+  set_exposure("location_count", location_count_value, "Location Count")
+  set_exposure("liquor_sales", liquor_sales_value, "Liquor Sales", money_field=True)
+
+  if current_premium_total > 0:
+    current_premium_value = str(int(current_premium_total)) if float(current_premium_total).is_integer() else f"{current_premium_total:.2f}"
+    parsed_profile["current_premium"] = current_premium_value
+    exposure_inputs["Current Premium"] = current_premium_value
+    exposure_rows.append({
+      "field": "current_premium",
+      "label": "Current Premium",
+      "value": current_premium_value,
+      "source": "flat_csv_preamble_table",
+    })
+
+  exposure_basis_parts = []
+  if parsed_profile.get("revenue"):
+    exposure_basis_parts.append(f"Revenue: {parsed_profile.get('revenue')}")
+  if parsed_profile.get("payroll"):
+    exposure_basis_parts.append(f"Payroll: {parsed_profile.get('payroll')}")
+  if parsed_profile.get("employee_count"):
+    exposure_basis_parts.append(f"Employees: {parsed_profile.get('employee_count')}")
+  if parsed_profile.get("location_count"):
+    exposure_basis_parts.append(f"Locations: {parsed_profile.get('location_count')}")
+  if parsed_profile.get("liquor_sales"):
+    exposure_basis_parts.append(f"Liquor Sales: {parsed_profile.get('liquor_sales')}")
+
+  if exposure_basis_parts:
+    parsed_profile["exposure_basis"] = " | ".join(exposure_basis_parts)
+    exposure_inputs["Exposure Basis"] = parsed_profile["exposure_basis"]
+
+  if exposure_inputs:
+    parsed_profile["exposure_inputs"] = exposure_inputs
+
+  if exposure_rows:
+    parsed_profile["exposures"] = exposure_rows
+
   policies_by_key = {}
   claims = []
 
@@ -695,6 +836,7 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
         "effective_date": row_effective,
         "expiration_date": row_expiration,
         "premium": premium,
+        "current_premium": money_display(premium),
         "claim_count": 0,
         "total_incurred": 0.0,
       }
