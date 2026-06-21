@@ -405,6 +405,15 @@ def lossq_universal_agency_from_csv(file_path):
 
 
 def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_profile=None):
+  # LOSSQ_CLEAN_STANDARD_CSV_OVERRIDE_SAFE_DEFAULTS_V1
+  # Keep CSV rescue from crashing on PDF/XLSX/XLS paths or partially parsed uploads.
+  parsed_claims = locals().get('parsed_claims', locals().get('claims', locals().get('existing_claims', [])))
+  if not isinstance(parsed_claims, list):
+    parsed_claims = []
+  parsed_profile = locals().get('parsed_profile', locals().get('profile', locals().get('existing_profile', {})))
+  if not isinstance(parsed_profile, dict):
+    parsed_profile = {}
+
   """
   Universal clean-tabular CSV reader.
   If a CSV has claim-level headers like Claim Number, Policy Number, Policy Type, Status,
