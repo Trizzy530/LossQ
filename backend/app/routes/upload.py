@@ -4541,6 +4541,157 @@ def lossq_pdf_full_claim_block_extract_before_save_v1(file_path, parsed_claims=N
 
   return parsed_claims, parsed_profile
 
+
+# LOSSQ_PDF_FINAL_CARRIER_LABEL_REPAIR_V1
+def lossq_pdf_final_carrier_label_repair_v1(file_path, parsed_profile=None, direct_profile=None):
+  """
+  Final universal PDF carrier repair.
+
+  Purpose:
+  - Runs late in the upload flow so later profile cleanup cannot overwrite the true PDF carrier.
+  - Reads carrier from generic labels only: Carrier, Writing Carrier, Insurance Carrier, Carrier Name.
+  - Does not hardcode customer, carrier, policy number, claim number, or sample file.
+  """
+  import re
+
+  parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+  direct_profile = direct_profile if isinstance(direct_profile, dict) else {}
+
+  if not str(file_path or "").lower().endswith(".pdf"):
+    return parsed_profile, direct_profile
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|")
+
+  def key(value):
+    return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+  def read_pdf_text():
+    try:
+      from pypdf import PdfReader
+      reader = PdfReader(file_path)
+      return "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception as exc:
+      print("LOSSQ_PDF_FINAL_CARRIER_LABEL_REPAIR_READ_ERROR_V1:", str(exc)[:200])
+      return ""
+
+  def looks_like_policy_or_account(value):
+    raw = clean(value).upper()
+    if not raw:
+      return True
+    if re.search(r"\b(ACCT|ACCOUNT|CUSTOMER|CLIENT)\b", raw):
+      return True
+    if re.search(r"^[A-Z0-9]{2,}(?:[-_][A-Z0-9]{2,}){2,9}$", raw) and re.search(r"\d", raw):
+      return True
+    return False
+
+  def good_carrier(value):
+    candidate = clean(value)
+    if not candidate:
+      return False
+
+    low = key(candidate)
+    bad_exact = {
+      "carrier",
+      "carriername",
+      "writingcarrier",
+      "insurancecarrier",
+      "notset",
+      "unknown",
+      "na",
+      "none",
+      "generalliability",
+      "workerscompensation",
+      "businessownerspolicy",
+      "businessownerpolicy",
+      "umbrella",
+      "liquorliability",
+      "commercialauto",
+      "garageliability",
+      "dealersopenlot",
+      "commercialproperty",
+      "property",
+      "cyberliability",
+      "professionalliability",
+      "employmentpracticesliability",
+      "directorsofficers",
+      "inlandmarine",
+      "motortruckcargo",
+    }
+
+    if low in bad_exact:
+      return False
+
+    if looks_like_policy_or_account(candidate):
+      return False
+
+    if re.search(r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}", candidate):
+      return False
+
+    if re.search(r"\$\s*\d", candidate):
+      return False
+
+    if re.search(
+      r"(?i)\b(claim\s+number|policy\s+number|line\s+of\s+business|claim\s+status|paid\s+amount|reserve\s+amount|total\s+incurred|date\s+of\s+loss|loss\s+summary|policy\s+schedule)\b",
+      candidate,
+    ):
+      return False
+
+    return bool(re.search(r"[A-Za-z]", candidate)) and len(candidate) >= 3
+
+  raw_text = read_pdf_text()
+  if not raw_text:
+    return parsed_profile, direct_profile
+
+  lines = [clean(line) for line in raw_text.splitlines() if clean(line)]
+  carrier_value = ""
+
+  # Same-line labels: Carrier - ABC, Carrier: ABC, Writing Carrier # ABC
+  for line in lines:
+    match = re.match(
+      r"(?i)^\s*(?:writing\s+carrier|insurance\s+carrier|carrier\s+name|carrier)\s*(?:[:#\-\u2013\u2014])\s*(.+?)\s*$",
+      line,
+    )
+    if match and good_carrier(match.group(1)):
+      carrier_value = clean(match.group(1))
+      break
+
+  # Label on one line, value on a following line.
+  if not carrier_value:
+    carrier_labels = {"writingcarrier", "insurancecarrier", "carriername", "carrier"}
+    for idx, line in enumerate(lines):
+      if key(line.rstrip(":#-")) in carrier_labels:
+        for j in range(idx + 1, min(idx + 4, len(lines))):
+          candidate = clean(lines[j])
+          if good_carrier(candidate):
+            carrier_value = candidate
+            break
+        if carrier_value:
+          break
+
+  if carrier_value:
+    for target in (parsed_profile, direct_profile):
+      target["carrier_name"] = carrier_value
+      target["writing_carrier"] = carrier_value
+      target["carrier"] = carrier_value
+
+      for list_key in ("policy_schedule", "policies"):
+        rows = target.get(list_key)
+        if isinstance(rows, list):
+          for row in rows:
+            if isinstance(row, dict):
+              row["carrier"] = carrier_value
+              row["carrier_name"] = carrier_value
+              row["writing_carrier"] = carrier_value
+
+  print("LOSSQ_PDF_FINAL_CARRIER_LABEL_REPAIR_V1:", {
+    "carrier_found": carrier_value,
+    "parsed_profile_carrier": parsed_profile.get("carrier_name") or parsed_profile.get("writing_carrier") or parsed_profile.get("carrier"),
+  })
+
+  return parsed_profile, direct_profile
+
+
 # LOSSQ_FINAL_UPLOAD_CLAIM_PROFILE_CLEANUP_V1
 def lossq_final_upload_claim_profile_cleanup_v1(file_path, parsed_claims=None, parsed_profile=None):
   """
@@ -13609,6 +13760,15 @@ async def save_uploaded_files(files, policy_number, db, current_user):
       parsed_claims,
       direct_profile,
     )
+
+
+    # LOSSQ_PDF_FINAL_CARRIER_LABEL_REPAIR_CALL_V1
+    parsed_profile, direct_profile = lossq_pdf_final_carrier_label_repair_v1(
+      file_path,
+      parsed_profile,
+      direct_profile,
+    )
+
 
     all_parsed_claims.extend(parsed_claims)
 
