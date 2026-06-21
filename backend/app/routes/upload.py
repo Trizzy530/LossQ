@@ -3377,6 +3377,32 @@ def lossq_parse_label_based_pdf_loss_run_v1(file_path: str):
 
 
 
+
+
+# LOSSQ_BUSINESS_NAME_LABEL_REPORT_CLEAN_V1
+def lossq_clean_business_name_label_report_v1(value):
+  import re
+
+  raw = re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+  # Remove label prefixes accidentally captured from PDFs.
+  raw = re.sub(
+    r"(?i)^\s*(?:business\s+name|named\s+insured|insured|account\s+name|applicant|entity)\s*[:#\-\/]*\s*",
+    "",
+    raw,
+  )
+
+  # Remove trailing report/document words accidentally captured from headers.
+  raw = re.sub(
+    r"(?i)\s+(?:loss\s+run\s+report|loss\s+run|report|pdf|document)\s*$",
+    "",
+    raw,
+  )
+
+  raw = raw.strip(" :-|/")
+
+  return raw
+
 # LOSSQ_PDF_SAVE_TIME_BUSINESS_NAME_REPAIR_V2
 def lossq_pdf_save_time_business_name_repair_v2(file_path, parsed_profile=None, parsed_claims=None, direct_profile=None):
   """
@@ -3569,7 +3595,7 @@ def lossq_pdf_save_time_business_name_repair_v2(file_path, parsed_profile=None, 
   for candidate in candidates:
     candidate = good_name(candidate)
     if candidate:
-      business_name = candidate
+      business_name = lossq_clean_business_name_label_report_v1(candidate)
       break
 
   current = (
@@ -3583,6 +3609,7 @@ def lossq_pdf_save_time_business_name_repair_v2(file_path, parsed_profile=None, 
     or direct_profile.get("account_name")
   )
 
+  business_name = lossq_clean_business_name_label_report_v1(business_name)
   if business_name and (is_bad_name(current) or business_name != clean(current)):
     for target in [parsed_profile, direct_profile]:
       target["business_name"] = business_name
