@@ -7768,21 +7768,71 @@ def make_doc(title: str):
 
 # LOSSQ_PDF_PARAGRAPH_HELPER_BACKWARD_COMPAT_V1
 # LOSSQ_PDF_PACKET_LANGUAGE_CLEANUP_V1
+
+# LOSSQ_PDF_PACKET_FINAL_COPY_POLISH_V1
+def lossq_pdf_humanize_claim_counts_v1(text):
+    import re
+
+    value = str(text or "")
+
+    def claim_s_repl(match):
+        count = int(match.group(1))
+        descriptor = (match.group(2) or "").strip()
+        descriptor_text = f"{descriptor} " if descriptor else ""
+
+        if count == 0:
+            return f"no {descriptor_text}claims"
+        if count == 1:
+            return f"1 {descriptor_text}claim"
+        return f"{count} {descriptor_text}claims"
+
+    value = re.sub(
+        r"\b(\d+)\s+([A-Za-z][A-Za-z\- ]*?)\s+claim\(s\)",
+        claim_s_repl,
+        value,
+    )
+
+    def zero_claims_repl(match):
+        descriptor = (match.group(1) or "").strip()
+        descriptor_text = f"{descriptor} " if descriptor else ""
+        return f"no {descriptor_text}claims"
+
+    value = re.sub(
+        r"\b0\s+([A-Za-z][A-Za-z\- ]*?)\s+claims\b",
+        zero_claims_repl,
+        value,
+    )
+
+    def one_claims_repl(match):
+        descriptor = (match.group(1) or "").strip()
+        descriptor_text = f"{descriptor} " if descriptor else ""
+        return f"1 {descriptor_text}claim"
+
+    value = re.sub(
+        r"\b1\s+([A-Za-z][A-Za-z\- ]*?)\s+claims\b",
+        one_claims_repl,
+        value,
+    )
+
+    return value
+
+
 def lossq_pdf_clean_paragraph_text_v1(text):
     import re
 
     value = str(text or "")
 
     replacements = {
-        "???": "'",
-        "???": "'",
-        "???": '"',
-        "??": '"',
-        "??\x9d": '"',
-        "???": "-",
-        "???": "-",
-        "?": "",
         "\ufeff": "",
+        "\u00a0": " ",
+        "\u00c2": "",
+        "\u00e2\u20ac\u2122": "'",
+        "\u00e2\u20ac\u02dc": "'",
+        "\u00e2\u20ac\u0153": '"',
+        "\u00e2\u20ac\ufffd": '"',
+        "\u00e2\u20ac\u009d": '"',
+        "\u00e2\u20ac\u201c": "-",
+        "\u00e2\u20ac\u201d": "-",
         "&lt;br/&gt;": "\n",
         "&lt;br /&gt;": "\n",
         "&lt;br&gt;": "\n",
@@ -7796,6 +7846,7 @@ def lossq_pdf_clean_paragraph_text_v1(text):
     for old, new in replacements.items():
         value = value.replace(old, new)
 
+    value = lossq_pdf_humanize_claim_counts_v1(value)
     value = re.sub(r"\n{3,}", "\n\n", value)
     value = re.sub(r"[ \t]{2,}", " ", value)
     return value.strip()
@@ -9312,7 +9363,33 @@ def lossq_append_pdf_list_section_v1(story, styles, title_text, items, fallback)
     story.append(p(lossq_report_list_text(items, fallback).replace("\\n", "<br/>")))
 
 
-def lossq_append_submission_readiness_detail_v1(story, styles, readiness):
+
+def lossq_pdf_default_claim_requirement_items_v1(claims):
+    items = []
+
+    for claim in (claims or [])[:12]:
+        claim_number = lossq_pdf_claim_number_text(claim)
+        line = lossq_pdf_claim_line_text(claim)
+        status = lossq_pdf_claim_status_text(claim) or ("Open" if lossq_pdf_claim_is_open(claim) else "Closed")
+        reserve = lossq_pdf_claim_reserve(claim)
+        incurred = lossq_pdf_claim_incurred(claim)
+
+        if lossq_pdf_claim_is_open(claim):
+            items.append(
+                f"{claim_number} is an open {line} claim with ${reserve:,.0f} in outstanding reserve and ${incurred:,.0f} total incurred. "
+                "Obtain current adjuster status, reserve rationale, expected resolution timing, litigation/counsel status if applicable, "
+                "and corrective-action documentation before market release."
+            )
+        else:
+            items.append(
+                f"{claim_number} is a closed {line} claim with ${incurred:,.0f} total incurred. "
+                "Confirm final paid amount, confirm no reserve remains, and document the corrective action or operational control that reduces recurrence risk."
+            )
+
+    return items
+
+
+def lossq_append_submission_readiness_detail_v1(story, styles, readiness, claims=None):
     readiness = readiness if isinstance(readiness, dict) else {}
 
     story.append(heading("To Reach 100% Readiness", styles))
@@ -9333,10 +9410,13 @@ def lossq_append_submission_readiness_detail_v1(story, styles, readiness):
 
     if isinstance(claim_items, list) and claim_items and isinstance(claim_items[0], dict):
         claim_items = [
-            f"{item.get('claim_number') or 'Claim'} ? {item.get('line_of_business') or 'Line not shown'}: "
+            f"{item.get('claim_number') or 'Claim'} - {item.get('line_of_business') or 'Line not shown'}: "
             f"{', '.join(item.get('needed') or item.get('required_actions') or [])}"
             for item in claim_items[:12]
         ]
+
+    if not claim_items:
+        claim_items = lossq_pdf_default_claim_requirement_items_v1(claims)
 
     story.append(p(lossq_report_list_text(
         claim_items,
@@ -9516,8 +9596,27 @@ def lossq_pdf_clean_pricing_sentence_v1(text, forecast):
         return value
 
     clean_sentence = f"Expected pricing pressure is {band}."
-    value = re.sub(r"Expected pricing pressure is [^.]+\\.", clean_sentence, value)
-    value = re.sub(r"Expected pricing action is [^.]+\\.", clean_sentence, value)
+    value = re.sub(r"Expected pricing pressure is [^.]+\.", clean_sentence, value)
+    value = re.sub(r"Expected pricing action is [^.]+\.", clean_sentence, value)
+
+    return value
+
+
+
+def lossq_pdf_clean_text_value_v1(value, forecast=None):
+    if isinstance(value, str):
+        if isinstance(forecast, dict):
+            value = lossq_pdf_clean_pricing_sentence_v1(value, forecast)
+        return lossq_pdf_clean_paragraph_text_v1(value)
+
+    if isinstance(value, list):
+        return [lossq_pdf_clean_text_value_v1(item, forecast) for item in value]
+
+    if isinstance(value, tuple):
+        return [lossq_pdf_clean_text_value_v1(item, forecast) for item in value]
+
+    if isinstance(value, dict):
+        return {key: lossq_pdf_clean_text_value_v1(item, forecast) for key, item in value.items()}
 
     return value
 
@@ -9525,32 +9624,33 @@ def lossq_pdf_clean_pricing_sentence_v1(text, forecast):
 def lossq_pdf_clean_packet_context_v1(ctx):
     ctx = ctx if isinstance(ctx, dict) else {}
     forecast = ctx.get("forecast") or ctx.get("premium_forecast") or {}
-    summary = ctx.get("summary") or ctx.get("intelligence") or {}
 
-    if isinstance(summary, dict):
-        band = lossq_pdf_pricing_band_v1(forecast)
+    band = lossq_pdf_pricing_band_v1(forecast)
+    pricing_keys = (
+        "expected_premium_impact",
+        "expected_pricing_pressure",
+        "expected_pricing_action",
+        "pricing_pressure",
+        "pricing_action",
+        "premium_impact",
+    )
+
+    for section_key in ("summary", "intelligence"):
+        section = ctx.get(section_key) or {}
+        if not isinstance(section, dict):
+            continue
+
         if band:
-            for key in (
-                "expected_premium_impact",
-                "expected_pricing_pressure",
-                "expected_pricing_action",
-                "pricing_pressure",
-                "pricing_action",
-                "premium_impact",
-            ):
-                summary[key] = band
+            for key in pricing_keys:
+                section[key] = band
 
-        for key in (
-            "renewal_summary",
-            "executive_summary",
-            "summary",
-            "broker_recommendation",
-            "premium_summary",
-        ):
-            if isinstance(summary.get(key), str):
-                summary[key] = lossq_pdf_clean_pricing_sentence_v1(summary.get(key), forecast)
+        ctx[section_key] = lossq_pdf_clean_text_value_v1(section, forecast)
 
-    ctx["summary"] = summary
+    for section_key in ("forecast", "premium_forecast", "carrier_match", "appetite", "carrier_appetite"):
+        section = ctx.get(section_key)
+        if isinstance(section, dict):
+            ctx[section_key] = lossq_pdf_clean_text_value_v1(section, forecast)
+
     return ctx
 
 
@@ -9724,7 +9824,7 @@ def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=Non
     readiness_items = readiness.get("missing_items") or readiness.get("required_items") or readiness.get("recommended_actions") or []
     if readiness_items:
         story.append(p(lossq_report_list_text(readiness_items, "").replace("\\n", "<br/>")))
-    lossq_append_submission_readiness_detail_v1(story, styles, readiness)
+    lossq_append_submission_readiness_detail_v1(story, styles, readiness, claims)
 
     story.append(heading("Top Claim Detail", styles))
     try:
@@ -10279,8 +10379,10 @@ def build_executive_pdf_response(ctx, policy_number=None, db=None, current_user=
     ], widths=[1.7 * inch] * 4, font_size=7, header_color=PURPLE))
     story.append(p(carrier_match.get("carrier_match_summary") or appetite.get("placement_summary") or "No carrier match summary available.", styles))
 
-    story.append(heading("Policy Schedule", styles))
-    story.append(table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.28 * inch, 1.55 * inch, 2.15 * inch, 0.82 * inch, 0.82 * inch], font_size=6.4, header_color=NAVY))
+    story.append(KeepTogether([
+        heading("Policy Schedule", styles),
+        table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.28 * inch, 1.55 * inch, 2.15 * inch, 0.82 * inch, 0.82 * inch], font_size=6.4, header_color=NAVY),
+    ]))
 
     story.append(PageBreak())
     story.append(heading("Top Claims by Total Incurred", styles))
@@ -10526,8 +10628,10 @@ def build_carrier_packet_pdf_response(ctx, policy_number=None, db=None, current_
     story.append(heading("Broker Marketing Narrative", styles))
     story.append(p(summary.get("broker_recommendation") or summary.get("renewal_summary") or f"This submission presents {insured} for carrier underwriting review based on {metrics['total_claims']} account-specific claim(s).", styles))
 
-    story.append(heading("Policy Schedule", styles))
-    story.append(table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.28 * inch, 1.55 * inch, 2.15 * inch, 0.82 * inch, 0.82 * inch], font_size=6.4, header_color=NAVY))
+    story.append(KeepTogether([
+        heading("Policy Schedule", styles),
+        table(policy_schedule_table(profile, ctx["policy_numbers_used"]), widths=[1.28 * inch, 1.55 * inch, 2.15 * inch, 0.82 * inch, 0.82 * inch], font_size=6.4, header_color=NAVY),
+    ]))
 
     story.append(heading("Loss Summary", styles))
     story.append(table([
@@ -10556,9 +10660,9 @@ def build_carrier_packet_pdf_response(ctx, policy_number=None, db=None, current_
     email_text = (
         f"Subject: Renewal Submission - {insured}\n\n"
         f"Please find attached the renewal submission package for {insured}. "
-        f"LossQ reviewed {metrics['total_claims']} account-specific claim(s), "
-        f"{metrics['open_claims']} open claim(s), total incurred losses of {dollars(metrics['total_incurred'])}, "
-        f"reserves of {dollars(metrics['total_reserve'])}, and {metrics['litigation_claims']} litigation-related claim(s). "
+        f"LossQ reviewed {lossq_pdf_humanize_claim_counts_v1(str(metrics['total_claims']) + ' account-specific claim(s)')}, "
+        f"{lossq_pdf_humanize_claim_counts_v1(str(metrics['open_claims']) + ' open claim(s)')}, total incurred losses of {dollars(metrics['total_incurred'])}, "
+        f"reserves of {dollars(metrics['total_reserve'])}, and {lossq_pdf_humanize_claim_counts_v1(str(metrics['litigation_claims']) + ' litigation-related claim(s)')}. "
         f"The modeled renewal score is {renewal_score}/100 and the account is rated {risk_level}. "
         f"Please advise if additional loss-control, vehicle, payroll, operations, reserve, or litigation information is needed for quoting consideration.\n\n"
         f"Prepared by: {creator}"
