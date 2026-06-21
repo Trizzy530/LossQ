@@ -9017,6 +9017,326 @@ def lossq_report_market_rows(appetite, carrier_match):
     return rows
 
 
+# LOSSQ_REPORT_PDF_CHARTS_AND_READINESS_V1
+def lossq_pdf_chart_num(value):
+    import re
+
+    if isinstance(value, (int, float)):
+        return float(value or 0)
+
+    raw = str(value or "").strip()
+    if not raw:
+        return 0.0
+
+    neg = raw.startswith("(") and raw.endswith(")")
+    raw = raw.replace("$", "").replace(",", "").replace("(", "").replace(")", "")
+    raw = re.sub(r"[^0-9.\-]+", "", raw)
+
+    try:
+        amount = float(raw or 0)
+        return -amount if neg else amount
+    except Exception:
+        return 0.0
+
+
+def lossq_pdf_claim_any(claim, *keys):
+    if isinstance(claim, dict):
+        for key in keys:
+            value = claim.get(key)
+            if value not in (None, ""):
+                return value
+        return ""
+
+    for key in keys:
+        value = getattr(claim, key, None)
+        if value not in (None, ""):
+            return value
+
+    return ""
+
+
+def lossq_pdf_claim_status_text(claim):
+    return str(lossq_pdf_claim_any(claim, "status", "claim_status", "claimStatus") or "").strip()
+
+
+def lossq_pdf_claim_is_open(claim):
+    status = lossq_pdf_claim_status_text(claim).lower()
+    return status in {"open", "opened", "reopened", "pending", "reported"}
+
+
+def lossq_pdf_claim_number_text(claim):
+    return str(lossq_pdf_claim_any(claim, "claim_number", "claimNumber", "claim_no", "claim_id") or "Unnumbered Claim").strip()
+
+
+def lossq_pdf_claim_line_text(claim):
+    return str(
+        lossq_pdf_claim_any(
+            claim,
+            "line_of_business",
+            "lineOfBusiness",
+            "claim_type",
+            "coverage",
+            "policy_type",
+            "lob",
+        )
+        or "Unspecified"
+    ).strip()
+
+
+def lossq_pdf_claim_paid(claim):
+    return lossq_pdf_chart_num(lossq_pdf_claim_any(claim, "paid_amount", "paid", "total_paid", "paidAmount"))
+
+
+def lossq_pdf_claim_reserve(claim):
+    return lossq_pdf_chart_num(lossq_pdf_claim_any(claim, "reserve_amount", "reserve", "total_reserve", "outstanding_reserve"))
+
+
+def lossq_pdf_claim_incurred(claim):
+    incurred = lossq_pdf_chart_num(
+        lossq_pdf_claim_any(claim, "total_incurred", "incurred", "gross_incurred", "net_incurred", "loss_amount")
+    )
+    if incurred <= 0:
+        incurred = lossq_pdf_claim_paid(claim) + lossq_pdf_claim_reserve(claim)
+    return incurred
+
+
+class LossQReportBarChart(Flowable):
+    def __init__(self, title_text, rows, width=6.65 * inch, height=1.85 * inch, value_prefix="$"):
+        Flowable.__init__(self)
+        self.title_text = str(title_text or "Chart")
+        self.rows = [(str(label or "-")[:34], float(value or 0)) for label, value in (rows or []) if float(value or 0) > 0]
+        self.width = width
+        self.height = height
+        self.value_prefix = value_prefix
+
+    def wrap(self, availWidth, availHeight):
+        return min(self.width, availWidth), self.height
+
+    def draw(self):
+        c = self.canv
+        W = self.width
+        H = self.height
+
+        c.saveState()
+        c.setStrokeColor(colors.HexColor("#D7DEE8"))
+        c.setFillColor(colors.HexColor("#F8FAFC"))
+        c.roundRect(0, 0, W, H, 8, stroke=1, fill=1)
+
+        c.setFillColor(colors.HexColor("#0F172A"))
+        c.setFont("Helvetica-Bold", 8.5)
+        c.drawString(0.16 * inch, H - 0.22 * inch, self.title_text[:75])
+
+        if not self.rows:
+            c.setFont("Helvetica", 7.2)
+            c.setFillColor(colors.HexColor("#64748B"))
+            c.drawString(0.16 * inch, H / 2, "No chartable values available.")
+            c.restoreState()
+            return
+
+        rows = self.rows[:8]
+        max_value = max([value for _, value in rows] + [1])
+        left = 1.72 * inch
+        right = 0.55 * inch
+        top = 0.42 * inch
+        bottom = 0.18 * inch
+        usable_w = max(1.0 * inch, W - left - right)
+        bar_h = max(0.10 * inch, (H - top - bottom) / max(len(rows), 1) * 0.48)
+        gap = max(0.045 * inch, (H - top - bottom) / max(len(rows), 1) * 0.52)
+
+        y = H - top - bar_h
+        for label, value in rows:
+            c.setFillColor(colors.HexColor("#334155"))
+            c.setFont("Helvetica", 6.1)
+            c.drawRightString(left - 0.08 * inch, y + 0.03 * inch, label[:28])
+
+            bar_w = max(0.02 * inch, usable_w * (value / max_value))
+            c.setFillColor(colors.HexColor("#2563EB"))
+            c.roundRect(left, y, bar_w, bar_h, 3, stroke=0, fill=1)
+
+            c.setFillColor(colors.HexColor("#0F172A"))
+            c.setFont("Helvetica-Bold", 6.1)
+            value_text = f"{self.value_prefix}{value:,.0f}" if self.value_prefix else f"{value:,.0f}"
+            c.drawString(left + bar_w + 0.05 * inch, y + 0.03 * inch, value_text[:18])
+            y -= (bar_h + gap)
+
+        c.restoreState()
+
+
+def lossq_chart_claim_status_rows(claims):
+    open_count = sum(1 for claim in claims or [] if lossq_pdf_claim_is_open(claim))
+    closed_count = max(0, len(claims or []) - open_count)
+    return [("Open", open_count), ("Closed", closed_count)]
+
+
+def lossq_chart_paid_reserve_rows(claims):
+    paid = sum(lossq_pdf_claim_paid(claim) for claim in claims or [])
+    reserve = sum(lossq_pdf_claim_reserve(claim) for claim in claims or [])
+    return [("Paid", paid), ("Reserve", reserve)]
+
+
+def lossq_chart_incurred_by_line_rows(claims):
+    by_line = {}
+    for claim in claims or []:
+        line = lossq_pdf_claim_line_text(claim)
+        by_line[line] = by_line.get(line, 0) + lossq_pdf_claim_incurred(claim)
+    return sorted(by_line.items(), key=lambda item: item[1], reverse=True)[:8]
+
+
+def lossq_chart_top_claim_rows(claims):
+    rows = []
+    for claim in claims or []:
+        rows.append((lossq_pdf_claim_number_text(claim), lossq_pdf_claim_incurred(claim)))
+    return sorted(rows, key=lambda item: item[1], reverse=True)[:8]
+
+
+def lossq_chart_readiness_deduction_rows(readiness):
+    import re
+
+    readiness = readiness if isinstance(readiness, dict) else {}
+    raw_items = (
+        readiness.get("score_deductions")
+        or readiness.get("readiness_deductions")
+        or readiness.get("deductions")
+        or []
+    )
+
+    rows = []
+    for item in raw_items:
+        text = str(item or "").strip()
+        if not text:
+            continue
+
+        match = re.search(r"-\s*(\d+)", text)
+        if not match:
+            match = re.search(r"(\d+)", text)
+
+        points = float(match.group(1)) if match else 0
+        label = re.sub(r"^-?\s*\d+\s*[:\-]?\s*", "", text).strip()
+        label = label.split(" Fix: ")[0].strip() or "Readiness deduction"
+
+        if points > 0:
+            rows.append((label, points))
+
+    return rows[:8]
+
+
+def lossq_append_pdf_charts_v1(story, styles, claims, readiness):
+    claims = claims or []
+    readiness = readiness if isinstance(readiness, dict) else {}
+
+    story.append(heading("Underwriting Charts", styles))
+    story.append(p(
+        "These charts convert the account's loss history into an underwriter-friendly visual review of status, "
+        "severity, reserve development, line concentration, and submission readiness."
+    ))
+
+    chart_blocks = [
+        LossQReportBarChart("Open vs. Closed Claims", lossq_chart_claim_status_rows(claims), value_prefix=""),
+        LossQReportBarChart("Paid vs. Outstanding Reserve", lossq_chart_paid_reserve_rows(claims), value_prefix="$"),
+        LossQReportBarChart("Total Incurred by Line of Business", lossq_chart_incurred_by_line_rows(claims), value_prefix="$"),
+        LossQReportBarChart("Top Claims by Total Incurred", lossq_chart_top_claim_rows(claims), value_prefix="$"),
+        LossQReportBarChart("Submission Readiness Deductions", lossq_chart_readiness_deduction_rows(readiness), value_prefix=""),
+    ]
+
+    for chart in chart_blocks:
+        story.append(KeepTogether([chart, Spacer(1, 0.08 * inch)]))
+
+
+def lossq_pdf_list_items_v1(value):
+    if isinstance(value, list):
+        return [str(item).strip() for item in value if str(item or "").strip()]
+    if isinstance(value, tuple):
+        return [str(item).strip() for item in value if str(item or "").strip()]
+    if isinstance(value, str) and value.strip():
+        return [item.strip(" -") for item in value.replace("\r", "\n").split("\n") if item.strip(" -")]
+    return []
+
+
+def lossq_append_pdf_list_section_v1(story, styles, title_text, items, fallback):
+    items = lossq_pdf_list_items_v1(items)
+    if not items:
+        items = [fallback]
+    story.append(heading(title_text, styles))
+    story.append(p(lossq_report_list_text(items, fallback).replace("\\n", "<br/>")))
+
+
+def lossq_append_submission_readiness_detail_v1(story, styles, readiness):
+    readiness = readiness if isinstance(readiness, dict) else {}
+
+    story.append(heading("To Reach 100% Readiness", styles))
+    story.append(p(lossq_report_list_text(
+        readiness.get("to_reach_100")
+        or readiness.get("recommended_actions")
+        or readiness.get("required_actions"),
+        "No specific 100% readiness path was returned. Confirm current loss runs, complete exposure inputs, and add open-claim narratives before release."
+    ).replace("\\n", "<br/>")))
+
+    story.append(heading("Claim-Level Underwriter Requirements", styles))
+    claim_items = (
+        readiness.get("claim_readiness_items")
+        or readiness.get("claim_underwriter_requirements")
+        or readiness.get("claim_underwriter_reviews")
+        or []
+    )
+
+    if isinstance(claim_items, list) and claim_items and isinstance(claim_items[0], dict):
+        claim_items = [
+            f"{item.get('claim_number') or 'Claim'} ? {item.get('line_of_business') or 'Line not shown'}: "
+            f"{', '.join(item.get('needed') or item.get('required_actions') or [])}"
+            for item in claim_items[:12]
+        ]
+
+    story.append(p(lossq_report_list_text(
+        claim_items,
+        "No claim-level underwriter requirements were returned."
+    ).replace("\\n", "<br/>")))
+
+    story.append(heading("Score Deductions", styles))
+    story.append(p(lossq_report_list_text(
+        readiness.get("score_deductions")
+        or readiness.get("readiness_deductions")
+        or readiness.get("deductions"),
+        "No score deductions were returned."
+    ).replace("\\n", "<br/>")))
+
+    story.append(heading("Required Documents", styles))
+    story.append(p(lossq_report_list_text(
+        readiness.get("required_documents")
+        or readiness.get("required_items"),
+        "Currently valued loss runs, policy schedule, exposure inputs, claim narratives, reserve status, and corrective-action documentation."
+    ).replace("\\n", "<br/>")))
+
+
+def lossq_append_full_exposure_inputs_v1(story, styles, profile):
+    profile = profile if isinstance(profile, dict) else {}
+
+    extra_rows = [
+        ["Additional Exposure Field", "Value"],
+        ["Primary State", lossq_report_display(profile.get("state") or profile.get("primary_state"))],
+        ["Class Code(s)", lossq_report_display(profile.get("class_code") or profile.get("class_codes"))],
+        ["Square Footage", lossq_report_display(profile.get("square_footage") or profile.get("sq_ft"))],
+        ["Unit Count", lossq_report_display(profile.get("unit_count"))],
+        ["Umbrella Limit", lossq_report_money_display(profile.get("umbrella_limit") or profile.get("excess_limit"))],
+        ["Cargo Limit", lossq_report_money_display(profile.get("cargo_limit"))],
+        ["Cyber Revenue", lossq_report_money_display(profile.get("cyber_revenue"))],
+        ["Professional Revenue", lossq_report_money_display(profile.get("professional_revenue"))],
+        ["Exposure Change %", lossq_report_percent_display(profile.get("exposure_change_percent"))],
+        ["Operations / Business Description", lossq_report_display(profile.get("operations") or profile.get("business_description"))],
+        ["Exposure Basis", lossq_report_display(profile.get("exposure_basis"))],
+        ["Underwriter Notes", lossq_report_display(profile.get("underwriter_notes"))],
+    ]
+
+    useful = [row for row in extra_rows[1:] if row[1] not in ("-", "", None)]
+    if useful:
+        story.append(Spacer(1, 0.08 * inch))
+        story.append(table([extra_rows[0]] + useful, widths=[1.95 * inch, 4.75 * inch], header=True, font_size=7.0, header_color=PURPLE))
+
+    story.append(p(
+        "Exposure Commentary: LossQ considered the submitted loss history alongside available exposure inputs. "
+        "Underwriters should compare claim frequency and severity against revenue, payroll, employee count, vehicle count, locations, limits, premium, and other rating basis fields where available. "
+        "Any missing exposure fields should be completed before broad market release."
+    ))
+
 def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=None, report_kind="executive", db=None, current_user=None):
     """
     Makes Executive Reports and Carrier Packets mirror the dashboard intelligence.
@@ -9103,6 +9423,8 @@ def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=Non
         ["Experience Mod", lossq_report_display(profile.get("experience_mod") or profile.get("mod"))],
     ]
     story.append(table(exposure_rows, widths=[1.95 * inch, 4.75 * inch], header=True, font_size=7.0, header_color=PURPLE))
+    lossq_append_full_exposure_inputs_v1(story, styles, profile)
+    lossq_append_pdf_charts_v1(story, styles, claims, readiness)
 
     story.append(heading("Policy Schedule", styles))
     try:
@@ -9185,6 +9507,7 @@ def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=Non
     readiness_items = readiness.get("missing_items") or readiness.get("required_items") or readiness.get("recommended_actions") or []
     if readiness_items:
         story.append(p(lossq_report_list_text(readiness_items, "").replace("\\n", "<br/>")))
+    lossq_append_submission_readiness_detail_v1(story, styles, readiness)
 
     story.append(heading("Top Claim Detail", styles))
     try:
