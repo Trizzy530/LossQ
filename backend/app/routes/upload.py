@@ -5675,6 +5675,8 @@ def lossq_final_profile_data_business_name_repair_v3(file_path, profile_data=Non
 
   profile_data = profile_data if isinstance(profile_data, dict) else {}
   direct_profile = direct_profile if isinstance(direct_profile, dict) else {}
+  # LOSSQ_FINAL_EXCEL_PROFILE_REPAIR_USE_CLAIM_FIELDS_V2
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
 
   def clean(value):
     return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
@@ -5887,7 +5889,7 @@ def lossq_final_profile_data_business_name_repair_v3(file_path, profile_data=Non
 
 
 # LOSSQ_FINAL_EXCEL_PROFILE_REPAIR_V1
-def lossq_final_excel_profile_repair_v1(file_path, profile_data=None, direct_profile=None):
+def lossq_final_excel_profile_repair_v1(file_path, profile_data=None, direct_profile=None, parsed_claims=None):
   """
   Final Excel profile repair after extract_profile_data().
 
@@ -6014,7 +6016,7 @@ def lossq_final_excel_profile_repair_v1(file_path, profile_data=None, direct_pro
     # Excel serial number fallback.
     if re.fullmatch(r"\d{5}", raw):
       try:
-        from datetime import datetime, timedelta
+        from datetime import timedelta
         serial = int(raw)
         dt = datetime(1899, 12, 30) + timedelta(days=serial)
         if 1990 <= dt.year <= 2100:
@@ -6141,6 +6143,19 @@ def lossq_final_excel_profile_repair_v1(file_path, profile_data=None, direct_pro
           business_name = candidate
           break
 
+  # LOSSQ_FINAL_EXCEL_PROFILE_REPAIR_CLAIM_BUSINESS_FALLBACK_V2
+  if not business_name:
+    for claim in parsed_claims:
+      if not isinstance(claim, dict):
+        continue
+      for name_key in ["business_name", "named_insured", "insured_name", "account_name", "insured"]:
+        candidate = good_business(claim.get(name_key))
+        if candidate:
+          business_name = candidate
+          break
+      if business_name:
+        break
+
   # Filename fallback, cleaned.
   if not business_name:
     try:
@@ -6183,12 +6198,57 @@ def lossq_final_excel_profile_repair_v1(file_path, profile_data=None, direct_pro
     "As-Of Date",
   ]))
 
+  # LOSSQ_FINAL_EXCEL_PROFILE_REPAIR_CLAIM_DATE_FALLBACK_V2
+  def first_claim_date(date_keys):
+    for claim in parsed_claims:
+      if not isinstance(claim, dict):
+        continue
+      for date_key in date_keys:
+        value = normalize_date(claim.get(date_key))
+        if value:
+          return value
+    return ""
+
+  if not effective_date:
+    effective_date = first_claim_date([
+      "effective_date",
+      "policy_effective_date",
+      "policy_effective",
+      "eff_date",
+      "effective",
+    ])
+
+  if not expiration_date:
+    expiration_date = first_claim_date([
+      "expiration_date",
+      "policy_expiration_date",
+      "policy_expiration",
+      "exp_date",
+      "expiration",
+    ])
+
+  if not evaluation_date:
+    evaluation_date = first_claim_date([
+      "evaluation_date",
+      "valuation_date",
+      "loss_run_date",
+      "report_date",
+      "as_of_date",
+      "as-of_date",
+    ])
+
   current_business = (
     profile_data.get("business_name")
     or profile_data.get("named_insured")
     or profile_data.get("insured_name")
     or profile_data.get("account_name")
   )
+
+  # LOSSQ_FINAL_EXCEL_PROFILE_REPAIR_CLEAN_CURRENT_BUSINESS_V2
+  if not business_name:
+    current_cleaned = good_business(current_business)
+    if current_cleaned:
+      business_name = current_cleaned
 
   if business_name and (is_bad_business(current_business) or clean_business(current_business) != business_name):
     for target in [profile_data, direct_profile]:
@@ -12336,10 +12396,12 @@ async def save_uploaded_files(files, policy_number, db, current_user):
   )
 
   # LOSSQ_FINAL_EXCEL_PROFILE_REPAIR_CALL_V1
+  # LOSSQ_FINAL_EXCEL_PROFILE_REPAIR_CALL_WITH_CLAIMS_V2
   profile_data, direct_profile = lossq_final_excel_profile_repair_v1(
     file_path,
     profile_data,
     direct_profile,
+    locals().get("all_parsed_claims", locals().get("parsed_claims", [])),
   )
 
   if not profile_data.get("policy_number"):
