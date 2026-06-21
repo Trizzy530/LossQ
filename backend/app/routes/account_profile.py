@@ -350,6 +350,33 @@ def lossq_account_profile_to_dict(profile):
     policies = parse_json_value(getattr(profile, "policies", None), [])
     validation = parse_json_value(getattr(profile, "validation", None), {})
 
+    # LOSSQ_PROFILE_TO_DICT_EXPOSURE_BASIS_FALLBACK_V1
+    exposure_basis_value = clean_value(getattr(profile, "exposure_basis", ""))
+
+    def lossq_extract_from_exposure_basis_v1(label: str) -> str:
+        if not exposure_basis_value:
+            return ""
+        match = re.search(rf"{re.escape(label)}\s*:\s*([^|]+)", exposure_basis_value, re.IGNORECASE)
+        if not match:
+            return ""
+        return clean_value(match.group(1)).replace(",", "")
+
+    location_count_value = (
+        clean_value(getattr(profile, "location_count", ""))
+        or clean_value(getattr(profile, "locations", ""))
+        or clean_value(getattr(profile, "locationCount", ""))
+        or lossq_extract_from_exposure_basis_v1("Locations")
+        or lossq_extract_from_exposure_basis_v1("Location Count")
+    )
+
+    liquor_sales_value = (
+        clean_value(getattr(profile, "liquor_sales", ""))
+        or clean_value(getattr(profile, "liquorSales", ""))
+        or clean_value(getattr(profile, "alcohol_sales", ""))
+        or lossq_extract_from_exposure_basis_v1("Liquor Sales")
+        or lossq_extract_from_exposure_basis_v1("Alcohol Sales")
+    )
+
     return {
         "id": getattr(profile, "id", None),
         "business_name": clean_value(getattr(profile, "business_name", "")),
@@ -383,12 +410,12 @@ def lossq_account_profile_to_dict(profile):
         "building_value": clean_value(getattr(profile, "building_value", "")),
         "contents_value": clean_value(getattr(profile, "contents_value", "")),
         "square_footage": clean_value(getattr(profile, "square_footage", "")),
-        "location_count": clean_value(getattr(profile, "location_count", "")),
-        "locations": clean_value(getattr(profile, "locations", "")),
-        "locationCount": clean_value(getattr(profile, "locationCount", "")),
-        "liquor_sales": clean_value(getattr(profile, "liquor_sales", "")),
-        "liquorSales": clean_value(getattr(profile, "liquorSales", "")),
-        "alcohol_sales": clean_value(getattr(profile, "alcohol_sales", "")),
+        "location_count": location_count_value,
+        "locations": location_count_value,
+        "locationCount": location_count_value,
+        "liquor_sales": liquor_sales_value,
+        "liquorSales": liquor_sales_value,
+        "alcohol_sales": liquor_sales_value,
         "unit_count": clean_value(getattr(profile, "unit_count", "")),
         "cargo_limit": clean_value(getattr(profile, "cargo_limit", "")),
         "umbrella_limit": clean_value(getattr(profile, "umbrella_limit", "")),
@@ -397,7 +424,7 @@ def lossq_account_profile_to_dict(profile):
         "exposure_change_percent": clean_value(getattr(profile, "exposure_change_percent", "")),
         "cyber_revenue": clean_value(getattr(profile, "cyber_revenue", "")),
         "professional_revenue": clean_value(getattr(profile, "professional_revenue", "")),
-        "exposure_basis": clean_value(getattr(profile, "exposure_basis", "")),
+        "exposure_basis": exposure_basis_value,
         "underwriter_notes": clean_value(getattr(profile, "underwriter_notes", "")),
         "policies": normalize_policy_list(policies),
         "validation": validation if isinstance(validation, dict) else {},
