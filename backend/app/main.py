@@ -26,7 +26,7 @@ from app.routes import (
     audit_logs,
     billing,
     platform_admin,
-    humanized,)
+    )
 
 from app.models.user import User
 from app.models.organization import Organization
