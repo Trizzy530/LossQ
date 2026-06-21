@@ -8423,6 +8423,38 @@ const modelChartNarrative =
        <h2 className="text-2xl md:text-3xl font-bold mb-5">Upload & Report Center</h2>
 
        <div className="flex flex-col sm:flex-row sm:flex-wrap gap-4 items-stretch sm:items-center">
+        {/* LOSSQ_UPLOAD_ACCEPTED_DOCUMENTS_GUIDANCE_V1 */}
+        <div className="mb-5 rounded-2xl border border-blue-400/20 bg-blue-500/10 p-5 text-sm text-slate-200">
+         <div className="mb-3 flex items-center gap-2">
+          <span className="rounded-full bg-blue-500/20 px-3 py-1 text-xs font-black uppercase tracking-[0.2em] text-blue-200">
+           Accepted Documents
+          </span>
+          <span className="text-xs text-slate-400">
+           LossQ reads common commercial insurance loss-run formats.
+          </span>
+         </div>
+         <div className="grid gap-4 md:grid-cols-3">
+          <div>
+           <p className="font-bold text-white">File types</p>
+           <p className="mt-1 leading-6 text-slate-300">
+            PDF, Excel, and CSV files: .pdf, .xlsx, .xls, .csv
+           </p>
+          </div>
+          <div>
+           <p className="font-bold text-white">Document types</p>
+           <p className="mt-1 leading-6 text-slate-300">
+            Carrier loss runs, broker worksheets, claim-detail worksheets, policy schedules, and no-loss / no-claim loss runs.
+           </p>
+          </div>
+          <div>
+           <p className="font-bold text-white">Best results include</p>
+           <p className="mt-1 leading-6 text-slate-300">
+            Named insured, carrier, policy number, policy dates, claim number, line of business, claim status, paid, reserve, and total incurred.
+           </p>
+          </div>
+         </div>
+        </div>
+
         <input
          type="file"
          multiple
