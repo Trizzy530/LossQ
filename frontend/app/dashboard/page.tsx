@@ -1874,6 +1874,46 @@ function lossqLooksLikePolicyNumber(value: any): boolean {
  return /\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b/.test(text);
 }
 
+
+
+// LOSSQ_FRONTEND_POLICY_FILTER_KEYS_ONLY_V1
+function lossqPolicyFilterKeysOnly(...values: any[]): string[] {
+ const seen = new Set<string>();
+ const output: string[] = [];
+
+ const pushValue = (value: any) => {
+  if (value === null || value === undefined) return;
+
+  if (Array.isArray(value)) {
+   value.forEach(pushValue);
+   return;
+  }
+
+  const raw = String(value || "").trim();
+  if (!raw) return;
+
+  // Support comma-separated policy_numbers from API/cache.
+  raw.split(",").forEach((part) => {
+   const normalized = normalizePolicyNumber(part);
+   if (!normalized) return;
+
+   // Account/customer/client identifiers must never be sent as policy_numbers.
+   if (lossqLooksLikeAccountIdentifier(normalized)) return;
+
+   // Only send real policy-looking values.
+   if (!lossqLooksLikePolicyNumber(normalized)) return;
+
+   if (!seen.has(normalized)) {
+    seen.add(normalized);
+    output.push(normalized);
+   }
+  });
+ };
+
+ values.forEach(pushValue);
+ return output;
+}
+
 function lossqCleanAccountNumber(value: any): string {
  // LOSSQ_ACCOUNT_NUMBER_DISPLAY_CLEANER_V3
  // Account/customer/client numbers may contain ACCT, ACCOUNT, CUSTOMER, CLIENT,
@@ -3917,16 +3957,18 @@ if (activeProfile?.policy_number) {
    // LOSSQ_SELECTED_PROFILE_ONLY_CLAIM_RELOAD_V1
    // Use the active loaded profile only. Do not merge old profile/ref/cached policy lists.
    const selectedClaimsProfile: any = activeProfile || {};
-   const claimReloadKeys: string[] = [
+   // LOSSQ_FRONTEND_CLAIMS_POLICY_NUMBERS_ONLY_V1
+  // Account/customer numbers stay in Account Snapshot only.
+  // They must not be sent to /claims as policy_numbers.
+  const claimReloadKeys: string[] = lossqPolicyFilterKeysOnly(
     policyNumber,
     requestedPolicyNumber,
     selectedClaimsProfile?.policy_number,
-    selectedClaimsProfile?.account_number,
-    selectedClaimsProfile?.customer_number,
-   ...(selectedClaimsProfile?.policies || []).map((p: any) => p?.policy_number),
-   ]
-   .map((item: any) => normalizePolicyNumber(item))
-   .filter((item: string) => Boolean(item));
+    selectedClaimsProfile?.main_policy,
+    selectedClaimsProfile?.main_policy_number,
+    selectedClaimsProfile?.policy_numbers,
+   ...(selectedClaimsProfile?.policies || []).map((p: any) => p?.policy_number)
+   );
 
    const uniqueClaimReloadKeys: string[] = Array.from(new Set<string>(claimReloadKeys));
    const policySet = new Set<string>(uniqueClaimReloadKeys);
