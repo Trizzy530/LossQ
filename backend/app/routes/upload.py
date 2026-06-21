@@ -407,7 +407,9 @@ def lossq_universal_agency_from_csv(file_path):
 def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_profile=None):
   # LOSSQ_CLEAN_STANDARD_CSV_OVERRIDE_SAFE_DEFAULTS_V1
   # LOSSQ_FLAT_CSV_PROFILE_STATUS_ZERO_CLAIM_POLICY_V1
+  # LOSSQ_FLAT_CSV_PREAMBLE_TABLE_HEADER_V2
   # Universal flat CSV repair:
+  # - Handles metadata preamble rows before the real CSV table header.
   # - Uses Account Name / Business Name as insured instead of filename fallback.
   # - Preserves every policy row, including zero-claim Umbrella / Excess rows.
   # - Saves Claim Status into both status and claim_status.
@@ -421,16 +423,16 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
   if not str(file_path or "").lower().endswith(".csv"):
     return parsed_claims, parsed_profile
 
-  rows = []
+  raw_rows = []
   for encoding in ("utf-8-sig", "utf-8", "latin-1"):
     try:
       with open(file_path, "r", newline="", encoding=encoding, errors="ignore") as f:
-        rows = list(csv.DictReader(f))
+        raw_rows = list(csv.reader(f))
       break
     except Exception:
-      rows = []
+      raw_rows = []
 
-  if not rows:
+  if not raw_rows:
     return parsed_claims, parsed_profile
 
   def clean(value):
@@ -438,6 +440,69 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
 
   def key(value):
     return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+  def good_profile_value(value):
+    value = clean(value)
+    bad = {
+      "",
+      "-",
+      "n/a",
+      "na",
+      "none",
+      "unknown",
+      "account",
+      "account number",
+      "account no",
+      "policy",
+      "policy number",
+      "policy no",
+      "claim",
+      "claim number",
+      "claim no",
+      "business name",
+      "named insured",
+      "insured",
+      "carrier",
+      "writing carrier",
+    }
+    return value if value.lower() not in bad else ""
+
+  # Find the real table header row. Some carrier CSVs have preamble rows first:
+  # Account Name, Account Number, Carrier, Policy Period, Valuation Date, then a blank row,
+  # then Business Name, Account Number, Policy Number, Claim Number, Claim Status, etc.
+  header_index = None
+  for idx, row in enumerate(raw_rows):
+    row_keys = {key(cell) for cell in row}
+    has_policy = bool({"policynumber", "policyno", "policy"} & row_keys)
+    has_claim_or_policy_type = bool({"claimnumber", "claimno", "claim", "policytype", "lineofbusiness", "coverage"} & row_keys)
+    has_business = bool({"businessname", "accountname", "namedinsured", "insured"} & row_keys)
+    if has_policy and (has_claim_or_policy_type or has_business):
+      header_index = idx
+      break
+
+  if header_index is None:
+    return parsed_claims, parsed_profile
+
+  preamble = {}
+  for row in raw_rows[:header_index]:
+    nonempty = [clean(cell) for cell in row if clean(cell)]
+    if len(nonempty) >= 2:
+      preamble[key(nonempty[0])] = nonempty[1]
+
+  headers = [clean(cell) for cell in raw_rows[header_index]]
+  rows = []
+  for raw in raw_rows[header_index + 1:]:
+    if not any(clean(cell) for cell in raw):
+      continue
+    row = {}
+    for i, header in enumerate(headers):
+      if not header:
+        continue
+      row[header] = raw[i] if i < len(raw) else ""
+    rows.append(row)
+
+  if not rows:
+    return parsed_claims, parsed_profile
 
   def get(row, *aliases):
     if not isinstance(row, dict):
@@ -451,9 +516,20 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
           return value
     return ""
 
+  def preamble_value(*aliases):
+    for alias in aliases:
+      value = good_profile_value(preamble.get(key(alias)))
+      if value:
+        return value
+    return ""
+
   def first_value(*aliases):
+    value = preamble_value(*aliases)
+    if value:
+      return value
+
     for row in rows:
-      value = get(row, *aliases)
+      value = good_profile_value(get(row, *aliases))
       if value:
         return value
     return ""
@@ -469,14 +545,23 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
     except Exception:
       return 0.0
 
+  def split_policy_period(value):
+    raw = clean(value)
+    if not raw:
+      return "", ""
+    parts = re.split(r"\s*(?:-|to|through|thru)\s*", raw, maxsplit=1, flags=re.IGNORECASE)
+    if len(parts) == 2:
+      return clean(parts[0]), clean(parts[1])
+    return "", ""
+
   def status_value(value, paid=0.0, reserve=0.0, incurred=0.0):
     raw = clean(value)
     low = raw.lower()
 
-    if low in {"open", "opened", "active", "pending", "reopened", "reopen"}:
+    if low in {"open", "opened", "active", "pending", "reopened", "reopen", "in progress"}:
       return "Open"
 
-    if low in {"closed", "close", "final", "settled"}:
+    if low in {"closed", "close", "final", "settled", "resolved"}:
       return "Closed"
 
     if low in {
@@ -498,25 +583,31 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
 
     return raw.title() if raw else ""
 
-  def policy_line_from_number(value):
+  def policy_line_from_number(value, fallback=""):
     upper = clean(value).upper()
-    if upper.startswith(("UMB", "UM", "EXC", "XS")):
-      return "Umbrella"
+    fallback = clean(fallback)
+
+    if fallback and fallback.lower() not in {"unknown", "n/a", "none", "-"}:
+      return fallback
+
+    if upper.startswith(("GL", "CGL")):
+      return "General Liability"
     if upper.startswith(("LIQ", "LQ")):
       return "Liquor Liability"
     if upper.startswith(("WC", "WORK")):
       return "Workers Compensation"
-    if upper.startswith(("AUTO", "CA", "AL")):
-      return "Commercial Auto"
     if upper.startswith(("BOP", "PROP", "CP")):
       return "Businessowners Policy"
-    if upper.startswith(("GL", "CGL")):
-      return "General Liability"
+    if upper.startswith(("UMB", "UM", "EXC", "XS")):
+      return "Umbrella"
+    if upper.startswith(("AUTO", "CA", "AL")):
+      return "Commercial Auto"
     if upper.startswith(("CARGO", "MTC")):
       return "Cargo"
     if upper.startswith(("CY", "CYB")):
       return "Cyber Liability"
-    return ""
+
+    return fallback or "Commercial Policy"
 
   def is_no_claim_row(row, claim_number):
     text = " ".join(clean(v).lower() for v in (row or {}).values())
@@ -529,14 +620,6 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
       )
     )
 
-  first = rows[0] or {}
-  header_keys = {key(k) for k in first.keys()}
-  has_policy_number = "policynumber" in header_keys or "policyno" in header_keys or "policy" in header_keys
-  has_claim_column = "claimnumber" in header_keys or "claimno" in header_keys or "claim" in header_keys
-
-  if not has_policy_number:
-    return parsed_claims, parsed_profile
-
   business_name = first_value("Account Name", "Business Name", "Named Insured", "Insured", "Insured Name", "Company Name")
   carrier_name = first_value("Carrier", "Writing Carrier", "Insurance Carrier", "Carrier Name")
   producing_agency = first_value("Producing Agency", "Agency", "Agency Name", "Producer", "Producer Name", "Broker", "Broker Name")
@@ -544,6 +627,12 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
   effective_date = first_value("Effective Date", "Policy Effective Date", "Policy Effective", "Eff Date")
   expiration_date = first_value("Expiration Date", "Policy Expiration Date", "Policy Expiration", "Exp Date")
   evaluation_date = first_value("Evaluation Date", "Valuation Date", "As Of Date", "Loss Run Date")
+
+  period_start, period_end = split_policy_period(preamble_value("Policy Period", "Policy Term", "Coverage Period"))
+  if not effective_date and period_start:
+    effective_date = period_start
+  if not expiration_date and period_end:
+    expiration_date = period_end
 
   if business_name:
     parsed_profile["business_name"] = business_name
@@ -584,10 +673,9 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
       continue
 
     policy_key = policy_number.upper()
-    policy_type = (
-      get(row, "Policy Type", "Line of Business", "Coverage", "Coverage Line", "LOB", "line_of_business", "claim_type")
-      or policy_line_from_number(policy_number)
-      or "Commercial Policy"
+    policy_type = policy_line_from_number(
+      policy_number,
+      get(row, "Policy Type", "Line of Business", "Coverage", "Coverage Line", "LOB", "line_of_business", "claim_type"),
     )
 
     row_carrier = get(row, "Carrier", "Writing Carrier", "Insurance Carrier", "Carrier Name") or carrier_name
@@ -601,6 +689,7 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
         "policy_type": policy_type,
         "line_of_business": policy_type,
         "coverage": policy_type,
+        "carrier": row_carrier,
         "carrier_name": row_carrier,
         "writing_carrier": row_carrier,
         "effective_date": row_effective,
@@ -613,7 +702,7 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
     claim_number = get(row, "Claim Number", "Claim #", "Claim No", "claim_number", "claim_no", "claim")
     no_claim_policy_only = is_no_claim_row(row, claim_number)
 
-    if not has_claim_column or no_claim_policy_only or not claim_number:
+    if no_claim_policy_only or not claim_number:
       continue
 
     paid = money(get(row, "Paid", "Paid Amount", "Total Paid", "Loss Paid"))
@@ -682,7 +771,7 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
     parsed_profile["claims"] = claims
     parsed_profile["parsed_claims"] = claims
 
-  print("LOSSQ_FLAT_CSV_PROFILE_STATUS_ZERO_CLAIM_POLICY_V1:", {
+  print("LOSSQ_FLAT_CSV_PREAMBLE_TABLE_HEADER_V2:", {
     "business_name": parsed_profile.get("business_name"),
     "claims": len(claims),
     "policies": len(policies),
@@ -691,6 +780,7 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
   })
 
   return parsed_claims, parsed_profile
+
 
 
 # LOSSQ_AUTHORITATIVE_FLAT_CSV_FINAL_REPAIR_V1
@@ -14723,6 +14813,39 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     )
   except Exception as authoritative_csv_profile_exc:
     print("LOSSQ_AUTHORITATIVE_FLAT_CSV_BEFORE_PROFILE_UPSERT_CALL_V1_ERROR:", str(authoritative_csv_profile_exc)[:500])
+
+  # LOSSQ_FLAT_CSV_PREAMBLE_BEFORE_PROFILE_UPSERT_V2
+  # Re-apply preamble-aware CSV truth immediately before profile upsert so
+  # filename fallback and later profile repairs cannot overwrite Account Name,
+  # Claim Status, or zero-claim policy schedule rows.
+  try:
+    final_preamble_csv_claims, final_preamble_csv_profile = lossq_clean_standard_csv_override(
+      file_path,
+      parsed_claims,
+      parsed_profile,
+    )
+
+    if isinstance(final_preamble_csv_profile, dict) and final_preamble_csv_profile:
+      parsed_profile = final_preamble_csv_profile
+      if isinstance(profile_data, dict):
+        for csv_key, csv_value in final_preamble_csv_profile.items():
+          if csv_value not in (None, "", [], {}):
+            profile_data[csv_key] = csv_value
+
+    if isinstance(final_preamble_csv_claims, list) and final_preamble_csv_claims:
+      parsed_claims = final_preamble_csv_claims
+      parsed_profile["claims"] = final_preamble_csv_claims
+      parsed_profile["parsed_claims"] = final_preamble_csv_claims
+
+    print("LOSSQ_FLAT_CSV_PREAMBLE_BEFORE_PROFILE_UPSERT_V2:", {
+      "business_name": parsed_profile.get("business_name") if isinstance(parsed_profile, dict) else None,
+      "claims": len(parsed_claims or []),
+      "policies": len(parsed_profile.get("policies") or parsed_profile.get("policy_schedule") or []) if isinstance(parsed_profile, dict) else 0,
+      "policy_numbers": parsed_profile.get("policy_numbers") if isinstance(parsed_profile, dict) else None,
+      "statuses": [c.get("status") for c in (parsed_claims or [])[:10] if isinstance(c, dict)],
+    })
+  except Exception as preamble_profile_exc:
+    print("LOSSQ_FLAT_CSV_PREAMBLE_BEFORE_PROFILE_UPSERT_V2_ERROR:", str(preamble_profile_exc)[:500])
 
   lossq_debug_upload_snapshot(
     "before_profile_upsert",
