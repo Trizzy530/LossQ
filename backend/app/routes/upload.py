@@ -13721,6 +13721,62 @@ async def save_uploaded_files(files, policy_number, db, current_user):
       parsed_profile,
     )
 
+
+    # LOSSQ_FINAL_FLAT_CSV_SAVE_PRESERVE_V1
+    # Final save-level CSV pass. Some later upload/profile steps can rehydrate
+    # filename fallback profile values or old claim defaults. Re-read clean flat
+    # CSV values immediately before final exposure/profile work so account name,
+    # claim status, and zero-claim policy rows survive to the dashboard.
+    try:
+      final_csv_claims, final_csv_profile = lossq_clean_standard_csv_override(
+        file_path,
+        parsed_claims,
+        parsed_profile,
+      )
+
+      if isinstance(final_csv_profile, dict) and final_csv_profile:
+        for key in [
+          "business_name",
+          "insured_name",
+          "named_insured",
+          "account_name",
+          "carrier_name",
+          "writing_carrier",
+          "carrier",
+          "producing_agency",
+          "agency_name",
+          "producer",
+          "account_number",
+          "customer_number",
+          "effective_date",
+          "expiration_date",
+          "evaluation_date",
+          "valuation_date",
+          "policy_number",
+          "main_policy",
+          "policy_numbers",
+          "policies",
+          "policy_schedule",
+        ]:
+          value = final_csv_profile.get(key)
+          if value not in (None, "", [], {}):
+            parsed_profile[key] = value
+
+      if isinstance(final_csv_claims, list) and final_csv_claims:
+        parsed_claims = final_csv_claims
+        parsed_profile["claims"] = final_csv_claims
+        parsed_profile["parsed_claims"] = final_csv_claims
+
+      print("LOSSQ_FINAL_FLAT_CSV_SAVE_PRESERVE_V1:", {
+        "business_name": parsed_profile.get("business_name"),
+        "claims": len(parsed_claims or []),
+        "policies": len(parsed_profile.get("policies") or parsed_profile.get("policy_schedule") or []),
+        "policy_numbers": parsed_profile.get("policy_numbers"),
+        "statuses": [c.get("status") for c in (parsed_claims or [])[:10] if isinstance(c, dict)],
+      })
+    except Exception as final_csv_exc:
+      print("LOSSQ_FINAL_FLAT_CSV_SAVE_PRESERVE_V1_ERROR:", str(final_csv_exc)[:500])
+
     # LOSSQ_REAPPLY_DIRECT_EXPOSURE_AFTER_CSV_REPAIRS_V1
     # Re-apply direct CSV/XLSX exposure values after CSV claim/profile repairs so they are not lost.
     direct_exposure_inputs_after_csv_repairs = lossq_extract_exposure_inputs_directly_from_file(file_path)
