@@ -3369,6 +3369,196 @@ def lossq_parse_label_based_pdf_loss_run_v1(file_path: str):
   # LOSSQ_LABEL_BASED_PDF_POLICY_DISPLAY_CLEANUP_V2
   normalized_claims, profile = lossq_clean_policy_schedule_display_names_v2(normalized_claims, profile)
   return normalized_claims, profile
+
+
+# LOSSQ_FINAL_UPLOAD_CLAIM_PROFILE_CLEANUP_V1
+def lossq_final_upload_claim_profile_cleanup_v1(file_path, parsed_claims=None, parsed_profile=None):
+  """
+  Universal final cleanup before saving uploaded loss run data.
+
+  Fixes messy parser artifacts across accepted upload types:
+  - Claim numbers that accidentally absorb nearby labels like POLICY-NUMBER.
+  - Missing insured/business name when the uploaded document contains a labeled insured.
+  - Applies clean values back to profile claims and parsed claims.
+  """
+  import os
+  import re
+
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+  parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+
+  def clean_text(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+  def bad_business_value(value):
+    key = re.sub(r"[^a-z0-9]+", "", clean_text(value).lower())
+    return key in {
+      "",
+      "businessnamenotset",
+      "notset",
+      "unknown",
+      "na",
+      "none",
+      "null",
+    }
+
+  def clean_claim_number(value):
+    raw = clean_text(value)
+    if not raw:
+      return raw
+
+    # Remove labels that can get glued to claim numbers during messy PDF extraction.
+    cleaned = re.sub(
+      r"(?i)(?:\s|_|-)*(?:"
+      r"POLICY\s*(?:NUMBER|NO|#)|"
+      r"POLICY[-_]*(?:NUMBER|NO|#)|"
+      r"LINE\s*OF\s*BUSINESS|"
+      r"CLAIM\s*STATUS|"
+      r"STATUS|"
+      r"PAID|"
+      r"RESERVE|"
+      r"TOTAL\s*INCURRED|"
+      r"INCURRED|"
+      r"DATE\s*OF\s*LOSS|"
+      r"DESCRIPTION"
+      r").*$",
+      "",
+      raw,
+    ).strip(" -_:/|")
+
+    # If the value still contains a glued POLICY token, cut there.
+    cleaned = re.split(r"(?i)POLICY", cleaned)[0].strip(" -_:/|")
+
+    return cleaned or raw
+
+  def read_upload_text():
+    text_parts = [
+      parsed_profile.get("raw_text"),
+      parsed_profile.get("raw_text_preview"),
+      parsed_profile.get("ocr_text"),
+      parsed_profile.get("document_text"),
+    ]
+
+    lower_path = str(file_path or "").lower()
+
+    if lower_path.endswith(".pdf"):
+      try:
+        from pypdf import PdfReader
+        reader = PdfReader(file_path)
+        pdf_text = "\n".join((page.extract_text() or "") for page in reader.pages)
+        text_parts.append(pdf_text)
+      except Exception:
+        pass
+
+    return "\n".join(str(part or "") for part in text_parts if part)
+
+  def good_business_candidate(value):
+    value = clean_text(value).strip(" :|-")
+    if not value:
+      return ""
+
+    lower = value.lower()
+    blocked = [
+      "business name not set",
+      "policy number",
+      "claim number",
+      "loss summary",
+      "claim detail",
+      "policy schedule",
+      "account number",
+      "effective date",
+      "expiration date",
+      "valuation date",
+      "writing carrier",
+      "carrier",
+    ]
+    if any(token == lower or lower.startswith(token + " ") for token in blocked):
+      return ""
+
+    if len(value) < 4 or len(value) > 120:
+      return ""
+
+    return value
+
+  def extract_business_name_from_upload():
+    raw_text = read_upload_text()
+
+    label_patterns = [
+      r"(?im)^\s*(?:Named\s+Insured|Insured|Business\s+Name|Account\s+Name|Applicant|Entity)\s*[:#-]?\s*(.+?)\s*$",
+      r"(?im)\b(?:Named\s+Insured|Insured|Business\s+Name|Account\s+Name|Applicant|Entity)\b\s*[:#-]\s*([^\n\r]+)",
+    ]
+
+    for pattern in label_patterns:
+      for match in re.finditer(pattern, raw_text or ""):
+        candidate = good_business_candidate(match.group(1))
+        if candidate:
+          return candidate
+
+    # Fallback: derive a clean display name from filename only when no document label is available.
+    try:
+      base = os.path.basename(str(file_path or ""))
+      base = re.sub(r"\.[a-zA-Z0-9]+$", "", base)
+      base = re.sub(r"(?i)\b(lossq|loss|run|messy|clean|ready|submission|pdf|csv|xlsx|xls|test|v\d+)\b", " ", base)
+      base = re.sub(r"[_\-]+", " ", base)
+      base = re.sub(r"\s+", " ", base).strip()
+      if base:
+        return base.title()
+    except Exception:
+      pass
+
+    return ""
+
+  # Clean claim numbers in parsed claims.
+  for claim in parsed_claims:
+    if not isinstance(claim, dict):
+      continue
+
+    original_claim_number = claim.get("claim_number") or claim.get("Claim Number") or claim.get("claim_no") or claim.get("Claim #")
+    fixed_claim_number = clean_claim_number(original_claim_number)
+
+    if fixed_claim_number and fixed_claim_number != original_claim_number:
+      claim["claim_number"] = fixed_claim_number
+      claim["Claim Number"] = fixed_claim_number
+
+  # Keep profile claim arrays aligned.
+  for claim_key in ["claims", "parsed_claims"]:
+    profile_claims = parsed_profile.get(claim_key)
+    if isinstance(profile_claims, list):
+      for claim in profile_claims:
+        if not isinstance(claim, dict):
+          continue
+        original_claim_number = claim.get("claim_number") or claim.get("Claim Number") or claim.get("claim_no") or claim.get("Claim #")
+        fixed_claim_number = clean_claim_number(original_claim_number)
+        if fixed_claim_number and fixed_claim_number != original_claim_number:
+          claim["claim_number"] = fixed_claim_number
+          claim["Claim Number"] = fixed_claim_number
+
+  # Fill missing insured/business name from document text or filename-derived fallback.
+  current_business = (
+    parsed_profile.get("business_name")
+    or parsed_profile.get("named_insured")
+    or parsed_profile.get("insured_name")
+    or parsed_profile.get("account_name")
+  )
+
+  if bad_business_value(current_business):
+    business_name = extract_business_name_from_upload()
+    if business_name:
+      parsed_profile["business_name"] = business_name
+      parsed_profile["named_insured"] = business_name
+      parsed_profile["insured_name"] = business_name
+      parsed_profile["account_name"] = business_name
+
+  print("LOSSQ_FINAL_UPLOAD_CLAIM_PROFILE_CLEANUP_V1:", {
+    "claims": len(parsed_claims),
+    "business_name": parsed_profile.get("business_name"),
+    "sample_claim_numbers": [
+      item.get("claim_number") for item in parsed_claims[:3] if isinstance(item, dict)
+    ],
+  })
+
+  return parsed_claims, parsed_profile
+
 def parse_file(file_path: str, filename: str):
   # LOSSQ_PARSE_FILE_SAFE_DEFAULTS_V1
   parsed_claims = []
@@ -10402,6 +10592,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             "stage": "parse_file",
           },
         )
+
+    # LOSSQ_FINAL_UPLOAD_CLAIM_PROFILE_CLEANUP_CALL_V1
+    parsed_claims, parsed_profile = lossq_final_upload_claim_profile_cleanup_v1(
+      file_path,
+      parsed_claims,
+      parsed_profile,
+    )
 
     # LOSSQ_UNIVERSAL_SECTION_CSV_CLAIMS_PROFILE_REPAIR_CALL_V1
     parsed_claims, parsed_profile = lossq_universal_section_csv_claims_profile_repair(
