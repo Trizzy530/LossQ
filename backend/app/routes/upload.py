@@ -3371,6 +3371,284 @@ def lossq_parse_label_based_pdf_loss_run_v1(file_path: str):
   return normalized_claims, profile
 
 
+
+
+# LOSSQ_PDF_FULL_CLAIM_BLOCK_EXTRACT_BEFORE_SAVE_V1
+def lossq_pdf_full_claim_block_extract_before_save_v1(file_path, parsed_claims=None, parsed_profile=None):
+  """
+  Universal final PDF claim-block extractor.
+
+  Purpose:
+  - PDF uploads should not fall short when the loss run uses Claim Block sections.
+  - Repairs claim numbers that absorb labels like POLICY-NUMBER.
+  - Pulls insured/business name from labeled PDF text.
+  - Replaces parsed_claims only when the PDF extraction finds more complete claim rows.
+  """
+  import re
+
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+  parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+
+  if not str(file_path or "").lower().endswith(".pdf"):
+    return parsed_claims, parsed_profile
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+  def key(value):
+    return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+  def money(value):
+    raw = clean(value)
+    if not raw:
+      return 0.0
+    neg = raw.startswith("(") and raw.endswith(")")
+    raw = raw.replace("$", "").replace(",", "").replace("(", "").replace(")", "")
+    raw = re.sub(r"[^0-9.\-]+", "", raw)
+    try:
+      val = float(raw or 0)
+      return -val if neg else val
+    except Exception:
+      return 0.0
+
+  def clean_claim_number(value):
+    raw = clean(value)
+    if not raw:
+      return ""
+
+    raw = re.sub(
+      r"(?i)(?:\s|_|-)*(?:"
+      r"POLICY\s*(?:NUMBER|NO|#)|"
+      r"POLICY[-_]*(?:NUMBER|NO|#)|"
+      r"LINE\s*OF\s*BUSINESS|"
+      r"COVERAGE|"
+      r"CLAIM\s*STATUS|"
+      r"STATUS|"
+      r"PAID\s*AMOUNT|"
+      r"PAID|"
+      r"RESERVE\s*AMOUNT|"
+      r"RESERVE|"
+      r"GROSS\s*INCURRED|"
+      r"NET\s*INCURRED|"
+      r"TOTAL\s*INCURRED|"
+      r"INCURRED|"
+      r"DATE\s*OF\s*LOSS|"
+      r"LOSS\s*DATE|"
+      r"DESCRIPTION"
+      r").*$",
+      "",
+      raw,
+    ).strip(" -_:/|")
+
+    raw = re.split(r"(?i)POLICY", raw)[0].strip(" -_:/|")
+    return raw
+
+  def read_pdf_text():
+    try:
+      from pypdf import PdfReader
+      reader = PdfReader(file_path)
+      return "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception as exc:
+      print("LOSSQ_PDF_FULL_CLAIM_BLOCK_EXTRACT_READ_ERROR_V1:", str(exc)[:200])
+      return ""
+
+  raw_text = read_pdf_text()
+  if not raw_text:
+    return parsed_claims, parsed_profile
+
+  lines = [clean(line) for line in raw_text.splitlines()]
+  lines = [line for line in lines if line]
+
+  def label_from_lines(label_names):
+    wanted = {key(item) for item in label_names}
+    for idx, line in enumerate(lines):
+      # same-line label
+      m = re.match(r"^\s*([^:]{2,60})\s*:\s*(.+?)\s*$", line)
+      if m and key(m.group(1)) in wanted:
+        val = clean(m.group(2))
+        if val:
+          return val
+
+      # label on one line, value on next line
+      if key(line.rstrip(":")) in wanted:
+        for j in range(idx + 1, min(idx + 5, len(lines))):
+          candidate = clean(lines[j])
+          if candidate and key(candidate.rstrip(":")) not in wanted:
+            return candidate
+    return ""
+
+  def values_from_block(block_lines):
+    result = {}
+
+    # Convert label/value lines into normalized dictionary.
+    idx = 0
+    while idx < len(block_lines):
+      line = clean(block_lines[idx])
+      if not line:
+        idx += 1
+        continue
+
+      same = re.match(r"^\s*([^:]{2,80})\s*:\s*(.+?)\s*$", line)
+      if same:
+        result[key(same.group(1))] = clean(same.group(2))
+        idx += 1
+        continue
+
+      # label on one line, value on the next non-empty line
+      label_key = key(line.rstrip(":"))
+      if label_key:
+        next_value = ""
+        for j in range(idx + 1, min(idx + 4, len(block_lines))):
+          candidate = clean(block_lines[j])
+          if not candidate:
+            continue
+          # stop if next line is another label
+          if key(candidate.rstrip(":")) in {
+            "claimnumber", "policynumber", "lineofbusiness", "coverage", "policytype",
+            "dateofloss", "lossdate", "datereported", "reporteddate", "dateclosed",
+            "status", "claimstatus", "paid", "paidamount", "reserve", "reserveamount",
+            "totalincurred", "grossincurred", "netincurred", "causeofloss", "cause",
+            "description", "litigation"
+          }:
+            break
+          next_value = candidate
+          break
+        if next_value:
+          result[label_key] = next_value
+
+      idx += 1
+
+    return result
+
+  # Build claim blocks. Prefer explicit Claim Block sections.
+  block_starts = []
+  for i, line in enumerate(lines):
+    if re.match(r"(?i)^claim\s+block\s+\d+\b", line):
+      block_starts.append(i)
+
+  blocks = []
+  if block_starts:
+    for pos, start in enumerate(block_starts):
+      end = block_starts[pos + 1] if pos + 1 < len(block_starts) else len(lines)
+      blocks.append(lines[start:end])
+  else:
+    # Fallback for PDFs without Claim Block headings: split by Claim Number labels.
+    claim_number_starts = []
+    for i, line in enumerate(lines):
+      if key(line.rstrip(":")) == "claimnumber" or re.match(r"(?i)^claim\s*number\s*:", line):
+        claim_number_starts.append(i)
+    for pos, start in enumerate(claim_number_starts):
+      end = claim_number_starts[pos + 1] if pos + 1 < len(claim_number_starts) else len(lines)
+      blocks.append(lines[start:end])
+
+  extracted_claims = []
+  seen = set()
+
+  for block in blocks:
+    data = values_from_block(block)
+
+    claim_number = clean_claim_number(
+      data.get("claimnumber")
+      or data.get("claimno")
+      or data.get("claim")
+      or data.get("claimid")
+    )
+
+    policy_number = clean(
+      data.get("policynumber")
+      or data.get("policyno")
+      or data.get("policy")
+    )
+
+    if not claim_number or not policy_number:
+      continue
+
+    line_of_business = clean(
+      data.get("lineofbusiness")
+      or data.get("coverage")
+      or data.get("policytype")
+      or data.get("lob")
+    )
+
+    paid = money(data.get("paid") or data.get("paidamount"))
+    reserve = money(data.get("reserve") or data.get("reserveamount"))
+    total = money(
+      data.get("totalincurred")
+      or data.get("grossincurred")
+      or data.get("netincurred")
+      or data.get("incurred")
+    )
+    if not total and (paid or reserve):
+      total = paid + reserve
+
+    status = clean(data.get("status") or data.get("claimstatus"))
+    if status:
+      if status.lower() in {"open", "opened"}:
+        status = "Open"
+      elif status.lower() in {"closed", "close"}:
+        status = "Closed"
+
+    dedupe_key = f"{claim_number.upper()}|{policy_number.upper()}"
+    if dedupe_key in seen:
+      continue
+    seen.add(dedupe_key)
+
+    claim = {
+      "claim_number": claim_number,
+      "Claim Number": claim_number,
+      "policy_number": policy_number,
+      "Policy Number": policy_number,
+      "line_of_business": line_of_business,
+      "claim_type": line_of_business,
+      "coverage": line_of_business,
+      "status": status,
+      "claim_status": status,
+      "date_of_loss": clean(data.get("dateofloss") or data.get("lossdate")),
+      "date_reported": clean(data.get("datereported") or data.get("reporteddate")),
+      "date_closed": clean(data.get("dateclosed") or data.get("closeddate")),
+      "paid_amount": paid,
+      "total_paid": paid,
+      "reserve_amount": reserve,
+      "total_reserve": reserve,
+      "total_incurred": total,
+      "cause_of_loss": clean(data.get("causeofloss") or data.get("cause")),
+      "description": clean(data.get("description") or data.get("claimdescription")),
+      "litigation": clean(data.get("litigation")),
+    }
+
+    extracted_claims.append(claim)
+
+  # Pull profile identity from PDF labels.
+  business_name = label_from_lines(["Named Insured", "Business Name", "Insured", "Account Name", "Applicant"])
+  if business_name and key(business_name) not in {"businessnamenotset", "notset", "unknown", "na", "none"}:
+    parsed_profile["business_name"] = business_name
+    parsed_profile["named_insured"] = business_name
+    parsed_profile["insured_name"] = business_name
+    parsed_profile["account_name"] = business_name
+
+  # If the PDF extraction found more rows, trust it. This fixes missed claim blocks.
+  if extracted_claims and len(extracted_claims) >= len(parsed_claims or []):
+    parsed_claims = extracted_claims
+    parsed_profile["claims"] = extracted_claims
+    parsed_profile["parsed_claims"] = extracted_claims
+    parsed_profile["claim_count"] = len(extracted_claims)
+    parsed_profile["total_claims"] = len(extracted_claims)
+    parsed_profile["open_claims"] = sum(1 for c in extracted_claims if clean(c.get("status")).lower() == "open")
+    parsed_profile["closed_claims"] = sum(1 for c in extracted_claims if clean(c.get("status")).lower() == "closed")
+    parsed_profile["total_paid"] = sum(money(c.get("paid_amount")) for c in extracted_claims)
+    parsed_profile["total_reserve"] = sum(money(c.get("reserve_amount")) for c in extracted_claims)
+    parsed_profile["total_incurred"] = sum(money(c.get("total_incurred")) for c in extracted_claims)
+
+  print("LOSSQ_PDF_FULL_CLAIM_BLOCK_EXTRACT_BEFORE_SAVE_V1:", {
+    "existing_claims": len(parsed_profile.get("claims") or []),
+    "extracted_claims": len(extracted_claims),
+    "final_claims": len(parsed_claims or []),
+    "business_name": parsed_profile.get("business_name"),
+    "sample_claim_numbers": [c.get("claim_number") for c in (parsed_claims or [])[:5] if isinstance(c, dict)],
+  })
+
+  return parsed_claims, parsed_profile
+
 # LOSSQ_FINAL_UPLOAD_CLAIM_PROFILE_CLEANUP_V1
 def lossq_final_upload_claim_profile_cleanup_v1(file_path, parsed_claims=None, parsed_profile=None):
   """
@@ -10808,6 +11086,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         parsed_claims=parsed_claims,
         parsed_profile=parsed_profile,
       )
+
+    # LOSSQ_PDF_FULL_CLAIM_BLOCK_EXTRACT_BEFORE_SAVE_CALL_V1
+    parsed_claims, parsed_profile = lossq_pdf_full_claim_block_extract_before_save_v1(
+      file_path,
+      parsed_claims,
+      parsed_profile,
+    )
 
     all_parsed_claims.extend(parsed_claims)
 
