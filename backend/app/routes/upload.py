@@ -4207,6 +4207,21 @@ def lossq_pdf_full_claim_block_extract_before_save_v1(file_path, parsed_claims=N
       if match:
         set_result(field_key, match.group("value"))
 
+    # LOSSQ_CLAIM_NOTES_FULL_SENTENCE_CAPTURE_V1
+    # The generic label scanner can stop early when a note contains words like
+    # "status", "reserve", or "policy". Claim notes should be captured as a
+    # full narrative sentence, stopping only at the next claim/summary boundary.
+    notes_match = re.search(
+      r"(?is)\b(?:Claim\s+Notes|Loss\s+Notes|Claim\s+Narrative|Loss\s+Narrative|Underwriting\s+Notes|Notes|Narrative)\b\s*[:#-]?\s*(?P<value>.*?)(?=\s+(?:Loss\s+Summary|Total\s+Claims|Open\s+Claims|Closed\s+Claims|Total\s+Paid|Total\s+Reserve|Total\s+Incurred|Umbrella\s+Loss\s+Activity|Claim\s+Block\s+\d+)\b|$)",
+      joined,
+    )
+    if notes_match:
+      note_value = clean(notes_match.group("value"))
+      if note_value:
+        set_result("description", note_value)
+        result["claim_notes"] = note_value
+        result["loss_description"] = note_value
+
     # Preserve existing colon and next-line behavior.
     idx = 0
     known_label_keys = {field_key for field_key, _ in label_patterns}

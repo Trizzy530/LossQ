@@ -7030,38 +7030,11 @@ def lossq_pdf_clean_display(value):
     return raw
 
 
-def lossq_pdf_current_user_agency_name(db, current_user):
-    db = db or lossq_get_active_pdf_db()
-    current_user = current_user or lossq_get_active_pdf_user() or {}
-    org_id = (
-        lossq_pdf_user_value(current_user, "organization_id")
-        or lossq_pdf_user_value(current_user, "org_id")
-    )
-
-    organization = None
-
-    if org_id:
-        try:
-            organization = (
-                db.query(Organization)
-                .filter(Organization.id == org_id)
-                .first()
-            )
-        except Exception:
-            organization = None
-
-    agency_name = ""
-    organization_name = ""
-
-    if organization:
-        agency_name = lossq_pdf_clean_display(getattr(organization, "agency_name", ""))
-        organization_name = lossq_pdf_clean_display(getattr(organization, "name", ""))
-
-    user_agency_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "agency_name"))
-    user_org_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "organization_name"))
-
-    return agency_name or organization_name or user_agency_name or user_org_name or ""
-
+def lossq_pdf_current_user_agency_name(db=None, current_user=None):
+    agency = lossq_pdf_best_agency_info(db, current_user)
+    return lossq_pdf_clean_agency_choice_v1(
+        lossq_pdf_get_any(agency, "agency_name", "company_name", "organization_name", "name")
+    ) or "Agency Not Set"
 
 def lossq_pdf_current_user_report_created_by(current_user):
     current_user = current_user or lossq_get_active_pdf_user() or {}
@@ -10468,90 +10441,175 @@ def lossq_pdf_actual_user_name(current_user=None, agency=None):
 
     return "Account User"
 
-def lossq_pdf_best_agency_info(db=None, current_user=None):
+# LOSSQ_PDF_SETTINGS_COMPANY_AS_PRODUCING_AGENCY_V1
+def lossq_pdf_org_row_for_current_user_v1(db=None, current_user=None):
     db = db or lossq_get_active_pdf_db()
     current_user = current_user or lossq_get_active_pdf_user() or {}
-
-    info = {}
-    organization = None
 
     org_id = (
         lossq_pdf_get_any(current_user, "organization_id", "org_id")
         or lossq_pdf_get_any(current_user, "organizationId", "orgId")
     )
 
-    if db and org_id:
-        try:
-            organization = db.query(Organization).filter(Organization.id == int(org_id)).first()
-        except Exception:
-            organization = None
+    if not db or not org_id:
+        return {}
 
-    # Start with the existing helper if it works.
+    try:
+        from sqlalchemy import text as sql_text
+        row = db.execute(
+            sql_text("SELECT * FROM organizations WHERE id = :org_id"),
+            {"org_id": org_id},
+        ).mappings().first()
+        return dict(row or {})
+    except Exception:
+        return {}
+
+
+def lossq_pdf_clean_agency_choice_v1(value):
+    text = lossq_pdf_clean_display(value)
+    if not text:
+        return ""
+
+    bad = {
+        "-",
+        "not set",
+        "agency not set",
+        "company not set",
+        "unknown",
+        "none",
+        "null",
+    }
+    if text.strip().lower() in bad:
+        return ""
+
+    return text
+
+
+def lossq_pdf_first_saved_agency_value_v1(*values):
+    for value in values:
+        clean_value = lossq_pdf_clean_agency_choice_v1(value)
+        if clean_value:
+            return clean_value
+    return ""
+
+
+def lossq_pdf_best_agency_info(db=None, current_user=None):
+    db = db or lossq_get_active_pdf_db()
+    current_user = current_user or lossq_get_active_pdf_user() or {}
+
+    organization = lossq_pdf_org_row_for_current_user_v1(db, current_user)
+
     try:
         existing = lossq_pdf_current_user_agency_info(db, current_user) or {}
-        if isinstance(existing, dict):
-            info.update(existing)
     except Exception:
-        pass
+        existing = {}
 
-    agency_name = (
-        lossq_pdf_get_any(organization, "agency_name", "organization_name", "name", "company_name", "legal_name")
-        or lossq_pdf_get_any(info, "agency_name", "organization_name", "name", "company_name")
-        or lossq_pdf_get_any(current_user, "agency_name", "organization_name", "company_name")
+    agency_name = lossq_pdf_first_saved_agency_value_v1(
+        organization.get("agency_name"),
+        organization.get("company_name"),
+        organization.get("legal_name"),
+        organization.get("business_name"),
+        organization.get("organization_name"),
+        organization.get("name"),
+        existing.get("agency_name"),
+        existing.get("company_name"),
+        existing.get("organization_name"),
+        existing.get("name"),
+        lossq_pdf_get_any(current_user, "agency_name", "company_name", "organization_name"),
     )
 
-    contact_name = (
-        lossq_pdf_get_any(organization, "contact_name", "agency_contact_name", "primary_contact", "producer_name", "account_user_name")
-        or lossq_pdf_get_any(info, "contact_name", "agency_contact_name", "primary_contact", "producer_name", "account_user_name")
-        or lossq_pdf_actual_user_name(current_user, info)
+    contact_name = lossq_pdf_first_saved_agency_value_v1(
+        organization.get("agency_contact_name"),
+        organization.get("contact_name"),
+        organization.get("primary_contact"),
+        organization.get("producer_name"),
+        existing.get("contact_name"),
+        existing.get("agency_contact_name"),
+        lossq_pdf_actual_user_name(current_user, existing),
     )
 
-    email = (
-        lossq_pdf_get_any(organization, "agency_email", "contact_email", "email", "support_email")
-        or lossq_pdf_get_any(info, "agency_email", "contact_email", "email", "support_email")
-        or lossq_pdf_get_any(current_user, "email")
+    email = lossq_pdf_first_saved_agency_value_v1(
+        organization.get("agency_email"),
+        organization.get("contact_email"),
+        organization.get("email"),
+        organization.get("support_email"),
+        existing.get("email"),
+        existing.get("agency_email"),
+        lossq_pdf_get_any(current_user, "email"),
     )
 
-    phone = (
-        lossq_pdf_get_any(organization, "agency_phone", "contact_phone", "phone", "phone_number", "mobile")
-        or lossq_pdf_get_any(info, "agency_phone", "contact_phone", "phone", "phone_number", "mobile")
-        or lossq_pdf_get_any(current_user, "phone", "phone_number", "mobile")
+    phone = lossq_pdf_first_saved_agency_value_v1(
+        organization.get("agency_phone"),
+        organization.get("contact_phone"),
+        organization.get("phone"),
+        organization.get("phone_number"),
+        existing.get("phone"),
+        existing.get("agency_phone"),
+        lossq_pdf_get_any(current_user, "phone", "phone_number", "mobile"),
     )
 
-    website = (
-        lossq_pdf_get_any(organization, "agency_website", "website", "url")
-        or lossq_pdf_get_any(info, "agency_website", "website", "url")
+    website = lossq_pdf_first_saved_agency_value_v1(
+        organization.get("agency_website"),
+        organization.get("website"),
+        organization.get("url"),
+        existing.get("website"),
+        existing.get("agency_website"),
     )
 
-    address = (
-        lossq_pdf_get_any(organization, "agency_address", "address", "street", "street_address", "address_line1")
-        or lossq_pdf_get_any(info, "agency_address", "address", "street", "street_address", "address_line1")
+    address = lossq_pdf_first_saved_agency_value_v1(
+        organization.get("agency_address"),
+        organization.get("address"),
+        organization.get("street"),
+        organization.get("street_address"),
+        existing.get("address"),
+        existing.get("agency_address"),
     )
 
-    city = lossq_pdf_get_any(organization, "city", "agency_city") or lossq_pdf_get_any(info, "city", "agency_city")
-    state = lossq_pdf_get_any(organization, "state", "agency_state") or lossq_pdf_get_any(info, "state", "agency_state")
-    zip_code = (
-        lossq_pdf_get_any(organization, "zip", "zipcode", "postal_code", "agency_zip")
-        or lossq_pdf_get_any(info, "zip", "zipcode", "postal_code", "agency_zip")
+    city = lossq_pdf_first_saved_agency_value_v1(
+        organization.get("agency_city"),
+        organization.get("city"),
+        existing.get("city"),
+        existing.get("agency_city"),
     )
 
-    license_number = (
-        lossq_pdf_get_any(organization, "license_number", "agency_license_number", "license", "producer_license")
-        or lossq_pdf_get_any(info, "license_number", "agency_license_number", "license", "producer_license")
+    state = lossq_pdf_first_saved_agency_value_v1(
+        organization.get("agency_state"),
+        organization.get("state"),
+        existing.get("state"),
+        existing.get("agency_state"),
+    )
+
+    zip_code = lossq_pdf_first_saved_agency_value_v1(
+        organization.get("agency_zip"),
+        organization.get("zip"),
+        organization.get("zipcode"),
+        organization.get("postal_code"),
+        existing.get("zip"),
+        existing.get("agency_zip"),
+    )
+
+    license_number = lossq_pdf_first_saved_agency_value_v1(
+        organization.get("agency_license_number"),
+        organization.get("license_number"),
+        organization.get("license"),
+        organization.get("producer_license"),
+        existing.get("license_number"),
+        existing.get("agency_license_number"),
     )
 
     return {
-        "agency_name": agency_name or "-",
+        "agency_name": agency_name or "Agency Not Set",
         "contact_name": contact_name or "Account User",
         "email": email or "-",
         "phone": phone or "-",
         "website": website or "-",
         "address": address or "-",
-        "city": city or "",
-        "state": state or "",
-        "zip": zip_code or "",
+        "city": city or "-",
+        "state": state or "-",
+        "zip": zip_code or "-",
         "license_number": license_number or "-",
     }
+
 
 def lossq_pdf_current_user_email(current_user=None):
     current_user = current_user or lossq_get_active_pdf_user() or {}
