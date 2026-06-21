@@ -8702,6 +8702,30 @@ const modelChartNarrative =
         />
        </div>
 
+       {/* LOSSQ_SUBMISSION_READINESS_UNDERWRITER_OUTPUTS_V1 */}
+       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+        <ListCard
+         title="To Reach 100%"
+         items={effectiveSubmissionReadiness?.to_reach_100 || ["No 100% readiness path available yet."]}
+         color="blue"
+        />
+
+        <ListCard
+         title="Claim-Level Underwriter Requirements"
+         items={effectiveSubmissionReadiness?.claim_readiness_items || ["No claim-level requirements available yet."]}
+         color="purple"
+        />
+       </div>
+
+       <div className="mt-6">
+        <ListCard
+         title="Score Deductions"
+         items={effectiveSubmissionReadiness?.score_deductions || ["No score deductions available yet."]}
+         color="red"
+        />
+       </div>
+
+
        <div className="mt-6">
         <TextCard
          title="Readiness Summary"
