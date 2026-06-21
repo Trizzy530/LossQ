@@ -8622,6 +8622,460 @@ def lossq_excel_zero_claim_policy_repair_v3(file_path, profile_data=None, parsed
 
   return profile_data
 
+# LOSSQ_EXCEL_MULTISHEET_POLICY_SCHEDULE_AUTHORITY_V1
+def lossq_excel_multisheet_policy_schedule_authority_v1(file_path, profile_data=None, parsed_claims=None):
+  """
+  Excel-only final authority layer for multi-sheet loss runs.
+
+  Purpose:
+  - Trust workbook Account/Profile and Policy Schedule sheets over filename fallback.
+  - Preserve Policy Schedule rows as the authoritative account policy list.
+  - Prevent claim numbers from becoming policy type / coverage rows.
+  - Prevent claim-detail rows from overwriting clean policy schedule rows.
+  - Keep zero-claim policies such as Umbrella visible.
+  - Does not run for PDF or CSV.
+  - No customer, carrier, policy, claim, or demo-file hardcoding.
+  """
+  import re
+  import datetime as _dt
+
+  profile_data = profile_data if isinstance(profile_data, dict) else {}
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+
+  lower_path = str(file_path or "").lower()
+  if not (lower_path.endswith(".xlsx") or lower_path.endswith(".xls")):
+    return profile_data
+
+  def clean(value):
+    if isinstance(value, (_dt.datetime, _dt.date)):
+      return value.strftime("%Y-%m-%d")
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|")
+
+  def key(value):
+    return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+  def money(value):
+    raw = clean(value)
+    if not raw:
+      return 0.0
+    raw = raw.replace("$", "").replace(",", "").replace("(", "-").replace(")", "")
+    try:
+      return float(raw)
+    except Exception:
+      return 0.0
+
+  def normalize_date(value):
+    value = clean(value)
+    if not value:
+      return ""
+    match = re.search(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b", value)
+    if match:
+      month, day, year = match.groups()
+      if len(year) == 2:
+        year = "20" + year
+      return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    match = re.search(r"\b(\d{4})[/-](\d{1,2})[/-](\d{1,2})\b", value)
+    if match:
+      year, month, day = match.groups()
+      return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+    return value
+
+  def split_policy_period(value):
+    value = clean(value)
+    dates = re.findall(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b", value)
+    if len(dates) >= 2:
+      return normalize_date(dates[0]), normalize_date(dates[1])
+    return "", ""
+
+  policy_prefixes = {
+    "GL": "General Liability",
+    "CGL": "General Liability",
+    "WC": "Workers Compensation",
+    "AUTO": "Commercial Auto",
+    "CA": "Commercial Auto",
+    "CARGO": "Motor Truck Cargo",
+    "MTC": "Motor Truck Cargo",
+    "BOP": "Businessowners Policy",
+    "CP": "Commercial Property",
+    "PROP": "Property",
+    "UMB": "Umbrella",
+    "UM": "Umbrella",
+    "EXCESS": "Umbrella / Excess",
+    "XS": "Umbrella / Excess",
+    "LIQ": "Liquor Liability",
+    "LQ": "Liquor Liability",
+    "CY": "Cyber Liability",
+    "CYBER": "Cyber Liability",
+    "PL": "Professional Liability",
+    "EPLI": "Employment Practices Liability",
+    "DO": "Directors & Officers",
+    "DNO": "Directors & Officers",
+    "IM": "Inland Marine",
+    "GAR": "Garage Liability",
+    "DOL": "Dealers Open Lot",
+  }
+
+  def first_segment(value):
+    return clean(value).upper().split("-")[0].strip()
+
+  def line_from_policy(policy_number):
+    upper = clean(policy_number).upper()
+    first = first_segment(upper)
+    if first in policy_prefixes:
+      return policy_prefixes[first]
+    for prefix, label in policy_prefixes.items():
+      if upper.startswith(prefix):
+        return label
+    return ""
+
+  def looks_like_claim_number(value):
+    upper = clean(value).upper()
+    if not upper:
+      return False
+    if re.search(r"-\d{5,}$", upper) and not re.search(r"-\d{4}-", upper):
+      return True
+    return False
+
+  def is_policy_number(value):
+    upper = clean(value).upper()
+    if not upper:
+      return False
+    if any(token in upper for token in ["ACCT", "ACCOUNT", "CUSTOMER", "CLIENT", "CUST"]):
+      return False
+    if looks_like_claim_number(upper):
+      return False
+    first = first_segment(upper)
+    if first in policy_prefixes:
+      return True
+    if re.search(r"-\d{4}-", upper):
+      return True
+    return False
+
+  def normalize_line(value, policy_number=""):
+    policy_line = line_from_policy(policy_number)
+    if policy_line:
+      return policy_line
+
+    raw = clean(value)
+    if not raw:
+      return ""
+
+    low = raw.lower()
+    if looks_like_claim_number(raw) or is_policy_number(raw):
+      return ""
+
+    mapping = {
+      "general liability": "General Liability",
+      "commercial general liability": "General Liability",
+      "workers compensation": "Workers Compensation",
+      "workers comp": "Workers Compensation",
+      "commercial auto": "Commercial Auto",
+      "businessowners policy": "Businessowners Policy",
+      "business owners policy": "Businessowners Policy",
+      "bop": "Businessowners Policy",
+      "umbrella": "Umbrella",
+      "umbrella / excess": "Umbrella / Excess",
+      "excess liability": "Umbrella / Excess",
+      "motor truck cargo": "Motor Truck Cargo",
+      "cargo": "Motor Truck Cargo",
+      "liquor liability": "Liquor Liability",
+      "property": "Property",
+      "commercial property": "Commercial Property",
+      "cyber liability": "Cyber Liability",
+      "professional liability": "Professional Liability",
+      "employment practices liability": "Employment Practices Liability",
+      "directors and officers": "Directors & Officers",
+      "directors & officers": "Directors & Officers",
+      "inland marine": "Inland Marine",
+      "garage liability": "Garage Liability",
+      "dealers open lot": "Dealers Open Lot",
+    }
+
+    compact = re.sub(r"[^a-z0-9]+", " ", low).strip()
+    if compact in mapping:
+      return mapping[compact]
+
+    if any(word in low for word in ["liability", "compensation", "umbrella", "property", "auto", "cargo", "cyber", "marine"]):
+      return raw
+
+    return ""
+
+  def good_business(value):
+    value = clean(value)
+    if not value:
+      return ""
+    low = value.lower()
+    bad_fragments = [
+      "lossq",
+      "loss run",
+      "policy schedule",
+      "claim detail",
+      "claim number",
+      "policy number",
+      "account number",
+      "business name",
+      "named insured",
+      "insured name",
+      "carrier",
+      "effective date",
+      "expiration date",
+      "valuation date",
+      "evaluation date",
+      ".xlsx",
+      ".xls",
+    ]
+    if any(fragment in low for fragment in bad_fragments):
+      return ""
+    if len(value) < 3:
+      return ""
+    return value
+
+  sheets = []
+  try:
+    if lower_path.endswith(".xlsx"):
+      from openpyxl import load_workbook
+      wb = load_workbook(file_path, data_only=True, read_only=True)
+      for ws in wb.worksheets:
+        rows = []
+        for row in ws.iter_rows(values_only=True):
+          values = [clean(cell) for cell in row]
+          if any(values):
+            rows.append(values)
+        sheets.append((clean(ws.title), rows))
+    else:
+      try:
+        import xlrd
+        wb = xlrd.open_workbook(file_path)
+        for sheet in wb.sheets():
+          rows = []
+          for r in range(sheet.nrows):
+            values = [clean(sheet.cell_value(r, c)) for c in range(sheet.ncols)]
+            if any(values):
+              rows.append(values)
+          sheets.append((clean(sheet.name), rows))
+      except Exception:
+        return profile_data
+  except Exception as workbook_exc:
+    print("LOSSQ_EXCEL_MULTISHEET_POLICY_SCHEDULE_AUTHORITY_V1_ERROR:", str(workbook_exc)[:500])
+    return profile_data
+
+  label_values = {}
+
+  label_aliases = {
+    "business_name": {"namedinsured", "insured", "insuredname", "accountname", "businessname", "companyname", "applicant"},
+    "account_number": {"accountnumber", "accountno", "account", "customernumber", "clientnumber"},
+    "carrier_name": {"writingcarrier", "carrier", "carriername", "insurancecarrier"},
+    "policy_period": {"policyperiod", "policyterm", "coverageperiod"},
+    "effective_date": {"effectivedate", "policyeffectivedate", "policyeffective", "effdate"},
+    "expiration_date": {"expirationdate", "policyexpirationdate", "policyexpiration", "expdate"},
+    "evaluation_date": {"evaluationdate", "valuationdate", "asofdate", "lossrundate"},
+  }
+
+  reverse_labels = {}
+  for field, aliases in label_aliases.items():
+    for alias in aliases:
+      reverse_labels[alias] = field
+
+  for sheet_name, rows in sheets:
+    for row in rows:
+      for idx, cell in enumerate(row):
+        cell_clean = clean(cell)
+        cell_key = key(cell_clean)
+
+        if cell_key in reverse_labels and idx + 1 < len(row):
+          value = clean(row[idx + 1])
+          if value:
+            label_values.setdefault(reverse_labels[cell_key], value)
+
+        if ":" in cell_clean:
+          left, right = cell_clean.split(":", 1)
+          left_key = key(left)
+          if left_key in reverse_labels and clean(right):
+            label_values.setdefault(reverse_labels[left_key], clean(right))
+
+  business_name = good_business(label_values.get("business_name"))
+  if business_name:
+    for field in ["business_name", "insured_name", "named_insured", "account_name", "insured"]:
+      profile_data[field] = business_name
+
+  account_number = clean(label_values.get("account_number"))
+  if account_number and not is_policy_number(account_number):
+    profile_data["account_number"] = account_number
+    profile_data["customer_number"] = account_number
+
+  carrier_name = clean(label_values.get("carrier_name"))
+  if carrier_name:
+    profile_data["carrier_name"] = carrier_name
+    profile_data["writing_carrier"] = carrier_name
+    profile_data["carrier"] = carrier_name
+
+  effective_date = normalize_date(label_values.get("effective_date"))
+  expiration_date = normalize_date(label_values.get("expiration_date"))
+
+  period_start, period_end = split_policy_period(label_values.get("policy_period"))
+  if not effective_date and period_start:
+    effective_date = period_start
+  if not expiration_date and period_end:
+    expiration_date = period_end
+
+  if effective_date:
+    profile_data["effective_date"] = effective_date
+  if expiration_date:
+    profile_data["expiration_date"] = expiration_date
+
+  evaluation_date = normalize_date(label_values.get("evaluation_date"))
+  if evaluation_date:
+    profile_data["evaluation_date"] = evaluation_date
+    profile_data["valuation_date"] = evaluation_date
+
+  claim_counts = {}
+  claim_totals = {}
+  claim_carriers = {}
+
+  for claim in parsed_claims:
+    if not isinstance(claim, dict):
+      continue
+    policy_number = clean(claim.get("policy_number") or claim.get("Policy Number")).upper()
+    if not is_policy_number(policy_number):
+      continue
+
+    claim_counts[policy_number] = claim_counts.get(policy_number, 0) + 1
+    claim_totals[policy_number] = claim_totals.get(policy_number, 0.0) + money(
+      claim.get("total_incurred") or claim.get("incurred") or claim.get("total")
+    )
+
+    claim_carrier = clean(claim.get("carrier_name") or claim.get("writing_carrier"))
+    if claim_carrier:
+      claim_carriers[policy_number] = claim_carrier
+
+  header_aliases = {
+    "policy_number": {"policynumber", "policyno", "policy", "policy#", "policynum"},
+    "line": {"policytypecoverage", "policytype", "linecoverage", "lineofbusiness", "coverage", "lob", "line"},
+    "carrier": {"carrier", "writingcarrier", "carriername", "insurancecarrier"},
+    "effective_date": {"effective", "effectivedate", "policyeffective", "policyeffectivedate", "effdate"},
+    "expiration_date": {"expiration", "expirationdate", "policyexpiration", "policyexpirationdate", "expdate"},
+    "premium": {"premium", "currentpremium", "annualpremium", "writtenpremium", "policypremium"},
+  }
+
+  def header_field_for(cell):
+    cell_key = key(cell)
+    for field, aliases in header_aliases.items():
+      if cell_key in aliases:
+        return field
+    return ""
+
+  policy_map = {}
+
+  def add_policy(policy_number, line_value="", carrier_value="", eff_value="", exp_value="", premium_value=""):
+    policy_number = clean(policy_number).upper()
+    if not is_policy_number(policy_number):
+      return
+
+    final_line = normalize_line(line_value, policy_number) or line_from_policy(policy_number) or "Other"
+    final_carrier = clean(carrier_value) or claim_carriers.get(policy_number) or profile_data.get("carrier_name") or profile_data.get("writing_carrier") or ""
+    final_eff = normalize_date(eff_value) or profile_data.get("effective_date") or effective_date or ""
+    final_exp = normalize_date(exp_value) or profile_data.get("expiration_date") or expiration_date or ""
+    final_premium = clean(premium_value)
+
+    existing = policy_map.get(policy_number, {})
+    policy_map[policy_number] = {
+      "policy_number": policy_number,
+      "policy_type": final_line or existing.get("policy_type") or "",
+      "line_of_business": final_line or existing.get("line_of_business") or "",
+      "coverage": final_line or existing.get("coverage") or "",
+      "line": final_line or existing.get("line") or "",
+      "carrier": final_carrier or existing.get("carrier") or "",
+      "carrier_name": final_carrier or existing.get("carrier_name") or "",
+      "writing_carrier": final_carrier or existing.get("writing_carrier") or "",
+      "effective_date": final_eff or existing.get("effective_date") or "",
+      "policy_effective_date": final_eff or existing.get("policy_effective_date") or "",
+      "expiration_date": final_exp or existing.get("expiration_date") or "",
+      "policy_expiration_date": final_exp or existing.get("policy_expiration_date") or "",
+      "premium": final_premium or existing.get("premium") or "",
+      "current_premium": final_premium.replace("$", "").replace(",", "") if final_premium else existing.get("current_premium", ""),
+      "claim_count": claim_counts.get(policy_number, 0),
+      "claims": claim_counts.get(policy_number, 0),
+      "total_incurred": claim_totals.get(policy_number, 0.0),
+    }
+
+  for sheet_name, rows in sheets:
+    if "claim" in sheet_name.lower():
+      continue
+
+    active_header = None
+
+    for row in rows:
+      row_text = " ".join(clean(cell).lower() for cell in row if clean(cell))
+      row_keys = {key(cell) for cell in row}
+
+      if "claimnumber" in row_keys or "claim detail" in row_text or "claims detail" in row_text:
+        active_header = None
+        continue
+
+      maybe_header = {}
+      for idx, cell in enumerate(row):
+        field = header_field_for(cell)
+        if field:
+          maybe_header[field] = idx
+
+      if "policy_number" in maybe_header and ("line" in maybe_header or "effective_date" in maybe_header or "expiration_date" in maybe_header):
+        active_header = maybe_header
+        continue
+
+      if not active_header:
+        continue
+
+      policy_i = active_header.get("policy_number")
+      if policy_i is None or policy_i >= len(row):
+        continue
+
+      policy_number = clean(row[policy_i]).upper()
+      if not is_policy_number(policy_number):
+        continue
+
+      def row_value(field):
+        idx = active_header.get(field)
+        if idx is None or idx >= len(row):
+          return ""
+        return clean(row[idx])
+
+      add_policy(
+        policy_number=policy_number,
+        line_value=row_value("line"),
+        carrier_value=row_value("carrier"),
+        eff_value=row_value("effective_date"),
+        exp_value=row_value("expiration_date"),
+        premium_value=row_value("premium"),
+      )
+
+  if not policy_map:
+    return profile_data
+
+  policies = list(policy_map.values())
+  policy_numbers = [item["policy_number"] for item in policies if item.get("policy_number")]
+
+  profile_data["policies"] = policies
+  profile_data["policy_schedule"] = policies
+  profile_data["policy_numbers"] = policy_numbers
+
+  if policy_numbers and not is_policy_number(profile_data.get("policy_number")):
+    profile_data["policy_number"] = policy_numbers[0]
+  if policy_numbers and not is_policy_number(profile_data.get("main_policy")):
+    profile_data["main_policy"] = policy_numbers[0]
+
+  print("LOSSQ_EXCEL_MULTISHEET_POLICY_SCHEDULE_AUTHORITY_V1:", {
+    "business_name": profile_data.get("business_name"),
+    "effective_date": profile_data.get("effective_date"),
+    "expiration_date": profile_data.get("expiration_date"),
+    "policy_count": len(policies),
+    "policy_numbers": policy_numbers,
+    "lines": [p.get("line_of_business") for p in policies],
+  })
+
+  return profile_data
+
+
+
 def extract_profile_data(
   parsed_claims: list[dict],
   fallback_policy_number: str,
@@ -14864,6 +15318,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
   profile_data["policies"] = merge_policy_lists_for_upload(
     existing_policy_schedule,
     claim_policy_schedule,
+  )
+
+  # LOSSQ_EXCEL_MULTISHEET_POLICY_SCHEDULE_AUTHORITY_CALL_V1
+  profile_data = lossq_excel_multisheet_policy_schedule_authority_v1(
+    file_path,
+    profile_data,
+    locals().get("all_parsed_claims", locals().get("parsed_claims", [])),
   )
 
   profile_account_key = choose_upload_account_key(profile_data, direct_profile)
