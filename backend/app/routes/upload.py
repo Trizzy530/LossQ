@@ -15048,6 +15048,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     if profile_data.get(key) not in ("", None, [], {})
   }
   if debug_exposure_payload:
+    print("LOSSQ_PROFILE_DATA_EXPOSURE_BEFORE_SAVE:", debug_exposure_payload)
+
   # LOSSQ_FORCE_LOCATION_LIQUOR_PROFILE_DATA_SAVE_V1
   # Final exposure save guard. The preamble CSV parser may place restaurant
   # exposure values inside exposure_basis/exposure_inputs, but profile upsert
