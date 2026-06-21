@@ -8005,11 +8005,41 @@ const modelChartNarrative =
          <ProfileDetail
           label="Producing Agency"
           value={lossqProducingAgencyFromObject({
-           // LOSSQ_PRODUCING_AGENCY_FROM_UPLOAD_PROFILE_ONLY_V1
-           // Account Snapshot should reflect the uploaded file/profile,
-           // not the user's Company Profile or organization fallback.
+           // LOSSQ_DASHBOARD_PRODUCING_AGENCY_FROM_SETTINGS_V1
+           // Dashboard Account Snapshot should match Settings / Company Info first,
+           // then fall back to uploaded profile-specific agency values.
           ...(profile || {}),
           ...(displayProfile || {}),
+           dashboardIdentity,
+           billingStatus,
+           organization:
+            dashboardIdentity?.organization ||
+            billingStatus?.organization ||
+            dashboardIdentity?.agency_profile ||
+            {},
+           company_profile:
+            dashboardIdentity?.organization ||
+            billingStatus?.organization ||
+            dashboardIdentity?.company_profile ||
+            dashboardIdentity?.agency_profile ||
+            {},
+           agency_profile:
+            dashboardIdentity?.organization ||
+            billingStatus?.organization ||
+            dashboardIdentity?.agency_profile ||
+            {},
+           agency_name:
+            dashboardIdentity?.organization?.agency_name ||
+            dashboardIdentity?.organization?.company_name ||
+            dashboardIdentity?.organization?.organization_name ||
+            dashboardIdentity?.organization?.name ||
+            dashboardIdentity?.agency_profile?.agency_name ||
+            dashboardIdentity?.company_profile?.agency_name ||
+            billingStatus?.organization?.agency_name ||
+            billingStatus?.organization?.company_name ||
+            billingStatus?.organization?.organization_name ||
+            billingStatus?.organization?.name ||
+            "",
           })}
          />
          <ProfileDetail label="Main Policy" value={mainPolicyNumber || "-"} />
