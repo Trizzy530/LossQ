@@ -5884,6 +5884,380 @@ def lossq_final_profile_data_business_name_repair_v3(file_path, profile_data=Non
 
   return profile_data, direct_profile
 
+
+
+# LOSSQ_EXCEL_ONLY_PROFILE_REPAIR_V2
+def lossq_excel_only_profile_repair_v2(file_path, profile_data=None, direct_profile=None, parsed_claims=None):
+  """
+  Excel-only final profile repair.
+
+  This does not run for PDF or CSV.
+  Purpose:
+  - Fix Excel uploads where claims parse but Account Snapshot uses filename fallback.
+  - Pull insured/business name and dates from parsed claim rows first.
+  - Fallback to workbook cells if claim rows do not contain profile fields.
+  """
+  import re
+  import os
+  import datetime as _dt
+
+  profile_data = profile_data if isinstance(profile_data, dict) else {}
+  direct_profile = direct_profile if isinstance(direct_profile, dict) else {}
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+
+  lower_path = str(file_path or "").lower()
+  if not (lower_path.endswith(".xlsx") or lower_path.endswith(".xls")):
+    return profile_data, direct_profile
+
+  def clean(value):
+    if isinstance(value, (_dt.datetime, _dt.date)):
+      return value.strftime("%m/%d/%Y")
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
+
+  def compact(value):
+    return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+  def normalize_date(value):
+    if isinstance(value, (_dt.datetime, _dt.date)):
+      return value.strftime("%m/%d/%Y")
+
+    raw = clean(value)
+    if not raw:
+      return ""
+
+    # Excel serial date fallback.
+    if re.fullmatch(r"\d{5}", raw):
+      try:
+        serial = int(raw)
+        dt = _dt.datetime(1899, 12, 30) + _dt.timedelta(days=serial)
+        if 1990 <= dt.year <= 2100:
+          return dt.strftime("%m/%d/%Y")
+      except Exception:
+        pass
+
+    formats = [
+      "%m/%d/%Y",
+      "%m/%d/%y",
+      "%Y-%m-%d",
+      "%m-%d-%Y",
+      "%m-%d-%y",
+      "%B %d, %Y",
+      "%b %d, %Y",
+    ]
+
+    for fmt in formats:
+      try:
+        return _dt.datetime.strptime(raw, fmt).strftime("%m/%d/%Y")
+      except Exception:
+        pass
+
+    match = re.search(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b", raw)
+    if match:
+      mm, dd, yy = match.group(1), match.group(2), match.group(3)
+      if len(yy) == 2:
+        yy = "20" + yy
+      try:
+        return _dt.datetime(int(yy), int(mm), int(dd)).strftime("%m/%d/%Y")
+      except Exception:
+        pass
+
+    return ""
+
+  def clean_business(value):
+    value = clean(value)
+
+    # Remove timestamp/filename fallback noise.
+    value = re.sub(r"^\d{8,20}\s+", "", value)
+    value = re.sub(r"(?i)^\s*(?:lossq\s+)?(?:excel\s+)?(?:loss\s+run\s+)?", "", value)
+
+    # Remove captured labels.
+    value = re.sub(
+      r"(?i)^\s*(?:business\s+name|named\s+insured|insured|insured\s*/\s*business\s*name|account\s+name|applicant|entity|company\s+name)\s*[:#\-\/]*\s*",
+      "",
+      value,
+    )
+
+    value = re.sub(
+      r"(?i)\s+(?:loss\s+run\s+report|loss\s+run|report|excel|xlsx|xls|document)\s*$",
+      "",
+      value,
+    )
+
+    return clean(value)
+
+  def is_bad_business(value):
+    k = compact(value)
+    return (
+      not k
+      or k in {
+        "businessname",
+        "businessnamenotset",
+        "namedinsured",
+        "insured",
+        "insuredname",
+        "accountname",
+        "applicant",
+        "entity",
+        "companyname",
+        "unknown",
+        "notset",
+        "na",
+        "none",
+        "null",
+      }
+      or k.startswith("lossqexcellossrun")
+      or k.startswith("excellossrun")
+      or bool(re.match(r"^\d{8,20}", clean(value)))
+    )
+
+  def good_business(value):
+    value = clean_business(value)
+    if is_bad_business(value):
+      return ""
+
+    low = value.lower()
+    blocked = [
+      "policy schedule",
+      "claim detail",
+      "claims detail",
+      "claim number",
+      "policy number",
+      "line of business",
+      "coverage",
+      "loss summary",
+      "paid amount",
+      "reserve amount",
+      "total incurred",
+      "effective date",
+      "expiration date",
+      "evaluation date",
+      "valuation date",
+      "account number",
+      "customer number",
+      "carrier",
+      "writing carrier",
+      "producer",
+      "producing agency",
+    ]
+
+    if any(part in low for part in blocked):
+      return ""
+
+    if len(value) < 4 or len(value) > 140:
+      return ""
+
+    return value
+
+  def first_from_claims(keys, is_date=False):
+    for claim in parsed_claims:
+      if not isinstance(claim, dict):
+        continue
+      for key in keys:
+        value = claim.get(key)
+        if is_date:
+          normalized = normalize_date(value)
+          if normalized:
+            return normalized
+        else:
+          candidate = good_business(value)
+          if candidate:
+            return candidate
+    return ""
+
+  # 1) First trust values already parsed into claim rows.
+  business_name = first_from_claims([
+    "business_name",
+    "named_insured",
+    "insured_name",
+    "account_name",
+    "insured",
+  ])
+
+  effective_date = first_from_claims([
+    "effective_date",
+    "policy_effective_date",
+    "policy_effective",
+    "eff_date",
+    "effective",
+  ], is_date=True)
+
+  expiration_date = first_from_claims([
+    "expiration_date",
+    "policy_expiration_date",
+    "policy_expiration",
+    "exp_date",
+    "expiration",
+  ], is_date=True)
+
+  evaluation_date = first_from_claims([
+    "evaluation_date",
+    "valuation_date",
+    "loss_run_date",
+    "report_date",
+    "as_of_date",
+    "as-of_date",
+  ], is_date=True)
+
+  # 2) Workbook cell fallback.
+  rows = []
+  try:
+    if lower_path.endswith(".xlsx"):
+      from openpyxl import load_workbook
+      wb = load_workbook(file_path, data_only=True, read_only=True)
+      for ws in wb.worksheets:
+        for row in ws.iter_rows(values_only=True):
+          values = [clean(cell) for cell in row]
+          if any(values):
+            rows.append(values)
+    elif lower_path.endswith(".xls"):
+      try:
+        import xlrd
+        wb = xlrd.open_workbook(file_path)
+        for sheet in wb.sheets():
+          for r in range(sheet.nrows):
+            values = [clean(sheet.cell_value(r, c)) for c in range(sheet.ncols)]
+            if any(values):
+              rows.append(values)
+      except Exception as exc:
+        print("LOSSQ_EXCEL_ONLY_PROFILE_REPAIR_XLS_SKIPPED_V2:", str(exc)[:200])
+  except Exception as exc:
+    print("LOSSQ_EXCEL_ONLY_PROFILE_REPAIR_WORKBOOK_READ_ERROR_V2:", str(exc)[:200])
+
+  flat = []
+  for row in rows:
+    for cell in row:
+      if clean(cell):
+        flat.append(clean(cell))
+
+  def label_value(labels):
+    wanted = {compact(label) for label in labels}
+
+    # Same row label -> value to right.
+    for row in rows:
+      for idx, cell in enumerate(row):
+        if compact(cell) in wanted:
+          for j in range(idx + 1, min(idx + 8, len(row))):
+            value = clean(row[j])
+            if value and compact(value) not in wanted:
+              return value
+
+    # Same cell "Label: Value".
+    for cell in flat:
+      match = re.match(r"^\s*([^:]{2,80})\s*:\s*(.+?)\s*$", cell)
+      if match and compact(match.group(1)) in wanted:
+        return clean(match.group(2))
+
+    # Vertical label -> next non-empty cell.
+    for idx, cell in enumerate(flat):
+      if compact(cell) in wanted:
+        for j in range(idx + 1, min(idx + 8, len(flat))):
+          value = clean(flat[j])
+          if value and compact(value) not in wanted:
+            return value
+
+    return ""
+
+  if not business_name:
+    business_name = good_business(label_value([
+      "Business Name",
+      "Named Insured",
+      "Insured",
+      "Insured Name",
+      "Account Name",
+      "Applicant",
+      "Entity",
+      "Company Name",
+    ]))
+
+  if not effective_date:
+    effective_date = normalize_date(label_value([
+      "Effective Date",
+      "Policy Effective Date",
+      "Policy Effective",
+      "Eff Date",
+      "Effective",
+      "Policy Period Start",
+    ]))
+
+  if not expiration_date:
+    expiration_date = normalize_date(label_value([
+      "Expiration Date",
+      "Policy Expiration Date",
+      "Policy Expiration",
+      "Exp Date",
+      "Expiration",
+      "Policy Period End",
+    ]))
+
+  if not evaluation_date:
+    evaluation_date = normalize_date(label_value([
+      "Evaluation Date",
+      "Valuation Date",
+      "Loss Run Date",
+      "Report Date",
+      "As Of Date",
+      "As-Of Date",
+    ]))
+
+  # 3) Clean current filename fallback if it is already present.
+  current_business = (
+    profile_data.get("business_name")
+    or profile_data.get("named_insured")
+    or profile_data.get("insured_name")
+    or profile_data.get("account_name")
+  )
+
+  if not business_name:
+    candidate = good_business(current_business)
+    if candidate:
+      business_name = candidate
+
+  # 4) Filename fallback only if there is no workbook/claim value.
+  if not business_name:
+    try:
+      base = os.path.basename(str(file_path or ""))
+      base = re.sub(r"\.[a-zA-Z0-9]+$", "", base)
+      base = re.sub(r"^\d{8,20}\s*", "", base)
+      base = re.sub(r"(?i)\b(lossq|loss|run|excel|messy|clean|ready|submission|pdf|csv|xlsx|xls|test|v\d+|parser|friendly)\b", " ", base)
+      base = re.sub(r"[_\-]+", " ", base)
+      base = re.sub(r"\s+", " ", base).strip()
+      business_name = good_business(base.title())
+    except Exception:
+      business_name = ""
+
+  if business_name:
+    for target in [profile_data, direct_profile]:
+      target["business_name"] = business_name
+      target["named_insured"] = business_name
+      target["insured_name"] = business_name
+      target["account_name"] = business_name
+
+  if effective_date:
+    profile_data["effective_date"] = effective_date
+    profile_data["policy_effective_date"] = effective_date
+    direct_profile["effective_date"] = effective_date
+
+  if expiration_date:
+    profile_data["expiration_date"] = expiration_date
+    profile_data["policy_expiration_date"] = expiration_date
+    direct_profile["expiration_date"] = expiration_date
+
+  if evaluation_date:
+    profile_data["evaluation_date"] = evaluation_date
+    profile_data["valuation_date"] = evaluation_date
+    direct_profile["evaluation_date"] = evaluation_date
+
+  print("LOSSQ_EXCEL_ONLY_PROFILE_REPAIR_V2:", {
+    "business_name": profile_data.get("business_name"),
+    "effective_date": profile_data.get("effective_date"),
+    "expiration_date": profile_data.get("expiration_date"),
+    "evaluation_date": profile_data.get("evaluation_date"),
+    "claims": len(parsed_claims),
+    "rows": len(rows),
+  })
+
+  return profile_data, direct_profile
+
 def extract_profile_data(
   parsed_claims: list[dict],
   fallback_policy_number: str,
@@ -11995,6 +12369,14 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     file_path,
     profile_data,
     direct_profile,
+  )
+
+  # LOSSQ_EXCEL_ONLY_PROFILE_REPAIR_CALL_V2
+  profile_data, direct_profile = lossq_excel_only_profile_repair_v2(
+    file_path,
+    profile_data,
+    direct_profile,
+    locals().get("all_parsed_claims", locals().get("parsed_claims", [])),
   )
 
   if not profile_data.get("policy_number"):
