@@ -9206,6 +9206,143 @@ def lossq_excel_multisheet_policy_schedule_authority_v1(file_path, profile_data=
   if first_policy_expiration and lossq_excel_invalid_account_date_v1(profile_data.get("expiration_date")):
     profile_data["expiration_date"] = first_policy_expiration
 
+
+  # LOSSQ_EXCEL_ACCOUNT_PROFILE_TWO_COLUMN_FINAL_V1
+  # Final Excel account snapshot repair for simple Account Profile sheets:
+  # Field | Value
+  # Named Insured | ...
+  # Account Number | ...
+  # Writing Carrier | ...
+  # Policy Period | ...
+  # This prevents filename fallback and adjacent labels/carriers from being saved
+  # as the account snapshot values.
+  excel_profile_fields = {}
+
+  excel_two_column_aliases = {
+    "namedinsured": "business_name",
+    "insured": "business_name",
+    "insuredname": "business_name",
+    "accountname": "business_name",
+    "businessname": "business_name",
+    "companyname": "business_name",
+    "accountnumber": "account_number",
+    "accountno": "account_number",
+    "account": "account_number",
+    "customernumber": "account_number",
+    "clientnumber": "account_number",
+    "writingcarrier": "carrier_name",
+    "carrier": "carrier_name",
+    "carriername": "carrier_name",
+    "insurancecarrier": "carrier_name",
+    "policyperiod": "policy_period",
+    "policyterm": "policy_period",
+    "coverageperiod": "policy_period",
+    "effectivedate": "effective_date",
+    "policyeffectivedate": "effective_date",
+    "expirationdate": "expiration_date",
+    "policyexpirationdate": "expiration_date",
+    "evaluationdate": "evaluation_date",
+    "valuationdate": "evaluation_date",
+    "asofdate": "evaluation_date",
+    "lossrundate": "evaluation_date",
+  }
+
+  def lossq_excel_valid_account_number_v1(value):
+    raw = clean(value)
+    if not raw:
+      return False
+
+    raw_key = key(raw)
+    low = raw.lower()
+
+    if any(fragment in low for fragment in ["insurance", "carrier", "company", "co.", "mutual", "policy schedule", "claim detail"]):
+      return False
+
+    if raw_key in reverse_labels:
+      return False
+
+    if is_policy_number(raw) or looks_like_claim_number(raw):
+      return False
+
+    if not any(char.isdigit() for char in raw):
+      return False
+
+    return True
+
+  for sheet_name, rows in sheets:
+    sheet_key = key(sheet_name)
+
+    # Prefer account/profile-style sheets, but still allow universal Field/Value rows.
+    for row in rows:
+      if len(row) < 2:
+        continue
+
+      left = clean(row[0])
+      right = clean(row[1])
+      field = excel_two_column_aliases.get(key(left))
+
+      if not field or not right:
+        continue
+
+      if field == "business_name":
+        if good_business(right):
+          excel_profile_fields[field] = right
+
+      elif field == "account_number":
+        if lossq_excel_valid_account_number_v1(right):
+          excel_profile_fields[field] = right
+
+      elif field == "carrier_name":
+        if right and not is_policy_number(right) and not looks_like_claim_number(right):
+          excel_profile_fields[field] = right
+
+      elif field in {"effective_date", "expiration_date", "evaluation_date"}:
+        normalized_value = normalize_date(right)
+        if normalized_value and any(char.isdigit() for char in normalized_value):
+          excel_profile_fields[field] = normalized_value
+
+      elif field == "policy_period":
+        start_date, end_date = split_policy_period(right)
+        if start_date and end_date:
+          excel_profile_fields["effective_date"] = start_date
+          excel_profile_fields["expiration_date"] = end_date
+          excel_profile_fields["policy_period"] = right
+
+  final_business = good_business(excel_profile_fields.get("business_name"))
+  if final_business:
+    for business_field in ["business_name", "insured_name", "named_insured", "account_name", "insured"]:
+      profile_data[business_field] = final_business
+
+  final_account_number = excel_profile_fields.get("account_number")
+  if lossq_excel_valid_account_number_v1(final_account_number):
+    profile_data["account_number"] = final_account_number
+    profile_data["customer_number"] = final_account_number
+
+  final_carrier = clean(excel_profile_fields.get("carrier_name"))
+  if final_carrier:
+    profile_data["carrier_name"] = final_carrier
+    profile_data["writing_carrier"] = final_carrier
+    profile_data["carrier"] = final_carrier
+
+  if excel_profile_fields.get("effective_date"):
+    profile_data["effective_date"] = excel_profile_fields["effective_date"]
+
+  if excel_profile_fields.get("expiration_date"):
+    profile_data["expiration_date"] = excel_profile_fields["expiration_date"]
+
+  if excel_profile_fields.get("evaluation_date"):
+    profile_data["evaluation_date"] = excel_profile_fields["evaluation_date"]
+    profile_data["valuation_date"] = excel_profile_fields["evaluation_date"]
+
+  print("LOSSQ_EXCEL_ACCOUNT_PROFILE_TWO_COLUMN_FINAL_V1:", {
+    "business_name": profile_data.get("business_name"),
+    "account_number": profile_data.get("account_number"),
+    "carrier_name": profile_data.get("carrier_name"),
+    "effective_date": profile_data.get("effective_date"),
+    "expiration_date": profile_data.get("expiration_date"),
+    "evaluation_date": profile_data.get("evaluation_date"),
+  })
+
   print("LOSSQ_EXCEL_MULTISHEET_POLICY_SCHEDULE_AUTHORITY_V1:", {
     "business_name": profile_data.get("business_name"),
     "effective_date": profile_data.get("effective_date"),
