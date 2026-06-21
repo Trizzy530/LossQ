@@ -6587,6 +6587,323 @@ def lossq_excel_only_policy_schedule_repair_v1(file_path, profile_data=None, dir
 
   return profile_data, direct_profile
 
+
+
+# LOSSQ_EXCEL_POLICY_SCHEDULE_BEFORE_PROFILE_SAVE_V2
+def lossq_excel_policy_schedule_before_profile_save_v2(file_path, profile_data=None, parsed_claims=None):
+  """
+  Excel-only final policy schedule repair immediately before account profile save.
+
+  Purpose:
+  - Preserve policy schedule rows that have zero claims, such as Umbrella.
+  - Does not run for PDF or CSV.
+  - Does not hardcode carrier, insured, policy number, or sample file.
+  """
+  import re
+  import datetime as _dt
+
+  profile_data = profile_data if isinstance(profile_data, dict) else {}
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+
+  lower_path = str(file_path or "").lower()
+  if not (lower_path.endswith(".xlsx") or lower_path.endswith(".xls")):
+    return profile_data
+
+  def clean(value):
+    if isinstance(value, (_dt.datetime, _dt.date)):
+      return value.strftime("%Y-%m-%d")
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+  def key(value):
+    return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+  def norm_policy(value):
+    return clean(value).upper().replace(" ", "").strip(" :;,.|/\\")
+
+  def is_account(value):
+    text = norm_policy(value)
+    return bool(re.search(r"(ACCT|ACCOUNT|CUSTOMER|CUST|CLIENT)", text))
+
+  def is_policy(value):
+    text = norm_policy(value)
+    if not text or is_account(text):
+      return False
+    return bool(
+      re.match(r"^[A-Z]{1,10}-\d{2,6}-[A-Z0-9]{2,20}$", text)
+      or re.match(r"^[A-Z]{2,10}\d{4}[A-Z0-9]{2,20}$", text)
+    )
+
+  def line_from_prefix(policy_number):
+    p = norm_policy(policy_number)
+    prefix = p.split("-")[0] if "-" in p else ""
+    mapping = {
+      "GL": "General Liability",
+      "CGL": "General Liability",
+      "WC": "Workers Compensation",
+      "BOP": "Businessowners Policy",
+      "UMB": "Umbrella",
+      "UM": "Umbrella",
+      "EXCESS": "Umbrella",
+      "LIQ": "Liquor Liability",
+      "AUTO": "Commercial Auto",
+      "CA": "Commercial Auto",
+      "GAR": "Garage Liability",
+      "DOL": "Dealers Open Lot",
+      "CP": "Commercial Property",
+      "PROP": "Property",
+      "CY": "Cyber Liability",
+      "CYBER": "Cyber Liability",
+      "PL": "Professional Liability",
+      "EPLI": "Employment Practices Liability",
+      "DO": "Directors & Officers",
+      "DNO": "Directors & Officers",
+      "IM": "Inland Marine",
+      "CARGO": "Motor Truck Cargo",
+    }
+    return mapping.get(prefix, "")
+
+  def normalize_date(value):
+    if isinstance(value, (_dt.datetime, _dt.date)):
+      return value.strftime("%Y-%m-%d")
+    raw = clean(value)
+    if not raw:
+      return ""
+
+    if re.fullmatch(r"\d{5}", raw):
+      try:
+        dt = _dt.datetime(1899, 12, 30) + _dt.timedelta(days=int(raw))
+        if 1990 <= dt.year <= 2100:
+          return dt.strftime("%Y-%m-%d")
+      except Exception:
+        pass
+
+    for fmt in ["%m/%d/%Y", "%m/%d/%y", "%Y-%m-%d", "%m-%d-%Y", "%m-%d-%y"]:
+      try:
+        return _dt.datetime.strptime(raw, fmt).strftime("%Y-%m-%d")
+      except Exception:
+        pass
+
+    return ""
+
+  def money(value):
+    raw = clean(value)
+    if not raw:
+      return 0.0
+    neg = raw.startswith("(") and raw.endswith(")")
+    raw = raw.replace("$", "").replace(",", "").replace("(", "").replace(")", "")
+    raw = re.sub(r"[^0-9.\-]+", "", raw)
+    try:
+      val = float(raw or 0)
+      return -val if neg else val
+    except Exception:
+      return 0.0
+
+  def better_line(value):
+    text = clean(value)
+    if not text:
+      return ""
+
+    k = key(text)
+    mapping = {
+      "generalliability": "General Liability",
+      "cgl": "General Liability",
+      "workerscompensation": "Workers Compensation",
+      "workerscomp": "Workers Compensation",
+      "businessownerspolicy": "Businessowners Policy",
+      "bop": "Businessowners Policy",
+      "umbrella": "Umbrella",
+      "umbrellaliability": "Umbrella",
+      "excessliability": "Umbrella",
+      "liquorliability": "Liquor Liability",
+      "commercialauto": "Commercial Auto",
+      "garage liability": "Garage Liability",
+      "garageliability": "Garage Liability",
+      "property": "Property",
+      "commercialproperty": "Commercial Property",
+      "cyberliability": "Cyber Liability",
+    }
+    return mapping.get(k, text if any(word in k for word in ["liability", "compensation", "umbrella", "policy", "property", "auto"]) else "")
+
+  rows = []
+  try:
+    if lower_path.endswith(".xlsx"):
+      from openpyxl import load_workbook
+      wb = load_workbook(file_path, data_only=True, read_only=True)
+      for ws in wb.worksheets:
+        for row in ws.iter_rows(values_only=True):
+          values = [clean(cell) for cell in row]
+          if any(values):
+            rows.append(values)
+    elif lower_path.endswith(".xls"):
+      try:
+        import xlrd
+        wb = xlrd.open_workbook(file_path)
+        for sheet in wb.sheets():
+          for r in range(sheet.nrows):
+            values = [clean(sheet.cell_value(r, c)) for c in range(sheet.ncols)]
+            if any(values):
+              rows.append(values)
+      except Exception as exc:
+        print("LOSSQ_EXCEL_POLICY_SCHEDULE_BEFORE_PROFILE_SAVE_XLS_SKIPPED_V2:", str(exc)[:200])
+  except Exception as exc:
+    print("LOSSQ_EXCEL_POLICY_SCHEDULE_BEFORE_PROFILE_SAVE_READ_ERROR_V2:", str(exc)[:300])
+    return profile_data
+
+  policy_map = {}
+
+  def add_policy(policy_number, line="", carrier="", effective="", expiration="", premium=0):
+    policy_number = norm_policy(policy_number)
+    if not is_policy(policy_number):
+      return
+
+    existing = policy_map.get(policy_number, {})
+    lob = clean(line) or existing.get("line_of_business") or line_from_prefix(policy_number)
+    carrier_value = clean(carrier) or existing.get("carrier") or clean(profile_data.get("carrier_name") or profile_data.get("writing_carrier"))
+    eff = normalize_date(effective) or existing.get("effective_date") or normalize_date(profile_data.get("effective_date"))
+    exp = normalize_date(expiration) or existing.get("expiration_date") or normalize_date(profile_data.get("expiration_date"))
+    prem = money(premium) or money(existing.get("premium"))
+
+    policy_map[policy_number] = {
+      "policy_number": policy_number,
+      "line_of_business": lob,
+      "coverage": lob,
+      "policy_type": lob,
+      "carrier": carrier_value,
+      "effective_date": eff,
+      "expiration_date": exp,
+      "premium": prem,
+      "current_premium": prem,
+    }
+
+  # Start with existing profile policy rows.
+  for source in [profile_data.get("policies"), profile_data.get("policy_schedule")]:
+    if isinstance(source, list):
+      for item in source:
+        if isinstance(item, dict):
+          add_policy(
+            item.get("policy_number") or item.get("policy") or item.get("policy_no"),
+            item.get("line_of_business") or item.get("coverage") or item.get("policy_type"),
+            item.get("carrier") or item.get("carrier_name") or item.get("writing_carrier"),
+            item.get("effective_date") or item.get("policy_effective_date"),
+            item.get("expiration_date") or item.get("policy_expiration_date"),
+            item.get("premium") or item.get("current_premium"),
+          )
+
+  # Add policies from parsed claim rows.
+  claim_counts = {}
+  claim_totals = {}
+  for claim in parsed_claims:
+    if not isinstance(claim, dict):
+      continue
+    policy_number = norm_policy(claim.get("policy_number") or claim.get("Policy Number"))
+    if not is_policy(policy_number):
+      continue
+
+    claim_counts[policy_number] = claim_counts.get(policy_number, 0) + 1
+    claim_totals[policy_number] = claim_totals.get(policy_number, 0.0) + money(
+      claim.get("total_incurred") or claim.get("incurred") or claim.get("total")
+    )
+
+    add_policy(
+      policy_number,
+      claim.get("line_of_business") or claim.get("claim_type") or claim.get("coverage"),
+      claim.get("carrier_name") or claim.get("writing_carrier"),
+      claim.get("effective_date"),
+      claim.get("expiration_date"),
+      0,
+    )
+
+  # Detect header table rows in workbook.
+  aliases = {
+    "policy": {"policynumber", "policyno", "policy", "policy#", "policynumber"},
+    "line": {"lineofbusiness", "coverage", "policytype", "lob", "line"},
+    "carrier": {"carrier", "writingcarrier", "insurancecarrier"},
+    "effective": {"effectivedate", "policyeffectivedate", "effective", "effdate"},
+    "expiration": {"expirationdate", "policyexpirationdate", "expiration", "expdate"},
+    "premium": {"premium", "currentpremium", "annualpremium", "writtenpremium"},
+  }
+
+  def find_col(row, names):
+    for i, cell in enumerate(row):
+      if key(cell) in names:
+        return i
+    return None
+
+  for r_idx, row in enumerate(rows):
+    policy_col = find_col(row, aliases["policy"])
+    if policy_col is None:
+      continue
+
+    line_col = find_col(row, aliases["line"])
+    carrier_col = find_col(row, aliases["carrier"])
+    eff_col = find_col(row, aliases["effective"])
+    exp_col = find_col(row, aliases["expiration"])
+    prem_col = find_col(row, aliases["premium"])
+
+    for data_row in rows[r_idx + 1 : min(len(rows), r_idx + 40)]:
+      if policy_col >= len(data_row):
+        continue
+
+      policy_number = norm_policy(data_row[policy_col])
+      if not is_policy(policy_number):
+        continue
+
+      add_policy(
+        policy_number,
+        data_row[line_col] if line_col is not None and line_col < len(data_row) else "",
+        data_row[carrier_col] if carrier_col is not None and carrier_col < len(data_row) else "",
+        data_row[eff_col] if eff_col is not None and eff_col < len(data_row) else "",
+        data_row[exp_col] if exp_col is not None and exp_col < len(data_row) else "",
+        data_row[prem_col] if prem_col is not None and prem_col < len(data_row) else 0,
+      )
+
+  # Loose scan: any policy-looking cell is preserved even if no claims exist.
+  for r_idx, row in enumerate(rows):
+    for c_idx, cell in enumerate(row):
+      policy_number = norm_policy(cell)
+      if not is_policy(policy_number):
+        continue
+
+      nearby_cells = []
+      for rr in rows[max(0, r_idx - 2): min(len(rows), r_idx + 3)]:
+        nearby_cells.extend(rr)
+
+      line = ""
+      for value in nearby_cells:
+        maybe = better_line(value)
+        if maybe:
+          line = maybe
+          break
+
+      add_policy(
+        policy_number,
+        line or line_from_prefix(policy_number),
+        profile_data.get("carrier_name") or profile_data.get("writing_carrier"),
+        profile_data.get("effective_date"),
+        profile_data.get("expiration_date"),
+        0,
+      )
+
+  policies = []
+  for policy_number in sorted(policy_map.keys()):
+    item = policy_map[policy_number]
+    item["claim_count"] = claim_counts.get(policy_number, 0)
+    item["claims"] = claim_counts.get(policy_number, 0)
+    item["total_incurred"] = claim_totals.get(policy_number, 0.0)
+    policies.append(item)
+
+  if policies:
+    profile_data["policies"] = policies
+    profile_data["policy_schedule"] = policies
+    profile_data["policy_numbers"] = [p["policy_number"] for p in policies]
+
+  print("LOSSQ_EXCEL_POLICY_SCHEDULE_BEFORE_PROFILE_SAVE_V2:", {
+    "count": len(policies),
+    "policies": [p.get("policy_number") for p in policies],
+  })
+
+  return profile_data
+
 def extract_profile_data(
   parsed_claims: list[dict],
   fallback_policy_number: str,
@@ -7119,6 +7436,13 @@ def lossq_sanitize_profile_policies_before_upsert_v6(profile_data: dict):
 
   return profile_data
 
+
+# LOSSQ_EXCEL_POLICY_SCHEDULE_BEFORE_PROFILE_SAVE_CALL_V2
+profile_data = lossq_excel_policy_schedule_before_profile_save_v2(
+  file_path,
+  profile_data,
+  locals().get("all_parsed_claims", locals().get("parsed_claims", [])),
+)
 
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
   # LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_CALL_V6
