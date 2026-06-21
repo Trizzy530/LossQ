@@ -55,6 +55,9 @@ class AccountProfile(Base):
     contents_value = Column(String, nullable=True)
     square_footage = Column(String, nullable=True)
     location_count = Column(String, nullable=True)
+    # LOSSQ_MODEL_LIQUOR_EXPOSURE_FIELDS_V1
+    liquor_sales = Column(String, nullable=True)
+    alcohol_sales = Column(String, nullable=True)
     unit_count = Column(String, nullable=True)
     cargo_limit = Column(String, nullable=True)
     umbrella_limit = Column(String, nullable=True)

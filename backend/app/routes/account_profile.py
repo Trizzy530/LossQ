@@ -69,6 +69,9 @@ class AccountProfileUpdate(BaseModel):
     contents_value: Optional[str] = ""
     square_footage: Optional[str] = ""
     location_count: Optional[str] = ""
+    # LOSSQ_PROFILE_LOCATION_LIQUOR_RESPONSE_V1
+    liquor_sales: Optional[str] = ""
+    alcohol_sales: Optional[str] = ""
     unit_count: Optional[str] = ""
     cargo_limit: Optional[str] = ""
     umbrella_limit: Optional[str] = ""
@@ -212,6 +215,8 @@ def ensure_account_profile_columns(db: Session):
         "contents_value": "VARCHAR",
         "square_footage": "VARCHAR",
         "location_count": "VARCHAR",
+        "liquor_sales": "VARCHAR",
+        "alcohol_sales": "VARCHAR",
         "unit_count": "VARCHAR",
         "cargo_limit": "VARCHAR",
         "umbrella_limit": "VARCHAR",
@@ -374,6 +379,26 @@ def lossq_account_profile_to_dict(profile):
         "vehicle_count": clean_value(getattr(profile, "vehicle_count", "")),
         "driver_count": clean_value(getattr(profile, "driver_count", "")),
         "property_tiv": clean_value(getattr(profile, "property_tiv", "")),
+        "tiv": clean_value(getattr(profile, "tiv", "")),
+        "building_value": clean_value(getattr(profile, "building_value", "")),
+        "contents_value": clean_value(getattr(profile, "contents_value", "")),
+        "square_footage": clean_value(getattr(profile, "square_footage", "")),
+        "location_count": clean_value(getattr(profile, "location_count", "")),
+        "locations": clean_value(getattr(profile, "locations", "")),
+        "locationCount": clean_value(getattr(profile, "locationCount", "")),
+        "liquor_sales": clean_value(getattr(profile, "liquor_sales", "")),
+        "liquorSales": clean_value(getattr(profile, "liquorSales", "")),
+        "alcohol_sales": clean_value(getattr(profile, "alcohol_sales", "")),
+        "unit_count": clean_value(getattr(profile, "unit_count", "")),
+        "cargo_limit": clean_value(getattr(profile, "cargo_limit", "")),
+        "umbrella_limit": clean_value(getattr(profile, "umbrella_limit", "")),
+        "experience_mod": clean_value(getattr(profile, "experience_mod", "")),
+        "mod": clean_value(getattr(profile, "mod", "")),
+        "exposure_change_percent": clean_value(getattr(profile, "exposure_change_percent", "")),
+        "cyber_revenue": clean_value(getattr(profile, "cyber_revenue", "")),
+        "professional_revenue": clean_value(getattr(profile, "professional_revenue", "")),
+        "exposure_basis": clean_value(getattr(profile, "exposure_basis", "")),
+        "underwriter_notes": clean_value(getattr(profile, "underwriter_notes", "")),
         "policies": normalize_policy_list(policies),
         "validation": validation if isinstance(validation, dict) else {},
         "raw_text_preview": clean_value(getattr(profile, "raw_text_preview", "")),
