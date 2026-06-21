@@ -3361,6 +3361,13 @@ def lossq_parse_label_based_pdf_loss_run_v1(file_path: str):
   normalized_claims, profile = lossq_clean_policy_schedule_display_names_v2(normalized_claims, profile)
   return normalized_claims, profile
 def parse_file(file_path: str, filename: str):
+  # LOSSQ_PARSE_FILE_SAFE_DEFAULTS_V1
+  parsed_claims = []
+  parsed_profile = {}
+  claims = []
+  profile = {}
+  policies = []
+
   lower_name = str(filename or "").lower()
 
   if lower_name.endswith(".pdf"):
