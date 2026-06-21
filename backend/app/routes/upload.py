@@ -15048,6 +15048,90 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     if profile_data.get(key) not in ("", None, [], {})
   }
   if debug_exposure_payload:
+  # LOSSQ_FORCE_LOCATION_LIQUOR_PROFILE_DATA_SAVE_V1
+  # Final exposure save guard. The preamble CSV parser may place restaurant
+  # exposure values inside exposure_basis/exposure_inputs, but profile upsert
+  # needs top-level fields for the dashboard inputs.
+  try:
+    import re as _lossq_exposure_re
+
+    def _lossq_clean_exposure_value_v1(value):
+      return str(value or "").strip()
+
+    def _lossq_exposure_from_basis_v1(label, source):
+      raw = str(source or "")
+      if not raw:
+        return ""
+
+      match = _lossq_exposure_re.search(
+        rf"{_lossq_exposure_re.escape(label)}\s*:\s*([^|]+)",
+        raw,
+        _lossq_exposure_re.IGNORECASE,
+      )
+      if not match:
+        return ""
+
+      return match.group(1).strip().replace(",", "")
+
+    def _lossq_first_exposure_value_v1(*values):
+      for value in values:
+        clean_value = _lossq_clean_exposure_value_v1(value)
+        if clean_value:
+          return clean_value.replace(",", "")
+      return ""
+
+    if isinstance(profile_data, dict):
+      exposure_inputs = profile_data.get("exposure_inputs")
+      if not isinstance(exposure_inputs, dict):
+        exposure_inputs = {}
+
+      exposure_basis_text = profile_data.get("exposure_basis") or ""
+
+      location_value = _lossq_first_exposure_value_v1(
+        profile_data.get("location_count"),
+        profile_data.get("locations"),
+        profile_data.get("locationCount"),
+        exposure_inputs.get("Location Count"),
+        exposure_inputs.get("Locations"),
+        _lossq_exposure_from_basis_v1("Locations", exposure_basis_text),
+        _lossq_exposure_from_basis_v1("Location Count", exposure_basis_text),
+      )
+
+      liquor_value = _lossq_first_exposure_value_v1(
+        profile_data.get("liquor_sales"),
+        profile_data.get("liquorSales"),
+        profile_data.get("alcohol_sales"),
+        exposure_inputs.get("Liquor Sales"),
+        exposure_inputs.get("Alcohol Sales"),
+        _lossq_exposure_from_basis_v1("Liquor Sales", exposure_basis_text),
+        _lossq_exposure_from_basis_v1("Alcohol Sales", exposure_basis_text),
+      )
+
+      if location_value:
+        profile_data["location_count"] = location_value
+        profile_data["locations"] = location_value
+        profile_data["locationCount"] = location_value
+        exposure_inputs["Location Count"] = location_value
+        exposure_inputs["Locations"] = location_value
+
+      if liquor_value:
+        profile_data["liquor_sales"] = liquor_value
+        profile_data["liquorSales"] = liquor_value
+        profile_data["alcohol_sales"] = liquor_value
+        exposure_inputs["Liquor Sales"] = liquor_value
+        exposure_inputs["Alcohol Sales"] = liquor_value
+
+      if exposure_inputs:
+        profile_data["exposure_inputs"] = exposure_inputs
+
+      print("LOSSQ_FORCE_LOCATION_LIQUOR_PROFILE_DATA_SAVE_V1:", {
+        "location_count": profile_data.get("location_count"),
+        "liquor_sales": profile_data.get("liquor_sales"),
+        "exposure_inputs": profile_data.get("exposure_inputs"),
+      })
+  except Exception as location_liquor_save_exc:
+    print("LOSSQ_FORCE_LOCATION_LIQUOR_PROFILE_DATA_SAVE_V1_ERROR:", str(location_liquor_save_exc)[:500])
+
     print("LOSSQ_PROFILE_DATA_EXPOSURE_BEFORE_SAVE:", debug_exposure_payload)
 
   # LOSSQ_CLEAN_EXPOSURE_LIMITS_FIELD_V1
