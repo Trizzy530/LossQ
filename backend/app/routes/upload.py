@@ -3373,6 +3373,211 @@ def lossq_parse_label_based_pdf_loss_run_v1(file_path: str):
 
 
 
+
+
+# LOSSQ_PDF_FINAL_BUSINESS_NAME_REPAIR_V1
+def lossq_pdf_final_business_name_repair_v1(file_path, parsed_profile=None):
+  """
+  Universal final PDF business-name repair.
+
+  Fixes messy PDFs where the account snapshot shows:
+  - Business Name Not Set
+  - / Business Name
+  - Named Insured / Business Name
+
+  No customer/file hardcoding.
+  """
+  import os
+  import re
+
+  parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+
+  if not str(file_path or "").lower().endswith(".pdf"):
+    return parsed_profile
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
+
+  def key(value):
+    return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+  def bad_name(value):
+    k = key(value)
+    return k in {
+      "",
+      "businessnamenotset",
+      "businessname",
+      "namedinsured",
+      "insured",
+      "accountname",
+      "applicant",
+      "namedinsuredbusinessname",
+      "insuredbusinessname",
+      "unknown",
+      "notset",
+      "na",
+      "none",
+      "null",
+    }
+
+  def good_candidate(value):
+    value = clean(value)
+    if bad_name(value):
+      return ""
+
+    lowered = value.lower()
+    blocked_parts = [
+      "loss run",
+      "policy schedule",
+      "claim detail",
+      "claim block",
+      "claim number",
+      "policy number",
+      "line of business",
+      "coverage",
+      "loss summary",
+      "paid amount",
+      "reserve amount",
+      "total incurred",
+      "date of loss",
+      "effective date",
+      "expiration date",
+      "valuation date",
+      "account number",
+      "carrier",
+      "writing carrier",
+      "producer",
+      "producing agency",
+      "report",
+    ]
+
+    if any(part in lowered for part in blocked_parts):
+      return ""
+
+    if len(value) < 4 or len(value) > 120:
+      return ""
+
+    return value
+
+  def read_pdf_text():
+    parts = [
+      parsed_profile.get("raw_text"),
+      parsed_profile.get("raw_text_preview"),
+      parsed_profile.get("ocr_text"),
+      parsed_profile.get("document_text"),
+    ]
+
+    try:
+      from pypdf import PdfReader
+      reader = PdfReader(file_path)
+      parts.append("\n".join((page.extract_text() or "") for page in reader.pages))
+    except Exception:
+      pass
+
+    return "\n".join(str(part or "") for part in parts if part)
+
+  raw_text = read_pdf_text()
+  lines = [clean(line) for line in raw_text.splitlines()]
+  lines = [line for line in lines if line]
+
+  label_keys = {
+    "namedinsured",
+    "businessname",
+    "insured",
+    "accountname",
+    "applicant",
+    "entity",
+    "companyname",
+  }
+
+  # 1) Same-line labels: Business Name: ABC LLC
+  for line in lines:
+    m = re.match(
+      r"(?i)^\s*(named\s+insured|business\s+name|insured|account\s+name|applicant|entity|company\s+name)\s*[:#\-]\s*(.+?)\s*$",
+      line,
+    )
+    if m:
+      candidate = good_candidate(m.group(2))
+      if candidate:
+        parsed_profile["business_name"] = candidate
+        parsed_profile["named_insured"] = candidate
+        parsed_profile["insured_name"] = candidate
+        parsed_profile["account_name"] = candidate
+        print("LOSSQ_PDF_FINAL_BUSINESS_NAME_REPAIR_V1:", {"business_name": candidate, "source": "same_line_label"})
+        return parsed_profile
+
+  # 2) Label on one line, value on following lines.
+  for idx, line in enumerate(lines):
+    line_key = key(line)
+
+    is_label_line = (
+      line_key in label_keys
+      or line_key in {"namedinsuredbusinessname", "insuredbusinessname", "accountnamebusinessname"}
+      or bool(re.match(r"(?i)^(named\s+insured|insured|account\s+name)\s*/\s*business\s+name$", line))
+    )
+
+    if not is_label_line:
+      continue
+
+    for j in range(idx + 1, min(idx + 8, len(lines))):
+      candidate = good_candidate(lines[j])
+      if candidate:
+        parsed_profile["business_name"] = candidate
+        parsed_profile["named_insured"] = candidate
+        parsed_profile["insured_name"] = candidate
+        parsed_profile["account_name"] = candidate
+        print("LOSSQ_PDF_FINAL_BUSINESS_NAME_REPAIR_V1:", {"business_name": candidate, "source": "next_line_label"})
+        return parsed_profile
+
+  # 3) Entity suffix fallback: find the first clean company-like line.
+  entity_suffix_pattern = re.compile(
+    r"(?i)\b([A-Z][A-Za-z0-9&.,'’\- ]{2,90}\s+"
+    r"(?:LLC|L\.L\.C\.|Inc\.?|Incorporated|Corp\.?|Corporation|Co\.?|Company|PLLC|LP|LLP|Group|Services|Service|Agency|Associates|Partners|Enterprises|Holdings))\b"
+  )
+
+  for line in lines:
+    candidate = good_candidate(line)
+    if not candidate:
+      continue
+
+    m = entity_suffix_pattern.search(candidate)
+    if m:
+      business_name = clean(m.group(1))
+      if good_candidate(business_name):
+        parsed_profile["business_name"] = business_name
+        parsed_profile["named_insured"] = business_name
+        parsed_profile["insured_name"] = business_name
+        parsed_profile["account_name"] = business_name
+        print("LOSSQ_PDF_FINAL_BUSINESS_NAME_REPAIR_V1:", {"business_name": business_name, "source": "entity_suffix"})
+        return parsed_profile
+
+  # 4) Filename fallback only when nothing usable exists.
+  current = (
+    parsed_profile.get("business_name")
+    or parsed_profile.get("named_insured")
+    or parsed_profile.get("insured_name")
+    or parsed_profile.get("account_name")
+  )
+
+  if bad_name(current):
+    try:
+      base = os.path.basename(str(file_path or ""))
+      base = re.sub(r"\.[a-zA-Z0-9]+$", "", base)
+      base = re.sub(r"(?i)\b(lossq|loss|run|messy|clean|ready|submission|pdf|csv|xlsx|xls|test|v\d+|parser|friendly)\b", " ", base)
+      base = re.sub(r"[_\-]+", " ", base)
+      base = re.sub(r"\s+", " ", base).strip()
+      candidate = good_candidate(base.title())
+      if candidate:
+        parsed_profile["business_name"] = candidate
+        parsed_profile["named_insured"] = candidate
+        parsed_profile["insured_name"] = candidate
+        parsed_profile["account_name"] = candidate
+        print("LOSSQ_PDF_FINAL_BUSINESS_NAME_REPAIR_V1:", {"business_name": candidate, "source": "filename_fallback"})
+    except Exception:
+      pass
+
+  return parsed_profile
+
 # LOSSQ_PDF_FULL_CLAIM_BLOCK_EXTRACT_BEFORE_SAVE_V1
 def lossq_pdf_full_claim_block_extract_before_save_v1(file_path, parsed_claims=None, parsed_profile=None):
   """
@@ -11086,6 +11291,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         parsed_claims=parsed_claims,
         parsed_profile=parsed_profile,
       )
+
+    # LOSSQ_PDF_FINAL_BUSINESS_NAME_REPAIR_CALL_V1
+    parsed_profile = lossq_pdf_final_business_name_repair_v1(file_path, parsed_profile)
 
     # LOSSQ_PDF_FULL_CLAIM_BLOCK_EXTRACT_BEFORE_SAVE_CALL_V1
     parsed_claims, parsed_profile = lossq_pdf_full_claim_block_extract_before_save_v1(
