@@ -4716,26 +4716,101 @@ function buildExposureInputsFromUploadedAccount(): AnyObject {
 
 
  // LOSSQ_EDITABLE_PROFILE_VALUE_PRESERVE_EMPTY_V1
+ // LOSSQ_FRONTEND_EXPOSURE_ALIAS_RESOLVER_V2
  const editableProfileValue = (field: string) => {
   const profileObject = (profile || {}) as AnyObject;
   const displayObject = (displayProfile || {}) as AnyObject;
 
-  if (Object.prototype.hasOwnProperty.call(profileObject, field)) {
-   const profileValue = String(profileObject[field] ?? "");
+  const cleanValue = (value: any) => String(value ?? "").trim();
 
-   if (!profileValue.trim() && ["location_count", "liquor_sales"].includes(field)) {
-    const displayValue =
-     displayObject?.[field] ||
-     displayObject?.exposure_inputs?.["Location Count"] ||
-     displayObject?.exposure_inputs?.Locations ||
-     displayObject?.exposure_inputs?.["Liquor Sales"] ||
-     displayObject?.exposure_inputs?.["Alcohol Sales"] ||
-     "";
+  const aliasMap: Record<string, string[]> = {
+   location_count: [
+    "location_count",
+    "locationCount",
+    "locations",
+    "number_of_locations",
+    "location_total",
+   ],
+   liquor_sales: [
+    "liquor_sales",
+    "liquorSales",
+    "alcohol_sales",
+    "alcoholSales",
+    "liquor_revenue",
+    "liquorRevenue",
+   ],
+  };
 
-    if (String(displayValue || "").trim()) return String(displayValue || "");
+  const labelMap: Record<string, string[]> = {
+   location_count: [
+    "Location Count",
+    "Locations",
+    "Number of Locations",
+   ],
+   liquor_sales: [
+    "Liquor Sales",
+    "Alcohol Sales",
+    "Beer Wine Liquor Sales",
+    "Liquor Revenue",
+   ],
+  };
+
+  const fromSource = (source: any, targetField: string): string => {
+   if (!source || typeof source !== "object") return "";
+
+   const aliases = aliasMap[targetField] || [targetField];
+   const labels = labelMap[targetField] || [targetField];
+
+   for (const alias of aliases) {
+    const direct = cleanValue(source?.[alias]);
+    if (direct) return direct;
    }
 
-   return profileValue;
+   const exposureInputs = source?.exposure_inputs || source?.exposureInputs || {};
+   if (exposureInputs && typeof exposureInputs === "object") {
+    for (const label of labels) {
+     const value = cleanValue(exposureInputs?.[label]);
+     if (value) return value;
+    }
+
+    for (const alias of aliases) {
+     const value = cleanValue(exposureInputs?.[alias]);
+     if (value) return value;
+    }
+   }
+
+   const exposureRows = [
+    ...(Array.isArray(source?.exposures) ? source.exposures : []),
+    ...(Array.isArray(source?.exposure_rows) ? source.exposure_rows : []),
+    ...(Array.isArray(source?.exposureRows) ? source.exposureRows : []),
+   ];
+
+   for (const row of exposureRows) {
+    if (!row || typeof row !== "object") continue;
+
+    const rowField = cleanValue(row?.field || row?.key || row?.name).toLowerCase();
+    const rowLabel = cleanValue(row?.label || row?.title).toLowerCase();
+    const rowValue = cleanValue(row?.value || row?.amount);
+
+    if (!rowValue) continue;
+
+    if (aliases.some((alias) => alias.toLowerCase() === rowField)) return rowValue;
+    if (labels.some((label) => label.toLowerCase() === rowLabel)) return rowValue;
+   }
+
+   return "";
+  };
+
+  if (["location_count", "liquor_sales"].includes(field)) {
+   const profileValue = fromSource(profileObject, field);
+   if (profileValue) return profileValue;
+
+   const displayValue = fromSource(displayObject, field);
+   if (displayValue) return displayValue;
+  }
+
+  if (Object.prototype.hasOwnProperty.call(profileObject, field)) {
+   return String(profileObject[field] ?? "");
   }
 
   return String(displayObject[field] ?? "");
@@ -8436,7 +8511,7 @@ const modelChartNarrative =
         <Input label="Contents Value" value={displayProfile?.contents_value || profile?.contents_value || deriveExposureInputsFromPolicyRows(profile)?.contents_value || ""} onChange={(v) => setProfile({...profile, contents_value: v })} />
 
         <Input label="Square Footage" value={displayProfile?.square_footage || profile?.square_footage || deriveExposureInputsFromPolicyRows(profile)?.square_footage || ""} onChange={(v) => setProfile({...profile, square_footage: v })} />
-        <Input label="Location Count" value={displayProfile?.location_count || profile?.location_count || deriveExposureInputsFromPolicyRows(profile)?.location_count || ""} onChange={(v) => setProfile({...profile, location_count: v })} />
+        <Input label="Location Count" value={editableProfileValue("location_count")} onChange={(v) => setProfile({...profile, location_count: v })} />
         <Input label="Liquor Sales" value={editableProfileValue("liquor_sales")} onChange={(v) => setProfile({...profile, liquor_sales: v })} />
         <Input label="Unit Count" value={displayProfile?.unit_count || profile?.unit_count || deriveExposureInputsFromPolicyRows(profile)?.unit_count || ""} onChange={(v) => setProfile({...profile, unit_count: v })} />
 
