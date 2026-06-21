@@ -122,7 +122,6 @@ app.include_router(submission_builder.router)
 app.include_router(audit_logs.router)
 app.include_router(audit_logs.compat_router)
 app.include_router(billing.router)
-app.include_router(humanized.router)  # LOSSQ_HUMANIZED_MAIN_ROUTE_V1
 
 @app.get("/version")
 def version():

@@ -2141,253 +2141,6 @@ function lossqExtractionQualityFromProfile(profile: any) {
 
 
 
-// LOSSQ_HUMANIZED_NARRATIVE_CARD_V1
-// LOSSQ_HUMANIZED_NARRATIVE_SECTION_DROPDOWN_V1
-function HumanizedUnderwritingNarrativeCard({
- profile,
- claims,
- policies,
- exposureInputs,
-}: {
- profile: any;
- claims: any[];
- policies: any[];
- exposureInputs: any;
-}) {
- const [humanizedNarrative, setHumanizedNarrative] = useState<any>(null);
- const [humanizedLoading, setHumanizedLoading] = useState(false);
- const [humanizedError, setHumanizedError] = useState("");
-
- const safeClaims = Array.isArray(claims) ? claims : [];
- const safePolicies = Array.isArray(policies) ? policies : [];
-
- const narrativeSignature = JSON.stringify({
-  profileId: profile?.id || "",
-  businessName: profile?.business_name || profile?.named_insured || "",
-  policyNumber: profile?.policy_number || profile?.main_policy || "",
-  policyNumbers: Array.isArray(profile?.policy_numbers) ? profile.policy_numbers : [],
-  claimCount: safeClaims.length,
-  claimKeys: safeClaims.slice(0, 20).map((claim: any) => [
-   claim?.claim_number || claim?.claimNo || claim?.id || "",
-   claim?.policy_number || "",
-   claim?.total_incurred || claim?.incurred || "",
-   claim?.status || claim?.claim_status || "",
-  ]),
-  policyCount: safePolicies.length,
- });
-
- useEffect(() => {
-  let cancelled = false;
-
-  async function loadHumanizedNarrative() {
-   const hasProfile =
-    profile?.business_name ||
-    profile?.named_insured ||
-    profile?.insured_name ||
-    profile?.policy_number ||
-    profile?.main_policy;
-
-   if (!hasProfile && safeClaims.length === 0 && safePolicies.length === 0) {
-    setHumanizedNarrative(null);
-    setHumanizedError("");
-    return;
-   }
-
-   setHumanizedLoading(true);
-   setHumanizedError("");
-
-   try {
-    const token =
-     (typeof window !== "undefined" &&
-      (
-       localStorage.getItem("token") ||
-       localStorage.getItem("lossq_token") ||
-       localStorage.getItem("auth_token") ||
-       sessionStorage.getItem("token") ||
-       sessionStorage.getItem("lossq_token") ||
-       ""
-      )) ||
-     "";
-
-    const response = await fetch(`${API}/humanized/narrative`, {
-     method: "POST",
-     headers: {
-      "Content-Type": "application/json",
-      ...(token ? { Authorization: `Bearer ${token}` } : {}),
-     },
-     body: JSON.stringify({
-      profile: profile || {},
-      claims: safeClaims,
-      policies: safePolicies,
-      exposure_inputs: exposureInputs || {},
-      source_context: "dashboard_overview",
-     }),
-    });
-
-    const data = await safeJson(response);
-
-    if (!response.ok) {
-     throw new Error(data?.detail || data?.message || "Humanized narrative could not be generated.");
-    }
-
-    if (!cancelled) {
-     setHumanizedNarrative(data || null);
-    }
-   } catch (error: any) {
-    if (!cancelled) {
-     setHumanizedNarrative(null);
-     setHumanizedError(error?.message || "Humanized narrative is temporarily unavailable.");
-    }
-   } finally {
-    if (!cancelled) {
-     setHumanizedLoading(false);
-    }
-   }
-  }
-
-  loadHumanizedNarrative();
-
-  return () => {
-   cancelled = true;
-  };
- }, [narrativeSignature]);
-
- const renderList = (items: any[]) => {
-  const safeItems = Array.isArray(items) ? items.filter(Boolean) : [];
-
-  if (safeItems.length === 0) {
-   return <p className="text-sm text-slate-400">No items generated yet.</p>;
-  }
-
-  return (
-   <ul className="mt-3 space-y-2 text-sm text-slate-200">
-    {safeItems.map((item: any, index: number) => (
-     <li key={`${String(item)}-${index}`} className="flex gap-2">
-      <span className="mt-1 h-1.5 w-1.5 shrink-0 rounded-full bg-blue-300" />
-      <span>{String(item)}</span>
-     </li>
-    ))}
-   </ul>
-  );
- };
-
- if (humanizedLoading && !humanizedNarrative) {
-  return (
-   <div className="mt-8 rounded-3xl border border-blue-400/20 bg-blue-500/10 p-5">
-    <p className="text-xs uppercase tracking-[0.25em] text-blue-300">Humanized Underwriting Narrative</p>
-    <h3 className="mt-2 text-xl font-bold text-white">Drafting account narrative...</h3>
-    <p className="mt-2 text-sm text-slate-300">
-     LossQ is translating the account profile, policy schedule, claims, and exposure inputs into underwriting language.
-    </p>
-   </div>
-  );
- }
-
- if (humanizedError && !humanizedNarrative) {
-  return (
-   <div className="mt-8 rounded-3xl border border-amber-400/20 bg-amber-500/10 p-5">
-    <p className="text-xs uppercase tracking-[0.25em] text-amber-300">Humanized Narrative</p>
-    <h3 className="mt-2 text-lg font-bold text-white">Narrative temporarily unavailable</h3>
-    <p className="mt-2 text-sm text-slate-300">{humanizedError}</p>
-   </div>
-  );
- }
-
- if (!humanizedNarrative) return null;
-
- return (
-  <details className="group mt-8 rounded-3xl border border-blue-400/20 bg-slate-950/60 p-5">
-   <summary className="flex cursor-pointer list-none flex-col gap-3 md:flex-row md:items-start md:justify-between">
-    <div>
-     <p className="text-xs uppercase tracking-[0.25em] text-blue-300">
-      Humanized Underwriting Narrative
-     </p>
-     <h3 className="mt-2 text-2xl font-bold text-white">
-      Carrier-ready language and human review notes
-     </h3>
-     <p className="mt-2 max-w-4xl text-sm text-slate-300">
-      Optional AI-drafted language for submissions. This section is collapsed so it does not compete with Renewal Risk.
-     </p>
-    </div>
-
-    <div className="flex flex-col gap-3 md:items-end">
-     <div className="rounded-2xl border border-white/10 bg-white/5 px-4 py-3 text-sm">
-      <p className="text-slate-400">Risk Level</p>
-      <p className="text-lg font-bold text-white">
-       {humanizedNarrative?.account_snapshot?.risk_level || "Not Rated"}
-      </p>
-     </div>
-
-     <span className="rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-blue-200 group-open:hidden">
-      Expand narrative
-     </span>
-     <span className="hidden rounded-full border border-white/10 bg-white/5 px-4 py-2 text-xs font-semibold text-blue-200 group-open:inline">
-      Collapse narrative
-     </span>
-    </div>
-   </summary>
-
-   <div className="mt-6 grid grid-cols-1 gap-5 xl:grid-cols-2">
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-     <h4 className="font-semibold text-white">Account Story</h4>
-     <p className="mt-3 text-sm leading-6 text-slate-200">
-      {humanizedNarrative.account_story || "No account story generated yet."}
-     </p>
-    </div>
-
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-     <h4 className="font-semibold text-white">Broker Positioning</h4>
-     <p className="mt-3 text-sm leading-6 text-slate-200">
-      {humanizedNarrative.broker_positioning || "No broker positioning generated yet."}
-     </p>
-    </div>
-
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-     <h4 className="font-semibold text-white">Underwriter View</h4>
-     {renderList(humanizedNarrative.underwriter_view)}
-    </div>
-
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-     <h4 className="font-semibold text-white">Carrier Concerns</h4>
-     {renderList(humanizedNarrative.carrier_concerns)}
-    </div>
-
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4 xl:col-span-2">
-     <h4 className="font-semibold text-white">Claim Narrative</h4>
-     <p className="mt-3 text-sm leading-6 text-slate-200">
-      {humanizedNarrative.claim_narrative || "No claim narrative generated yet."}
-     </p>
-    </div>
-
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-     <h4 className="font-semibold text-white">Recommended Human Action</h4>
-     {renderList(humanizedNarrative.corrective_actions)}
-    </div>
-
-    <div className="rounded-2xl border border-white/10 bg-white/5 p-4">
-     <h4 className="font-semibold text-white">Confidence Notes</h4>
-     {renderList(humanizedNarrative.confidence_notes)}
-    </div>
-
-    <div className="rounded-2xl border border-cyan-400/20 bg-cyan-500/10 p-4 xl:col-span-2">
-     <h4 className="font-semibold text-white">Carrier-Ready Summary</h4>
-     <p className="mt-3 text-sm leading-6 text-slate-100">
-      {humanizedNarrative.carrier_ready_summary || "No carrier-ready summary generated yet."}
-     </p>
-    </div>
-
-    <div className="rounded-2xl border border-amber-400/20 bg-amber-500/10 p-4 xl:col-span-2">
-     <h4 className="font-semibold text-amber-100">AI Draft - Review Before Sending</h4>
-     <p className="mt-3 text-sm leading-6 text-amber-50/90">
-      {humanizedNarrative.human_review_note ||
-       "LossQ generated this draft from uploaded data. Review all details before sending to a carrier."}
-     </p>
-    </div>
-   </div>
-  </details>
- );
-}
-
 function LossQExtractionReviewBanner({ profile }: { profile: any }) {
  const { score, status, warnings, criticalIssues, requiresReview } =
   lossqExtractionQualityFromProfile(profile);
@@ -8406,16 +8159,6 @@ const modelChartNarrative =
 
         <EvaluationDateAlertBadge profileLike={displayProfile} policyRows={policySchedule} />
 
-         <HumanizedUnderwritingNarrativeCard
-          profile={displayProfile || profile || {}}
-          claims={claims || []}
-          policies={policySchedule || []}
-          exposureInputs={{
-           ...(deriveExposureInputsFromPolicyRows(displayProfile) || {}),
-           ...((displayProfile && typeof displayProfile.exposure_inputs === "object" ? displayProfile.exposure_inputs : {}) || {}),
-          }}
-         />
-
 
 
         {policySchedule.length > 0 && (
@@ -8872,111 +8615,153 @@ const modelChartNarrative =
       </section>
      )}
 
+
      {activeTool === "renewal-risk" && (
-      <section className="glass-panel p-6 md:p-8">
-       <div className="flex flex-col gap-6 lg:flex-row lg:items-start lg:justify-between">
-        <div>
-         <p className="text-sm uppercase tracking-[0.25em] text-blue-300 mb-3">
-          Renewal Risk Engine
-         </p>
-
-         <h2 className="text-2xl md:text-3xl font-bold">
-          Renewal Risk Score
-         </h2>
-
-         <p className="text-slate-400 mt-2 max-w-3xl">
-          Policy-specific renewal risk based on claims, reserves, severity,
-          litigation, frequency, and open claim pressure.
-         </p>
-        </div>
-
-        <div className="rounded-3xl border border-white/10 bg-slate-950/70 px-8 py-6 text-center min-w-[180px]">
-         <div className="text-5xl font-black">
-          {effectiveSummary?.renewal_score ?? "-"}
+      <section className="space-y-6">
+       {/* LOSSQ_MODERN_RENEWAL_RISK_OVERVIEW_V1 */}
+       <div className="glass-panel overflow-hidden p-6 md:p-8">
+        <div className="flex flex-col gap-6 xl:flex-row xl:items-start xl:justify-between">
+         <div>
+          <p className="text-xs uppercase tracking-[0.3em] text-blue-300">
+           Renewal Risk Intelligence
+          </p>
+          <h2 className="mt-3 text-3xl font-black text-white">
+           Renewal overview, carrier concerns, and broker strategy
+          </h2>
+          <p className="mt-3 max-w-4xl text-sm leading-7 text-slate-300">
+           LossQ turns the selected account's claims, reserves, exposure inputs, and policy schedule into a renewal-focused underwriting view. This tab should be the single place for account positioning instead of a separate humanized narrative section.
+          </p>
          </div>
-         <div className="text-slate-400 text-sm mt-1">out of 100</div>
 
-         <div className="mt-4 inline-flex rounded-full border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-bold text-blue-200">
-          {effectiveSummary?.renewal_risk_level || "Not Rated"}
+         <div className="rounded-3xl border border-white/10 bg-slate-950/70 px-8 py-6 text-center shadow-xl shadow-blue-950/30">
+          <p className="text-xs uppercase tracking-[0.25em] text-slate-400">Renewal Score</p>
+          <div className="mt-2 text-5xl font-black text-white">
+           {effectiveSummary?.renewal_score ?? localRenewalScore ?? "-"}
+          </div>
+          <p className="mt-2 text-sm font-semibold text-blue-200">
+           {effectiveSummary?.renewal_risk_level ||
+            effectiveSummary?.risk_level ||
+            localRenewalRiskLevel ||
+            "Needs Review"}
+          </p>
          </div>
         </div>
-       </div>
 
-       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-8">
-        <ListCard title="Renewal Drivers" items={effectiveSummary?.renewal_drivers || ["No renewal drivers available."]} color="blue" />
-        <ListCard title="Carrier Concerns" items={effectiveSummary?.carrier_concerns || ["No carrier concerns available."]} color="red" />
-
-        {/* LOSSQ_FRONTEND_SAFETY_CLAIM_STORY_DISPLAY_V1 */}
-        <div className="lg:col-span-2">
-         <ListCard
-          title="Safety & Risk Recommendations"
-          items={
-           effectiveSummary?.safety_recommendations ||
-           effectiveSummary?.risk_control_recommendations ||
-           ["No safety and risk recommendations available yet."]
-          }
-          color="blue"
+        <div className="mt-8 grid grid-cols-1 gap-4 md:grid-cols-4">
+         <MetricCard
+          title="Claims Reviewed"
+          value={String(visibleClaims.length || claims.length || 0)}
          />
-        </div>
-
-        <div className="lg:col-span-2">
-         <ListCard
-          title="Loss-Control Plan"
-          items={
-           effectiveSummary?.loss_control_plan ||
-           effectiveSummary?.carrier_risk_improvement_plan ||
-           ["No loss-control plan available yet."]
+         <MetricCard title="Open Claims" value={openClaimsDisplay} />
+         <MetricCard title="Total Incurred" value={totalIncurredDisplay} />
+         <MetricCard
+          title="Renewal Probability"
+          value={
+           effectiveDecision?.renewal_probability != null
+            ? `${effectiveDecision.renewal_probability}%`
+            : "-"
           }
-          color="purple"
-         />
-        </div>
-
-        <div className="lg:col-span-2">
-         <ListCard
-          title="Recommended Underwriting Documents"
-          items={
-           effectiveSummary?.recommended_underwriting_documents ||
-           ["No underwriting document checklist available yet."]
-          }
-          color="blue"
-         />
-        </div>
-
-        <div className="lg:col-span-2">
-         <TextCard
-          title="AI Claim Story Summary"
-          text={
-           effectiveSummary?.claim_story_summary ||
-           "No AI claim story summary available yet."
-          }
-         />
-        </div>
-
-        <div className="lg:col-span-2">
-         <ListCard
-          title="AI Claim Story Generator"
-          items={
-           Array.isArray(effectiveSummary?.ai_claim_stories) &&
-           effectiveSummary.ai_claim_stories.length > 0
-            ? effectiveSummary.ai_claim_stories.map((story: any) =>
-              typeof story === "string"
-               ? story
-               : `${story.claim_number || "Claim"} - ${
-                 story.carrier_facing_story ||
-                 story.story ||
-                 "No claim story available."
-                }`
-             )
-            : ["No AI claim stories available yet."]
-          }
-          color="purple"
          />
         </div>
        </div>
 
-       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-        <TextCard title="Broker Recommendation" text={effectiveSummary?.broker_recommendation || "Upload claims to generate a broker recommendation."} />
-        <TextCard title="Renewal Summary" text={effectiveSummary?.renewal_summary || "No renewal summary available yet."} />
+       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <TextCard
+         title="Executive Renewal Overview"
+         text={
+          effectiveSummary?.renewal_summary ||
+          effectiveSummary?.summary ||
+          effectiveSummary?.carrier_narrative ||
+          "Upload claims and generate renewal risk to create an executive renewal overview."
+         }
+        />
+
+        <TextCard
+         title="Broker Strategy"
+         text={
+          effectiveSummary?.broker_recommendation ||
+          effectiveSummary?.recommendation ||
+          "Prepare updated loss runs, explain open claims, confirm reserves, document corrective actions, and include a clear broker narrative before approaching renewal markets."
+         }
+        />
+       </div>
+
+       <div className="grid grid-cols-1 gap-6 xl:grid-cols-3">
+        <ListCard
+         title="What Is Driving the Score"
+         items={
+          Array.isArray(effectiveSummary?.renewal_drivers) &&
+          effectiveSummary.renewal_drivers.length
+           ? effectiveSummary.renewal_drivers
+           : Array.isArray(effectiveSummary?.recommended_actions) &&
+             effectiveSummary.recommended_actions.length
+           ? effectiveSummary.recommended_actions
+           : ["Claims, open reserves, severity, frequency, and policy mix will drive the renewal view once risk data is generated."]
+         }
+         color="blue"
+        />
+
+        <ListCard
+         title="What Carriers May Question"
+         items={
+          Array.isArray(effectiveSummary?.carrier_concerns) &&
+          effectiveSummary.carrier_concerns.length
+           ? effectiveSummary.carrier_concerns
+           : Array.isArray(effectiveSummary?.missing_items) &&
+             effectiveSummary.missing_items.length
+           ? effectiveSummary.missing_items
+           : ["Carrier questions will focus on open claim status, reserve adequacy, large losses, claim trends, and corrective-action documentation."]
+         }
+         color="red"
+        />
+
+        <ListCard
+         title="Submission Action Plan"
+         items={
+          Array.isArray(effectiveSummary?.submission_actions) &&
+          effectiveSummary.submission_actions.length
+           ? effectiveSummary.submission_actions
+           : Array.isArray(effectiveSummary?.recommended_actions) &&
+             effectiveSummary.recommended_actions.length
+           ? effectiveSummary.recommended_actions
+           : [
+              "Verify open claim status and reserve position.",
+              "Document corrective actions for the largest and most recent losses.",
+              "Prepare a concise broker narrative before sending to carriers.",
+             ]
+         }
+         color="purple"
+        />
+       </div>
+
+       {Array.isArray(effectiveSummary?.exposure_drivers) &&
+        effectiveSummary.exposure_drivers.length > 0 && (
+         <div>
+          <ListCard
+           title="Exposure Inputs Used"
+           items={effectiveSummary.exposure_drivers}
+           color="purple"
+          />
+         </div>
+        )}
+
+       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <TextCard
+         title="Carrier-Ready Positioning"
+         text={
+          effectiveSummary?.carrier_narrative ||
+          effectiveSummary?.client_narrative ||
+          effectiveSummary?.market_positioning ||
+          "Carrier-ready positioning will appear after LossQ has enough claim, exposure, and renewal risk data to explain the account."
+         }
+        />
+
+        <TextCard
+         title="Human Review Notes"
+         text={
+          "Review the renewal overview before sending it to a carrier. Confirm claim status, reserve accuracy, policy details, exposure inputs, and corrective actions. LossQ should prepare the work, but the broker or underwriter should control the final message."
+         }
+        />
        </div>
       </section>
      )}
