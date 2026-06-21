@@ -7814,6 +7814,19 @@ def lossq_pdf_humanize_claim_counts_v1(text):
         value,
     )
 
+    def commercial_lines_repl(match):
+        count = int(match.group(1))
+        if count == 0:
+            return "no commercial lines"
+        if count == 1:
+            return "1 commercial line"
+        return f"{count} commercial lines"
+
+    value = re.sub(r"\b(\d+)\s+commercial line\(s\)", commercial_lines_repl, value)
+    value = value.replace("indicator(s)", "indicators")
+    value = re.sub(r"\b0\s+litigation/attorney indicators\b", "no litigation/attorney indicators", value)
+    value = re.sub(r"\b1\s+litigation/attorney indicators\b", "1 litigation/attorney indicator", value)
+
     return value
 
 
@@ -9654,6 +9667,117 @@ def lossq_pdf_clean_packet_context_v1(ctx):
     return ctx
 
 
+
+# LOSSQ_PDF_PACKET_ENGINE_SUMMARY_POLISH_V1
+def lossq_pdf_nonblank_v2(value):
+    if value in (None, "", "-", "-/100", "None", "null"):
+        return False
+    return True
+
+
+def lossq_pdf_score_display_v2(value):
+    if not lossq_pdf_nonblank_v2(value):
+        return "Pending"
+
+    try:
+        return f"{int(float(str(value).replace('/100', '').strip()))}/100"
+    except Exception:
+        text = str(value).strip()
+        return text if text.endswith("/100") else f"{text}/100"
+
+
+def lossq_pdf_risk_from_score_v2(score):
+    try:
+        value = int(float(str(score).replace("/100", "").strip()))
+    except Exception:
+        return "Pending"
+
+    if value >= 80:
+        return "Low"
+    if value >= 65:
+        return "Moderate"
+    if value >= 50:
+        return "High"
+    return "Critical"
+
+
+def lossq_pdf_packet_summary_text_v2(metrics, profile, forecast):
+    insured = (
+        (profile or {}).get("business_name")
+        or (profile or {}).get("insured")
+        or (profile or {}).get("named_insured")
+        or "The selected account"
+    )
+
+    total_claims = int((metrics or {}).get("total_claims") or 0)
+    open_claims = int((metrics or {}).get("open_claims") or 0)
+    total_incurred = dollars((metrics or {}).get("total_incurred") or 0)
+    total_reserve = dollars((metrics or {}).get("total_reserve") or 0)
+    band = lossq_pdf_pricing_band_v1(forecast) or "subject to underwriting review"
+
+    return (
+        f"{insured} presents {total_claims} validated claims, {open_claims} open claims, "
+        f"{total_incurred} total incurred, and {total_reserve} outstanding reserves. "
+        f"Expected pricing pressure is {band}. Underwriters should review open-claim status, reserve rationale, "
+        "exposure basis, and corrective-action documentation before final market release."
+    )
+
+
+def lossq_pdf_merge_packet_intelligence_v2(ctx):
+    ctx = ctx if isinstance(ctx, dict) else {}
+
+    summary = ctx.get("summary") if isinstance(ctx.get("summary"), dict) else {}
+    intelligence = ctx.get("intelligence") if isinstance(ctx.get("intelligence"), dict) else {}
+    decision = ctx.get("decision") if isinstance(ctx.get("decision"), dict) else {}
+    metrics = ctx.get("metrics") if isinstance(ctx.get("metrics"), dict) else {}
+    profile = ctx.get("profile") if isinstance(ctx.get("profile"), dict) else {}
+    forecast = ctx.get("forecast") if isinstance(ctx.get("forecast"), dict) else {}
+
+    merged = {}
+
+    # Low-priority first, strongest / most normalized summary last.
+    for section in (decision, intelligence, summary):
+        for key, value in section.items():
+            if lossq_pdf_nonblank_v2(value):
+                merged[key] = value
+
+    if not lossq_pdf_nonblank_v2(merged.get("renewal_score")) and lossq_pdf_nonblank_v2(summary.get("renewal_score")):
+        merged["renewal_score"] = summary.get("renewal_score")
+
+    if not lossq_pdf_nonblank_v2(merged.get("renewal_risk_level")):
+        merged["renewal_risk_level"] = lossq_pdf_risk_from_score_v2(merged.get("renewal_score"))
+
+    if not lossq_pdf_nonblank_v2(merged.get("renewal_summary")) and not lossq_pdf_nonblank_v2(merged.get("summary")):
+        merged["renewal_summary"] = lossq_pdf_packet_summary_text_v2(metrics, profile, forecast)
+
+    if not merged.get("renewal_drivers"):
+        total_claims = int(metrics.get("total_claims") or 0)
+        open_claims = int(metrics.get("open_claims") or 0)
+        total_incurred = dollars(metrics.get("total_incurred") or 0)
+        total_reserve = dollars(metrics.get("total_reserve") or 0)
+        merged["renewal_drivers"] = [
+            f"{total_claims} account-specific claims identified across the selected policy schedule.",
+            f"Total incurred losses are {total_incurred}.",
+            f"{open_claims} open claims may continue developing before renewal.",
+            f"Outstanding reserves total {total_reserve}.",
+        ]
+
+    if not merged.get("carrier_concerns"):
+        open_claims = int(metrics.get("open_claims") or 0)
+        total_reserve = dollars(metrics.get("total_reserve") or 0)
+        reserve_ratio = metrics.get("reserve_ratio_percent") or metrics.get("reserve_ratio") or ""
+        concerns = []
+        if open_claims:
+            concerns.append(f"{open_claims} open claims may continue developing before renewal.")
+        if total_reserve != "$0":
+            concerns.append(f"{total_reserve} in outstanding reserves may pressure terms and quote authority.")
+        if reserve_ratio not in ("", None, "-", 0):
+            concerns.append(f"Reserve ratio is {reserve_ratio}%, indicating unresolved loss development.")
+        merged["carrier_concerns"] = concerns or [
+            "Carrier concerns should be reviewed against current-valued loss runs, exposure basis, and claim narratives."
+        ]
+
+    return lossq_pdf_clean_text_value_v1(merged, forecast)
 def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=None, report_kind="executive", db=None, current_user=None):
     """
     Makes Executive Reports and Carrier Packets mirror the dashboard intelligence.
@@ -9664,7 +9788,7 @@ def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=Non
     claims = lossq_report_order_claims_open_first(claims)  # LOSSQ_REPORT_CLAIM_TABLE_OPEN_FIRST_V1
     metrics = ctx.get("metrics") or {}
     quality = ctx.get("quality") or ctx.get("data_quality") or {}
-    intelligence = ctx.get("intelligence") or ctx.get("summary") or {}
+    intelligence = lossq_pdf_merge_packet_intelligence_v2(ctx)
     decision = ctx.get("decision") or {}
     appetite = ctx.get("appetite") or ctx.get("carrier_appetite") or {}
     carrier_match = ctx.get("carrier_match") or {}
@@ -9759,12 +9883,12 @@ def lossq_append_dashboard_packet_sections(story, styles, ctx, policy_number=Non
         intelligence.get("renewal_summary")
         or intelligence.get("summary")
         or intelligence.get("carrier_narrative")
-        or "No AI underwriting summary was available."
+        or lossq_pdf_packet_summary_text_v2(metrics, profile, forecast)
     ))
 
     engine_rows = [
         ["Engine", "Dashboard Result"],
-        ["Renewal Score", f"{lossq_report_display(intelligence.get('renewal_score'))}/100"],
+        ["Renewal Score", lossq_pdf_score_display_v2(intelligence.get("renewal_score"))],
         ["Renewal Risk Level", lossq_report_display(intelligence.get("renewal_risk_level") or intelligence.get("risk_level"))],
         ["Submission Strength", lossq_report_display(intelligence.get("submission_strength"))],
         ["Underwriter Decision", lossq_report_display(decision.get("decision") or decision.get("underwriter_decision") or decision.get("renewal_decision"))],
