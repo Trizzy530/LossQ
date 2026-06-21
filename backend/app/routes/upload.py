@@ -10322,15 +10322,16 @@ async def save_uploaded_files(files, policy_number, db, current_user):
             parsed_profile = locals().get("parsed_profile", locals().get("profile", {}))
             if not isinstance(parsed_profile, dict):
               parsed_profile = {}
+            # LOSSQ_UPLOAD_LOOP_CLEAN_FLAT_CSV_RESCUE_SAFE_ARGS_V3
             rescue_claims, rescue_profile = lossq_clean_standard_csv_override(
               file_path,
-              [],
-              {},
+              parsed_claims,
+              parsed_profile,
             )
 
-          if rescue_claims:
-            parsed_claims = rescue_claims
-            parsed_profile = rescue_profile or {}
+          if rescue_claims or rescue_profile:
+            parsed_claims = rescue_claims or []
+            parsed_profile = rescue_profile or parsed_profile or {}
             print("LOSSQ_UPLOAD_LOOP_CLEAN_FLAT_CSV_RESCUED:", {
               "claims": len(parsed_claims or []),
               "profile_keys": list((parsed_profile or {}).keys())[:20],
