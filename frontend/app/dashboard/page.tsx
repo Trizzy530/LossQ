@@ -2092,6 +2092,97 @@ function clearLossQDashboardTenantCache() {
 
 
 // LOSSQ_EXTRACTION_REVIEW_BANNER_V1
+
+// LOSSQ_RENEWAL_RISK_INSURED_QUESTIONS_V1
+function lossqQuestionsToAskInsured(profileLike: any, claimsLike: any[] = [], policiesLike: any[] = []) {
+ const safeClaims = Array.isArray(claimsLike) ? claimsLike : [];
+ const safePolicies = Array.isArray(policiesLike) ? policiesLike : [];
+
+ const combinedText = JSON.stringify({
+  profile: profileLike || {},
+  claims: safeClaims,
+  policies: safePolicies,
+ }).toLowerCase();
+
+ const questions: string[] = [];
+
+ const addQuestion = (question: string) => {
+  const cleaned = String(question || "").trim();
+  if (!cleaned) return;
+  if (questions.includes(cleaned)) return;
+  questions.push(cleaned);
+ };
+
+ const hasText = (patterns: string[]) =>
+  patterns.some((pattern) => combinedText.includes(pattern));
+
+ const openClaims = safeClaims.filter((claim: any) => isOpenClaimStatus(claim));
+
+ addQuestion("Has the insured made any operational changes since the reported losses?");
+
+ if (openClaims.length > 0) {
+  addQuestion("Has the open claim reserve changed since the valuation date?");
+  addQuestion("What is the current status and expected closure timeline for each open claim?");
+ }
+
+ if (safeClaims.length > 0) {
+  addQuestion("Were any safety procedures, training steps, or supervision practices updated after the loss?");
+  addQuestion("What corrective actions can be documented for the largest and most recent claims?");
+ }
+
+ if (hasText(["subcontract", "contractor", "independent contractor"])) {
+  addQuestion("Are subcontractors used? If yes, are certificates of insurance collected before work begins?");
+ } else {
+  addQuestion("Does the insured use subcontractors, temporary labor, or independent contractors?");
+ }
+
+ if (hasText(["auto", "vehicle", "driver", "fleet", "truck", "courier", "delivery"])) {
+  addQuestion("Have driver screening, MVR review, vehicle maintenance, or accident-prevention procedures changed since the reported auto losses?");
+  addQuestion("Does the insured perform overnight driving, high-traffic deliveries, long-distance routes, or time-sensitive operations?");
+ }
+
+ if (hasText(["cargo", "freight", "loading", "unloading", "warehouse", "delivery"])) {
+  addQuestion("Have cargo handling, loading, securement, warehouse, or delivery procedures changed since the reported cargo losses?");
+ }
+
+ if (hasText(["workers", "comp", "employee injury", "payroll", "employee"])) {
+  addQuestion("Were return-to-work procedures, employee safety training, or job-site controls updated after the employee injury?");
+ }
+
+ if (hasText(["general liability", "premises", "slip", "fall", "customer", "visitor"])) {
+  addQuestion("Does the insured have written premises inspection, incident reporting, and customer safety procedures?");
+ }
+
+ if (hasText(["liquor", "bar", "restaurant", "alcohol"])) {
+  addQuestion("Does the insured maintain liquor service training, ID verification, incident logs, and manager escalation procedures?");
+ }
+
+ if (hasText(["property", "bop", "building", "tiv", "sprinkler", "theft", "fire", "water"])) {
+  addQuestion("Have property protection, maintenance, security, fire prevention, or water-damage controls changed since the reported losses?");
+ }
+
+ addQuestion("Does the insured perform work at heights, overnight operations, high-traffic premises, or other higher-hazard operations?");
+ addQuestion("Are there any changes in payroll, revenue, vehicle count, employee count, locations, or operations for the upcoming renewal term?");
+ addQuestion("What documentation can the insured provide to support improved risk controls before carrier submission?");
+
+ return questions.slice(0, 12);
+}
+
+// LOSSQ_RENEWAL_RISK_NOTES_SECTION_V1
+function lossqRenewalRiskNotesCacheKey(profileLike: any) {
+ const key = normalizePolicyNumber(
+  profileLike?.account_number ||
+   profileLike?.customer_number ||
+   profileLike?.policy_number ||
+   profileLike?.main_policy ||
+   profileLike?.business_name ||
+   profileLike?.named_insured ||
+   "account"
+ );
+
+ return `lossq_renewal_risk_notes_${key || "account"}`;
+}
+
 function lossqExtractionQualityFromProfile(profile: any) {
  const quality =
   profile?.extraction_quality ||
@@ -8732,6 +8823,52 @@ const modelChartNarrative =
          }
          color="purple"
         />
+       </div>
+
+
+       <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
+        <ListCard
+         title="Questions to Ask the Insured"
+         items={lossqQuestionsToAskInsured(
+          displayProfile || profile || {},
+          visibleClaims.length ? visibleClaims : claims || [],
+          policySchedule || []
+         )}
+         color="blue"
+        />
+
+        <div className="rounded-3xl border border-white/10 bg-slate-950/70 p-5">
+         <div className="flex flex-col gap-2">
+          <p className="text-xs uppercase tracking-[0.25em] text-blue-300">
+           Broker / Underwriter Notes
+          </p>
+          <h3 className="text-xl font-bold text-white">Notes from the insured conversation</h3>
+          <p className="text-sm leading-6 text-slate-400">
+           Use this section to capture answers, follow-up items, reserve updates, corrective actions, and carrier positioning notes.
+          </p>
+         </div>
+
+         <textarea
+          className="mt-4 min-h-[190px] w-full rounded-2xl border border-white/10 bg-black/30 p-4 text-sm leading-6 text-slate-100 placeholder:text-slate-500 focus:border-blue-300 focus:outline-none focus:ring-2 focus:ring-blue-400/30"
+          placeholder="Example: Insured confirmed driver training was updated after the auto loss. Open WC claim reserve reduced after latest adjuster review. Need updated COIs for subcontractors before submission."
+          defaultValue={
+           typeof window !== "undefined"
+            ? localStorage.getItem(lossqRenewalRiskNotesCacheKey(displayProfile || profile || {})) || ""
+            : ""
+          }
+          onChange={(event) => {
+           if (typeof window === "undefined") return;
+           localStorage.setItem(
+            lossqRenewalRiskNotesCacheKey(displayProfile || profile || {}),
+            event.target.value
+           );
+          }}
+         />
+
+         <p className="mt-3 text-xs text-slate-500">
+          Notes save in this browser for the selected account. They are not sent to carriers automatically.
+         </p>
+        </div>
        </div>
 
        {Array.isArray(effectiveSummary?.exposure_drivers) &&
