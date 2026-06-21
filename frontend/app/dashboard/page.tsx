@@ -4635,6 +4635,17 @@ function buildExposureInputsFromUploadedAccount(): AnyObject {
    derivedFromProfile?.receipts ||
    derivedFromPolicySchedule?.receipts ||
    "",
+  // LOSSQ_FRONTEND_LIQUOR_LOCATION_EXPOSURE_V1
+  liquor_sales:
+   sourceProfile?.liquor_sales ||
+   sourceProfile?.liquorSales ||
+   sourceProfile?.alcohol_sales ||
+   sourceProfile?.exposure_inputs?.["Liquor Sales"] ||
+   sourceProfile?.exposure_inputs?.["Alcohol Sales"] ||
+   derivedFromProfile?.liquor_sales ||
+   derivedFromProfile?.alcohol_sales ||
+   derivedFromPolicySchedule?.liquor_sales ||
+   "",
   employee_count:
    sourceProfile?.employee_count ||
    sourceProfile?.employeeCount ||
@@ -4676,8 +4687,15 @@ function buildExposureInputsFromUploadedAccount(): AnyObject {
    "",
   location_count:
    sourceProfile?.location_count ||
+   sourceProfile?.locationCount ||
+   sourceProfile?.locations ||
+   sourceProfile?.number_of_locations ||
+   sourceProfile?.exposure_inputs?.["Location Count"] ||
+   sourceProfile?.exposure_inputs?.Locations ||
    derivedFromProfile?.location_count ||
+   derivedFromProfile?.locations ||
    derivedFromPolicySchedule?.location_count ||
+   derivedFromPolicySchedule?.locations ||
    "",
   unit_count:
    sourceProfile?.unit_count ||
@@ -4703,7 +4721,21 @@ function buildExposureInputsFromUploadedAccount(): AnyObject {
   const displayObject = (displayProfile || {}) as AnyObject;
 
   if (Object.prototype.hasOwnProperty.call(profileObject, field)) {
-   return String(profileObject[field] ?? "");
+   const profileValue = String(profileObject[field] ?? "");
+
+   if (!profileValue.trim() && ["location_count", "liquor_sales"].includes(field)) {
+    const displayValue =
+     displayObject?.[field] ||
+     displayObject?.exposure_inputs?.["Location Count"] ||
+     displayObject?.exposure_inputs?.Locations ||
+     displayObject?.exposure_inputs?.["Liquor Sales"] ||
+     displayObject?.exposure_inputs?.["Alcohol Sales"] ||
+     "";
+
+    if (String(displayValue || "").trim()) return String(displayValue || "");
+   }
+
+   return profileValue;
   }
 
   return String(displayObject[field] ?? "");
@@ -8405,6 +8437,7 @@ const modelChartNarrative =
 
         <Input label="Square Footage" value={displayProfile?.square_footage || profile?.square_footage || deriveExposureInputsFromPolicyRows(profile)?.square_footage || ""} onChange={(v) => setProfile({...profile, square_footage: v })} />
         <Input label="Location Count" value={displayProfile?.location_count || profile?.location_count || deriveExposureInputsFromPolicyRows(profile)?.location_count || ""} onChange={(v) => setProfile({...profile, location_count: v })} />
+        <Input label="Liquor Sales" value={editableProfileValue("liquor_sales")} onChange={(v) => setProfile({...profile, liquor_sales: v })} />
         <Input label="Unit Count" value={displayProfile?.unit_count || profile?.unit_count || deriveExposureInputsFromPolicyRows(profile)?.unit_count || ""} onChange={(v) => setProfile({...profile, unit_count: v })} />
 
         <Input label="Cargo Limit" value={displayProfile?.cargo_limit || profile?.cargo_limit || deriveExposureInputsFromPolicyRows(profile)?.cargo_limit || ""} onChange={(v) => setProfile({...profile, cargo_limit: v })} />

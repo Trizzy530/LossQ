@@ -772,6 +772,30 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
   set_exposure("location_count", location_count_value, "Location Count")
   set_exposure("liquor_sales", liquor_sales_value, "Liquor Sales", money_field=True)
 
+  # LOSSQ_FLAT_CSV_EXPOSURE_LOCATION_LIQUOR_TIV_FIX_V1
+  # Preserve common frontend/report aliases for restaurant/location/liquor exposures.
+  if parsed_profile.get("location_count"):
+    parsed_profile["locations"] = parsed_profile.get("location_count")
+    parsed_profile["locationCount"] = parsed_profile.get("location_count")
+    exposure_inputs["Locations"] = parsed_profile.get("location_count")
+
+  if parsed_profile.get("liquor_sales"):
+    parsed_profile["alcohol_sales"] = parsed_profile.get("liquor_sales")
+    parsed_profile["liquorSales"] = parsed_profile.get("liquor_sales")
+    exposure_inputs["Alcohol Sales"] = parsed_profile.get("liquor_sales")
+
+  # Property TIV should not be populated from date fragments like "01".
+  for tiv_key in ["property_tiv", "tiv"]:
+    raw_tiv = clean(parsed_profile.get(tiv_key))
+    raw_tiv_number = raw_tiv.replace("$", "").replace(",", "").strip()
+    try:
+      tiv_amount = float(raw_tiv_number or 0)
+    except Exception:
+      tiv_amount = 0
+
+    if raw_tiv and tiv_amount > 0 and tiv_amount < 1000:
+      parsed_profile.pop(tiv_key, None)
+
   if current_premium_total > 0:
     current_premium_value = str(int(current_premium_total)) if float(current_premium_total).is_integer() else f"{current_premium_total:.2f}"
     parsed_profile["current_premium"] = current_premium_value
