@@ -3828,6 +3828,230 @@ def lossq_pdf_final_business_name_repair_v1(file_path, parsed_profile=None):
 
   return parsed_profile
 
+# LOSSQ_PDF_CLEAN_TABLE_CLAIM_REPAIR_V1
+def lossq_pdf_clean_table_claim_repair_v1(file_path, parsed_claims=None, parsed_profile=None):
+  import re
+
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+  parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+
+  if not str(file_path or "").lower().endswith(".pdf"):
+    return parsed_claims, parsed_profile
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
+
+  def money(value):
+    raw = clean(value)
+    if not raw:
+      return 0.0
+    neg = raw.startswith("(") and raw.endswith(")")
+    raw = raw.replace("$", "").replace(",", "").replace("(", "").replace(")", "")
+    raw = re.sub(r"[^0-9.\-]+", "", raw)
+    try:
+      amount = float(raw or 0)
+      return -amount if neg else amount
+    except Exception:
+      return 0.0
+
+  def policy_like(value):
+    raw = clean(value).upper()
+    if not raw or not re.search(r"\d", raw):
+      return False
+    if any(token in raw for token in ["ACCT", "ACCOUNT", "CUSTOMER", "CUST", "CLIENT"]):
+      return False
+    return bool(re.search(r"^[A-Z0-9]{2,}(?:[-_][A-Z0-9]{2,}){2,9}$", raw))
+
+  def claim_like(value):
+    raw = clean(value).upper()
+    if not raw or not re.search(r"\d", raw):
+      return False
+    if raw in {"CLAIM NUMBER", "CLAIM NO", "POLICY NUMBER", "LOSS SUMMARY"}:
+      return False
+    return bool(re.search(r"^[A-Z0-9]{2,}(?:[-_][A-Z0-9]{2,}){1,8}$", raw))
+
+  def infer_line(policy_number, fallback=""):
+    value = clean(fallback)
+    if value:
+      return value
+
+    key = clean(policy_number).upper()
+    mapping = [
+      (("CARGO", "MTC"), "Motor Truck Cargo"),
+      (("BOP",), "Businessowners Policy"),
+      (("WC",), "Workers Compensation"),
+      (("GL", "CGL"), "General Liability"),
+      (("UMB", "UM", "EXCESS"), "Umbrella"),
+      (("LIQ", "LIQUOR"), "Liquor Liability"),
+      (("AUTO", "CA"), "Commercial Auto"),
+      (("GAR",), "Garage Liability"),
+      (("DOL",), "Dealers Open Lot"),
+      (("CP", "PROP"), "Commercial Property"),
+      (("CY", "CYBER"), "Cyber Liability"),
+      (("EPLI",), "Employment Practices Liability"),
+      (("PL",), "Professional Liability"),
+      (("DO", "DNO"), "Directors & Officers"),
+      (("IM",), "Inland Marine"),
+    ]
+
+    for prefixes, label in mapping:
+      if any(key.startswith(prefix + "-") or key.startswith(prefix + "_") or key == prefix for prefix in prefixes):
+        return label
+
+    return ""
+
+  def read_pdf_text():
+    try:
+      from pypdf import PdfReader
+      reader = PdfReader(file_path)
+      return "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception as exc:
+      print("LOSSQ_PDF_CLEAN_TABLE_CLAIM_REPAIR_READ_ERROR_V1:", str(exc)[:200])
+      return ""
+
+  raw_text = read_pdf_text()
+  if not raw_text:
+    return parsed_claims, parsed_profile
+
+  upper = raw_text.upper()
+
+  def section_between(start_labels, end_labels):
+    starts = [upper.find(label) for label in start_labels if upper.find(label) >= 0]
+    if not starts:
+      return ""
+    start = min(starts)
+    tail = upper[start:]
+    ends = [tail.find(label) for label in end_labels if tail.find(label) > 0]
+    end = start + min(ends) if ends else len(raw_text)
+    return raw_text[start:end]
+
+  date_pattern = r"\d{1,2}[/-]\d{1,2}[/-]\d{2,4}"
+  money_pattern = r"\$?\(?-?\d[\d,]*(?:\.\d{1,2})?\)?"
+  status_pattern = r"Open|Closed|Reopened|Pending|Denied|Reported"
+  claim_pattern = r"[A-Z0-9]{2,}(?:[-_][A-Z0-9]{2,}){1,8}"
+  policy_pattern = r"[A-Z0-9]{2,}(?:[-_][A-Z0-9]{2,}){2,9}"
+
+  claim_section = section_between(
+    ["CLAIM DETAIL", "CLAIMS DETAIL", "CLAIM DETAILS", "CLAIMS DETAILS"],
+    ["LOSS SUMMARY", "UNDERWRITING NOTES", "BROKER RECOMMENDATION"],
+  )
+
+  extracted_claims = []
+
+  if claim_section:
+    lines = [clean(line) for line in claim_section.splitlines() if clean(line)]
+    lines = [
+      line for line in lines
+      if not re.search(r"(?i)^claim\s+number\s+policy\s+number\b", line)
+      and not re.search(r"(?i)^claim\s+detail$", line)
+      and not re.search(r"(?i)^claims\s+detail$", line)
+    ]
+
+    claim_text = "\n".join(lines)
+    row_start = re.compile(rf"(?m)^\s*(?P<claim>{claim_pattern})\s+(?P<policy>{policy_pattern})\s+")
+    starts = list(row_start.finditer(claim_text))
+    seen = set()
+
+    for index, match in enumerate(starts):
+      claim_number = clean(match.group("claim")).upper()
+      policy_number = clean(match.group("policy")).upper()
+
+      if not claim_like(claim_number) or not policy_like(policy_number):
+        continue
+
+      next_start = starts[index + 1].start() if index + 1 < len(starts) else len(claim_text)
+      rest = clean(claim_text[match.end():next_start])
+
+      row_match = re.search(
+        rf"^(?P<lob>.*?)(?P<loss>{date_pattern})\s+(?P<status>{status_pattern})\s+"
+        rf"(?P<paid>{money_pattern})\s+(?P<reserve>{money_pattern})\s+(?P<total>{money_pattern})\s*(?P<description>.*)$",
+        rest,
+        flags=re.I | re.S,
+      )
+
+      if not row_match:
+        row_match = re.search(
+          rf"^(?P<lob>.*?)(?P<status>{status_pattern})\s+(?P<loss>{date_pattern})"
+          rf"(?:\s+(?P<reported>{date_pattern}))?(?:\s+(?P<closed>{date_pattern}))?\s+"
+          rf"(?P<paid>{money_pattern})\s+(?P<reserve>{money_pattern})\s+(?P<total>{money_pattern})\s*(?P<description>.*)$",
+          rest,
+          flags=re.I | re.S,
+        )
+
+      if not row_match:
+        continue
+
+      paid = money(row_match.group("paid"))
+      reserve = money(row_match.group("reserve"))
+      total = money(row_match.group("total"))
+
+      if total <= 0 and (paid or reserve):
+        total = paid + reserve
+
+      if total <= 0 and paid <= 0 and reserve <= 0:
+        continue
+
+      dedupe_key = f"{claim_number}|{policy_number}"
+      if dedupe_key in seen:
+        continue
+
+      seen.add(dedupe_key)
+
+      line_of_business = infer_line(policy_number, row_match.group("lob"))
+      status = clean(row_match.group("status")).title()
+
+      extracted_claims.append({
+        "claim_number": claim_number,
+        "Claim Number": claim_number,
+        "claim_id": claim_number,
+        "policy_number": policy_number,
+        "Policy Number": policy_number,
+        "line_of_business": line_of_business,
+        "claim_type": line_of_business,
+        "coverage": line_of_business,
+        "policy_type": line_of_business,
+        "date_of_loss": clean(row_match.group("loss")),
+        "loss_date": clean(row_match.group("loss")),
+        "date_reported": clean(row_match.groupdict().get("reported")),
+        "date_closed": clean(row_match.groupdict().get("closed")),
+        "status": status,
+        "claim_status": status,
+        "paid_amount": paid,
+        "total_paid": paid,
+        "reserve_amount": reserve,
+        "total_reserve": reserve,
+        "total_incurred": total,
+        "description": clean(row_match.group("description")),
+      })
+
+  if extracted_claims:
+    existing_total = 0.0
+    for claim in parsed_claims:
+      if isinstance(claim, dict):
+        existing_total += money(claim.get("total_incurred") or claim.get("incurred"))
+
+    extracted_total = sum(money(claim.get("total_incurred")) for claim in extracted_claims)
+
+    if len(extracted_claims) >= len(parsed_claims or []) or extracted_total > existing_total:
+      parsed_claims = extracted_claims
+      parsed_profile["claims"] = extracted_claims
+      parsed_profile["parsed_claims"] = extracted_claims
+      parsed_profile["claim_count"] = len(extracted_claims)
+      parsed_profile["total_claims"] = len(extracted_claims)
+      parsed_profile["open_claims"] = sum(1 for c in extracted_claims if clean(c.get("status")).lower() == "open")
+      parsed_profile["closed_claims"] = sum(1 for c in extracted_claims if clean(c.get("status")).lower() == "closed")
+      parsed_profile["total_paid"] = sum(money(c.get("paid_amount")) for c in extracted_claims)
+      parsed_profile["total_reserve"] = sum(money(c.get("reserve_amount")) for c in extracted_claims)
+      parsed_profile["total_incurred"] = sum(money(c.get("total_incurred")) for c in extracted_claims)
+
+  print("LOSSQ_PDF_CLEAN_TABLE_CLAIM_REPAIR_V1:", {
+    "extracted_claims": len(extracted_claims),
+    "final_claims": len(parsed_claims or []),
+    "sample_claim_numbers": [c.get("claim_number") for c in (parsed_claims or [])[:5] if isinstance(c, dict)],
+  })
+
+  return parsed_claims, parsed_profile
+
 # LOSSQ_PDF_FULL_CLAIM_BLOCK_EXTRACT_BEFORE_SAVE_V1
 def lossq_pdf_full_claim_block_extract_before_save_v1(file_path, parsed_claims=None, parsed_profile=None):
   """
@@ -13155,6 +13379,15 @@ async def save_uploaded_files(files, policy_number, db, current_user):
       parsed_claims,
       parsed_profile,
     )
+
+
+    # LOSSQ_PDF_CLEAN_TABLE_CLAIM_REPAIR_CALL_V1
+    parsed_claims, parsed_profile = lossq_pdf_clean_table_claim_repair_v1(
+      file_path,
+      parsed_claims,
+      parsed_profile,
+    )
+
 
     # LOSSQ_PDF_SAVE_TIME_BUSINESS_NAME_REPAIR_CALL_V2
     parsed_profile, direct_profile = lossq_pdf_save_time_business_name_repair_v2(
