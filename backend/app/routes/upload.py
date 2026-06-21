@@ -8893,6 +8893,86 @@ def lossq_excel_multisheet_policy_schedule_authority_v1(file_path, profile_data=
           if left_key in reverse_labels and clean(right):
             label_values.setdefault(reverse_labels[left_key], clean(right))
 
+
+  # LOSSQ_EXCEL_PROFILE_HEADER_ROW_VALUES_V1
+  # Some Excel account profile sheets place labels across one row and values
+  # directly underneath. Example:
+  # Named Insured | Writing Carrier | Carrier | Account Number
+  # Metro Courier | Keystone ...   | Keystone | MCI-...
+  # The older same-row next-cell scan can accidentally read adjacent labels
+  # such as Expiration Date or Current Premium as values. This block prefers
+  # below-row values when a row contains multiple profile labels.
+  def lossq_excel_label_value_usable_v1(field, value):
+    raw = clean(value)
+    if not raw:
+      return False
+
+    raw_key = key(raw)
+    if raw_key in reverse_labels:
+      return False
+
+    if field == "business_name":
+      return bool(good_business(raw))
+
+    if field == "account_number":
+      return not is_policy_number(raw) and not looks_like_claim_number(raw) and "account" not in raw_key
+
+    if field == "carrier_name":
+      low = raw.lower()
+      return not any(fragment in low for fragment in ["policy schedule", "claim detail", "claim number", "policy number"])
+
+    if field in {"effective_date", "expiration_date", "evaluation_date"}:
+      normalized = normalize_date(raw)
+      if not normalized or raw_key in {"effectivedate", "expirationdate", "currentpremium", "policynumber"}:
+        return False
+      return any(char.isdigit() for char in normalized)
+
+    if field == "policy_period":
+      start, end = split_policy_period(raw)
+      return bool(start and end)
+
+    return True
+
+  for sheet_name, rows in sheets:
+    for row_index, row in enumerate(rows):
+      label_positions = []
+
+      for idx, cell in enumerate(row):
+        field = reverse_labels.get(key(cell))
+        if field:
+          label_positions.append((field, idx))
+
+      if not label_positions:
+        continue
+
+      row_has_multiple_labels = len(label_positions) >= 2
+      next_rows = rows[row_index + 1: row_index + 4]
+
+      for field, idx in label_positions:
+        candidates = []
+
+        # Only trust same-row next-cell when the row is not a label header row.
+        if not row_has_multiple_labels and idx + 1 < len(row):
+          candidates.append(row[idx + 1])
+
+        # Prefer values below the label in the same column.
+        for next_row in next_rows:
+          if idx < len(next_row):
+            candidates.append(next_row[idx])
+          if idx + 1 < len(next_row):
+            candidates.append(next_row[idx + 1])
+
+        for candidate in candidates:
+          candidate = clean(candidate)
+          if lossq_excel_label_value_usable_v1(field, candidate):
+            existing = clean(label_values.get(field))
+            if not lossq_excel_label_value_usable_v1(field, existing):
+              label_values[field] = candidate
+            else:
+              # For multi-label header rows, below-row values are more authoritative.
+              label_values[field] = candidate
+            break
+
   business_name = good_business(label_values.get("business_name"))
   if business_name:
     for field in ["business_name", "insured_name", "named_insured", "account_name", "insured"]:
@@ -9062,6 +9142,69 @@ def lossq_excel_multisheet_policy_schedule_authority_v1(file_path, profile_data=
     profile_data["policy_number"] = policy_numbers[0]
   if policy_numbers and not is_policy_number(profile_data.get("main_policy")):
     profile_data["main_policy"] = policy_numbers[0]
+
+
+  # LOSSQ_EXCEL_TOP_LEVEL_PROFILE_FINALIZE_V1
+  # Final top-level cleanup after policy schedule authority. The policy table can
+  # be correct while the account snapshot still holds filename/header fallback values.
+  def lossq_excel_invalid_account_date_v1(value):
+    raw = clean(value)
+    if not raw:
+      return True
+
+    raw_key = key(raw)
+    if raw_key in reverse_labels:
+      return True
+
+    if raw_key in {"currentpremium", "expiringpremium", "targetrenewalpremium", "policynumber", "claimnumber"}:
+      return True
+
+    normalized = normalize_date(raw)
+    if not normalized:
+      return True
+
+    return not any(char.isdigit() for char in normalized)
+
+  corrected_business_name = good_business(label_values.get("business_name"))
+  current_business_name = clean(profile_data.get("business_name"))
+  current_business_key = current_business_name.lower()
+
+  if corrected_business_name and (
+    not good_business(current_business_name)
+    or "lossq" in current_business_key
+    or ".xlsx" in current_business_key
+    or ".xls" in current_business_key
+    or current_business_key.startswith("20")
+  ):
+    for business_field in ["business_name", "insured_name", "named_insured", "account_name", "insured"]:
+      profile_data[business_field] = corrected_business_name
+
+  first_policy_effective = ""
+  first_policy_expiration = ""
+
+  for policy in policies:
+    if not isinstance(policy, dict):
+      continue
+
+    if not first_policy_effective:
+      first_policy_effective = normalize_date(
+        policy.get("effective_date")
+        or policy.get("policy_effective_date")
+        or policy.get("effective")
+      )
+
+    if not first_policy_expiration:
+      first_policy_expiration = normalize_date(
+        policy.get("expiration_date")
+        or policy.get("policy_expiration_date")
+        or policy.get("expiration")
+      )
+
+  if first_policy_effective and lossq_excel_invalid_account_date_v1(profile_data.get("effective_date")):
+    profile_data["effective_date"] = first_policy_effective
+
+  if first_policy_expiration and lossq_excel_invalid_account_date_v1(profile_data.get("expiration_date")):
+    profile_data["expiration_date"] = first_policy_expiration
 
   print("LOSSQ_EXCEL_MULTISHEET_POLICY_SCHEDULE_AUTHORITY_V1:", {
     "business_name": profile_data.get("business_name"),
