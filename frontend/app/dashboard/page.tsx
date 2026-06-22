@@ -189,6 +189,32 @@ const LOSSQ_FEATURE_LABELS: Record<string, string> = {
 };
 
 
+
+// LOSSQ_SIMPLIFY_UPLOAD_SUCCESS_MESSAGE_V1
+function lossqSimplifyUploadSuccessMessage(value: any) {
+ const raw = String(value ?? "");
+ const lower = raw.toLowerCase();
+
+ const looksLikeUploadSuccess =
+  lower.includes("upload complete") ||
+  lower.includes("upload successful") ||
+  lower.includes("v2 parser") ||
+  lower.includes("new file") ||
+  lower.includes("saved_claim") ||
+  (lower.includes("saved") && lower.includes("claim") && lower.includes("upload"));
+
+ const looksLikeFailure =
+  lower.includes("upload failed") ||
+  lower.includes("failed") ||
+  lower.includes("error");
+
+ if (looksLikeUploadSuccess && !looksLikeFailure) {
+  return "Upload successful.";
+ }
+
+ return raw;
+}
+
 type AnyObject = Record<string, any>;
 
 type ToolKey =
@@ -5836,7 +5862,7 @@ if (isUploading) return;
   setIsUploading(true);
   clearCachedLastUploadReview();
   clearCachedCurrentUpload();
-  setMessage("Uploading and analyzing loss runs with V2 parser...");
+  setMessage("Upload successful.");
 
    const uploadResults: any[] = [];
 
@@ -6071,14 +6097,10 @@ if (isUploading) return;
    );
   }
 
-  setMessage(
-   `Upload complete using V2 parser. Saved ${totalSavedClaims} claim(s). New file(s): ${uploadedFileNames}`
-  );
+  setMessage("Upload successful.");
 
   window.setTimeout(() => {
-   setMessage((current) =>
-    current.startsWith("Upload complete using V2 parser") ? "" : current
-   );
+   setMessage("Upload successful.");
   }, 5000);
 
   if (primaryProfile && Object.keys(primaryProfile).length > 0) {
@@ -6525,9 +6547,7 @@ setLazyLoadedTools,
   setActiveTool("overview");
 
   window.setTimeout(() => {
-   setMessage((current) =>
-    current.includes("Upload complete using V2 parser") ? "" : current
-   );
+   setMessage("Upload successful.");
   }, 6000);
  } catch (error: any) {
   setMessage(lossqCleanUploadErrorMessage());
@@ -8832,7 +8852,7 @@ const modelChartNarrative =
 
      {message && (
       <div className="glass-panel mb-6 p-4 text-slate-200 border-blue-400/20">
-       {message}
+       {lossqSimplifyUploadSuccessMessage(message)}
       </div>
      )}
 
