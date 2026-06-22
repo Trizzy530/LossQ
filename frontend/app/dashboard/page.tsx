@@ -215,6 +215,355 @@ function lossqSimplifyUploadSuccessMessage(value: any) {
  return raw;
 }
 
+
+// LOSSQ_CARRIER_APPETITE_HUMANIZED_PROFILE_GUARD_V1
+function lossqCarrierAppetiteClean(value: any) {
+ return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function lossqCarrierAppetiteNumber(value: any) {
+ const raw = lossqCarrierAppetiteClean(value)
+  .replace(/[$,]/g, "")
+  .replace("(", "-")
+  .replace(")", "");
+
+ const parsed = Number(raw);
+
+ if (Number.isFinite(parsed)) {
+  return parsed;
+ }
+
+ return 0;
+}
+
+function lossqCarrierAppetiteMoney(value: any) {
+ return `$${Math.round(lossqCarrierAppetiteNumber(value)).toLocaleString()}`;
+}
+
+function lossqCarrierAppetiteClaimIncurred(claim: any) {
+ const direct = lossqCarrierAppetiteNumber(
+  claim?.total_incurred ||
+   claim?.incurred ||
+   claim?.total ||
+   claim?.gross_incurred ||
+   claim?.amount
+ );
+
+ if (direct > 0) {
+  return direct;
+ }
+
+ return (
+  lossqCarrierAppetiteNumber(claim?.paid || claim?.paid_amount) +
+  lossqCarrierAppetiteNumber(claim?.reserve || claim?.reserve_amount)
+ );
+}
+
+function lossqCarrierAppetiteClaimReserve(claim: any) {
+ return lossqCarrierAppetiteNumber(
+  claim?.reserve ||
+   claim?.reserve_amount ||
+   claim?.outstanding_reserve ||
+   claim?.case_reserve
+ );
+}
+
+function lossqCarrierAppetiteLine(claim: any) {
+ return lossqCarrierAppetiteClean(
+  claim?.line_of_business ||
+   claim?.claim_type ||
+   claim?.policy_type ||
+   claim?.coverage ||
+   claim?.line ||
+   "Unknown line"
+ );
+}
+
+function lossqCarrierAppetiteStatus(claim: any) {
+ return lossqCarrierAppetiteClean(claim?.status || claim?.claim_status || claim?.claimStatus);
+}
+
+function lossqCarrierAppetiteOpenClaim(claim: any) {
+ const status = lossqCarrierAppetiteStatus(claim).toLowerCase();
+
+ if (status.includes("open")) {
+  return true;
+ }
+
+ if (status.includes("pending")) {
+  return true;
+ }
+
+ if (status.includes("active")) {
+  return true;
+ }
+
+ if (lossqCarrierAppetiteClaimReserve(claim) > 0) {
+  return true;
+ }
+
+ return false;
+}
+
+function lossqCarrierAppetiteSafeClaims(claimsLike: any[] = []) {
+ if (!Array.isArray(claimsLike)) {
+  return [];
+ }
+
+ return claimsLike.filter((claim: any) => {
+  if (!claim || typeof claim !== "object") {
+   return false;
+  }
+
+  const claimNumber = lossqCarrierAppetiteClean(
+   claim?.claim_number ||
+    claim?.claimNumber ||
+    claim?.claim_no ||
+    claim?.id
+  );
+
+  const line = lossqCarrierAppetiteLine(claim);
+  const incurred = lossqCarrierAppetiteClaimIncurred(claim);
+
+  if (claimNumber) {
+   return true;
+  }
+
+  if (line && line !== "Unknown line") {
+   return true;
+  }
+
+  if (incurred > 0) {
+   return true;
+  }
+
+  return false;
+ });
+}
+
+function lossqCarrierAppetitePolicyLines(policiesLike: any[] = []) {
+ if (!Array.isArray(policiesLike)) {
+  return [];
+ }
+
+ const lines = policiesLike
+  .map((policy: any) =>
+   lossqCarrierAppetiteClean(
+    policy?.line_of_business ||
+     policy?.policy_type ||
+     policy?.coverage ||
+     policy?.line
+   )
+  )
+  .filter(Boolean);
+
+ return Array.from(new Set(lines));
+}
+
+function lossqCarrierAppetiteHasUsableProfile(profileLike: any, claimsLike: any[] = [], policiesLike: any[] = []) {
+ const profileText = [
+  profileLike?.business_name,
+  profileLike?.named_insured,
+  profileLike?.insured_name,
+  profileLike?.account_number,
+  profileLike?.customer_number,
+  profileLike?.policy_number,
+  profileLike?.carrier_name,
+  profileLike?.writing_carrier,
+  profileLike?.business_description,
+  profileLike?.operations,
+  profileLike?.scope_of_work,
+ ].map(lossqCarrierAppetiteClean).filter(Boolean).join(" ");
+
+ if (profileText) {
+  return true;
+ }
+
+ if (lossqCarrierAppetiteSafeClaims(claimsLike).length > 0) {
+  return true;
+ }
+
+ if (lossqCarrierAppetitePolicyLines(policiesLike).length > 0) {
+  return true;
+ }
+
+ return false;
+}
+
+function lossqCarrierAppetiteScoreDisplay(appetiteLike: any) {
+ const score =
+  appetiteLike?.carrier_appetite_score ??
+  appetiteLike?.appetite_score ??
+  appetiteLike?.marketability_score;
+
+ if (score !== undefined && score !== null && score !== "") {
+  return `${score}/100`;
+ }
+
+ return "-";
+}
+
+function lossqCarrierAppetiteLevelDisplay(appetiteLike: any) {
+ return lossqCarrierAppetiteClean(
+  appetiteLike?.carrier_appetite_level ||
+   appetiteLike?.appetite_level ||
+   appetiteLike?.market_appetite ||
+   appetiteLike?.appetite ||
+   "Not rated"
+ );
+}
+
+function lossqCarrierAppetiteHumanizedSummary(profileLike: any, claimsLike: any[] = [], policiesLike: any[] = [], appetiteLike: any = {}) {
+ const businessName =
+  lossqCarrierAppetiteClean(profileLike?.business_name) ||
+  lossqCarrierAppetiteClean(profileLike?.named_insured) ||
+  lossqCarrierAppetiteClean(profileLike?.insured_name) ||
+  "this account";
+
+ const claimRows = lossqCarrierAppetiteSafeClaims(claimsLike);
+ const openClaims = claimRows.filter(lossqCarrierAppetiteOpenClaim);
+ const totalIncurred = claimRows.reduce((sum: number, claim: any) => sum + lossqCarrierAppetiteClaimIncurred(claim), 0);
+ const totalReserve = claimRows.reduce((sum: number, claim: any) => sum + lossqCarrierAppetiteClaimReserve(claim), 0);
+ const policyLines = lossqCarrierAppetitePolicyLines(policiesLike);
+ const score = lossqCarrierAppetiteScoreDisplay(appetiteLike);
+ const level = lossqCarrierAppetiteLevelDisplay(appetiteLike);
+
+ if (claimRows.length === 0) {
+  return `${businessName} has a profile started, but carrier appetite should not be treated as market-ready until validated claim rows are attached. Add or select the loss run so LossQ can explain which markets are likely to lean in, which ones may push back, and what the broker needs to package before release.`;
+ }
+
+ const lineSummaryMap: Record<string, number> = {};
+ claimRows.forEach((claim: any) => {
+  const line = lossqCarrierAppetiteLine(claim);
+  lineSummaryMap[line] = (lineSummaryMap[line] || 0) + 1;
+ });
+
+ const lineSummary = Object.entries(lineSummaryMap)
+  .map(([line, count]) => `${count} ${line}`)
+  .join(", ");
+
+ let opening = `${businessName} should be positioned to carriers based on the actual loss story, not a generic appetite label.`;
+
+ if (score !== "-") {
+  opening += ` LossQ currently reads the account at ${score} with a ${level} appetite posture.`;
+ }
+
+ return `${opening} The file shows ${claimRows.length} claim(s), ${openClaims.length} open claim(s), ${lossqCarrierAppetiteMoney(totalIncurred)} total incurred, and ${lossqCarrierAppetiteMoney(totalReserve)} in reserves. ${lineSummary ? `The loss activity is concentrated across ${lineSummary}. ` : ""}${policyLines.length ? `The policy schedule includes ${policyLines.join(", ")}. ` : ""}Carrier appetite should be explained around whether the losses are isolated, whether open reserves are controlled, and what documentation the broker can provide before approaching markets.`;
+}
+
+function lossqCarrierAppetiteTargets(profileLike: any, claimsLike: any[] = [], policiesLike: any[] = [], appetiteLike: any = {}) {
+ const claimRows = lossqCarrierAppetiteSafeClaims(claimsLike);
+ const openClaims = claimRows.filter(lossqCarrierAppetiteOpenClaim).length;
+ const totalIncurred = claimRows.reduce((sum: number, claim: any) => sum + lossqCarrierAppetiteClaimIncurred(claim), 0);
+
+ const backendTargets = Array.isArray(appetiteLike?.best_fit_carriers)
+  ? appetiteLike.best_fit_carriers
+  : [];
+
+ if (backendTargets.length > 0) {
+  return backendTargets.map((item: any) => {
+   if (typeof item === "string") {
+    return `Consider ${item} only if the submission includes updated loss runs, open-claim status, and a clear account narrative.`;
+   }
+
+   const name = lossqCarrierAppetiteClean(item?.carrier || item?.name || item?.market || "Recommended market");
+   const reason = lossqCarrierAppetiteClean(item?.reason || item?.fit_reason || item?.notes);
+
+   if (reason) {
+    return `${name}: ${reason}`;
+   }
+
+   return `${name}: Review as a possible fit after claim documentation and exposure support are attached.`;
+  });
+ }
+
+ const policyLines = lossqCarrierAppetitePolicyLines(policiesLike);
+ const lineText = policyLines.join(" ").toLowerCase();
+ const targets: string[] = [];
+
+ if (openClaims > 0 || totalIncurred >= 100000) {
+  targets.push("Start with incumbent, regional, program, or specialty markets that are comfortable reviewing claim detail instead of declining on loss count alone.");
+ } else {
+  targets.push("Standard and regional markets may be approachable if the submission clearly explains the claims and shows current exposure information.");
+ }
+
+ if (lineText.includes("workers") || lineText.includes("wc")) {
+  targets.push("For workers compensation, target markets that will review return-to-work controls, safety training, payroll accuracy, and open medical reserve status.");
+ }
+
+ if (lineText.includes("auto") || lineText.includes("cargo") || lineText.includes("truck")) {
+  targets.push("For auto or cargo exposure, target markets that will review driver controls, maintenance, routing, cargo handling, and loss-prevention changes.");
+ }
+
+ if (lineText.includes("general") || lineText.includes("liability") || lineText.includes("bop") || lineText.includes("property")) {
+  targets.push("For GL, BOP, or property exposure, target markets that will review premises controls, incident documentation, repairs, inspections, and risk-control improvements.");
+ }
+
+ return targets.slice(0, 6);
+}
+
+function lossqCarrierAppetitePushback(claimsLike: any[] = [], appetiteLike: any = {}) {
+ const claimRows = lossqCarrierAppetiteSafeClaims(claimsLike);
+ const openClaims = claimRows.filter(lossqCarrierAppetiteOpenClaim);
+ const totalReserve = claimRows.reduce((sum: number, claim: any) => sum + lossqCarrierAppetiteClaimReserve(claim), 0);
+ const totalIncurred = claimRows.reduce((sum: number, claim: any) => sum + lossqCarrierAppetiteClaimIncurred(claim), 0);
+ const concerns: string[] = [];
+
+ if (Array.isArray(appetiteLike?.carrier_concerns)) {
+  appetiteLike.carrier_concerns.forEach((item: any) => {
+   const clean = lossqCarrierAppetiteClean(item);
+   if (clean) {
+    concerns.push(clean);
+   }
+  });
+ }
+
+ if (openClaims.length > 0) {
+  concerns.push(`Carriers will ask for current adjuster notes and expected closure timing on ${openClaims.length} open claim(s).`);
+ }
+
+ if (totalReserve > 0) {
+  concerns.push(`Outstanding reserves of ${lossqCarrierAppetiteMoney(totalReserve)} need explanation before the file is released broadly.`);
+ }
+
+ if (totalIncurred >= 100000) {
+  concerns.push(`Total incurred losses of ${lossqCarrierAppetiteMoney(totalIncurred)} may create pricing pressure or narrower market appetite.`);
+ }
+
+ if (concerns.length === 0) {
+  concerns.push("Carrier pushback should be reviewed after loss runs and exposure inputs are attached.");
+ }
+
+ return Array.from(new Set(concerns)).slice(0, 7);
+}
+
+function lossqCarrierAppetitePlacementStrategy(profileLike: any, claimsLike: any[] = [], appetiteLike: any = {}) {
+ const businessName =
+  lossqCarrierAppetiteClean(profileLike?.business_name) ||
+  lossqCarrierAppetiteClean(profileLike?.named_insured) ||
+  lossqCarrierAppetiteClean(profileLike?.insured_name) ||
+  "the insured";
+
+ const backendStrategy = lossqCarrierAppetiteClean(appetiteLike?.market_strategy || appetiteLike?.placement_summary);
+
+ const claimRows = lossqCarrierAppetiteSafeClaims(claimsLike);
+ const openClaims = claimRows.filter(lossqCarrierAppetiteOpenClaim);
+
+ if (claimRows.length === 0) {
+  return `${businessName} should not be marketed from this tab yet. Upload or select a profile with validated loss data first, then use Carrier Appetite to decide which markets deserve the first look.`;
+ }
+
+ if (backendStrategy && !backendStrategy.toLowerCase().includes("insufficient")) {
+  return backendStrategy;
+ }
+
+ if (openClaims.length > 0) {
+  return `Market ${businessName} with a controlled release strategy. Start with markets most likely to tolerate open losses, attach current loss runs, explain every open reserve, and avoid broad preferred-market release until the broker has claim status notes.`;
+ }
+
+ return `Market ${businessName} with a clean account narrative, current loss runs, exposure support, and claim-by-claim explanations. Lead with why the account is controllable instead of relying on a generic appetite score.`;
+}
+
 type AnyObject = Record<string, any>;
 
 type ToolKey =
@@ -9627,56 +9976,122 @@ const modelChartNarrative =
       </section>
      )}
 
-     {activeTool === "carrier-appetite" && (
-      <section className="glass-panel p-6 md:p-8">
-       <p className="text-sm uppercase tracking-[0.25em] text-blue-300 mb-3">
-        Carrier Appetite Engine
-       </p>
+     {activeTool === "carrier-appetite" && (() => {
+ let appetiteProfile: any = {};
+ if (displayProfile && typeof displayProfile === "object") {
+  appetiteProfile = displayProfile;
+ } else if (profile && typeof profile === "object") {
+  appetiteProfile = profile;
+ }
 
-       <h2 className="text-2xl md:text-3xl font-bold mb-6">
-        Market Appetite Strategy
-       </h2>
+ let appetiteClaims: any[] = [];
+ if (Array.isArray(visibleClaims) && visibleClaims.length > 0) {
+  appetiteClaims = visibleClaims;
+ } else if (Array.isArray(claims)) {
+  appetiteClaims = claims;
+ }
 
-       <div className="grid grid-cols-1 md:grid-cols-3 gap-5 mb-8">
-        <MetricCard title="Appetite Score" value={effectiveCarrierAppetite?.carrier_appetite_score != null ? `${effectiveCarrierAppetite.carrier_appetite_score}/100` : "-"} />
-        <MetricCard title="Appetite Level" value={effectiveCarrierAppetite?.carrier_appetite_level || "-"} />
-        <MetricCard title="Best Market" value={effectiveCarrierAppetite?.best_fit_carriers?.[0]?.carrier_type || "-"} />
-       </div>
+ let appetitePolicies: any[] = [];
+ if (Array.isArray(policySchedule)) {
+  appetitePolicies = policySchedule;
+ }
 
-       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
-        <ListCard
-         title="Best Fit Markets"
-         items={
-          effectiveCarrierAppetite?.best_fit_carriers?.length
-           ? effectiveCarrierAppetite.best_fit_carriers.map(
-             (item: any) =>
-              `${item.carrier_type} - " ${item.match_score}/100 - " ${item.fit}`
-            )
-           : ["No best fit markets available."]
-         }
-         color="blue"
-        />
+ const hasCarrierAppetiteProfile = lossqCarrierAppetiteHasUsableProfile(
+  appetiteProfile,
+  appetiteClaims,
+  appetitePolicies
+ );
 
-        <ListCard
-         title="Appetite Reasons"
-         items={effectiveCarrierAppetite?.carrier_match_reasons || ["No carrier appetite reasons available."]}
-         color="purple"
-        />
-       </div>
+ if (!hasCarrierAppetiteProfile) {
+  return (
+   <section className="glass-panel p-6 md:p-8">
+    <p className="text-sm uppercase tracking-[0.25em] text-blue-300 mb-3">
+     Carrier Appetite Engine
+    </p>
 
-       <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
-        <TextCard
-         title="Market Strategy"
-         text={effectiveCarrierAppetite?.market_strategy || "No market strategy available yet."}
-        />
+    <h2 className="text-2xl md:text-3xl font-bold mb-4">
+     Market Appetite Strategy
+    </h2>
 
-        <TextCard
-         title="Placement Summary"
-         text={effectiveCarrierAppetite?.placement_summary || "No placement summary available yet."}
-        />
-       </div>
-      </section>
+    <div className="rounded-3xl border border-blue-400/20 bg-blue-500/10 p-6">
+     <h3 className="text-xl font-black text-white mb-3">
+      Upload or select an account first.
+     </h3>
+
+     <p className="text-slate-300 leading-7">
+      Carrier Appetite is intentionally blank until LossQ has an actual profile, policy schedule, or validated claim data. This prevents generic market recommendations from appearing before the account is ready.
+     </p>
+    </div>
+   </section>
+  );
+ }
+
+ return (
+  <section className="glass-panel p-6 md:p-8">
+   <p className="text-sm uppercase tracking-[0.25em] text-blue-300 mb-3">
+    Carrier Appetite Engine
+   </p>
+
+   <h2 className="text-2xl md:text-3xl font-bold mb-4">
+    Humanized Market Appetite Strategy
+   </h2>
+
+   <p className="text-slate-400 mb-6 max-w-4xl">
+    This tab explains how the account may be received by the market. It does not repeat Renewal Risk; it translates the uploaded profile, policy lines, and claims into a broker-facing carrier strategy.
+   </p>
+
+   <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
+    <MetricCard title="Appetite Score" value={lossqCarrierAppetiteScoreDisplay(effectiveCarrierAppetite)} />
+    <MetricCard title="Appetite Level" value={lossqCarrierAppetiteLevelDisplay(effectiveCarrierAppetite)} />
+    <MetricCard title="Claims Reviewed" value={String(lossqCarrierAppetiteSafeClaims(appetiteClaims).length)} />
+    <MetricCard title="Open Claims" value={String(lossqCarrierAppetiteSafeClaims(appetiteClaims).filter(lossqCarrierAppetiteOpenClaim).length)} />
+   </div>
+
+   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+    <TextCard
+     title="Humanized Appetite Analysis"
+     text={lossqCarrierAppetiteHumanizedSummary(
+      appetiteProfile,
+      appetiteClaims,
+      appetitePolicies,
+      effectiveCarrierAppetite || {}
      )}
+    />
+
+    <TextCard
+     title="Placement Strategy"
+     text={lossqCarrierAppetitePlacementStrategy(
+      appetiteProfile,
+      appetiteClaims,
+      effectiveCarrierAppetite || {}
+     )}
+    />
+   </div>
+
+   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6 mt-6">
+    <ListCard
+     title="Best Carrier Conversations"
+     items={lossqCarrierAppetiteTargets(
+      appetiteProfile,
+      appetiteClaims,
+      appetitePolicies,
+      effectiveCarrierAppetite || {}
+     )}
+     color="purple"
+    />
+
+    <ListCard
+     title="Likely Carrier Pushback"
+     items={lossqCarrierAppetitePushback(
+      appetiteClaims,
+      effectiveCarrierAppetite || {}
+     )}
+     color="red"
+    />
+   </div>
+  </section>
+ );
+})()}
 
      {activeTool === "submission-readiness" && (
       <section className="glass-panel p-6 md:p-8">
