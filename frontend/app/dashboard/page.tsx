@@ -2093,9 +2093,9 @@ function clearLossQDashboardTenantCache() {
 
 // LOSSQ_EXTRACTION_REVIEW_BANNER_V1
 
-// LOSSQ_RENEWAL_RISK_INSURED_QUESTIONS_V1
 
-// LOSSQ_RENEWAL_RISK_PREMIUM_ALIGNMENT_V1
+
+// LOSSQ_RENEWAL_RISK_PREMIUM_ALIGNMENT_RESTORE_V2
 function lossqMoneyDisplayFromAny(value: any) {
  const raw = String(value ?? "").replace(/[$,]/g, "").trim();
  const number = Number(raw);
@@ -2192,6 +2192,7 @@ function lossqRenewalOverviewAlignedWithPremium(summaryLike: any, forecastLike: 
  return "Upload claims and generate renewal risk to create an executive renewal overview.";
 }
 
+// LOSSQ_RENEWAL_RISK_INSURED_QUESTIONS_V2
 function lossqQuestionsToAskInsured(profileLike: any, claimsLike: any[] = [], policiesLike: any[] = []) {
  const safeClaims = Array.isArray(claimsLike) ? claimsLike : [];
  const safePolicies = Array.isArray(policiesLike) ? policiesLike : [];
@@ -2211,10 +2212,161 @@ function lossqQuestionsToAskInsured(profileLike: any, claimsLike: any[] = [], po
   questions.push(cleaned);
  };
 
- const hasText = (patterns: string[]) =>
+ const hasAny = (patterns: string[]) =>
   patterns.some((pattern) => combinedText.includes(pattern));
 
  const openClaims = safeClaims.filter((claim: any) => isOpenClaimStatus(claim));
+
+ const hasAutoExposure = hasAny([
+  "commercial auto",
+  "business auto",
+  "auto liability",
+  "fleet",
+  "vehicle",
+  "vehicles",
+  "driver",
+  "drivers",
+  "mvr",
+  "truck",
+  "trucking",
+  "courier",
+  "delivery",
+  "transport",
+  "transportation",
+  "garage",
+  "motor carrier",
+ ]);
+
+ const hasCargoExposure = hasAny([
+  "cargo",
+  "motor truck cargo",
+  "freight",
+  "warehouse",
+  "loading",
+  "unloading",
+  "shipment",
+  "delivery damage",
+  "in transit",
+ ]);
+
+ const hasBarRestaurantExposure = hasAny([
+  "bar",
+  "tavern",
+  "pub",
+  "nightclub",
+  "restaurant",
+  "grill",
+  "cafe",
+  "food",
+  "kitchen",
+  "liquor",
+  "alcohol",
+  "beer",
+  "wine",
+  "server",
+  "bouncer",
+  "security",
+  "patron",
+  "customer injury",
+ ]);
+
+ const hasConstructionExposure = hasAny([
+  "construction",
+  "contractor",
+  "subcontractor",
+  "roofing",
+  "framing",
+  "electrical",
+  "plumbing",
+  "hvac",
+  "excavation",
+  "ladder",
+  "scaffold",
+  "heights",
+  "jobsite",
+  "job site",
+ ]);
+
+ const hasHealthcareExposure = hasAny([
+  "nursing",
+  "assisted living",
+  "healthcare",
+  "health care",
+  "resident",
+  "patient",
+  "caregiver",
+  "medication",
+  "cna",
+  "medical",
+  "fall prevention",
+ ]);
+
+ const hasSalonExposure = hasAny([
+  "salon",
+  "spa",
+  "beauty",
+  "barber",
+  "cosmetology",
+  "hair",
+  "nail",
+  "esthetician",
+  "chemical",
+  "waxing",
+ ]);
+
+ const hasPremisesExposure = hasAny([
+  "general liability",
+  "premises",
+  "slip",
+  "fall",
+  "trip",
+  "customer",
+  "visitor",
+  "parking lot",
+  "sidewalk",
+ ]);
+
+ const hasPropertyExposure = hasAny([
+  "property",
+  "bop",
+  "building",
+  "business personal property",
+  "tiv",
+  "fire",
+  "water damage",
+  "theft",
+  "sprinkler",
+  "alarm",
+ ]);
+
+ const hasWorkersCompExposure = hasAny([
+  "workers compensation",
+  "workers comp",
+  "wc",
+  "employee injury",
+  "payroll",
+  "employee",
+  "employees",
+ ]);
+
+ const hasCyberExposure = hasAny([
+  "cyber",
+  "data breach",
+  "privacy",
+  "network",
+  "ransomware",
+  "phishing",
+ ]);
+
+ const hasProfessionalExposure = hasAny([
+  "professional",
+  "errors and omissions",
+  "e&o",
+  "malpractice",
+  "consulting",
+  "design",
+  "advice",
+ ]);
 
  addQuestion("Has the insured made any operational changes since the reported losses?");
 
@@ -2224,42 +2376,84 @@ function lossqQuestionsToAskInsured(profileLike: any, claimsLike: any[] = [], po
  }
 
  if (safeClaims.length > 0) {
-  addQuestion("Were any safety procedures, training steps, or supervision practices updated after the loss?");
   addQuestion("What corrective actions can be documented for the largest and most recent claims?");
  }
 
- if (hasText(["subcontract", "contractor", "independent contractor"])) {
-  addQuestion("Are subcontractors used? If yes, are certificates of insurance collected before work begins?");
- } else {
-  addQuestion("Does the insured use subcontractors, temporary labor, or independent contractors?");
+ if (hasBarRestaurantExposure) {
+  addQuestion("Does the insured maintain liquor service training, ID verification, incident logs, and manager escalation procedures?");
+  addQuestion("Were any staff training, security, crowd-control, or patron incident procedures updated after the reported losses?");
+  addQuestion("Does the insured use bouncers, live entertainment, late-night hours, bottle service, or special events?");
+  addQuestion("Are slip/fall controls documented for entrances, restrooms, dance floors, kitchens, and parking areas?");
+  addQuestion("Does the insured have written procedures for food safety, cleaning schedules, and incident reporting?");
  }
 
- if (hasText(["auto", "vehicle", "driver", "fleet", "truck", "courier", "delivery"])) {
+ if (hasAutoExposure) {
   addQuestion("Have driver screening, MVR review, vehicle maintenance, or accident-prevention procedures changed since the reported auto losses?");
   addQuestion("Does the insured perform overnight driving, high-traffic deliveries, long-distance routes, or time-sensitive operations?");
+  addQuestion("Are vehicle use rules, distracted-driving policies, and accident reporting procedures documented?");
  }
 
- if (hasText(["cargo", "freight", "loading", "unloading", "warehouse", "delivery"])) {
+ if (hasCargoExposure) {
   addQuestion("Have cargo handling, loading, securement, warehouse, or delivery procedures changed since the reported cargo losses?");
+  addQuestion("Are delivery condition checks, chain-of-custody steps, and damage reporting procedures documented?");
  }
 
- if (hasText(["workers", "comp", "employee injury", "payroll", "employee"])) {
-  addQuestion("Were return-to-work procedures, employee safety training, or job-site controls updated after the employee injury?");
+ if (hasConstructionExposure) {
+  addQuestion("Does the insured use subcontractors? If yes, are certificates of insurance collected before work begins?");
+  addQuestion("Does the insured perform work at heights, hot work, excavation, roofing, electrical work, or other higher-hazard operations?");
+  addQuestion("Are jobsite safety meetings, fall protection, tool/equipment controls, and subcontractor controls documented?");
  }
 
- if (hasText(["general liability", "premises", "slip", "fall", "customer", "visitor"])) {
+ if (hasHealthcareExposure) {
+  addQuestion("Were resident safety, fall prevention, staffing, medication, or incident response procedures updated after the reported losses?");
+  addQuestion("Are employee training, resident supervision, documentation, and abuse/neglect prevention controls current?");
+ }
+
+ if (hasSalonExposure) {
+  addQuestion("Are licenses, sanitation procedures, chemical handling, client waivers, and incident logs maintained?");
+  addQuestion("Were any product-use, slip/fall, burn prevention, or client consultation procedures updated after the reported losses?");
+ }
+
+ if (hasPremisesExposure && !hasBarRestaurantExposure) {
   addQuestion("Does the insured have written premises inspection, incident reporting, and customer safety procedures?");
+  addQuestion("Are parking lots, sidewalks, entrances, restrooms, and public areas inspected and documented regularly?");
  }
 
- if (hasText(["liquor", "bar", "restaurant", "alcohol"])) {
-  addQuestion("Does the insured maintain liquor service training, ID verification, incident logs, and manager escalation procedures?");
- }
-
- if (hasText(["property", "bop", "building", "tiv", "sprinkler", "theft", "fire", "water"])) {
+ if (hasPropertyExposure) {
   addQuestion("Have property protection, maintenance, security, fire prevention, or water-damage controls changed since the reported losses?");
+  addQuestion("Are alarms, sprinklers, inspections, repairs, and emergency response procedures documented?");
  }
 
- addQuestion("Does the insured perform work at heights, overnight operations, high-traffic premises, or other higher-hazard operations?");
+ if (hasWorkersCompExposure) {
+  addQuestion("Were return-to-work procedures, employee safety training, or job-specific controls updated after the employee injury?");
+  addQuestion("Are payroll, employee count, job duties, and class-code exposures changing for the renewal term?");
+ }
+
+ if (hasCyberExposure) {
+  addQuestion("Does the insured maintain MFA, employee phishing training, backups, endpoint protection, and incident response procedures?");
+ }
+
+ if (hasProfessionalExposure) {
+  addQuestion("Are contracts, scopes of work, client sign-offs, quality review, and documentation procedures current?");
+ }
+
+ if (
+  !hasAutoExposure &&
+  !hasCargoExposure &&
+  !hasBarRestaurantExposure &&
+  !hasConstructionExposure &&
+  !hasHealthcareExposure &&
+  !hasSalonExposure &&
+  !hasPremisesExposure &&
+  !hasPropertyExposure &&
+  !hasWorkersCompExposure &&
+  !hasCyberExposure &&
+  !hasProfessionalExposure
+ ) {
+  addQuestion("What are the insured's primary operations, locations, employee duties, and services performed?");
+  addQuestion("Are there any higher-hazard operations, subcontracted work, off-premises work, or special events?");
+ }
+
  addQuestion("Are there any changes in payroll, revenue, vehicle count, employee count, locations, or operations for the upcoming renewal term?");
  addQuestion("What documentation can the insured provide to support improved risk controls before carrier submission?");
 
