@@ -2095,6 +2095,292 @@ function clearLossQDashboardTenantCache() {
 
 
 
+
+// LOSSQ_SUBMISSION_BUILDER_CARRIER_FACING_CLAIM_EXPLANATIONS_V1
+function lossqSubmissionClean(value: any) {
+ return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function lossqSubmissionMoneyNumber(value: any) {
+ const raw = lossqSubmissionClean(value).replace(/[$,]/g, "").replace("(", "-").replace(")", "");
+ const number = Number(raw);
+ return Number.isFinite(number) ? number : 0;
+}
+
+function lossqSubmissionFormatMoney(value: any) {
+ const number = lossqSubmissionMoneyNumber(value);
+ return `$${Math.round(number).toLocaleString()}`;
+}
+
+function lossqSubmissionPaid(claim: any) {
+ return lossqSubmissionMoneyNumber(claim?.paid_amount || claim?.paid || claim?.paid_total || claim?.amount_paid);
+}
+
+function lossqSubmissionReserve(claim: any) {
+ return lossqSubmissionMoneyNumber(claim?.reserve_amount || claim?.reserve || claim?.outstanding_reserve || claim?.case_reserve);
+}
+
+function lossqSubmissionIncurred(claim: any) {
+ const direct = lossqSubmissionMoneyNumber(
+  claim?.total_incurred ||
+   claim?.incurred ||
+   claim?.total ||
+   claim?.total_amount ||
+   claim?.gross_incurred
+ );
+
+ if (direct > 0) return direct;
+
+ return lossqSubmissionPaid(claim) + lossqSubmissionReserve(claim);
+}
+
+function lossqSubmissionClaimNumber(claim: any) {
+ return lossqSubmissionClean(
+  claim?.claim_number ||
+   claim?.claimNumber ||
+   claim?.claim_no ||
+   claim?.claim_id ||
+   claim?.id ||
+   "Unnumbered claim"
+ );
+}
+
+function lossqSubmissionLine(claim: any) {
+ return lossqSubmissionClean(
+  claim?.line_of_business ||
+   claim?.claim_type ||
+   claim?.policy_type ||
+   claim?.coverage ||
+   claim?.line ||
+   "Unknown line"
+ );
+}
+
+function lossqSubmissionStatus(claim: any) {
+ return lossqSubmissionClean(claim?.status || claim?.claim_status || claim?.claimStatus || "Status not stated");
+}
+
+function lossqSubmissionLossDate(claim: any) {
+ return lossqSubmissionClean(
+  claim?.loss_date ||
+   claim?.date_of_loss ||
+   claim?.claim_date ||
+   claim?.accident_date ||
+   ""
+ );
+}
+
+function lossqSubmissionDescription(claim: any) {
+ return lossqSubmissionClean(
+  claim?.description ||
+   claim?.claim_description ||
+   claim?.loss_description ||
+   claim?.cause_of_loss ||
+   claim?.notes ||
+   ""
+ );
+}
+
+function lossqSubmissionClaimRows(claimsLike: any[]) {
+ const safeClaims = Array.isArray(claimsLike) ? claimsLike : [];
+
+ return safeClaims
+  .filter((claim: any) => {
+   const claimNumber = lossqSubmissionClaimNumber(claim);
+   const line = lossqSubmissionLine(claim);
+   const incurred = lossqSubmissionIncurred(claim);
+
+   return claimNumber !== "Unnumbered claim" || line !== "Unknown line" || incurred > 0;
+  })
+  .sort((a: any, b: any) => lossqSubmissionIncurred(b) - lossqSubmissionIncurred(a));
+}
+
+function lossqSubmissionLineSpecificExplanation(claim: any) {
+ const line = lossqSubmissionLine(claim).toLowerCase();
+ const description = lossqSubmissionDescription(claim);
+ const status = lossqSubmissionStatus(claim).toLowerCase();
+ const reserve = lossqSubmissionReserve(claim);
+
+ const isOpen = status.includes("open") || status.includes("pending") || status.includes("active");
+
+ if (line.includes("workers") || line.includes("comp") || line === "wc") {
+  return isOpen || reserve > 0
+   ? "Explain the current medical status, reserve rationale, return-to-work plan, employee safety controls, and whether the reserve has changed since the valuation date."
+   : "Explain what happened, whether the employee returned to work, what safety controls were updated, and why the loss is considered resolved.";
+ }
+
+ if (line.includes("auto") || line.includes("vehicle") || line.includes("fleet")) {
+  return "Explain the accident facts, driver status, preventability, vehicle repair outcome, driver training, MVR review, and any updated fleet safety controls.";
+ }
+
+ if (line.includes("cargo") || line.includes("freight")) {
+  return "Explain the cargo damage facts, loading or delivery process, chain-of-custody steps, recovery potential, and any updated handling or securement procedures.";
+ }
+
+ if (line.includes("liquor")) {
+  return "Explain the incident facts, liquor service controls, ID verification, staff training, manager escalation, security response, and any incident log documentation.";
+ }
+
+ if (line.includes("general") || line.includes("liability") || line.includes("premises")) {
+  return "Explain the premises or liability facts, incident location, inspection procedures, witness documentation, corrective action, and whether similar incidents have occurred.";
+ }
+
+ if (line.includes("property") || line.includes("bop")) {
+  return "Explain the cause of loss, repair status, mitigation steps, property protection improvements, maintenance controls, and whether the damaged property has been fully restored.";
+ }
+
+ if (line.includes("professional") || line.includes("e&o")) {
+  return "Explain the client issue, contract or scope of work, documentation controls, quality review steps, and what changed to prevent recurrence.";
+ }
+
+ if (line.includes("cyber")) {
+  return "Explain the incident timeline, affected systems, containment, notification status, MFA, backups, endpoint protection, and incident response improvements.";
+ }
+
+ if (description) {
+  return "Explain what happened, why it happened, current claim status, reserve position, corrective action, and why the carrier should view the loss as controlled.";
+ }
+
+ return "Confirm the facts of loss, current status, reserve position, corrective action, and whether the insured has documentation to support the explanation.";
+}
+
+function lossqSubmissionBrokerPosition(claim: any) {
+ const status = lossqSubmissionStatus(claim).toLowerCase();
+ const incurred = lossqSubmissionIncurred(claim);
+ const reserve = lossqSubmissionReserve(claim);
+ const line = lossqSubmissionLine(claim);
+
+ if (status.includes("open") || reserve > 0) {
+  return `Position this as an active ${line} claim that needs current adjuster status, reserve support, and a clear closure path before broad carrier release.`;
+ }
+
+ if (incurred >= 50000) {
+  return `Position this as a severity claim and lead with what changed after the loss, not just the dollar amount.`;
+ }
+
+ return `Position this as a resolved ${line} claim with documented corrective action and no indication of ongoing development, if supported by the file.`;
+}
+
+function lossqSubmissionClaimExplanations(claimsLike: any[], backendExplanations: any[] = []) {
+ const claimRows = lossqSubmissionClaimRows(claimsLike);
+
+ if (claimRows.length > 0) {
+  return claimRows.slice(0, 10).map((claim: any) => {
+   const claimNumber = lossqSubmissionClaimNumber(claim);
+   const line = lossqSubmissionLine(claim);
+   const status = lossqSubmissionStatus(claim);
+   const paid = lossqSubmissionPaid(claim);
+   const reserve = lossqSubmissionReserve(claim);
+   const incurred = lossqSubmissionIncurred(claim);
+   const lossDate = lossqSubmissionLossDate(claim);
+   const description = lossqSubmissionDescription(claim);
+
+   const financials = [
+    `total incurred ${lossqSubmissionFormatMoney(incurred)}`,
+    paid > 0 ? `paid ${lossqSubmissionFormatMoney(paid)}` : "",
+    reserve > 0 ? `reserved ${lossqSubmissionFormatMoney(reserve)}` : "",
+   ].filter(Boolean).join(", ");
+
+   return [
+    `${claimNumber} ? ${line} ? ${status}${lossDate ? ` ? loss date ${lossDate}` : ""}.`,
+    `File facts: ${financials}.`,
+    description ? `Loss detail: ${description}.` : "Loss detail: Confirm the factual description with the insured or adjuster notes.",
+    `Carrier explanation needed: ${lossqSubmissionLineSpecificExplanation(claim)}`,
+    `Broker position: ${lossqSubmissionBrokerPosition(claim)}`,
+   ].join(" ");
+  });
+ }
+
+ if (Array.isArray(backendExplanations) && backendExplanations.length > 0) {
+  return backendExplanations.map((item: any) =>
+   [
+    item?.claim_number ? `${item.claim_number} ?` : "",
+    item?.explanation || "",
+    item?.broker_position ? `Broker position: ${item.broker_position}` : "",
+   ].filter(Boolean).join(" ")
+  );
+ }
+
+ return ["No claim rows are available yet. Generate the submission package after selecting an account with claims."];
+}
+
+function lossqSubmissionCarrierTalkingPoints(
+ profileLike: any,
+ claimsLike: any[],
+ policiesLike: any[],
+ forecastLike: any,
+ readinessLike: any
+) {
+ const claimRows = lossqSubmissionClaimRows(claimsLike);
+ const businessName = lossqSubmissionClean(
+  profileLike?.business_name ||
+   profileLike?.named_insured ||
+   profileLike?.insured_name ||
+   "the insured"
+ );
+
+ const totalClaims = claimRows.length;
+ const openClaims = claimRows.filter((claim: any) => isOpenClaimStatus(claim)).length;
+ const totalIncurred = claimRows.reduce((sum: number, claim: any) => sum + lossqSubmissionIncurred(claim), 0);
+ const totalReserve = claimRows.reduce((sum: number, claim: any) => sum + lossqSubmissionReserve(claim), 0);
+ const largestClaim = claimRows[0];
+
+ const lineCounts = new Map<string, number>();
+ claimRows.forEach((claim: any) => {
+  const line = lossqSubmissionLine(claim);
+  lineCounts.set(line, (lineCounts.get(line) || 0) + 1);
+ });
+
+ const lineSummary = Array.from(lineCounts.entries())
+  .slice(0, 5)
+  .map(([line, count]) => `${count} ${line}`)
+  .join(", ");
+
+ const premiumText = lossqPremiumForecastAlignmentText?.(forecastLike) || "";
+
+ const readinessText =
+  readinessLike?.submission_readiness_score != null
+   ? `Submission readiness is ${readinessLike.submission_readiness_score}/100, so the package should focus on the missing support items before release.`
+   : "Submission readiness should be confirmed before release.";
+
+ const largestText = largestClaim
+  ? `Lead with the largest claim: ${lossqSubmissionClaimNumber(largestClaim)} is ${lossqSubmissionLine(largestClaim)} with ${lossqSubmissionFormatMoney(lossqSubmissionIncurred(largestClaim))} incurred${lossqSubmissionReserve(largestClaim) > 0 ? ` and ${lossqSubmissionFormatMoney(lossqSubmissionReserve(largestClaim))} reserved` : ""}.`
+  : "No individual claim rows are available yet.";
+
+ return [
+  `Present ${businessName} as a submission package, not just a loss run. Start with the account facts, then explain the claim story in plain underwriting language.`,
+  totalClaims > 0
+   ? `Use these talking points: ${totalClaims} claim${totalClaims === 1 ? "" : "s"} reviewed${lineSummary ? ` across ${lineSummary}` : ""}, ${openClaims} open, ${lossqSubmissionFormatMoney(totalIncurred)} total incurred, and ${lossqSubmissionFormatMoney(totalReserve)} outstanding reserve.`
+   : "Use these talking points: claim detail is limited, so the submission needs verified loss history before carrier release.",
+  largestText,
+  openClaims > 0
+   ? "For open claims, do not avoid the issue. Confirm current reserve status, adjuster notes, expected closure timeline, and whether anything has changed since the valuation date."
+   : "For closed claims, position the account around resolution, corrective action, and lack of ongoing development.",
+  premiumText || "Keep pricing comments tied to Premium Forecast rather than restating a separate pricing opinion.",
+  readinessText,
+ ].join(" ");
+}
+
+function lossqSubmissionCarrierOpeningPosition(profileLike: any, claimsLike: any[]) {
+ const claimRows = lossqSubmissionClaimRows(claimsLike);
+ const businessName = lossqSubmissionClean(
+  profileLike?.business_name ||
+   profileLike?.named_insured ||
+   profileLike?.insured_name ||
+   "The insured"
+ );
+
+ if (claimRows.length === 0) {
+  return `${businessName} should be submitted with verified operations, policy schedule, exposure inputs, and updated loss history before carrier release.`;
+ }
+
+ const openClaims = claimRows.filter((claim: any) => isOpenClaimStatus(claim)).length;
+ const totalIncurred = claimRows.reduce((sum: number, claim: any) => sum + lossqSubmissionIncurred(claim), 0);
+ const largestClaim = claimRows[0];
+
+ return `${businessName} should be presented with a direct claim explanation rather than a raw loss run. The file shows ${claimRows.length} claim${claimRows.length === 1 ? "" : "s"}, ${openClaims} open, and ${lossqSubmissionFormatMoney(totalIncurred)} total incurred. The carrier conversation should specifically address ${lossqSubmissionClaimNumber(largestClaim)} because it is the largest listed claim at ${lossqSubmissionFormatMoney(lossqSubmissionIncurred(largestClaim))}.`;
+}
+
 // LOSSQ_RENEWAL_RISK_PREMIUM_ALIGNMENT_RESTORE_V2
 function lossqMoneyDisplayFromAny(value: any) {
  const raw = String(value ?? "").replace(/[$,]/g, "").trim();
@@ -9771,18 +10057,24 @@ const modelChartNarrative =
 
   <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
    <TextCard
-    title="Underwriter Narrative"
-    text={
-     submissionBuilder?.underwriter_narrative ||
-     "No underwriter narrative available yet."
-    }
+    title="Carrier Submission Talking Points"
+    text={lossqSubmissionCarrierTalkingPoints(
+     displayProfile || profile || {},
+     visibleClaims.length ? visibleClaims : claims || [],
+     policySchedule || [],
+     effectivePremiumForecast || {},
+     effectiveSubmissionReadiness || {}
+    )}
    />
 
    <TextCard
-    title="Executive Summary"
+    title="Carrier Opening Position"
     text={
      submissionBuilder?.executive_summary ||
-     "No executive summary available yet."
+     lossqSubmissionCarrierOpeningPosition(
+      displayProfile || profile || {},
+      visibleClaims.length ? visibleClaims : claims || []
+     )
     }
    />
   </div>
@@ -9833,21 +10125,17 @@ const modelChartNarrative =
     }
    />
   </div>
-
   <div className="mt-6">
    <ListCard
-    title="Loss Explanations"
-    items={
-     submissionBuilder?.loss_explanations?.length
-      ? submissionBuilder.loss_explanations.map(
-        (item: any) =>
-         `${item.claim_number} - " ${item.explanation} Broker position: ${item.broker_position}`
-       )
-      : ["No loss explanations available yet."]
-    }
+    title="Claim-by-Claim Loss Explanation"
+    items={lossqSubmissionClaimExplanations(
+     visibleClaims.length ? visibleClaims : claims || [],
+     submissionBuilder?.loss_explanations || []
+    )}
     color="purple"
    />
   </div>
+
 
   <div className="mt-8 flex flex-wrap gap-4">
    <button onClick={exportExecutiveReport} className="btn-success">
