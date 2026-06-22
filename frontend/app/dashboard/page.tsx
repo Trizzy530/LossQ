@@ -8475,6 +8475,25 @@ const modelChartNarrative =
  }
 
  if (dashboardError) {
+  // LOSSQ_SCROLL_TO_TOP_ON_TOOL_CHANGE_V1
+
+  useEffect(() => {
+
+   if (typeof window === "undefined") return;
+
+
+   window.requestAnimationFrame(() => {
+
+    window.scrollTo({ top: 0, left: 0, behavior: "auto" });
+
+    document.documentElement.scrollTop = 0;
+
+    document.body.scrollTop = 0;
+
+   });
+
+  }, [activeTool]);
+
   return (
    <main className="min-h-screen bg-[#020617] text-white flex items-center justify-center px-6">
 {/* LOSSQ_EXTRACTION_REVIEW_BANNER_RENDER_V1 */}
