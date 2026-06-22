@@ -2281,20 +2281,24 @@ function lossqSubmissionClaimExplanations(claimsLike: any[], backendExplanations
     reserve > 0 ? `reserved ${lossqSubmissionFormatMoney(reserve)}` : "",
    ].filter(Boolean).join(", ");
 
+   // LOSSQ_SUBMISSION_CLAIM_EXPLANATION_ASCII_FORMAT_V1
    return [
-    `${claimNumber} ? ${line} ? ${status}${lossDate ? ` ? loss date ${lossDate}` : ""}.`,
-    `File facts: ${financials}.`,
-    description ? `Loss detail: ${description}.` : "Loss detail: Confirm the factual description with the insured or adjuster notes.",
-    `Carrier explanation needed: ${lossqSubmissionLineSpecificExplanation(claim)}`,
-    `Broker position: ${lossqSubmissionBrokerPosition(claim)}`,
-   ].join(" ");
+    `Claim: ${claimNumber}.`,
+    `Line: ${line}.`,
+    `Status: ${status}.`,
+    lossDate ? `Loss Date: ${lossDate}.` : "",
+    `File Facts: ${financials}.`,
+    description ? `Loss Detail: ${description}.` : "Loss Detail: Confirm the factual description with the insured or adjuster notes.",
+    `Carrier Explanation Needed: ${lossqSubmissionLineSpecificExplanation(claim)}`,
+    `Broker Position: ${lossqSubmissionBrokerPosition(claim)}`,
+   ].filter(Boolean).join(" ");
   });
  }
 
  if (Array.isArray(backendExplanations) && backendExplanations.length > 0) {
   return backendExplanations.map((item: any) =>
    [
-    item?.claim_number ? `${item.claim_number} ?` : "",
+    item?.claim_number ? `${item.claim_number}:` : "",
     item?.explanation || "",
     item?.broker_position ? `Broker position: ${item.broker_position}` : "",
    ].filter(Boolean).join(" ")
