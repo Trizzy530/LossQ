@@ -129,6 +129,14 @@ export default function LandingPage() {
           fontFamily: "Arial, Helvetica, sans-serif",
         }}
       >
+{/* LOSSQ_LANDING_DEMO_FLOATING_TAB_V1 */}
+<a
+ href="/demo"
+ className="fixed right-5 top-5 z-50 rounded-full border border-blue-300/40 bg-blue-500/90 px-5 py-3 text-sm font-black text-white shadow-lg shadow-blue-500/30 backdrop-blur hover:bg-blue-400"
+>
+ Watch Demo
+</a>
+
         <div style={{ textAlign: "center" }}>
           <div
             style={{
@@ -1025,7 +1033,70 @@ export default function LandingPage() {
           }
         }
       `}</style>
-    </main>
+
+{/* LOSSQ_LANDING_DEMO_SECTION_V1 */}
+<section id="demo" className="relative mx-auto max-w-7xl px-6 py-20">
+ <div className="rounded-[2rem] border border-white/10 bg-slate-950/70 p-6 md:p-10 shadow-[0_0_60px_rgba(59,130,246,0.18)]">
+  <div className="grid grid-cols-1 gap-10 lg:grid-cols-[0.9fr_1.1fr] lg:items-center">
+   <div>
+    <div className="mb-5 inline-flex rounded-full border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-bold uppercase tracking-[0.22em] text-blue-200">
+     Platform Demo
+    </div>
+
+    <h2 className="text-3xl font-black tracking-tight text-white md:text-5xl">
+     Watch LossQ turn a loss run into underwriting intelligence.
+    </h2>
+
+    <p className="mt-5 text-lg leading-8 text-slate-300">
+     See how LossQ uploads a loss run, extracts account and claim data, explains renewal risk,
+     builds carrier appetite, and prepares submission-ready talking points.
+    </p>
+
+    <div className="mt-8 flex flex-col gap-4 sm:flex-row">
+     <a
+      href="/demo"
+      className="rounded-xl bg-blue-500 px-6 py-4 text-center font-black text-white shadow-lg shadow-blue-500/25 hover:bg-blue-400"
+     >
+      Watch Full Demo
+     </a>
+
+     <a
+      href="/login"
+      className="rounded-xl border border-white/15 bg-white/10 px-6 py-4 text-center font-black text-white hover:bg-white/15"
+     >
+      Start Using LossQ
+     </a>
+    </div>
+   </div>
+
+   <a href="/demo" className="group block">
+    <div className="relative overflow-hidden rounded-[1.5rem] border border-blue-400/20 bg-black">
+     <video
+      className="aspect-video w-full bg-black opacity-90 transition group-hover:opacity-100"
+      muted
+      playsInline
+      preload="metadata"
+      poster="/lossq-logo-style2.png"
+     >
+      <source src="/videos/lossq-demo.mp4" type="video/mp4" />
+     </video>
+
+     <div className="absolute inset-0 flex items-center justify-center bg-black/30">
+      <div className="rounded-full border border-white/25 bg-white/15 px-6 py-4 text-lg font-black text-white backdrop-blur">
+       Watch Demo
+      </div>
+     </div>
+    </div>
+
+    <p className="mt-4 text-sm leading-6 text-slate-400">
+     Upload ? Extract ? Analyze ? Score ? Package ? Submit
+    </p>
+   </a>
+  </div>
+ </div>
+</section>
+
+</main>
   );
 }
 
