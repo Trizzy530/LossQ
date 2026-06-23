@@ -564,6 +564,7 @@ function lossqCarrierAppetitePlacementStrategy(profileLike: any, claimsLike: any
  return `Market ${businessName} with a clean account narrative, current loss runs, exposure support, and claim-by-claim explanations. Lead with why the account is controllable instead of relying on a generic appetite score.`;
 }
 
+
 type AnyObject = Record<string, any>;
 
 type ToolKey =
@@ -7102,8 +7103,18 @@ async function exportCarrierLossRun() {
 
 
  async function exportExecutiveReport() {
-  if (!canUseFeature("pdf_exports")) {
-   setMessage("PDF exports are not included in the current package.");
+  // LOSSQ_EXECUTIVE_REPORT_ORG_PACKAGE_ACCESS_V1
+  // Executive PDF access should follow the organization's paid package/features,
+  // not only the owner account. Reports access, PDF exports, carrier packet access,
+  // or an unlocked paid dashboard can generate the executive report.
+  const canExportExecutivePdf =
+   canUseFeature("pdf_exports") ||
+   canUseFeature("reports") ||
+   canUseFeature("carrier_packet") ||
+   isDashboardBillingUnlocked();
+
+  if (!canExportExecutivePdf) {
+   setMessage("Executive reports are not included in the current organization package.");
    return;
   }
 
