@@ -16580,7 +16580,38 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
       exposure_basis_text = profile_data.get("exposure_basis") or ""
 
-      location_value = _lossq_first_exposure_value_v1(
+      # LOSSQ_LOCATION_LIQUOR_EXPOSURE_SPLIT_GUARD_V1
+      def _lossq_labeled_count_from_exposure_basis_v1(label, source):
+        raw = str(source or "")
+        match = _lossq_exposure_re.search(
+          rf"{_lossq_exposure_re.escape(label)}\s*[:#-]?\s*(\d{{1,6}})(?=\s*[;,\.\n]|$)",
+          raw,
+          _lossq_exposure_re.IGNORECASE,
+        )
+        return match.group(1) if match else ""
+
+      def _lossq_labeled_money_from_exposure_basis_v1(label, source):
+        raw = str(source or "")
+        match = _lossq_exposure_re.search(
+          rf"{_lossq_exposure_re.escape(label)}\s*[:#-]?\s*\$?\s*([0-9][0-9,]*(?:\.\d{{2}})?)(?=\s*[;,\.\n]|$)",
+          raw,
+          _lossq_exposure_re.IGNORECASE,
+        )
+        return match.group(1).replace(',', '') if match else ""
+
+      def _lossq_first_count_only_v1(value):
+        match = _lossq_exposure_re.search(r"\b(\d{1,6})(?:\.\d+)?\b", str(value or ""))
+        return match.group(1) if match else ""
+
+      def _lossq_first_money_only_v1(value):
+        raw = str(value or "")
+        money_match = _lossq_exposure_re.search(r"\$\s*([0-9][0-9,]*(?:\.\d{2})?)", raw)
+        if money_match:
+          return money_match.group(1).replace(',', '')
+        large_number_match = _lossq_exposure_re.search(r"\b([0-9][0-9,]{3,}(?:\.\d{2})?)\b", raw)
+        return large_number_match.group(1).replace(',', '') if large_number_match else ""
+
+      raw_location_value = _lossq_first_exposure_value_v1(
         profile_data.get("location_count"),
         profile_data.get("locations"),
         profile_data.get("locationCount"),
@@ -16590,7 +16621,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         _lossq_exposure_from_basis_v1("Location Count", exposure_basis_text),
       )
 
-      liquor_value = _lossq_first_exposure_value_v1(
+      raw_liquor_value = _lossq_first_exposure_value_v1(
         profile_data.get("liquor_sales"),
         profile_data.get("liquorSales"),
         profile_data.get("alcohol_sales"),
@@ -16599,6 +16630,10 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         _lossq_exposure_from_basis_v1("Liquor Sales", exposure_basis_text),
         _lossq_exposure_from_basis_v1("Alcohol Sales", exposure_basis_text),
       )
+
+      location_value = _lossq_labeled_count_from_exposure_basis_v1("location count", exposure_basis_text) or _lossq_first_count_only_v1(raw_location_value)
+      liquor_value = _lossq_labeled_money_from_exposure_basis_v1("liquor sales", exposure_basis_text) or _lossq_first_money_only_v1(raw_liquor_value) or _lossq_labeled_money_from_exposure_basis_v1("liquor sales", raw_location_value)
+
 
       if location_value:
         profile_data["location_count"] = location_value
