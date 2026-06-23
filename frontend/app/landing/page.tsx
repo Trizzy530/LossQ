@@ -172,7 +172,7 @@ export default function LandingPage() {
         <ul className="nav-links">
           <li><a href="#features">Features</a>
 {/* LOSSQ_LANDING_DEMO_NAV_LINK_V1 */}
-<a href="/demo">DEMO</a></li>
+<a href="/demo" className="mx-6 inline-block text-slate-300 hover:text-white">DEMO</a></li>
           <li><a href="#how">How It Works</a></li>
           <li><a href="#pricing">Pricing</a></li>
           <li><a href="/login?fresh=1" className="nav-cta">Launch App</a></li>
