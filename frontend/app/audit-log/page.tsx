@@ -246,6 +246,7 @@ function safeText(value: any) {
 
 // LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V1
 // LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V2
+// LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V3
 function eventTime(event: AuditEvent) {
   const details = toDetails(event.details);
 
@@ -547,6 +548,8 @@ export default function AuditLogPage() {
   const router = useRouter();
 
   const [events, setEvents] = useState<AuditEvent[]>([]);
+  // LOSSQ_AUDIT_SORT_ORDER_V1
+  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
   const [summary, setSummary] = useState<AuditSummary | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -732,6 +735,24 @@ export default function AuditLogPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+
+  // LOSSQ_AUDIT_SORTED_EVENTS_V1
+  const sortedAuditEvents = useMemo(() => {
+    const source = Array.isArray(filteredEvents) ? filteredEvents : [];
+
+    const toTime = (event: AuditEvent) => {
+      const raw = eventTime(event);
+      if (!raw) return 0;
+      const parsed = new Date(raw).getTime();
+      return Number.isNaN(parsed) ? 0 : parsed;
+    };
+
+    return [...source].sort((a, b) => {
+      const diff = toTime(b) - toTime(a);
+      return sortOrder === "newest" ? diff : -diff;
+    });
+  }, [filteredEvents, sortOrder]);
+
   return (
     <main className="min-h-screen bg-[#050816] text-white">
       <header className="border-b border-white/10 bg-black/30 px-6 py-6">
@@ -828,6 +849,15 @@ export default function AuditLogPage() {
                 <option value="user">Users</option>
                 <option value="system">System</option>
               </select>
+              {/* LOSSQ_AUDIT_SORT_DROPDOWN_V1 */}
+              <select
+                value={sortOrder}
+                onChange={(event) => setSortOrder(event.target.value as "newest" | "oldest")}
+                className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-blue-400"
+              >
+                <option value="newest">Newest First</option>
+                <option value="oldest">Oldest First</option>
+              </select>
             </div>
           </div>
         </div>
@@ -878,7 +908,7 @@ export default function AuditLogPage() {
             </div>
 
             <div className="grid divide-y divide-white/10">
-              {filteredEvents.map((event, index) => {
+              {sortedAuditEvents.map((event, index) => {
                 const tone = actionTone(event);
                 const userName = eventUserName(event);
                 const userEmail = eventUserEmail(event, currentUserEmail);
@@ -897,7 +927,12 @@ export default function AuditLogPage() {
                       </div>
 
                       <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">User</p>
+                        {/* LOSSQ_AUDIT_LEFT_TIME_VALUE_V2 */}
+                      <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Time</p>
+                      <p className="mt-2 mb-4 text-sm font-bold text-slate-100">
+                        {eventTime(event) ? formatDate(eventTime(event)) : "-"}
+                      </p>
+                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">User</p>
                         {userName ? (
                           <p className="mt-1 break-words text-sm font-bold text-slate-100">
                             {userName}
@@ -924,11 +959,7 @@ export default function AuditLogPage() {
                         <h3 className="text-xl font-black tracking-tight">
                           {prettyAction(event.action)}
                         </h3>
-                        {eventTime(event) && (
-                          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-slate-300">
-                            Generated {formatDate(eventTime(event))}
-                          </span>
-                        )}
+
                       </div>
 
                       <EventDetails event={event} />
@@ -942,4 +973,7 @@ export default function AuditLogPage() {
       </section>
     </main>
   );
+
+
+
 }
