@@ -96,6 +96,25 @@ export default function SettingsPage() {
   const isAdmin = String(me?.role || "").toLowerCase() === "admin";
   const canManageUsers = isOwner || isAdmin;
 
+  // LOSSQ_INTERNAL_ADMIN_LINK_VISIBILITY_V1
+  // Platform Admin and Support Lookup are LossQ-internal tools.
+  // Customer organization owners/admins can manage their users, but should not see platform-wide admin links.
+  const internalRole = String(me?.role || "").trim().toLowerCase();
+  const internalEmail = String(me?.email || "").trim().toLowerCase();
+
+  const canSeePlatformAdminLinks =
+    [
+      "founder",
+      "platform_owner",
+      "platform_admin",
+      "super_admin",
+      "support",
+      "support_admin",
+      "tech_support",
+    ].includes(internalRole) ||
+    internalEmail.endsWith("@lossq.com") ||
+    internalEmail === "tmckenzie49@gmail.com";
+
   const activeUsers = useMemo(
     () => users.filter((user) => user.is_active !== false),
     [users]
@@ -390,19 +409,23 @@ export default function SettingsPage() {
               Beta Guide
             </a>
 
+            {canSeePlatformAdminLinks && (
             <a
               href="/platform-admin"
               className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-5 py-3 font-semibold text-cyan-100 hover:bg-cyan-500/20"
             >
               Platform Admin
             </a>
+            )}
 
+            {canSeePlatformAdminLinks && (
             <a
               href="/settings/support-lookup"
               className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-semibold text-cyan-100 hover:bg-cyan-400/20"
             >
               Support Lookup
             </a>
+            )}
 
 <a href="/audit-log" className="rounded-xl border border-purple-400/30 bg-purple-500/10 px-5 py-3 font-semibold text-purple-100 hover:bg-purple-500/20">
               Audit Log
