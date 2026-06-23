@@ -808,11 +808,17 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
     payload = await request.body()
     signature = request.headers.get("stripe-signature")
 
-    if STRIPE_WEBHOOK_SECRET:
-        try:
-            stripe.Webhook.construct_event(payload, signature, STRIPE_WEBHOOK_SECRET)
-        except Exception as exc:
-            raise HTTPException(status_code=400, detail=f"Webhook signature verification failed: {exc}")
+    # LOSSQ_STRIPE_WEBHOOK_REQUIRE_SIGNATURE_SECRET_V1
+    if not STRIPE_WEBHOOK_SECRET:
+        raise HTTPException(status_code=500, detail="Stripe webhook secret is not configured")
+
+    if not signature:
+        raise HTTPException(status_code=400, detail="Missing Stripe webhook signature")
+
+    try:
+        stripe.Webhook.construct_event(payload, signature, STRIPE_WEBHOOK_SECRET)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=f"Webhook signature verification failed: {exc}")
 
     try:
         event = json.loads(payload.decode("utf-8"))
@@ -962,6 +968,9 @@ async def stripe_webhook(request: Request, db: Session = Depends(get_db)):
 # LOSSQ_BILLING_CANCEL_SUBSCRIPTION_ENDPOINT_V1
 @router.post("/cancel-subscription")
 def cancel_subscription(current_user=Depends(get_current_user), db: Session = Depends(get_db)):
+    # LOSSQ_BILLING_CANCEL_OWNER_ADMIN_GUARD_V1
+    require_owner_or_admin(current_user)
+
     """
     End/cancel the current organization's subscription.
 
