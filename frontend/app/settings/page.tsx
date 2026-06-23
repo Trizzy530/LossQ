@@ -442,7 +442,40 @@ export default function SettingsPage() {
             )}
 
 
-<a href="/audit-log" className="rounded-xl border border-purple-400/30 bg-purple-500/10 px-5 py-3 font-semibold text-purple-100 hover:bg-purple-500/20">
+{/* LOSSQ_FOUNDER_BETA_ADMIN_LINKS_V1 */}
+            {canSeePlatformAdminLinks && (
+              <>
+                <a
+                  href="/platform-admin/beta-requests"
+                  className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-5 py-3 font-semibold text-cyan-100 hover:bg-cyan-500/20"
+                >
+                  Beta Requests
+                </a>
+
+                <a
+                  href="/platform-admin/beta-feedback"
+                  className="rounded-xl border border-orange-400/30 bg-orange-500/10 px-5 py-3 font-semibold text-orange-100 hover:bg-orange-500/20"
+                >
+                  Beta Feedback
+                </a>
+
+                <a
+                  href="/platform-admin/beta-activity"
+                  className="rounded-xl border border-emerald-400/30 bg-emerald-500/10 px-5 py-3 font-semibold text-emerald-100 hover:bg-emerald-500/20"
+                >
+                  Beta Activity
+                </a>
+
+                <a
+                  href="/platform-admin/beta-exit-surveys"
+                  className="rounded-xl border border-purple-400/30 bg-purple-500/10 px-5 py-3 font-semibold text-purple-100 hover:bg-purple-500/20"
+                >
+                  Exit Surveys
+                </a>
+              </>
+            )}
+
+            <a href="/audit-log" className="rounded-xl border border-purple-400/30 bg-purple-500/10 px-5 py-3 font-semibold text-purple-100 hover:bg-purple-500/20">
               Audit Log
             </a>
             <button onClick={logout} className="rounded-xl border border-red-400/30 bg-red-500/10 px-5 py-3 font-semibold text-red-200 hover:bg-red-500/20">
