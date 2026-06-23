@@ -247,6 +247,7 @@ function safeText(value: any) {
 // LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V1
 // LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V2
 // LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V3
+// LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V4
 function eventTime(event: AuditEvent) {
   const details = toDetails(event.details);
 
@@ -294,6 +295,38 @@ function eventUserEmail(event: AuditEvent, fallbackEmail = "") {
   );
 }
 
+// LOSSQ_AUDIT_DISPLAY_HELPERS_V1
+function auditDetailValue(event: AuditEvent, ...keys: string[]) {
+  const details = toDetails(event.details);
+
+  for (const key of keys) {
+    const eventValue = (event as any)?.[key];
+    if (eventValue !== undefined && eventValue !== null && eventValue !== "") return eventValue;
+
+    const detailValue = details?.[key];
+    if (detailValue !== undefined && detailValue !== null && detailValue !== "") return detailValue;
+  }
+
+  return "";
+}
+
+function auditReportClaimCount(event: AuditEvent) {
+  return auditDetailValue(event, "claim_count", "total_claims", "claims_count") || "-";
+}
+
+function auditReportTotalIncurred(event: AuditEvent) {
+  return auditDetailValue(event, "total_incurred", "incurred_total", "total_loss", "loss_total");
+}
+
+function auditReportRiskLevel(event: AuditEvent) {
+  return auditDetailValue(event, "risk_level", "renewal_risk_level") || "-";
+}
+
+function auditReportRenewalScore(event: AuditEvent) {
+  return auditDetailValue(event, "renewal_score", "score") || "-";
+}
+
+
 function resourceLabel(event: AuditEvent) {
   const type = String(event.resource_type || "system").toLowerCase();
 
@@ -307,6 +340,42 @@ function resourceLabel(event: AuditEvent) {
 
   return prettyAction(type);
 }
+
+// LOSSQ_AUDIT_CATEGORY_MATCH_FIX_V1
+function auditEventMatchesCategory(event: AuditEvent, category: string) {
+  const clean = String(category || "all").trim().toLowerCase();
+  const action = String(event.action || "").toLowerCase();
+  const resource = String(event.resource_type || "").toLowerCase();
+
+  if (!clean || clean === "all" || clean === "total") return true;
+
+  if (clean.includes("report")) {
+    return resource === "report" || action.includes("report") || action.includes("packet") || action.includes("memo") || action.includes("pdf");
+  }
+
+  if (clean.includes("upload")) {
+    return resource === "upload" || action.includes("upload") || action.includes("loss_run");
+  }
+
+  if (clean.includes("claim")) {
+    return resource === "claim" || action.includes("claim");
+  }
+
+  if (clean.includes("account") || clean.includes("profile")) {
+    return resource === "account_profile" || action.includes("account_profile") || action.includes("profile_deleted") || action.includes("profile");
+  }
+
+  if (clean.includes("user")) {
+    return resource === "user" || action.includes("user");
+  }
+
+  if (clean.includes("billing")) {
+    return resource === "billing" || action.includes("billing") || action.includes("subscription") || action.includes("checkout");
+  }
+
+  return resource.includes(clean) || action.includes(clean);
+}
+
 
 function actionTone(event: AuditEvent): ActionTone {
   const action = String(event.action || "").toLowerCase();
@@ -417,7 +486,7 @@ function EventDetails({ event }: { event: AuditEvent }) {
           <DetailPill label="Line of Business" value={details.line_of_business} />
           <DetailPill label="Paid" value={formatCurrency(details.paid_amount)} />
           <DetailPill label="Reserve" value={formatCurrency(details.reserve_amount)} />
-          <DetailPill label="Total Incurred" value={formatCurrency(details.total_incurred)} tone="emerald" />
+          <DetailPill label="Total Incurred" value={formatCurrency(auditReportTotalIncurred(event))} />
         </div>
         <RawDetailsButton details={details} />
       </div>
@@ -432,8 +501,8 @@ function EventDetails({ event }: { event: AuditEvent }) {
           <DetailPill label="Policy Number" value={details.policy_number || event.resource_id} />
           <DetailPill label="Business" value={details.business_name} />
           <StatusPill label="Risk Level" value={details.risk_level} />
-          <DetailPill label="Renewal Score" value={details.renewal_score ?? ""} tone="purple" />
-          <DetailPill label="Claim Count" value={formatNumber(details.claim_count)} />
+          <DetailPill label="Renewal Score" value={auditReportRenewalScore(event)} />
+          <DetailPill label="Claim Count" value={auditReportClaimCount(event)} />
           <DetailPill label="Total Incurred" value={formatCurrency(details.total_incurred)} />
         </div>
         <RawDetailsButton details={details} />
@@ -927,8 +996,8 @@ export default function AuditLogPage() {
                       </div>
 
                       <div>
-                        {/* LOSSQ_AUDIT_LEFT_TIME_VALUE_V2 */}
-                      <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Time</p>
+{/* LOSSQ_AUDIT_LEFT_TIME_VALUE_V4 */}
+                      <p className="text-xs uppercase tracking-[0.35em] text-slate-500">TIME</p>
                       <p className="mt-2 mb-4 text-sm font-bold text-slate-100">
                         {eventTime(event) ? formatDate(eventTime(event)) : "-"}
                       </p>
