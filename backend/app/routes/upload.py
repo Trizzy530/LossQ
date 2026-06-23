@@ -5810,6 +5810,118 @@ def lossq_pdf_final_carrier_label_repair_v1(file_path, parsed_profile=None, dire
   return parsed_profile, direct_profile
 
 
+# LOSSQ_EXCEL_ACCOUNT_CUSTOMER_PRECEDENCE_V1
+def lossq_excel_account_customer_precedence_v1(file_path, parsed_profile=None, direct_profile=None):
+  """
+  Excel-only guardrail: keep Account Number and Customer Number separate.
+  If both exist in a workbook, Account Number wins for account_number.
+  """
+  parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+  direct_profile = direct_profile if isinstance(direct_profile, dict) else {}
+
+  if not str(file_path or "").lower().endswith((".xlsx", ".xlsm")):
+    return parsed_profile, direct_profile
+
+  try:
+    import re
+    import openpyxl
+
+    workbook = openpyxl.load_workbook(file_path, data_only=True, read_only=True)
+
+    def clean(value):
+      return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+    def key(value):
+      return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+    account_labels = {
+      "accountnumber",
+      "accountno",
+      "account",
+      "acctnumber",
+      "acctno",
+      "insuredaccountnumber",
+    }
+
+    customer_labels = {
+      "customernumber",
+      "customerno",
+      "customerid",
+      "clientnumber",
+      "clientno",
+    }
+
+    def usable_identifier(value):
+      value = clean(value)
+      if not value or value.lower() in {"field", "value", "none", "null", "na", "n/a"}:
+        return ""
+      if len(value) > 80:
+        return ""
+      if not re.search(r"[A-Za-z0-9]", value):
+        return ""
+      if re.search(r"(?i)\b(policy|claim|premium|carrier|insured|agency|effective|expiration|date)\b", value):
+        return ""
+      return value
+
+    def next_value(row_values, index):
+      for value in row_values[index + 1:index + 6]:
+        cleaned = usable_identifier(value)
+        if cleaned:
+          return cleaned
+      return ""
+
+    account_number = ""
+    customer_number = ""
+
+    for sheet in workbook.worksheets:
+      for row in sheet.iter_rows(values_only=True):
+        row_values = list(row or [])
+        for idx, cell in enumerate(row_values):
+          label_key = key(cell)
+          cell_text = clean(cell)
+
+          if not account_number and label_key in account_labels:
+            account_number = next_value(row_values, idx)
+
+          if not customer_number and label_key in customer_labels:
+            customer_number = next_value(row_values, idx)
+
+          if not account_number:
+            same_cell_account = re.search(r"(?i)\baccount\s*(?:number|no\.?|#)\s*[:#-]\s*([A-Z0-9][A-Z0-9._/-]{2,60})", cell_text)
+            if same_cell_account:
+              account_number = usable_identifier(same_cell_account.group(1))
+
+          if not customer_number:
+            same_cell_customer = re.search(r"(?i)\bcustomer\s*(?:number|no\.?|#|id)\s*[:#-]\s*([A-Z0-9][A-Z0-9._/-]{2,60})", cell_text)
+            if same_cell_customer:
+              customer_number = usable_identifier(same_cell_customer.group(1))
+
+        if account_number and customer_number:
+          break
+      if account_number and customer_number:
+        break
+
+    if account_number:
+      for target in (parsed_profile, direct_profile):
+        target["account_number"] = account_number
+        target["account_no"] = account_number
+        target["account"] = account_number
+
+    if customer_number:
+      for target in (parsed_profile, direct_profile):
+        target["customer_number"] = customer_number
+
+    print("LOSSQ_EXCEL_ACCOUNT_CUSTOMER_PRECEDENCE_V1:", {
+      "account_number": account_number,
+      "customer_number": customer_number,
+    })
+
+    return parsed_profile, direct_profile
+  except Exception as exc:
+    print("LOSSQ_EXCEL_ACCOUNT_CUSTOMER_PRECEDENCE_ERROR_V1:", str(exc)[:250])
+    return parsed_profile, direct_profile
+
+
 # LOSSQ_FINAL_UPLOAD_CLAIM_PROFILE_CLEANUP_V1
 def lossq_final_upload_claim_profile_cleanup_v1(file_path, parsed_claims=None, parsed_profile=None):
   """
@@ -15520,6 +15632,18 @@ async def save_uploaded_files(files, policy_number, db, current_user):
       parsed_profile["producing_agency"] = upload_agency_name
       parsed_profile["producer"] = upload_agency_name
 
+    # LOSSQ_EXCEL_ACCOUNT_CUSTOMER_PRECEDENCE_CALL_V1
+    parsed_profile, direct_profile = lossq_excel_account_customer_precedence_v1(
+      file_path,
+      parsed_profile,
+      direct_profile if "direct_profile" in locals() and isinstance(direct_profile, dict) else {},
+    )
+
+    if "profile_data" in locals() and isinstance(profile_data, dict):
+      for _lossq_account_key in ("account_number", "account_no", "account", "customer_number"):
+        _lossq_account_value = parsed_profile.get(_lossq_account_key)
+        if _lossq_account_value not in ("", None, [], {}):
+          profile_data[_lossq_account_key] = _lossq_account_value
     file_policy_number = clean_input_policy
     file_account_key_for_claims = ""
 
