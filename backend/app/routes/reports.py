@@ -7298,54 +7298,95 @@ def get_report_agency_info(db, current_user):
 
 
 # LOSSQ_PDF_CREATOR_NON_OWNER_SAFE_V1
+# LOSSQ_PDF_CREATOR_DB_USER_LOOKUP_V1
 def get_creator(current_user: dict | None, db=None):
     """
-    Safe PDF creator display.
-    Do not show raw email in Created By.
-    Do not query DB here because non-owner/current_user payloads can be thinner.
+    PDF Created By should show the actual logged-in user's saved name when available.
+    It should never show a raw email address.
     """
     user = current_user or {}
 
-    def _value(key):
+    def _value(source, key):
         try:
-            if isinstance(user, dict):
-                return clean(user.get(key) or "")
-            return clean(getattr(user, key, "") or "")
+            if isinstance(source, dict):
+                return clean(source.get(key) or "")
+            return clean(getattr(source, key, "") or "")
         except Exception:
             return ""
 
-    first = _value("first_name") or _value("firstName")
-    last = _value("last_name") or _value("lastName")
-    full = f"{first} {last}".strip()
+    def _name_from_source(source):
+        first = _value(source, "first_name") or _value(source, "firstName")
+        last = _value(source, "last_name") or _value(source, "lastName")
+        full = f"{first} {last}".strip()
 
-    if full and "@" not in full:
-        return full
+        if full and "@" not in full:
+            return full
 
-    for key in [
-        "full_name",
-        "fullName",
-        "name",
-        "display_name",
-        "displayName",
-        "username",
-        "agency_user_name",
-        "producer_name",
-        "owner_name",
-    ]:
-        candidate = _value(key)
-        if candidate and "@" not in candidate:
-            return candidate
+        for key in [
+            "full_name",
+            "fullName",
+            "name",
+            "display_name",
+            "displayName",
+            "username",
+            "agency_user_name",
+            "producer_name",
+            "owner_name",
+        ]:
+            candidate = _value(source, key)
+            if candidate and "@" not in candidate:
+                return candidate
 
-    email = _value("email") or _value("user_email")
-    if email and "@" in email:
-        local = email.split("@", 1)[0]
-        local = re.sub(r"[._\-]+", " ", local)
-        local = re.sub(r"\d+", " ", local)
-        local = re.sub(r"\s+", " ", local).strip()
+        return ""
 
-        if local:
-            return " ".join(part.capitalize() for part in local.split())
+    # 1. Prefer the current_user payload if it already contains a real name.
+    direct_name = _name_from_source(user)
+    if direct_name:
+        return direct_name
 
+    # 2. Look up the real User row by user_id/email because auth payload may be thin.
+    try:
+        if db:
+            user_id = _value(user, "user_id") or _value(user, "id") or _value(user, "userId")
+            email = _value(user, "email") or _value(user, "user_email")
+
+            db_user = None
+
+            if user_id:
+                try:
+                    db_user = db.query(User).filter(User.id == int(user_id)).first()
+                except Exception:
+                    db_user = None
+
+            if not db_user and email:
+                try:
+                    db_user = db.query(User).filter(User.email == email).first()
+                except Exception:
+                    db_user = None
+
+            db_name = _name_from_source(db_user)
+            if db_name:
+                return db_name
+    except Exception:
+        pass
+
+    # 3. Use agency/contact name if available.
+    try:
+        agency = lossq_pdf_best_agency_info(db, user) or {}
+        agency_name = (
+            _value(agency, "contact_name")
+            or _value(agency, "agency_contact_name")
+            or _value(agency, "producer_name")
+            or _value(agency, "account_user_name")
+            or _value(agency, "primary_contact")
+        )
+
+        if agency_name and "@" not in agency_name:
+            return agency_name
+    except Exception:
+        pass
+
+    # 4. Never show raw email. Generic fallback is better than exposing email.
     return "Account User"
 
 
