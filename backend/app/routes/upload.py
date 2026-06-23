@@ -5317,6 +5317,271 @@ def lossq_pdf_full_claim_block_extract_before_save_v1(file_path, parsed_claims=N
   return parsed_claims, parsed_profile
 
 
+# LOSSQ_PDF_VERTICAL_POLICY_SECTION_REPAIR_V1
+def lossq_pdf_vertical_policy_section_repair_v1(file_path, parsed_claims=None, parsed_profile=None, direct_profile=None):
+  """PDF-only repair for vertical carrier policy-section PDFs."""
+  import re
+
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+  parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+  direct_profile = direct_profile if isinstance(direct_profile, dict) else {}
+
+  if not str(file_path or "").lower().endswith(".pdf"):
+    return parsed_claims, parsed_profile, direct_profile
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", " ").strip())
+
+  def money(value):
+    raw = clean(value).replace("$", "").replace(",", "").replace("(", "-").replace(")", "")
+    match = re.search(r"-?\d+(?:\.\d+)?", raw)
+    if not match:
+      return 0.0
+    try:
+      return float(match.group(0))
+    except Exception:
+      return 0.0
+
+  def norm_date(value):
+    raw = clean(value)
+    match = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})", raw)
+    if not match:
+      return raw
+    month, day, year = match.groups()
+    if len(year) == 2:
+      year = "20" + year
+    return f"{int(month):02d}/{int(day):02d}/{year}"
+
+  def money_text(value):
+    amount = money(value)
+    if amount <= 0:
+      return "0"
+    return str(int(amount)) if float(amount).is_integer() else f"{amount:.2f}"
+
+  try:
+    from pypdf import PdfReader
+    raw_text = "\n".join((page.extract_text() or "") for page in PdfReader(file_path).pages)
+  except Exception as exc:
+    print("LOSSQ_PDF_VERTICAL_POLICY_SECTION_REPAIR_READ_ERROR_V1:", str(exc)[:200])
+    return parsed_claims, parsed_profile, direct_profile
+
+  if "POLICY SECTION" not in raw_text or "Policy Number" not in raw_text:
+    return parsed_claims, parsed_profile, direct_profile
+
+  def put_profile(key, value, aliases=()):
+    value = clean(value)
+    if not value:
+      return
+    parsed_profile[key] = value
+    direct_profile[key] = value
+    for alias in aliases:
+      parsed_profile[alias] = value
+      direct_profile[alias] = value
+
+  insured = re.search(r"(?is)\bInsured\s+Name\s*:\s*(.+?)(?=\n|\s+Account\s+Number)", raw_text)
+  if insured:
+    put_profile("business_name", insured.group(1), ("insured_name", "named_insured", "account_name"))
+
+  account = re.search(r"(?is)\bAccount\s+Number\s*:\s*([A-Z0-9._/-]+)", raw_text)
+  if account:
+    put_profile("account_number", account.group(1), ("account_no", "account"))
+
+  customer = re.search(r"(?is)\bCustomer\s+Number\s*:\s*([A-Z0-9._/-]+)", raw_text)
+  if customer:
+    put_profile("customer_number", customer.group(1))
+
+  carrier = re.search(r"(?is)\bCarrier\s*:\s*(.+?)(?=\n|\s+Producer)", raw_text)
+  if carrier:
+    put_profile("carrier_name", carrier.group(1), ("writing_carrier", "carrier"))
+
+  evaluation = re.search(r"(?is)\bEvaluation\s+Date\s*:\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", raw_text)
+  if evaluation:
+    put_profile("evaluation_date", norm_date(evaluation.group(1)), ("valuation_date",))
+
+  current_premium = re.search(r"(?is)\bCurrent\s+Premium\s*:\s*(\$?\s*\d[\d,]*(?:\.\d{2})?)", raw_text)
+  if current_premium:
+    put_profile("current_premium", money_text(current_premium.group(1)), ("expiring_premium",))
+
+  target_premium = re.search(r"(?is)\bTarget\s+Renewal\s+Premium\s*:\s*(\$?\s*\d[\d,]*(?:\.\d{2})?)", raw_text)
+  if target_premium:
+    put_profile("target_renewal_premium", money_text(target_premium.group(1)))
+
+  exposure_notes = re.search(r"(?is)\bExposure\s+Notes\s*:\s*(.+?)(?=\n\s*POLICY\s+SECTION|$)", raw_text)
+  if exposure_notes:
+    exposure_text = clean(exposure_notes.group(1))
+    beds = re.search(r"(?i)\b(\d{1,6})\s+beds?\b", exposure_text)
+    payroll = re.search(r"(?i)\bpayroll\s*\$?\s*([0-9][0-9,]*(?:\.\d{2})?)", exposure_text)
+    revenue = re.search(r"(?i)\bannual\s+revenue\s*\$?\s*([0-9][0-9,]*(?:\.\d{2})?)", exposure_text)
+    employees = re.search(r"(?i)\bemployee\s+count\s*(\d{1,6})", exposure_text)
+    locations = re.search(r"(?i)\blocation\s+count\s*(\d{1,6})", exposure_text)
+    if beds:
+      put_profile("bed_count", beds.group(1), ("beds",))
+    if payroll:
+      put_profile("payroll", payroll.group(1).replace(',', ''))
+    if revenue:
+      put_profile("revenue", revenue.group(1).replace(',', ''), ("annual_revenue", "sales"))
+    if employees:
+      put_profile("employee_count", employees.group(1))
+    if locations:
+      put_profile("location_count", locations.group(1), ("locations", "locationCount"))
+
+  policy_re = re.compile(r"(?is)\bPOLICY\s+SECTION\s+\d+\s*:\s*(.+?)(?=\n\s*POLICY\s+SECTION\s+\d+\s*:|\Z)")
+  claim_re = re.compile(
+    r"(?is)\bClaim\s+([A-Z0-9][A-Z0-9./-]{2,45})\s+Status\s+([A-Za-z]+)\s+"
+    r"Claimant\s+(.+?)\s+Jurisdiction\s+([A-Z]{2})\s+"
+    r"Loss\s+Date\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+Reported\s+Date\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+"
+    r"Closed\s+Date\s+(OPEN|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+Adjuster\s+(.+?)\s+"
+    r"Paid\s+(\$?\s*\d[\d,]*(?:\.\d{2})?)\s+Reserve\s+(\$?\s*\d[\d,]*(?:\.\d{2})?)\s+"
+    r"Total\s+Incurred\s+(\$?\s*\d[\d,]*(?:\.\d{2})?)\s+Description\s+(.+?)(?=\s+Claim\s+[A-Z0-9][A-Z0-9./-]{2,45}\s+Status\b|\s+POLICY\s+SECTION\s+\d+\s*:|\s+NO\s+CLAIMS\s+REPORTED|\Z)"
+  )
+
+  policies = []
+  extracted_claims = []
+
+  for section_match in policy_re.finditer(raw_text):
+    section = section_match.group(1)
+    section_title = clean(section.splitlines()[0] if section.splitlines() else "")
+
+    policy_number_match = re.search(r"(?is)\bPolicy\s+Number\s+([A-Z0-9][A-Z0-9./-]{2,60})", section)
+    line_match = re.search(r"(?is)\bLine\s+of\s+Business\s+(.+?)(?=\s+Policy\s+Term|\n)", section)
+    term_match = re.search(r"(?is)\bPolicy\s+Term\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*-\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", section)
+    premium_match = re.search(r"(?is)\bPremium\s+(\$?\s*\d[\d,]*(?:\.\d{2})?)", section)
+    section_total_match = re.search(r"(?is)\bTotal\s+Incurred\s+(\$?\s*\d[\d,]*(?:\.\d{2})?)", section)
+
+    policy_number = clean(policy_number_match.group(1)).upper() if policy_number_match else ""
+    line_name = clean(line_match.group(1)) if line_match else section_title
+
+    if policy_number:
+      policies.append({
+        "policy_number": policy_number,
+        "policy_type": line_name,
+        "line_of_business": line_name,
+        "coverage": line_name,
+        "carrier": parsed_profile.get("carrier_name", ""),
+        "carrier_name": parsed_profile.get("carrier_name", ""),
+        "writing_carrier": parsed_profile.get("writing_carrier", parsed_profile.get("carrier_name", "")),
+        "effective_date": norm_date(term_match.group(1)) if term_match else parsed_profile.get("effective_date", ""),
+        "expiration_date": norm_date(term_match.group(2)) if term_match else parsed_profile.get("expiration_date", ""),
+        "premium": money_text(premium_match.group(1)) if premium_match else "",
+        "current_premium": money_text(premium_match.group(1)) if premium_match else "",
+        "claim_count": 0,
+        "total_incurred": money(section_total_match.group(1)) if section_total_match else 0.0,
+      })
+
+    for claim_match in claim_re.finditer(section):
+      claim_number = clean(claim_match.group(1)).upper()
+      status = clean(claim_match.group(2))
+      claimant = clean(claim_match.group(3))
+      state = clean(claim_match.group(4)).upper()
+      date_of_loss = norm_date(claim_match.group(5))
+      date_reported = norm_date(claim_match.group(6))
+      closed_raw = clean(claim_match.group(7))
+      date_closed = "" if closed_raw.upper() == "OPEN" else norm_date(closed_raw)
+      adjuster = clean(claim_match.group(8))
+      paid = money(claim_match.group(9))
+      reserve = money(claim_match.group(10))
+      incurred = money(claim_match.group(11)) or paid + reserve
+      description = clean(claim_match.group(12))
+
+      extracted_claims.append({
+        "business_name": parsed_profile.get("business_name", ""),
+        "named_insured": parsed_profile.get("named_insured", ""),
+        "insured_name": parsed_profile.get("insured_name", ""),
+        "carrier_name": parsed_profile.get("carrier_name", ""),
+        "writing_carrier": parsed_profile.get("writing_carrier", parsed_profile.get("carrier_name", "")),
+        "policy_number": policy_number,
+        "policy": policy_number,
+        "policy_type": line_name,
+        "line_of_business": line_name,
+        "claim_type": line_name,
+        "coverage": line_name,
+        "claim_number": claim_number,
+        "claim_no": claim_number,
+        "status": status,
+        "claim_status": status,
+        "claimant": claimant,
+        "claimant_name": claimant,
+        "jurisdiction": state,
+        "state": state,
+        "date_of_loss": date_of_loss,
+        "loss_date": date_of_loss,
+        "date_reported": date_reported,
+        "reported_date": date_reported,
+        "date_closed": date_closed,
+        "closed_date": date_closed,
+        "paid_amount": paid,
+        "paid": paid,
+        "reserve_amount": reserve,
+        "reserve": reserve,
+        "total_incurred": incurred,
+        "incurred": incurred,
+        "total": incurred,
+        "adjuster": adjuster,
+        "examiner": adjuster,
+        "description": description,
+        "loss_description": description,
+      })
+
+  if policies:
+    stats = {}
+    for claim in extracted_claims:
+      policy_key = clean(claim.get("policy_number")).upper()
+      stats.setdefault(policy_key, {"claim_count": 0, "total_incurred": 0.0})
+      stats[policy_key]["claim_count"] += 1
+      stats[policy_key]["total_incurred"] += money(claim.get("total_incurred"))
+
+    for policy in policies:
+      policy_key = clean(policy.get("policy_number")).upper()
+      if policy_key in stats:
+        policy["claim_count"] = stats[policy_key]["claim_count"]
+        policy["total_incurred"] = stats[policy_key]["total_incurred"]
+
+    parsed_profile["policies"] = policies
+    parsed_profile["policy_schedule"] = policies
+    parsed_profile["policy_numbers"] = [p.get("policy_number") for p in policies if p.get("policy_number")]
+    if parsed_profile.get("policy_numbers") and not parsed_profile.get("policy_number"):
+      parsed_profile["policy_number"] = parsed_profile["policy_numbers"][0]
+      parsed_profile["main_policy"] = parsed_profile["policy_numbers"][0]
+
+    direct_profile["policies"] = policies
+    direct_profile["policy_schedule"] = policies
+    direct_profile["policy_numbers"] = parsed_profile.get("policy_numbers")
+
+  existing_total = sum(money(c.get("total_incurred") or c.get("incurred")) for c in parsed_claims if isinstance(c, dict))
+  extracted_total = sum(money(c.get("total_incurred") or c.get("incurred")) for c in extracted_claims)
+
+  if extracted_claims and (len(extracted_claims) >= len(parsed_claims or []) or extracted_total > existing_total):
+    parsed_claims = extracted_claims
+    parsed_profile["claims"] = extracted_claims
+    parsed_profile["parsed_claims"] = extracted_claims
+    parsed_profile["claim_count"] = len(extracted_claims)
+    parsed_profile["total_claims"] = len(extracted_claims)
+    parsed_profile["open_claims"] = sum(1 for c in extracted_claims if clean(c.get("status")).lower() == "open")
+    parsed_profile["closed_claims"] = sum(1 for c in extracted_claims if clean(c.get("status")).lower() == "closed")
+    parsed_profile["total_paid"] = sum(money(c.get("paid_amount")) for c in extracted_claims)
+    parsed_profile["total_reserve"] = sum(money(c.get("reserve_amount")) for c in extracted_claims)
+    parsed_profile["total_incurred"] = extracted_total
+    direct_profile["claims"] = extracted_claims
+    direct_profile["parsed_claims"] = extracted_claims
+    direct_profile["claim_count"] = len(extracted_claims)
+    direct_profile["total_claims"] = len(extracted_claims)
+    direct_profile["open_claims"] = parsed_profile["open_claims"]
+    direct_profile["closed_claims"] = parsed_profile["closed_claims"]
+    direct_profile["total_paid"] = parsed_profile["total_paid"]
+    direct_profile["total_reserve"] = parsed_profile["total_reserve"]
+    direct_profile["total_incurred"] = extracted_total
+
+  print("LOSSQ_PDF_VERTICAL_POLICY_SECTION_REPAIR_V1:", {
+    "policies": len(policies),
+    "claims": len(extracted_claims),
+    "final_claims": len(parsed_claims or []),
+    "total_incurred": parsed_profile.get("total_incurred"),
+    "claim_numbers": [c.get("claim_number") for c in (parsed_claims or [])[:10] if isinstance(c, dict)],
+  })
+
+  return parsed_claims, parsed_profile, direct_profile
+
+
 # LOSSQ_PDF_MESSY_BLOCK_MINI_REPAIR_V1
 def lossq_pdf_messy_block_mini_repair_v1(file_path, parsed_claims=None, parsed_profile=None, direct_profile=None):
   """
@@ -15857,6 +16122,60 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         _lossq_pdf_value = parsed_profile.get(_lossq_pdf_key)
         if _lossq_pdf_value not in ("", None, [], {}):
           profile_data[_lossq_pdf_key] = _lossq_pdf_value
+    # LOSSQ_PDF_VERTICAL_POLICY_SECTION_REPAIR_CALL_V1
+    if "direct_profile" not in locals() or not isinstance(direct_profile, dict):
+      direct_profile = {}
+    parsed_claims, parsed_profile, direct_profile = lossq_pdf_vertical_policy_section_repair_v1(
+      file_path,
+      parsed_claims,
+      parsed_profile,
+      direct_profile,
+    )
+
+    if "profile_data" in locals() and isinstance(profile_data, dict) and isinstance(parsed_profile, dict):
+      for _lossq_vertical_key in (
+        "business_name",
+        "insured_name",
+        "named_insured",
+        "account_name",
+        "account_number",
+        "customer_number",
+        "carrier_name",
+        "writing_carrier",
+        "carrier",
+        "effective_date",
+        "expiration_date",
+        "evaluation_date",
+        "valuation_date",
+        "current_premium",
+        "expiring_premium",
+        "target_renewal_premium",
+        "payroll",
+        "revenue",
+        "annual_revenue",
+        "employee_count",
+        "location_count",
+        "locations",
+        "locationCount",
+        "bed_count",
+        "beds",
+        "policies",
+        "policy_schedule",
+        "policy_numbers",
+        "policy_number",
+        "main_policy",
+        "claim_count",
+        "total_claims",
+        "open_claims",
+        "closed_claims",
+        "total_paid",
+        "total_reserve",
+        "total_incurred",
+      ):
+        _lossq_vertical_value = parsed_profile.get(_lossq_vertical_key)
+        if _lossq_vertical_value not in ("", None, [], {}):
+          profile_data[_lossq_vertical_key] = _lossq_vertical_value
+
     all_parsed_claims.extend(parsed_claims)
 
     # LOSSQ_CANONICAL_UPLOAD_CLAIM_PURGE_V1
