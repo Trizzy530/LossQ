@@ -128,9 +128,10 @@ export default function SettingsPage() {
   if (typeof window !== "undefined") {
     try {
       const token =
+        sessionStorage.getItem("lossq_tab_token") ||
+        localStorage.getItem("lossq_token") ||
         localStorage.getItem("token") ||
         localStorage.getItem("access_token") ||
-        localStorage.getItem("lossq_token") ||
         localStorage.getItem("authToken") ||
         "";
       const payload = token.split(".")[1];
