@@ -7142,21 +7142,52 @@ def lossq_pdf_user_name_from_db(db=None, current_user=None):
 
 
 
+
+# LOSSQ_SAFE_CREATED_BY_NO_EMAIL_V1
+def lossq_pdf_display_name_from_email(value):
+    raw = str(value or "").strip()
+    if "@" not in raw:
+        return ""
+
+    local = raw.split("@", 1)[0]
+    local = re.sub(r"[._\-]+", " ", local)
+    local = re.sub(r"\d+", " ", local)
+    local = re.sub(r"\s+", " ", local).strip()
+
+    if not local:
+        return "Account User"
+
+    return " ".join(part.capitalize() for part in local.split())
+
+
 def lossq_pdf_current_user_report_created_by(current_user):
     current_user = current_user or lossq_get_active_pdf_user() or {}
+
     first_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "first_name"))
     last_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "last_name"))
     full_name = f"{first_name} {last_name}".strip()
 
-    if full_name:
+    if full_name and "@" not in full_name:
         return full_name
 
-    name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "name"))
-    if name:
-        return name
+    for key in [
+        "full_name",
+        "fullName",
+        "name",
+        "display_name",
+        "displayName",
+        "username",
+        "agency_user_name",
+        "producer_name",
+        "owner_name",
+    ]:
+        value = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, key))
+        if value and "@" not in value:
+            return value
 
     email = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "email"))
-    email_display_name = lossq_pdf_display_name_from_email_local_part(email)
+    email_display_name = lossq_pdf_display_name_from_email(email)
+
     if email_display_name:
         return email_display_name
 
