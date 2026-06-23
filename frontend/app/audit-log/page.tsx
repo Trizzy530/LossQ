@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 
 const API =
@@ -10,6 +10,7 @@ type AuditEvent = {
   id?: string | number;
   created_at?: string;
   timestamp?: string;
+  updated_at?: string;
   user_id?: string | number;
   user_email?: string;
   user_full_name?: string;
@@ -20,6 +21,7 @@ type AuditEvent = {
   resource_type?: string;
   resource_id?: string;
   details?: any;
+  [key: string]: any;
 };
 
 type AuditSummary = {
@@ -28,16 +30,39 @@ type AuditSummary = {
   claims?: number;
   users?: number;
   exports?: number;
+  reports?: number;
   last_event_at?: string;
   source?: string;
   [key: string]: any;
 };
 
-type ActionTone = "blue" | "emerald" | "purple" | "amber" | "rose" | "slate";
+type SortOrder = "newest" | "oldest";
+
+type CategoryFilter =
+  | "all"
+  | "reports"
+  | "uploads"
+  | "claims"
+  | "account_profiles"
+  | "users"
+  | "billing"
+  | "system";
+
+type Tone =
+  | "blue"
+  | "emerald"
+  | "purple"
+  | "amber"
+  | "rose"
+  | "slate"
+  | "cyan"
+  | "orange";
 
 function getToken() {
   if (typeof window === "undefined") return "";
+
   return (
+    sessionStorage.getItem("lossq_tab_token") ||
     localStorage.getItem("lossq_token") ||
     localStorage.getItem("token") ||
     localStorage.getItem("access_token") ||
@@ -45,32 +70,116 @@ function getToken() {
   );
 }
 
-function decodeJwtPayload(token: string) {
-  try {
-    const payload = token.split(".")[1];
-    if (!payload) return null;
+function authHeaders() {
+  const token = getToken();
 
-    const normalized = payload.replace(/-/g, "+").replace(/_/g, "/");
-    const decoded = JSON.parse(window.atob(normalized));
-
-    return decoded;
-  } catch {
-    return null;
-  }
+  return {
+    Authorization: `Bearer ${token}`,
+    "Content-Type": "application/json",
+  };
 }
 
-function getCurrentUserEmail() {
-  if (typeof window === "undefined") return "";
+function normalizePlan(plan: any) {
+  const clean = String(plan || "free").trim().toLowerCase();
 
-  const token = getToken();
-  const payload = decodeJwtPayload(token);
+  if (clean === "founder" || clean === "founding" || clean === "founding agency") {
+    return "founding_agency";
+  }
+
+  if (clean === "enterprise") return "agency";
+  if (clean === "pro") return "professional";
+
+  return clean;
+}
+
+function canAccessAuditLogsFromBilling(data: any) {
+  const plan = normalizePlan(
+    data?.plan ||
+      data?.subscription_plan ||
+      data?.plan_name ||
+      data?.organization?.plan ||
+      "free"
+  );
+
+  const features = Array.isArray(data?.features)
+    ? data.features.map((item: any) => String(item).toLowerCase())
+    : [];
 
   return (
-    payload?.email ||
-    payload?.sub ||
-    payload?.user_email ||
-    localStorage.getItem("lossq_user_email") ||
-    localStorage.getItem("user_email") ||
+    plan === "agency" ||
+    plan === "founding_agency" ||
+    features.includes("audit_logs")
+  );
+}
+
+function toDetails(details: any): Record<string, any> {
+  if (!details) return {};
+
+  if (typeof details === "string") {
+    try {
+      const parsed = JSON.parse(details);
+      return parsed && typeof parsed === "object" ? parsed : {};
+    } catch {
+      return {};
+    }
+  }
+
+  if (typeof details === "object") return details;
+
+  return {};
+}
+
+function cleanText(value: any) {
+  if (value === null || value === undefined || value === "") return "-";
+
+  const clean = String(value)
+    .replace(/\s+/g, " ")
+    .replace(/undefined|null/gi, "")
+    .trim();
+
+  return clean || "-";
+}
+
+function optionalText(value: any) {
+  const clean = cleanText(value);
+  return clean === "-" ? "" : clean;
+}
+
+function detailValue(event: AuditEvent, ...keys: string[]) {
+  const details = toDetails(event.details);
+
+  for (const key of keys) {
+    const eventValue = (event as any)?.[key];
+
+    if (eventValue !== undefined && eventValue !== null && eventValue !== "") {
+      return eventValue;
+    }
+
+    const detail = details?.[key];
+
+    if (detail !== undefined && detail !== null && detail !== "") {
+      return detail;
+    }
+  }
+
+  return "";
+}
+
+function eventTime(event: AuditEvent) {
+  const details = toDetails(event.details);
+
+  return (
+    event.created_at ||
+    event.timestamp ||
+    event.updated_at ||
+    details.created_at ||
+    details.generated_at_utc ||
+    details.event_timestamp_utc ||
+    details.generated_at ||
+    details.exported_at ||
+    details.submitted_at ||
+    details.deleted_at ||
+    details.uploaded_at ||
     ""
   );
 }
@@ -86,47 +195,18 @@ function parseAuditDate(value?: string) {
   const normalized = hasTimezone ? clean : `${clean}Z`;
   const date = new Date(normalized);
 
-  if (Number.isNaN(date.getTime())) return null;
+  if (Number.isNaN(date.getTime())) {
+    const fallback = new Date(clean);
+    return Number.isNaN(fallback.getTime()) ? null : fallback;
+  }
 
   return date;
 }
 
-
-
-// LOSSQ_AUDIT_RETRY_NO_LOGOUT_ON_403_V1
-// LOSSQ_AUDIT_LOG_FRONTEND_PACKAGE_GATE_V1
-function normalizeAuditPlan(plan: any) {
-  const clean = String(plan || "free").trim().toLowerCase();
-
-  if (clean === "founder" || clean === "founding" || clean === "founding agency") {
-    return "founding_agency";
-  }
-
-  if (clean === "enterprise") return "agency";
-  if (clean === "pro") return "professional";
-
-  return clean;
-}
-
-function canAccessAuditLogsFromBilling(data: any) {
-  const plan = normalizeAuditPlan(
-    data?.plan ||
-      data?.subscription_plan ||
-      data?.plan_name ||
-      data?.organization?.plan ||
-      "free"
-  );
-
-  const features = Array.isArray(data?.features) ? data.features.map((item: any) => String(item)) : [];
-
-  return plan === "agency" || plan === "founding_agency" || features.includes("audit_logs");
-}
-
-
 function formatDate(value?: string) {
   const date = parseAuditDate(value);
 
-  if (!date) return value || "";
+  if (!date) return "-";
 
   try {
     return new Intl.DateTimeFormat("en-US", {
@@ -136,20 +216,21 @@ function formatDate(value?: string) {
       day: "numeric",
       hour: "numeric",
       minute: "2-digit",
-      second: "2-digit",
       timeZoneName: "short",
     }).format(date);
   } catch {
-    return value || "";
+    return value || "-";
   }
 }
 
 function formatCurrency(value: any) {
-  const num = Number(value || 0);
+  if (value === null || value === undefined || value === "") return "-";
 
-  if (!Number.isFinite(num)) return "";
+  const numeric = Number(String(value).replace(/[$,]/g, ""));
 
-  return num.toLocaleString("en-US", {
+  if (!Number.isFinite(numeric)) return cleanText(value);
+
+  return numeric.toLocaleString("en-US", {
     style: "currency",
     currency: "USD",
     maximumFractionDigits: 0,
@@ -157,13 +238,13 @@ function formatCurrency(value: any) {
 }
 
 function formatNumber(value: any) {
-  if (value === null || value === undefined || value === "") return "";
+  if (value === null || value === undefined || value === "") return "-";
 
-  const num = Number(value);
+  const numeric = Number(value);
 
-  if (!Number.isFinite(num)) return String(value);
+  if (!Number.isFinite(numeric)) return cleanText(value);
 
-  return num.toLocaleString();
+  return numeric.toLocaleString("en-US");
 }
 
 function prettyAction(action?: string) {
@@ -176,10 +257,21 @@ function prettyAction(action?: string) {
     carrier_packet_generated: "Carrier Packet Generated",
     carrier_packet_pdf_generated: "Carrier Packet PDF Generated",
     carrier_packet_pdf_downloaded: "Carrier Packet PDF Downloaded",
-    pdf_export_generated: "PDF Export Generated",
     renewal_memo_generated: "Renewal Memo Generated",
+    pdf_export_generated: "PDF Export Generated",
+    account_profile_deleted: "Account Profile Deleted",
+    account_profile_saved: "Account Profile Saved",
+    account_profile_updated: "Account Profile Updated",
+    profile_deleted: "Account Profile Deleted",
     user_login: "User Login",
     user_logout: "User Logout",
+    user_invited: "User Invited",
+    user_role_changed: "User Role Changed",
+    billing_subscription_updated: "Billing Updated",
+    platform_admin_stats_viewed: "Platform Admin Stats Viewed",
+    platform_admin_users_viewed: "Platform Admin Users Viewed",
+    platform_admin_organizations_viewed: "Platform Admin Organizations Viewed",
+    support_lookup_searched: "Support Lookup Searched",
     audit_event: "Audit Event",
   };
 
@@ -189,91 +281,80 @@ function prettyAction(action?: string) {
 
   return clean
     .replace(/_/g, " ")
+    .replace(/-/g, " ")
     .replace(/\b\w/g, (letter) => letter.toUpperCase());
 }
 
-function sourceLabel(source?: string) {
-  const clean = String(source || "").trim();
+function resourceLabel(event: AuditEvent) {
+  const resource = String(event.resource_type || "").toLowerCase();
+  const action = String(event.action || "").toLowerCase();
 
-  const labels: Record<string, string> = {
-    audit_logs_with_claims: "Audit + Claims",
-    audit_logs: "Audit Logs",
-    existing_uploads: "Upload History",
-    safe_error_payload: "Safe Error Payload",
-    no_events_found: "No Events Found",
-  };
-
-  return labels[clean] || prettyAction(clean || "audit-logs");
-}
-
-function toDetails(details: any) {
-  if (!details) return {};
-
-  if (typeof details === "string") {
-    try {
-      return JSON.parse(details);
-    } catch {
-      return { note: details };
-    }
+  if (resource === "report" || action.includes("report") || action.includes("packet") || action.includes("pdf")) {
+    return "Report";
   }
 
-  if (typeof details === "object") return details;
+  if (resource === "upload" || action.includes("upload") || action.includes("loss_run")) {
+    return "Upload";
+  }
 
-  return { value: String(details) };
+  if (resource === "claim" || action.includes("claim")) {
+    return "Claim";
+  }
+
+  if (resource === "account_profile" || action.includes("account_profile") || action.includes("profile")) {
+    return "Account Profile";
+  }
+
+  if (resource === "billing" || action.includes("billing") || action.includes("subscription") || action.includes("checkout")) {
+    return "Billing";
+  }
+
+  if (resource === "user" || action.includes("user")) {
+    return "User";
+  }
+
+  if (resource === "support_lookup" || action.includes("support_lookup")) {
+    return "Support";
+  }
+
+  return "System";
 }
 
-function cleanDisplayText(value: any) {
-  if (value === null || value === undefined || value === "") return "-";
+function eventTone(event: AuditEvent): Tone {
+  const label = resourceLabel(event).toLowerCase();
+  const action = String(event.action || "").toLowerCase();
 
-  return String(value)
-    .replace(/\u00e2\u20ac\u201d/g, "-")
-    .replace(/\u00e2\u20ac\u201c/g, "-")
-    .replace(/\u00e2\u20ac\u0153/g, '"')
-    .replace(/\u00e2\u20ac\ufffd/g, '"')
-    .replace(/\u00e2\u20ac\u009d/g, '"')
-    .replace(/\u00e2\u20ac\u2122/g, "'")
-    .replace(/\u00e2\u20ac\u02dc/g, "'")
-    .replace(/\u00e2\u20ac\u00a2/g, "")
-    .replace(/\u00e2\u20ac\u00a6/g, "...")
-    .replace(/\u00e2\u2020\u0090/g, "<-")
-    .replace(/\u00e2\u2020\u2019/g, "->")
-    .replace(/\u00c2/g, "");
+  if (label === "report") return "purple";
+  if (label === "upload") return "blue";
+  if (label === "claim") return "emerald";
+  if (label === "account profile") return "rose";
+  if (label === "billing") return "amber";
+  if (label === "user") return "cyan";
+  if (label === "support") return "orange";
+  if (action.includes("error") || action.includes("failed")) return "rose";
+
+  return "slate";
 }
 
-function safeText(value: any) {
-  return cleanDisplayText(value);
-}
+function toneClasses(tone: Tone) {
+  const map: Record<Tone, string> = {
+    blue: "border-blue-400/30 bg-blue-500/10 text-blue-200",
+    emerald: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200",
+    purple: "border-purple-400/30 bg-purple-500/10 text-purple-200",
+    amber: "border-amber-400/30 bg-amber-500/10 text-amber-200",
+    rose: "border-rose-400/30 bg-rose-500/10 text-rose-200",
+    slate: "border-slate-400/30 bg-slate-500/10 text-slate-200",
+    cyan: "border-cyan-400/30 bg-cyan-500/10 text-cyan-200",
+    orange: "border-orange-400/30 bg-orange-500/10 text-orange-200",
+  };
 
-// LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V1
-// LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V2
-// LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V3
-// LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V4
-function eventTime(event: AuditEvent) {
-  const details = toDetails(event.details);
-
-  return (
-    event.created_at ||
-    event.timestamp ||
-    details.created_at ||
-    details.generated_at_utc ||
-    details.event_timestamp_utc ||
-    details.generated_at ||
-    details.exported_at ||
-    details.submitted_at ||
-    ""
-  );
-}
-
-function optionalDisplayText(value: any) {
-  if (value === null || value === undefined || value === "") return "";
-  const clean = cleanDisplayText(value).trim();
-  return clean === "-" ? "" : clean;
+  return map[tone];
 }
 
 function eventUserName(event: AuditEvent) {
   const details = toDetails(event.details);
 
-  return optionalDisplayText(
+  return optionalText(
     event.user_full_name ||
       event.actor_name ||
       event.user_name ||
@@ -286,7 +367,7 @@ function eventUserName(event: AuditEvent) {
 function eventUserEmail(event: AuditEvent, fallbackEmail = "") {
   const details = toDetails(event.details);
 
-  return optionalDisplayText(
+  return optionalText(
     event.user_email ||
       event.actor_email ||
       details.user_email ||
@@ -295,132 +376,136 @@ function eventUserEmail(event: AuditEvent, fallbackEmail = "") {
   );
 }
 
-// LOSSQ_AUDIT_DISPLAY_HELPERS_V1
-function auditDetailValue(event: AuditEvent, ...keys: string[]) {
+function eventResourceId(event: AuditEvent) {
+  return cleanText(
+    event.resource_id ||
+      detailValue(
+        event,
+        "resource_id",
+        "policy_number",
+        "claim_number",
+        "profile_id",
+        "upload_id",
+        "account_number"
+      )
+  );
+}
+
+function matchesCategory(event: AuditEvent, category: CategoryFilter) {
+  if (category === "all") return true;
+
+  const label = resourceLabel(event).toLowerCase();
+  const action = String(event.action || "").toLowerCase();
+  const resource = String(event.resource_type || "").toLowerCase();
+
+  if (category === "reports") {
+    return label === "report" || resource === "report" || action.includes("report") || action.includes("packet") || action.includes("pdf") || action.includes("memo");
+  }
+
+  if (category === "uploads") {
+    return label === "upload" || resource === "upload" || action.includes("upload") || action.includes("loss_run");
+  }
+
+  if (category === "claims") {
+    return label === "claim" || resource === "claim" || action.includes("claim");
+  }
+
+  if (category === "account_profiles") {
+    return label === "account profile" || resource === "account_profile" || action.includes("account_profile") || action.includes("profile");
+  }
+
+  if (category === "users") {
+    return label === "user" || resource === "user" || action.includes("user");
+  }
+
+  if (category === "billing") {
+    return label === "billing" || resource === "billing" || action.includes("billing") || action.includes("subscription") || action.includes("checkout");
+  }
+
+  if (category === "system") {
+    return label === "system";
+  }
+
+  return true;
+}
+
+function eventSearchText(event: AuditEvent) {
   const details = toDetails(event.details);
 
-  for (const key of keys) {
-    const eventValue = (event as any)?.[key];
-    if (eventValue !== undefined && eventValue !== null && eventValue !== "") return eventValue;
-
-    const detailValue = details?.[key];
-    if (detailValue !== undefined && detailValue !== null && detailValue !== "") return detailValue;
-  }
-
-  return "";
+  return [
+    event.action,
+    event.resource_type,
+    event.resource_id,
+    event.user_email,
+    event.user_full_name,
+    event.actor_email,
+    event.actor_name,
+    JSON.stringify(details),
+  ]
+    .join(" ")
+    .toLowerCase();
 }
 
-function auditReportClaimCount(event: AuditEvent) {
-  return auditDetailValue(event, "claim_count", "total_claims", "claims_count") || "-";
+function eventTimestampNumber(event: AuditEvent) {
+  const raw = eventTime(event);
+  const date = parseAuditDate(raw);
+
+  return date ? date.getTime() : 0;
 }
 
-function auditReportTotalIncurred(event: AuditEvent) {
-  return auditDetailValue(event, "total_incurred", "incurred_total", "total_loss", "loss_total");
-}
+function computeSummary(events: AuditEvent[], summary: AuditSummary | null) {
+  const uploads = events.filter((event) => matchesCategory(event, "uploads")).length;
+  const claims = events.filter((event) => matchesCategory(event, "claims")).length;
+  const reports = events.filter((event) => matchesCategory(event, "reports")).length;
+  const users = events.filter((event) => matchesCategory(event, "users")).length;
 
-function auditReportRiskLevel(event: AuditEvent) {
-  return auditDetailValue(event, "risk_level", "renewal_risk_level") || "-";
-}
-
-function auditReportRenewalScore(event: AuditEvent) {
-  return auditDetailValue(event, "renewal_score", "score") || "-";
-}
-
-
-function resourceLabel(event: AuditEvent) {
-  const type = String(event.resource_type || "system").toLowerCase();
-
-  if (type === "upload") return "Upload";
-  if (type === "claim") return "Claim";
-  if (type === "report") return "Report";
-  if (type === "user") return "User";
-  if (type === "account_profile") return "Account Profile";
-  if (type === "billing") return "Billing";
-  if (type === "system") return "System";
-
-  return prettyAction(type);
-}
-
-// LOSSQ_AUDIT_CATEGORY_MATCH_FIX_V1
-function auditEventMatchesCategory(event: AuditEvent, category: string) {
-  const clean = String(category || "all").trim().toLowerCase();
-  const action = String(event.action || "").toLowerCase();
-  const resource = String(event.resource_type || "").toLowerCase();
-
-  if (!clean || clean === "all" || clean === "total") return true;
-
-  if (clean.includes("report")) {
-    return resource === "report" || action.includes("report") || action.includes("packet") || action.includes("memo") || action.includes("pdf");
-  }
-
-  if (clean.includes("upload")) {
-    return resource === "upload" || action.includes("upload") || action.includes("loss_run");
-  }
-
-  if (clean.includes("claim")) {
-    return resource === "claim" || action.includes("claim");
-  }
-
-  if (clean.includes("account") || clean.includes("profile")) {
-    return resource === "account_profile" || action.includes("account_profile") || action.includes("profile_deleted") || action.includes("profile");
-  }
-
-  if (clean.includes("user")) {
-    return resource === "user" || action.includes("user");
-  }
-
-  if (clean.includes("billing")) {
-    return resource === "billing" || action.includes("billing") || action.includes("subscription") || action.includes("checkout");
-  }
-
-  return resource.includes(clean) || action.includes(clean);
-}
-
-
-function actionTone(event: AuditEvent): ActionTone {
-  const action = String(event.action || "").toLowerCase();
-  const resource = String(event.resource_type || "").toLowerCase();
-
-  if (resource === "claim" || action.includes("claim")) return "emerald";
-  if (resource === "report" || action.includes("report") || action.includes("packet") || action.includes("memo")) return "purple";
-  if (resource === "upload" || action.includes("upload")) return "blue";
-  if (resource === "billing" || action.includes("billing") || action.includes("checkout") || action.includes("subscription")) return "amber";
-  if (resource === "account_profile" || action.includes("delete") || action.includes("purge")) return "rose";
-  if (action.includes("error") || action.includes("failed")) return "rose";
-  if (action.includes("review") || action.includes("warning")) return "amber";
-
-  return "slate";
-}
-
-function toneClasses(tone: ActionTone) {
-  const map: Record<ActionTone, string> = {
-    blue: "border-blue-400/30 bg-blue-500/10 text-blue-200",
-    emerald: "border-emerald-400/30 bg-emerald-500/10 text-emerald-200",
-    purple: "border-purple-400/30 bg-purple-500/10 text-purple-200",
-    amber: "border-amber-400/30 bg-amber-500/10 text-amber-200",
-    rose: "border-rose-400/30 bg-rose-500/10 text-rose-200",
-    slate: "border-slate-400/30 bg-slate-500/10 text-slate-200",
+  return {
+    total_events: summary?.total_events ?? events.length,
+    uploads: summary?.uploads ?? uploads,
+    claims: summary?.claims ?? claims,
+    reports: summary?.reports ?? summary?.exports ?? reports,
+    users: summary?.users ?? users,
+    last_event_at: summary?.last_event_at || eventTime(events[0] || {}),
+    source: summary?.source || "",
   };
-
-  return map[tone];
 }
 
-function statusTone(value: any) {
-  const clean = String(value || "").toLowerCase();
+function categoryOptions(): { value: CategoryFilter; label: string }[] {
+  return [
+    { value: "all", label: "All Activity" },
+    { value: "reports", label: "Reports" },
+    { value: "uploads", label: "Uploads" },
+    { value: "claims", label: "Claims" },
+    { value: "account_profiles", label: "Account Profiles" },
+    { value: "users", label: "Users" },
+    { value: "billing", label: "Billing" },
+    { value: "system", label: "System" },
+  ];
+}
 
-  if (clean.includes("passed") || clean.includes("good") || clean.includes("clean") || clean.includes("low")) {
-    return "border-emerald-400/30 bg-emerald-500/10 text-emerald-200";
-  }
-
-  if (clean.includes("review") || clean.includes("medium") || clean.includes("moderate")) {
-    return "border-amber-400/30 bg-amber-500/10 text-amber-200";
-  }
-
-  if (clean.includes("failed") || clean.includes("critical") || clean.includes("high")) {
-    return "border-rose-400/30 bg-rose-500/10 text-rose-200";
-  }
-
-  return "border-slate-400/30 bg-slate-500/10 text-slate-200";
+function SummaryCard({
+  label,
+  value,
+  description,
+  tone,
+}: {
+  label: string;
+  value: any;
+  description: string;
+  tone: Tone;
+}) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
+      <div className="flex items-start justify-between gap-3">
+        <p className="text-sm text-slate-400">{label}</p>
+        <span className={`rounded-xl border px-3 py-1 text-xs font-black ${toneClasses(tone)}`}>
+          {label}
+        </span>
+      </div>
+      <p className="mt-3 text-3xl font-black text-white">{formatNumber(value)}</p>
+      <p className="mt-3 text-xs text-slate-500">{description}</p>
+    </div>
+  );
 }
 
 function DetailPill({
@@ -430,469 +515,370 @@ function DetailPill({
 }: {
   label: string;
   value: any;
-  tone?: ActionTone;
+  tone?: Tone;
 }) {
   return (
     <div className={`min-w-0 rounded-xl border px-3 py-2 ${toneClasses(tone)}`}>
       <p className="text-[10px] uppercase tracking-[0.2em] opacity-70">{label}</p>
-      <p className="mt-1 min-w-0 break-words text-sm font-bold leading-relaxed">{safeText(value)}</p>
+      <p className="mt-1 min-w-0 break-words text-sm font-bold leading-relaxed">{cleanText(value)}</p>
     </div>
   );
 }
 
-function StatusPill({ label, value }: { label: string; value: any }) {
+function ReportDetails({ event }: { event: AuditEvent }) {
+  const reportType =
+    detailValue(event, "report_type") ||
+    (String(event.action || "").includes("carrier") ? "Carrier Submission Packet" : "Executive Underwriting Report");
+
   return (
-    <div className={`min-w-0 rounded-xl border px-3 py-2 ${statusTone(value)}`}>
-      <p className="text-[10px] uppercase tracking-[0.2em] opacity-70">{label}</p>
-      <p className="mt-1 min-w-0 break-words text-sm font-bold leading-relaxed">{safeText(value)}</p>
+    <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
+      <DetailPill label="Report Type" value={prettyAction(String(reportType))} tone="purple" />
+      <DetailPill label="Policy Number" value={detailValue(event, "policy_number")} />
+      <DetailPill label="Business" value={detailValue(event, "business_name", "insured_name", "company_name", "account_name")} />
+      <DetailPill label="Account Number" value={detailValue(event, "account_number", "customer_number")} />
+      <DetailPill label="Claim Count" value={detailValue(event, "claim_count", "total_claims", "claims_count") || "-"} />
+      <DetailPill label="Total Incurred" value={formatCurrency(detailValue(event, "total_incurred", "incurred_total", "total_loss", "loss_total"))} />
+      <DetailPill label="Open Claims" value={detailValue(event, "open_claims", "open_claim_count") || "-"} />
+      <DetailPill label="Risk Level" value={detailValue(event, "risk_level", "renewal_risk_level") || "-"} />
+      <DetailPill label="Renewal Score" value={detailValue(event, "renewal_score", "score") || "-"} />
     </div>
   );
 }
 
-function RawDetailsButton({ details }: { details: any }) {
-  const cleanDetails = toDetails(details);
+function AccountProfileDetails({ event }: { event: AuditEvent }) {
+  const details = toDetails(event.details);
+  const deletedClaims = detailValue(event, "claims_deleted", "deleted_claims_count", "claim_count");
+  const deletedProfiles = detailValue(event, "profiles_deleted", "deleted_profiles_count", "profile_count");
+  const scope =
+    details.delete_claims === true ||
+    String(event.action || "").includes("delete") ||
+    String(event.action || "").includes("deleted")
+      ? "Account / file group deletion"
+      : "Account profile activity";
 
   return (
-    <details className="mt-3 rounded-xl border border-white/10 bg-black/20">
-      <summary className="cursor-pointer px-3 py-2 text-xs font-bold text-slate-300 hover:text-white">
-        View technical details
-      </summary>
-      <pre className="max-h-72 overflow-auto whitespace-pre-wrap border-t border-white/10 p-3 text-xs text-slate-400">
-        {JSON.stringify(cleanDetails, null, 2)}
-      </pre>
-    </details>
+    <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
+      <DetailPill label="Deleted Scope" value={scope} tone="rose" />
+      <DetailPill label="Profile ID" value={detailValue(event, "profile_id") || event.resource_id} />
+      <DetailPill label="Business Name" value={detailValue(event, "business_name", "insured_name", "company_name", "account_name")} />
+      <DetailPill label="Carrier Name" value={detailValue(event, "carrier_name", "writing_carrier")} />
+      <DetailPill label="Policy Number" value={detailValue(event, "policy_number")} />
+      <DetailPill label="Account Number" value={detailValue(event, "account_number")} />
+      <DetailPill label="Customer Number" value={detailValue(event, "customer_number")} />
+      <DetailPill label="Profiles Deleted" value={deletedProfiles || "-"} />
+      <DetailPill label="Claims Deleted" value={deletedClaims || "-"} />
+    </div>
+  );
+}
+
+function UploadDetails({ event }: { event: AuditEvent }) {
+  return (
+    <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
+      <DetailPill label="Filename" value={detailValue(event, "filename", "file_name", "original_filename")} tone="blue" />
+      <DetailPill label="Policy Number" value={detailValue(event, "policy_number")} />
+      <DetailPill label="Account Number" value={detailValue(event, "account_number", "customer_number")} />
+      <DetailPill label="Claims Saved" value={detailValue(event, "claims_saved", "claim_count", "claims_count")} />
+      <DetailPill label="Parser" value={detailValue(event, "parser", "parser_version", "source")} />
+      <DetailPill label="Upload ID" value={detailValue(event, "upload_id") || event.resource_id} />
+    </div>
+  );
+}
+
+function ClaimDetails({ event }: { event: AuditEvent }) {
+  return (
+    <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
+      <DetailPill label="Claim Number" value={detailValue(event, "claim_number") || event.resource_id} tone="emerald" />
+      <DetailPill label="Policy Number" value={detailValue(event, "policy_number")} />
+      <DetailPill label="Status" value={detailValue(event, "status", "claim_status")} />
+      <DetailPill label="Line of Business" value={detailValue(event, "line_of_business", "lob")} />
+      <DetailPill label="Paid" value={formatCurrency(detailValue(event, "paid_amount", "paid"))} />
+      <DetailPill label="Reserve" value={formatCurrency(detailValue(event, "reserve_amount", "reserve"))} />
+      <DetailPill label="Total Incurred" value={formatCurrency(detailValue(event, "total_incurred", "incurred"))} />
+      <DetailPill label="Loss Date" value={detailValue(event, "loss_date", "date_of_loss")} />
+      <DetailPill label="Claimant" value={detailValue(event, "claimant_name", "claimant")} />
+    </div>
+  );
+}
+
+function GenericDetails({ event }: { event: AuditEvent }) {
+  const details = toDetails(event.details);
+  const entries = Object.entries(details)
+    .filter(([key, value]) => {
+      if (value === null || value === undefined || value === "") return false;
+      if (typeof value === "object") return false;
+      return !["created_at", "generated_at", "generated_at_utc", "event_timestamp_utc"].includes(key);
+    })
+    .slice(0, 9);
+
+  if (!entries.length) {
+    return (
+      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-4 text-sm text-slate-400">
+        No additional details were saved for this event.
+      </div>
+    );
+  }
+
+  return (
+    <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
+      {entries.map(([key, value]) => (
+        <DetailPill
+          key={key}
+          label={prettyAction(key)}
+          value={String(value)}
+        />
+      ))}
+    </div>
   );
 }
 
 function EventDetails({ event }: { event: AuditEvent }) {
-  const details = toDetails(event.details);
-  const validation = toDetails(details.validation);
-  const reported = toDetails(validation.reported_totals);
-  const extracted = toDetails(validation.extracted_totals);
-  const uploadedFile = Array.isArray(details.uploaded_files)
-    ? details.uploaded_files[0]
-    : null;
+  const label = resourceLabel(event).toLowerCase();
 
-  const resource = String(event.resource_type || "").toLowerCase();
-  const action = String(event.action || "").toLowerCase();
+  if (label === "report") return <ReportDetails event={event} />;
+  if (label === "account profile") return <AccountProfileDetails event={event} />;
+  if (label === "upload") return <UploadDetails event={event} />;
+  if (label === "claim") return <ClaimDetails event={event} />;
 
-  if (resource === "claim" || action.includes("claim")) {
-    return (
-      <div className="space-y-3">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
-          <DetailPill label="Claim Number" value={details.claim_number || event.resource_id} tone="emerald" />
-          <DetailPill label="Policy Number" value={details.policy_number} />
-          <StatusPill label="Status" value={details.status} />
-          <DetailPill label="Line of Business" value={details.line_of_business} />
-          <DetailPill label="Paid" value={formatCurrency(details.paid_amount)} />
-          <DetailPill label="Reserve" value={formatCurrency(details.reserve_amount)} />
-          <DetailPill label="Total Incurred" value={formatCurrency(auditReportTotalIncurred(event))} />
-        </div>
-        <RawDetailsButton details={details} />
-      </div>
-    );
-  }
-
-  if (resource === "report" || action.includes("report") || action.includes("packet") || action.includes("memo")) {
-    return (
-      <div className="space-y-3">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
-          <DetailPill label="Report Type" value={prettyAction(details.report_type)} tone="purple" />
-          <DetailPill label="Policy Number" value={details.policy_number || event.resource_id} />
-          <DetailPill label="Business" value={details.business_name} />
-          <StatusPill label="Risk Level" value={details.risk_level} />
-          <DetailPill label="Renewal Score" value={auditReportRenewalScore(event)} />
-          <DetailPill label="Claim Count" value={auditReportClaimCount(event)} />
-          <DetailPill label="Total Incurred" value={formatCurrency(details.total_incurred)} />
-        </div>
-        <RawDetailsButton details={details} />
-      </div>
-    );
-  }
-
-  if (resource === "upload" || action.includes("upload")) {
-    const warningCount =
-      validation.warning_count ??
-      (Array.isArray(validation.warnings) ? validation.warnings.length : undefined);
-
-    return (
-      <div className="space-y-3">
-        <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
-          <DetailPill
-            label="File"
-            value={uploadedFile?.filename || details.filename || "Loss run upload"}
-            tone="blue"
-          />
-          <DetailPill label="Policy Number" value={details.policy_number || event.resource_id} />
-          <DetailPill label="Account Number" value={details.account_number} />
-          <DetailPill label="Claims Saved" value={formatNumber(details.saved_claims ?? uploadedFile?.claims_saved)} tone="emerald" />
-          <DetailPill label="Duplicates" value={formatNumber(details.duplicates_skipped ?? uploadedFile?.duplicates_skipped)} />
-          <DetailPill label="Policy Rows" value={formatNumber(details.policy_count)} />
-          <StatusPill label="Financial Validation" value={validation.financial_validation || validation.status} />
-          <StatusPill label="Renewal Signal" value={validation.renewal_signal} />
-          <StatusPill label="Confidence" value={validation.confidence_level || validation.document_confidence} />
-          <DetailPill label="Extracted Claims" value={formatNumber(extracted.total_claims ?? validation.parsed_claim_count)} />
-          <DetailPill label="Reported Claims" value={formatNumber(reported.reported_total_claims ?? validation.document_total_claims)} />
-          <DetailPill label="Warning Count" value={formatNumber(warningCount)} tone={Number(warningCount || 0) > 0 ? "amber" : "emerald"} />
-        </div>
-
-        {Array.isArray(validation.warnings) && validation.warnings.length > 0 && (
-          <div className="rounded-xl border border-amber-400/20 bg-amber-500/10 p-3">
-            <p className="text-xs font-black uppercase tracking-[0.2em] text-amber-200">Review Notes</p>
-            <ul className="mt-2 grid gap-1 text-sm text-amber-100">
-              {validation.warnings.slice(0, 4).map((warning: string, index: number) => (
-                <li key={`${warning}-${index}`}>- {safeText(warning)}</li>
-              ))}
-            </ul>
-          </div>
-        )}
-
-        <RawDetailsButton details={details} />
-      </div>
-    );
-  }
-
-  return (
-    <div className="space-y-3">
-      <div className="grid grid-cols-1 gap-2 md:grid-cols-3 [&>*]:min-w-0">
-        {Object.entries(details)
-          .slice(0, 6)
-          .map(([key, value]) => (
-            <DetailPill key={key} label={prettyAction(key)} value={typeof value === "object" ? "See details" : value} />
-          ))}
-      </div>
-      <RawDetailsButton details={details} />
-    </div>
-  );
-}
-
-function StatCard({
-  label,
-  value,
-  helper,
-  tone = "slate",
-}: {
-  label: string;
-  value: any;
-  helper: string;
-  tone?: ActionTone;
-}) {
-  return (
-    <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5 shadow-2xl shadow-black/20">
-      <div className="flex items-start justify-between gap-3">
-        <div>
-          <p className="text-sm text-slate-400">{label}</p>
-          <p className="mt-2 text-3xl font-black tracking-tight">{value}</p>
-        </div>
-        <div className={`rounded-xl border px-3 py-2 text-xs font-black ${toneClasses(tone)}`}>
-          {label.split(" ")[0]}
-        </div>
-      </div>
-      <p className="mt-4 text-xs text-slate-500">{helper}</p>
-    </div>
-  );
-}
-
-
-function lossqCleanAuditLogError(error: any): string {
-  const raw = String(error?.message || error || "").trim();
-
-  if (raw.includes("Audit Logs are only available")) {
-    return "Audit Logs are only available on the Agency and Founding Agency packages.";
-  }
-
-  const detailMatch = raw.match(/"detail"\s*:\s*"([^"]+)"/);
-  if (detailMatch?.[1]) {
-    return detailMatch[1];
-  }
-
-  if (raw.includes("403")) {
-    return "Audit Logs are only available on the Agency and Founding Agency packages.";
-  }
-
-  return raw || "Audit log could not be loaded.";
+  return <GenericDetails event={event} />;
 }
 
 export default function AuditLogPage() {
   const router = useRouter();
 
   const [events, setEvents] = useState<AuditEvent[]>([]);
-  // LOSSQ_AUDIT_SORT_ORDER_V1
-  const [sortOrder, setSortOrder] = useState<"newest" | "oldest">("newest");
   const [summary, setSummary] = useState<AuditSummary | null>(null);
-  const [loading, setLoading] = useState(true);
-  const [error, setError] = useState("");
   const [source, setSource] = useState("");
-  const [search, setSearch] = useState("");
-  const [resourceFilter, setResourceFilter] = useState("all");
   const [currentUserEmail, setCurrentUserEmail] = useState("");
+  const [loading, setLoading] = useState(true);
+  const [refreshing, setRefreshing] = useState(false);
+  const [error, setError] = useState("");
+  const [accessChecked, setAccessChecked] = useState(false);
+  const [canAccess, setCanAccess] = useState(true);
+  const [search, setSearch] = useState("");
+  const [categoryFilter, setCategoryFilter] = useState<CategoryFilter>("all");
+  const [sortOrder, setSortOrder] = useState<SortOrder>("newest");
 
-  const totalEvents = useMemo(() => {
-    if (summary?.total_events !== undefined) return summary.total_events;
-    return events.length;
-  }, [summary, events]);
+  const loadAuditLog = useCallback(async () => {
+    const token = getToken();
+
+    if (!token) {
+      router.replace("/login?expired=1");
+      return;
+    }
+
+    setRefreshing(true);
+    setError("");
+
+    try {
+      try {
+        const meRes = await fetch(`${API}/auth/me`, { headers: authHeaders() });
+
+        if (meRes.status === 401) {
+          router.replace("/login?expired=1");
+          return;
+        }
+
+        if (meRes.ok) {
+          const meData = await meRes.json();
+          setCurrentUserEmail(meData?.email || meData?.user_email || "");
+        }
+      } catch {
+        // Non-blocking.
+      }
+
+      try {
+        const billingRes = await fetch(`${API}/billing/status`, {
+          headers: authHeaders(),
+        });
+
+        if (billingRes.status === 401) {
+          router.replace("/login?expired=1");
+          return;
+        }
+
+        if (billingRes.ok) {
+          const billingData = await billingRes.json();
+
+          if (!canAccessAuditLogsFromBilling(billingData)) {
+            setCanAccess(false);
+            setAccessChecked(true);
+            setEvents([]);
+            setSummary(null);
+            return;
+          }
+        }
+      } catch {
+        // Backend still protects the route. Do not block page if billing endpoint is unavailable.
+      }
+
+      setCanAccess(true);
+      setAccessChecked(true);
+
+      const [summaryRes, listRes] = await Promise.all([
+        fetch(`${API}/audit-logs/summary?limit=500`, {
+          headers: authHeaders(),
+        }),
+        fetch(`${API}/audit-logs/?limit=250`, {
+          headers: authHeaders(),
+        }),
+      ]);
+
+      if ([summaryRes.status, listRes.status].includes(401)) {
+        router.replace("/login?expired=1");
+        return;
+      }
+
+      if ([summaryRes.status, listRes.status].includes(403)) {
+        setCanAccess(false);
+        setAccessChecked(true);
+        setEvents([]);
+        setSummary(null);
+        return;
+      }
+
+      if (!listRes.ok) {
+        throw new Error("Audit Log could not be loaded.");
+      }
+
+      const listData = await listRes.json();
+      const summaryData = summaryRes.ok ? await summaryRes.json() : null;
+
+      const nextEvents = Array.isArray(listData?.events) ? listData.events : [];
+
+      setEvents(nextEvents);
+      setSummary(summaryData || null);
+      setSource(listData?.source || summaryData?.source || "");
+    } catch (err: any) {
+      setError(err?.message || "Audit Log could not be loaded.");
+    } finally {
+      setLoading(false);
+      setRefreshing(false);
+    }
+  }, [router]);
+
+  useEffect(() => {
+    loadAuditLog();
+  }, [loadAuditLog]);
+
+  const sortedAllEvents = useMemo(() => {
+    return [...events].sort((a, b) => eventTimestampNumber(b) - eventTimestampNumber(a));
+  }, [events]);
+
+  const computedSummary = useMemo(() => {
+    return computeSummary(sortedAllEvents, summary);
+  }, [sortedAllEvents, summary]);
 
   const filteredEvents = useMemo(() => {
     const cleanSearch = search.trim().toLowerCase();
 
-    return events.filter((event) => {
-      const resource = String(event.resource_type || "").toLowerCase();
-
-      if (resourceFilter !== "all" && resource !== resourceFilter) {
-        return false;
-      }
-
+    return sortedAllEvents.filter((event) => {
+      if (!matchesCategory(event, categoryFilter)) return false;
       if (!cleanSearch) return true;
 
-      const details = JSON.stringify(toDetails(event.details)).toLowerCase();
-
-      return [
-        event.action,
-        event.resource_type,
-        event.resource_id,
-        event.user_full_name,
-        event.actor_name,
-        event.user_name,
-        event.user_email,
-        event.actor_email,
-        currentUserEmail,
-        details,
-      ]
-        .filter(Boolean)
-        .join(" ")
-        .toLowerCase()
-        .includes(cleanSearch);
+      return eventSearchText(event).includes(cleanSearch);
     });
-  }, [events, search, resourceFilter, currentUserEmail]);
+  }, [categoryFilter, search, sortedAllEvents]);
 
-  async function fetchJson(path: string) {
-    const token = getToken();
-
-    const response = await fetch(`${API}${path}`, {
-      method: "GET",
-      headers: {
-        "Content-Type": "application/json",
-        ...(token ? { Authorization: `Bearer ${token}` } : {}),
-      },
-      cache: "no-store",
-    });
-
-    if (response.status === 401) {
-      localStorage.removeItem("lossq_token");
-      localStorage.removeItem("token");
-      localStorage.removeItem("access_token");
-      router.push("/login?expired=1");
-      throw new Error("Your session expired. Please log in again.");
-    }
-
-    if (!response.ok) {
-      const body = await response.text().catch(() => "");
-      let cleanDetail = "";
-      try {
-        cleanDetail = JSON.parse(body)?.detail || "";
-      } catch {
-        cleanDetail = body;
-      }
-
-      throw new Error(cleanDetail || `Audit log request failed with status ${response.status}.`);
-    }
-
-    return response.json();
-  }
-
-  async function loadAuditLog() {
-    setLoading(true);
-    setError("");
-
-    try {
-      const [eventsPayload, summaryPayload] = await Promise.allSettled([
-        fetchJson("/audit-logs/"),
-        fetchJson("/audit-logs/summary"),
-      ]);
-
-      if (eventsPayload.status === "fulfilled") {
-        const data = eventsPayload.value;
-        const nextEvents = Array.isArray(data)
-          ? data
-          : Array.isArray(data.events)
-          ? data.events
-          : Array.isArray(data.audit_logs)
-          ? data.audit_logs
-          : Array.isArray(data.logs)
-          ? data.logs
-          : [];
-
-        setEvents(nextEvents);
-        setSource(data.source || "audit-logs");
-      } else {
-        throw eventsPayload.reason;
-      }
-
-      if (summaryPayload.status === "fulfilled") {
-        setSummary(summaryPayload.value);
-      } else {
-        setSummary(null);
-      }
-    } catch (err: any) {
-      setError(lossqCleanAuditLogError(err));
-      setEvents([]);
-      setSummary(null);
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  useEffect(() => {
-    const token = getToken();
-
-    if (!token) {
-      router.push("/login");
-      return;
-    }
-
-    async function verifyAuditAccessAndLoad() {
-      setLoading(true);
-      setError("");
-
-      try {
-        const response = await fetch(`${API}/billing/status`, {
-          method: "GET",
-          headers: {
-            "Content-Type": "application/json",
-            ...(token ? { Authorization: `Bearer ${token}` } : {}),
-          },
-          cache: "no-store",
-        });
-
-        if (response.status === 401) {
-          localStorage.removeItem("lossq_token");
-          localStorage.removeItem("token");
-          localStorage.removeItem("access_token");
-          router.push("/login?expired=1");
-          return;
-        }
-
-        if (response.status === 403) {
-          setEvents([]);
-          setSummary(null);
-          setError("Audit Logs are only available on the Agency and Founding Agency packages.");
-          setLoading(false);
-          return;
-        }
-
-        const billingData = response.ok ? await response.json() : {};
-
-        if (!canAccessAuditLogsFromBilling(billingData)) {
-          setEvents([]);
-          setSummary(null);
-          setError("Audit Logs are only available on the Agency and Founding Agency packages.");
-          setLoading(false);
-          return;
-        }
-
-        setCurrentUserEmail(getCurrentUserEmail());
-        await loadAuditLog();
-      } catch (err: any) {
-        setEvents([]);
-        setSummary(null);
-        setError(lossqCleanAuditLogError(err));
-        setLoading(false);
-      }
-    }
-
-    verifyAuditAccessAndLoad();
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, []);
-
-
-  // LOSSQ_AUDIT_SORTED_EVENTS_V1
   const sortedAuditEvents = useMemo(() => {
-    const source = Array.isArray(filteredEvents) ? filteredEvents : [];
+    const sourceEvents = Array.isArray(filteredEvents) ? filteredEvents : [];
 
-    const toTime = (event: AuditEvent) => {
-      const raw = eventTime(event);
-      if (!raw) return 0;
-      const parsed = new Date(raw).getTime();
-      return Number.isNaN(parsed) ? 0 : parsed;
-    };
-
-    return [...source].sort((a, b) => {
-      const diff = toTime(b) - toTime(a);
+    return [...sourceEvents].sort((a, b) => {
+      const diff = eventTimestampNumber(b) - eventTimestampNumber(a);
       return sortOrder === "newest" ? diff : -diff;
     });
   }, [filteredEvents, sortOrder]);
 
+  const visibleEvents = sortedAuditEvents.slice(0, 100);
+  const lastEventTime = sortedAllEvents.length ? eventTime(sortedAllEvents[0]) : computedSummary.last_event_at;
+
+  if (!accessChecked && loading) {
+    return (
+      <main className="min-h-screen bg-slate-950 px-6 py-10 text-white">
+        <div className="mx-auto max-w-6xl rounded-3xl border border-white/10 bg-white/[0.04] p-8">
+          <p className="text-lg font-bold">Loading Audit Log...</p>
+        </div>
+      </main>
+    );
+  }
+
+  if (!canAccess) {
+    return (
+      <main className="min-h-screen bg-slate-950 px-6 py-10 text-white">
+        <div className="mx-auto max-w-4xl rounded-3xl border border-amber-400/30 bg-amber-500/10 p-8">
+          <p className="text-xs uppercase tracking-[0.35em] text-amber-200">Audit Log</p>
+          <h1 className="mt-3 text-3xl font-black">Agency package required</h1>
+          <p className="mt-3 text-slate-300">
+            Audit Logs are available on Agency and Founding Agency packages.
+          </p>
+          <button
+            onClick={() => router.push("/settings")}
+            className="mt-6 rounded-xl border border-white/10 px-5 py-3 font-bold text-white hover:bg-white/10"
+          >
+            Back to Settings
+          </button>
+        </div>
+      </main>
+    );
+  }
+
   return (
-    <main className="min-h-screen bg-[#050816] text-white">
-      <header className="border-b border-white/10 bg-black/30 px-6 py-6">
-        <div className="mx-auto flex max-w-7xl flex-col gap-5 md:flex-row md:items-center md:justify-between">
+    <main className="min-h-screen bg-slate-950 text-white">
+      <section className="border-b border-white/10 bg-slate-950/90 px-6 py-8">
+        <div className="mx-auto flex max-w-7xl flex-col gap-5 md:flex-row md:items-end md:justify-between">
           <div>
             <button
               onClick={() => router.push("/settings")}
-              className="mb-4 rounded-xl border border-white/10 px-4 py-2 text-sm text-slate-300 transition hover:bg-white/10 hover:text-white"
+              className="rounded-xl border border-white/10 px-4 py-2 text-sm font-bold text-slate-200 hover:bg-white/10"
             >
-             Back to Settings
+              Back to Settings
             </button>
-            <div className="flex flex-wrap items-center gap-3">
-              <h1 className="text-4xl font-black tracking-tight">Audit Log</h1>
-              <span className="rounded-full border border-blue-400/30 bg-blue-500/10 px-3 py-1 text-xs font-black uppercase tracking-[0.2em] text-blue-200">
+            <div className="mt-6 flex flex-wrap items-center gap-3">
+              <h1 className="text-4xl font-black">Audit Log</h1>
+              <span className="rounded-full border border-blue-400/30 bg-blue-500/10 px-4 py-1 text-xs font-black uppercase tracking-[0.25em] text-blue-200">
                 Compliance Console
               </span>
             </div>
-            <p className="mt-2 max-w-3xl text-slate-400">
-              A clean activity timeline for uploads, derived claim records, reports, exports, and system events.
+            <p className="mt-2 text-slate-400">
+              A clean activity timeline for uploads, claims, reports, exports, account profiles, users, billing, and system events.
             </p>
           </div>
 
           <div className="flex flex-wrap items-center gap-3">
             <div className="rounded-2xl border border-white/10 bg-white/[0.04] px-4 py-3">
-              <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Source</p>
-              <p className="text-sm font-black text-slate-100">{sourceLabel(source || summary?.source)}</p>
+              <p className="text-[10px] uppercase tracking-[0.25em] text-slate-500">Source</p>
+              <p className="text-sm font-black text-white">{source || "Audit Log"}</p>
             </div>
             <button
               onClick={loadAuditLog}
-              className="rounded-xl bg-blue-600 px-5 py-3 font-bold shadow-lg shadow-blue-950/40 transition hover:bg-blue-500"
+              disabled={refreshing}
+              className="rounded-xl bg-blue-600 px-5 py-3 font-black text-white hover:bg-blue-700 disabled:opacity-60"
             >
-              Refresh
+              {refreshing ? "Refreshing..." : "Refresh"}
             </button>
           </div>
         </div>
-      </header>
+      </section>
 
-      <section className="mx-auto grid max-w-7xl gap-6 p-6">
+      <section className="mx-auto max-w-7xl space-y-6 px-6 py-8">
+        {error && (
+          <div className="rounded-2xl border border-rose-400/30 bg-rose-500/10 p-4 text-rose-100">
+            {error}
+          </div>
+        )}
+
         <div className="grid grid-cols-1 gap-4 md:grid-cols-4">
-          <StatCard
-            label="Total Events"
-            value={formatNumber(totalEvents)}
-            helper="Combined organization activity records."
-            tone="slate"
-          />
-          <StatCard
-            label="Uploads"
-            value={formatNumber(summary?.uploads ?? "")}
-            helper="Loss run uploads and file activity."
-            tone="blue"
-          />
-          <StatCard
-            label="Claims"
-            value={formatNumber(summary?.claims ?? "")}
-            helper="Claim records derived from saved claims."
-            tone="emerald"
-          />
-          <StatCard
-            label="Reports"
-            value={formatNumber(summary?.exports ?? "")}
-            helper="Generated reports, packets, and memos."
-            tone="purple"
-          />
+          <SummaryCard label="Total" value={computedSummary.total_events} description="Combined organization activity records." tone="slate" />
+          <SummaryCard label="Uploads" value={computedSummary.uploads} description="Loss run uploads and file activity." tone="blue" />
+          <SummaryCard label="Claims" value={computedSummary.claims} description="Claim records derived from saved claims." tone="emerald" />
+          <SummaryCard label="Reports" value={computedSummary.reports} description="Generated reports, packets, and memos." tone="purple" />
         </div>
 
         <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-5">
-          <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
             <div>
-              <h2 className="text-xl font-black">Activity Filters</h2>
-              <p className="mt-1 text-sm text-slate-400">
-                Search policy numbers, claim numbers, report names, users, or validation results.
+              <h2 className="text-2xl font-black">Activity Filters</h2>
+              <p className="text-sm text-slate-400">
+                Search policy numbers, claim numbers, report names, users, deleted profiles, or validation results.
               </p>
             </div>
 
@@ -901,27 +887,24 @@ export default function AuditLogPage() {
                 value={search}
                 onChange={(event) => setSearch(event.target.value)}
                 placeholder="Search audit activity..."
-                className="w-full rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none placeholder:text-slate-500 focus:border-blue-400/60 md:w-80"
+                className="min-w-[280px] rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-blue-400"
               />
 
               <select
-                value={resourceFilter}
-                onChange={(event) => setResourceFilter(event.target.value)}
-                className="rounded-xl border border-white/10 bg-black/30 px-4 py-3 text-sm text-white outline-none focus:border-blue-400/60"
+                value={categoryFilter}
+                onChange={(event) => setCategoryFilter(event.target.value as CategoryFilter)}
+                className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-blue-400"
               >
-                <option value="all">All Resources</option>
-                <option value="upload">Uploads</option>
-                <option value="claim">Claims</option>
-                <option value="report">Reports</option>
-                <option value="account_profile">Account Profiles</option>
-                <option value="billing">Billing</option>
-                <option value="user">Users</option>
-                <option value="system">System</option>
+                {categoryOptions().map((option) => (
+                  <option key={option.value} value={option.value}>
+                    {option.label}
+                  </option>
+                ))}
               </select>
-              {/* LOSSQ_AUDIT_SORT_DROPDOWN_V1 */}
+
               <select
                 value={sortOrder}
-                onChange={(event) => setSortOrder(event.target.value as "newest" | "oldest")}
+                onChange={(event) => setSortOrder(event.target.value as SortOrder)}
                 className="rounded-xl border border-white/10 bg-slate-950 px-4 py-3 text-white outline-none focus:border-blue-400"
               >
                 <option value="newest">Newest First</option>
@@ -931,118 +914,90 @@ export default function AuditLogPage() {
           </div>
         </div>
 
-        {loading && (
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-10 text-center">
-            <div className="mx-auto h-10 w-10 animate-spin rounded-full border-2 border-white/10 border-t-blue-400" />
-            <p className="mt-4 text-slate-300">Loading audit activity...</p>
-          </div>
-        )}
-
-        {!loading && error && (
-          <div className="rounded-2xl border border-red-500/30 bg-red-500/10 p-6">
-            <h2 className="text-xl font-black text-red-200">Audit Log Error</h2>
-            <p className="mt-2 whitespace-pre-wrap text-red-100">{error}</p>
-            <button
-              onClick={loadAuditLog}
-              className="mt-5 rounded-xl bg-red-500 px-4 py-2 text-sm font-bold text-white hover:bg-red-400"
-            >
-              Retry
-            </button>
-          </div>
-        )}
-
-        {!loading && !error && filteredEvents.length === 0 && (
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] p-10 text-center">
-            <h2 className="text-2xl font-black">No matching audit events</h2>
-            <p className="mt-2 text-slate-400">
-              Clear the search or select a different resource filter.
+        <div className="overflow-hidden rounded-2xl border border-white/10 bg-white/[0.04]">
+          <div className="flex flex-col gap-2 border-b border-white/10 p-5 md:flex-row md:items-end md:justify-between">
+            <div>
+              <h2 className="text-2xl font-black">Recent Activity</h2>
+              <p className="text-sm text-blue-200">
+                Showing {visibleEvents.length} of {filteredEvents.length} filtered records.
+              </p>
+            </div>
+            <p className="text-sm text-slate-500">
+              Last event: {formatDate(lastEventTime)}
             </p>
           </div>
-        )}
 
-        {!loading && !error && filteredEvents.length > 0 && (
-          <div className="rounded-2xl border border-white/10 bg-white/[0.04] shadow-2xl shadow-black/30">
-            <div className="border-b border-white/10 p-5">
-              <div className="flex flex-col gap-2 md:flex-row md:items-end md:justify-between">
-                <div>
-                  <h2 className="text-2xl font-black">Recent Activity</h2>
-                  <p className="mt-1 text-sm text-slate-400">
-                    Showing {formatNumber(filteredEvents.length)} of {formatNumber(events.length)} records.
-                  </p>
-                </div>
-                <p className="text-xs text-slate-500">
-                  Last event: {formatDate(summary?.last_event_at || eventTime(filteredEvents[0]))}
-                </p>
-              </div>
-            </div>
-
-            <div className="grid divide-y divide-white/10">
-              {sortedAuditEvents.map((event, index) => {
-                const tone = actionTone(event);
+          {loading ? (
+            <div className="p-8 text-slate-300">Loading activity...</div>
+          ) : visibleEvents.length === 0 ? (
+            <div className="p-8 text-slate-300">No audit events match the selected filters.</div>
+          ) : (
+            <div className="divide-y divide-white/10">
+              {visibleEvents.map((event, index) => {
+                const tone = eventTone(event);
                 const userName = eventUserName(event);
                 const userEmail = eventUserEmail(event, currentUserEmail);
+                const timeValue = eventTime(event);
 
                 return (
                   <article
                     key={`${event.id || "event"}-${index}`}
-                    className="grid gap-4 p-5 transition hover:bg-white/[0.03] lg:grid-cols-[220px_1fr]"
+                    className="grid grid-cols-1 gap-5 p-5 lg:grid-cols-[190px_1fr]"
                   >
-                    <aside className="space-y-3">
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Time</p>
-                        <p className="mt-1 text-sm font-bold text-slate-200" title={eventTime(event)}>
-                          {formatDate(eventTime(event))}
-                        </p>
-                      </div>
-
-                      <div>
-{/* LOSSQ_AUDIT_LEFT_TIME_VALUE_V4 */}
-                      <p className="text-xs uppercase tracking-[0.35em] text-slate-500">TIME</p>
-                      <p className="mt-2 mb-4 text-sm font-bold text-slate-100">
-                        {eventTime(event) ? formatDate(eventTime(event)) : "-"}
+                    <aside className="min-w-0 text-sm">
+                      <p className="text-xs uppercase tracking-[0.35em] text-slate-500">Time</p>
+                      <p className="mt-2 break-words text-sm font-bold leading-relaxed text-slate-100">
+                        {formatDate(timeValue)}
                       </p>
-                      <p className="text-xs uppercase tracking-[0.2em] text-slate-500">User</p>
-                        {userName ? (
-                          <p className="mt-1 break-words text-sm font-bold text-slate-100">
-                            {userName}
-                          </p>
-                        ) : null}
-                        <p className="mt-1 break-all text-sm text-slate-300">
-                          {userEmail || "System"}
-                        </p>
-                      </div>
 
-                      <div>
-                        <p className="text-xs uppercase tracking-[0.2em] text-slate-500">Resource ID</p>
-                        <p className="mt-1 break-all text-xs text-slate-400">
-                          {safeText(event.resource_id)}
-                        </p>
-                      </div>
+                      <p className="mt-5 text-xs uppercase tracking-[0.35em] text-slate-500">User</p>
+                      <p className="mt-2 break-words font-bold text-white">{userName || "-"}</p>
+                      <p className="mt-1 break-words text-slate-300">{userEmail || "-"}</p>
+
+                      <p className="mt-5 text-xs uppercase tracking-[0.35em] text-slate-500">Resource ID</p>
+                      <p className="mt-2 break-words text-blue-200">{eventResourceId(event)}</p>
                     </aside>
 
-                    <div className="space-y-4">
+                    <section className="min-w-0 space-y-4">
                       <div className="flex flex-wrap items-center gap-3">
                         <span className={`rounded-full border px-3 py-1 text-xs font-black ${toneClasses(tone)}`}>
                           {resourceLabel(event)}
                         </span>
-                        <h3 className="text-xl font-black tracking-tight">
+                        <h3 className="min-w-0 break-words text-xl font-black tracking-tight">
                           {prettyAction(event.action)}
                         </h3>
-
                       </div>
 
                       <EventDetails event={event} />
-                    </div>
+
+                      <details className="rounded-xl border border-white/10 bg-slate-950/50">
+                        <summary className="cursor-pointer px-4 py-3 text-sm font-bold text-slate-200">
+                          View technical details
+                        </summary>
+                        <pre className="max-h-80 overflow-auto border-t border-white/10 p-4 text-xs text-slate-300">
+                          {JSON.stringify(
+                            {
+                              id: event.id,
+                              created_at: event.created_at,
+                              timestamp: event.timestamp,
+                              action: event.action,
+                              resource_type: event.resource_type,
+                              resource_id: event.resource_id,
+                              details: toDetails(event.details),
+                            },
+                            null,
+                            2
+                          )}
+                        </pre>
+                      </details>
+                    </section>
                   </article>
                 );
               })}
             </div>
-          </div>
-        )}
+          )}
+        </div>
       </section>
     </main>
   );
-
-
-
 }
