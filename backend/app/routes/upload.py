@@ -5347,6 +5347,19 @@ def lossq_pdf_messy_block_mini_repair_v1(file_path, parsed_claims=None, parsed_p
     except Exception:
       return 0.0
 
+
+  def money_text(value):
+    amount = money(value)
+    if amount <= 0:
+      return ""
+    if float(amount).is_integer():
+      return str(int(amount))
+    return f"{amount:.2f}"
+
+  def plausible_premium(value):
+    amount = money(value)
+    return amount > 0 and amount < 100000000
+
   def norm_date(value):
     raw = clean(value)
     match = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})", raw)
