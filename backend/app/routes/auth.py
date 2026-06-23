@@ -35,6 +35,7 @@ INVITE_TOKEN_EXPIRE_MINUTES = 10080
 FRONTEND_URL = os.getenv("FRONTEND_URL", "https://lossq.com").rstrip("/")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "LossQ <onboarding@resend.dev>")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
+REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").strip().lower() in {"1", "true", "yes", "on"}
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 
@@ -345,6 +346,60 @@ def email_shell(title: str, preview: str, button_text: str, button_url: str, foo
     """
 
 
+
+# LOSSQ_EMAIL_VERIFICATION_ENFORCEMENT_V1
+def lossq_send_verification_email(user):
+    if not user or not getattr(user, "email", None):
+        return None
+
+    verify_token = create_token({"sub": user.email, "type": "email_verify"}, VERIFY_TOKEN_EXPIRE_MINUTES)
+    verify_link = f"{FRONTEND_URL}/verify-email?token={verify_token}"
+
+    return send_email(
+        user.email,
+        "Verify your LossQ email",
+        email_shell(
+            title="Verify your LossQ email",
+            preview="Confirm your email to protect your LossQ account.",
+            button_text="Verify Email",
+            button_url=verify_link,
+            footer_note="This verification link expires in 24 hours. If you did not create a LossQ account, you can ignore this email.",
+        ),
+    )
+
+
+def lossq_email_verification_required(user):
+    if not REQUIRE_EMAIL_VERIFICATION:
+        return False
+    if not user:
+        return False
+    if bool(getattr(user, "is_email_verified", False)):
+        return False
+
+    email = str(getattr(user, "email", "") or "").strip().lower()
+    owner_email = os.getenv("LOSSQ_OWNER_EMAIL", "tmckenzie49@gmail.com").strip().lower()
+    if email and email == owner_email:
+        return False
+
+    role = str(getattr(user, "role", "") or "").strip().lower()
+    if role in {"founder", "platform_admin", "support", "tech_support"}:
+        return False
+
+    return True
+
+
+def lossq_raise_unverified_email(user, resend=False):
+    if resend:
+        try:
+            lossq_send_verification_email(user)
+        except Exception as exc:
+            print("LOSSQ_EMAIL_VERIFICATION_RESEND_ON_BLOCK_ERROR:", str(exc)[:250])
+
+    raise HTTPException(
+        status_code=403,
+        detail="Email verification required. Check your inbox for the verification link.",
+    )
+
 def public_user(user: User):
     return {
         "id": user.id,
@@ -428,6 +483,9 @@ def get_current_user(
 
     if not bool(user.is_active):
         raise HTTPException(status_code=403, detail="User account is disabled")
+    # LOSSQ_EMAIL_VERIFICATION_GET_CURRENT_USER_ENFORCE_V1
+    if lossq_email_verification_required(user):
+        lossq_raise_unverified_email(user)
 
     # LOSSQ_SINGLE_ACTIVE_SESSION_ENFORCE_V1
     enforce_active_session(payload, user, db)
@@ -687,6 +745,9 @@ def login_user(data: LoginRequest, request: Request, db: Session = Depends(get_d
 
     if not bool(user.is_active):
         raise HTTPException(status_code=403, detail="User account is disabled")
+    # LOSSQ_EMAIL_VERIFICATION_LOGIN_ENFORCE_V1
+    if lossq_email_verification_required(user):
+        lossq_raise_unverified_email(user, resend=True)
 
     previous_session_id = getattr(user, "active_session_id", None)
 
@@ -999,6 +1060,26 @@ def remove_org_user(user_id: int, request: Request, current_user: User = Depends
     return {"message": f"{removed_email} was deleted from the account.", "deleted_user_id": user_id}
 
 
+
+
+@router.post("/resend-verification")
+def resend_verification(data: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
+    clean_email = data.email.strip().lower()
+    user = db.query(User).filter(User.email == clean_email).first()
+
+    if user and bool(user.is_active) and not bool(user.is_email_verified):
+        lossq_send_verification_email(user)
+        record_audit_event(
+            db,
+            current_user=audit_actor(user),
+            action="email_verification_resent",
+            entity_type="user",
+            entity_id=str(user.id),
+            details={"email": user.email},
+            request=request,
+        )
+
+    return {"message": "If an unverified account exists, a verification email has been sent."}
 @router.post("/forgot-password")
 def forgot_password(data: ForgotPasswordRequest, request: Request, db: Session = Depends(get_db)):
     clean_email = data.email.strip().lower()
