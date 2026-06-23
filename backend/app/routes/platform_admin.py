@@ -10,6 +10,7 @@ import urllib.error
 
 from app.database import SessionLocal
 from app.auth_utils import get_current_user
+from app.services.audit_service import write_audit_event
 
 router = APIRouter(prefix="/platform-admin", tags=["Platform Admin"])
 
@@ -125,12 +126,48 @@ def require_founder_or_tech_support(current_user=Depends(get_current_user)):
   return require_platform_admin(current_user)
 
 
+# LOSSQ_PLATFORM_ADMIN_AUDIT_EVENTS_V1
+def lossq_platform_record_audit(
+  db: Session,
+  current_user,
+  request: Request,
+  action: str,
+  resource_type: str = "platform_admin",
+  resource_id: str = "",
+  details: dict | None = None,
+):
+  """
+  Best-effort audit logging for internal LossQ admin actions.
+  Never block the admin route if audit logging fails.
+  """
+  try:
+    write_audit_event(
+      db=db,
+      current_user=current_user,
+      action=action,
+      resource_type=resource_type,
+      resource_id=str(resource_id or ""),
+      details=details or {},
+      request=request,
+    )
+  except Exception as exc:
+    print("LOSSQ_PLATFORM_ADMIN_AUDIT_ERROR:", str(exc)[:300])
+
+
 @router.get("/stats")
 def platform_stats(
+  request: Request,
   db: Session = Depends(get_db),
   current_user: dict = Depends(get_current_user),
 ):
   require_platform_admin(current_user)
+  lossq_platform_record_audit(
+    db=db,
+    current_user=current_user,
+    request=request,
+    action="platform_admin_stats_viewed",
+    details={"section": "stats"},
+  )
 
   stats = {
     "total_users": 0,
@@ -161,10 +198,18 @@ def platform_stats(
 
 @router.get("/users")
 def platform_users(
+  request: Request,
   db: Session = Depends(get_db),
   current_user: dict = Depends(get_current_user),
 ):
   require_platform_admin(current_user)
+  lossq_platform_record_audit(
+    db=db,
+    current_user=current_user,
+    request=request,
+    action="platform_admin_users_viewed",
+    details={"section": "users"},
+  )
 
   if not table_exists(db, "users"):
     return {"users": [], "message": "No users table found."}
@@ -246,10 +291,18 @@ def platform_users(
 
 @router.get("/organizations")
 def platform_organizations(
+  request: Request,
   db: Session = Depends(get_db),
   current_user: dict = Depends(get_current_user),
 ):
   require_platform_admin(current_user)
+  lossq_platform_record_audit(
+    db=db,
+    current_user=current_user,
+    request=request,
+    action="platform_admin_organizations_viewed",
+    details={"section": "organizations"},
+  )
 
   if not table_exists(db, "organizations"):
     return {"organizations": [], "message": "No organizations table found."}
@@ -295,6 +348,7 @@ def platform_organizations(
 
 @router.get("/support-lookup")
 def platform_support_lookup(
+  request: Request,
   q: str = "",
   db: Session = Depends(get_db),
   current_user=Depends(require_founder_or_tech_support),
@@ -395,6 +449,21 @@ def platform_support_lookup(
       rows = db.execute(text(f"SELECT {', '.join(selected_org_columns)} FROM organizations")).fetchall()
       organizations = [row_to_dict(row) for row in rows]
       organizations = [org for org in organizations if matches(org)]
+
+  lossq_platform_record_audit(
+    db=db,
+    current_user=current_user,
+    request=request,
+    action="support_lookup_searched",
+    resource_type="support_lookup",
+    details={
+      "query_length": len(query_value),
+      "contains_email_symbol": "@" in query_value,
+      "digits_count": len(phone_digits),
+      "user_count": len(users),
+      "organization_count": len(organizations),
+    },
+  )
 
   return {
     "query": q,
