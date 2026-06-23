@@ -7296,40 +7296,57 @@ def get_report_agency_info(db, current_user):
     }
 
 
+# LOSSQ_PDF_CREATOR_NON_OWNER_SAFE_V1
 def get_creator(current_user: dict | None, db=None):
+    """
+    Safe PDF creator display.
+    Do not show raw email in Created By.
+    Do not query DB here because non-owner/current_user payloads can be thinner.
+    """
     user = current_user or {}
 
-    db_name = lossq_pdf_user_name_from_db(db, user)
-    if db_name and "@" not in db_name:
-        return db_name
+    def _value(key):
+        try:
+            if isinstance(user, dict):
+                return clean(user.get(key) or "")
+            return clean(getattr(user, key, "") or "")
+        except Exception:
+            return ""
 
-    first = clean(user.get("first_name") or user.get("firstName") or "")
-    last = clean(user.get("last_name") or user.get("lastName") or "")
-    full_name = f"{first} {last}".strip()
+    first = _value("first_name") or _value("firstName")
+    last = _value("last_name") or _value("lastName")
+    full = f"{first} {last}".strip()
 
-    creator = (
-        full_name
-        or user.get("full_name")
-        or user.get("fullName")
-        or user.get("name")
-        or user.get("display_name")
-        or user.get("displayName")
-        or user.get("username")
-        or user.get("agency_user_name")
-        or user.get("producer_name")
-    )
+    if full and "@" not in full:
+        return full
 
-    creator = clean(creator)
+    for key in [
+        "full_name",
+        "fullName",
+        "name",
+        "display_name",
+        "displayName",
+        "username",
+        "agency_user_name",
+        "producer_name",
+        "owner_name",
+    ]:
+        candidate = _value(key)
+        if candidate and "@" not in candidate:
+            return candidate
 
-    if creator and "@" not in creator:
-        return creator
+    email = _value("email") or _value("user_email")
+    if email and "@" in email:
+        local = email.split("@", 1)[0]
+        local = re.sub(r"[._\-]+", " ", local)
+        local = re.sub(r"\d+", " ", local)
+        local = re.sub(r"\s+", " ", local).strip()
 
-    email = clean(user.get("email") or user.get("user_email") or "")
-    email_display_name = lossq_pdf_display_name_from_email_local_part(email)
-    if email_display_name:
-        return email_display_name
+        if local:
+            return " ".join(part.capitalize() for part in local.split())
 
     return "Account User"
+
 
 def get_logo_path():
     candidates = [
