@@ -96,6 +96,28 @@ export default function SettingsPage() {
   const isAdmin = String(me?.role || "").toLowerCase() === "admin";
   const canManageUsers = isOwner || isAdmin;
 
+  // LOSSQ_SETTINGS_BETA_ONLY_LINKS_V1
+  // Beta links should only appear for beta / beta_access / early_access accounts.
+  const organizationForBetaSettings = organization as any;
+  const meForBetaSettings = me as any;
+
+  const settingsPlan = String(
+    organizationForBetaSettings?.plan ||
+      organizationForBetaSettings?.subscription_plan ||
+      organizationForBetaSettings?.billing_plan ||
+      organizationForBetaSettings?.package ||
+      meForBetaSettings?.plan ||
+      meForBetaSettings?.subscription_plan ||
+      ""
+  )
+    .trim()
+    .toLowerCase();
+
+  const showBetaSettingsLinks =
+    settingsPlan === "beta" ||
+    settingsPlan === "beta_access" ||
+    settingsPlan === "early_access";
+
   // LOSSQ_INTERNAL_ADMIN_LINK_VISIBILITY_V2
   // Platform Admin and Support Lookup are LossQ-internal tools.
   // Do not allow normal customer owners/admins or generic @lossq.com test users.
@@ -392,44 +414,33 @@ export default function SettingsPage() {
               Billing & Subscription
             </a>
 
+            {showBetaSettingsLinks && (
             <a
               href="/beta-exit-survey"
               className="rounded-xl border border-purple-400/30 bg-purple-500/10 px-5 py-3 font-semibold text-purple-100 hover:bg-purple-500/20"
             >
               Exit Survey
             </a>
+            )}
 
+            {showBetaSettingsLinks && (
             <a
               href="/beta-feedback"
               className="rounded-xl border border-orange-400/30 bg-orange-500/10 px-5 py-3 font-semibold text-orange-100 hover:bg-orange-500/20"
             >
               Beta Feedback
             </a>
+            )}
 
+            {showBetaSettingsLinks && (
             <a
               href="/beta-guide"
               className="rounded-xl border border-blue-400/30 bg-blue-500/10 px-5 py-3 font-semibold text-blue-100 hover:bg-blue-500/20"
             >
               Beta Guide
             </a>
-
-            {canSeePlatformAdminLinks && (
-            <a
-              href="/platform-admin"
-              className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-5 py-3 font-semibold text-cyan-100 hover:bg-cyan-500/20"
-            >
-              Platform Admin
-            </a>
             )}
 
-            {canSeePlatformAdminLinks && (
-            <a
-              href="/settings/support-lookup"
-              className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-semibold text-cyan-100 hover:bg-cyan-400/20"
-            >
-              Support Lookup
-            </a>
-            )}
 
 <a href="/audit-log" className="rounded-xl border border-purple-400/30 bg-purple-500/10 px-5 py-3 font-semibold text-purple-100 hover:bg-purple-500/20">
               Audit Log
