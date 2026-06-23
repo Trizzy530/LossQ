@@ -121,12 +121,14 @@ export default function SettingsPage() {
   // LOSSQ_INTERNAL_ADMIN_LINK_VISIBILITY_V2
   // Platform Admin and Support Lookup are LossQ-internal tools.
   // Do not allow normal customer owners/admins or generic @lossq.com test users.
-  const internalRole = String(me?.role || "").trim().toLowerCase();
-  const internalEmail = String(me?.email || "").trim().toLowerCase();
+  // LOSSQ_SETTINGS_INTERNAL_USER_VISIBILITY_FIX_V1
+  // /auth/me can return either the user directly or nested under { user }.
+  const internalUser = (me as any)?.user || me;
+  const internalRole = String(internalUser?.role || "").trim().toLowerCase();
+  const internalEmail = String(internalUser?.email || "").trim().toLowerCase();
 
   const LOSSQ_INTERNAL_ADMIN_EMAIL_ALLOWLIST = new Set([
     "tmckenzie49@gmail.com",
-    "support@lossq.com",
   ]);
 
   const canSeePlatformAdminLinks =
@@ -135,9 +137,6 @@ export default function SettingsPage() {
       "platform_owner",
       "platform_admin",
       "super_admin",
-      "support",
-      "support_admin",
-      "tech_support",
     ].includes(internalRole) ||
     LOSSQ_INTERNAL_ADMIN_EMAIL_ALLOWLIST.has(internalEmail);
 
