@@ -5317,6 +5317,318 @@ def lossq_pdf_full_claim_block_extract_before_save_v1(file_path, parsed_claims=N
   return parsed_claims, parsed_profile
 
 
+# LOSSQ_PDF_MESSY_BLOCK_MINI_REPAIR_V1
+def lossq_pdf_messy_block_mini_repair_v1(file_path, parsed_claims=None, parsed_profile=None, direct_profile=None):
+  """
+  PDF-only universal overlay for messy claim-block loss runs.
+
+  It reads labeled evidence from the uploaded PDF and only replaces claims/profile
+  when it extracts stronger claim-block results than the current parser.
+  """
+  import re
+
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+  parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+  direct_profile = direct_profile if isinstance(direct_profile, dict) else {}
+
+  if not str(file_path or "").lower().endswith(".pdf"):
+    return parsed_claims, parsed_profile, direct_profile
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", " ").strip())
+
+  def money(value):
+    raw = clean(value).replace("$", "").replace(",", "").replace("(", "-").replace(")", "")
+    match = re.search(r"-?\d+(?:\.\d+)?", raw)
+    if not match:
+      return 0.0
+    try:
+      return float(match.group(0))
+    except Exception:
+      return 0.0
+
+  def norm_date(value):
+    raw = clean(value)
+    match = re.search(r"(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})", raw)
+    if not match:
+      return raw
+    month, day, year = match.groups()
+    if len(year) == 2:
+      year = "20" + year
+    return f"{int(month):02d}/{int(day):02d}/{year}"
+
+  try:
+    from pypdf import PdfReader
+    raw_text = "\n".join((page.extract_text() or "") for page in PdfReader(file_path).pages)
+  except Exception as exc:
+    print("LOSSQ_PDF_MESSY_BLOCK_MINI_REPAIR_READ_ERROR_V1:", str(exc)[:200])
+    return parsed_claims, parsed_profile, direct_profile
+
+  if not clean(raw_text):
+    return parsed_claims, parsed_profile, direct_profile
+
+  if "Claim Number" not in raw_text or "Line / Coverage" not in raw_text:
+    return parsed_claims, parsed_profile, direct_profile
+
+  def put_profile(key, value, aliases=()):
+    value = clean(value)
+    if not value:
+      return
+    parsed_profile[key] = value
+    direct_profile[key] = value
+    for alias in aliases:
+      parsed_profile[alias] = value
+      direct_profile[alias] = value
+
+  def title_carrier(value):
+    value = clean(value).strip(" :-|")
+    if not value:
+      return ""
+    value = value.title()
+    for old, new in {
+      " Llc": " LLC",
+      " Inc": " Inc.",
+      " Co": " Co.",
+      " Ltd": " Ltd.",
+      " Usa": " USA",
+    }.items():
+      value = value.replace(old, new)
+    return value
+
+  heading = re.search(
+    r"(?im)^\s*([A-Z][A-Z0-9&.,' -]{4,120}?)\s*-\s*(?:LOSS|CLAIM|CLAIMS)\s+(?:EXPERIENCE|RUN|SUMMARY)\b",
+    raw_text,
+  )
+  if heading:
+    put_profile("carrier_name", title_carrier(heading.group(1)), ("writing_carrier", "carrier"))
+
+  insured = re.search(r"(?is)\bNamed\s+Insured\s*:\s*(.+?)(?=\s+Account\s*#|\n)", raw_text)
+  if insured:
+    put_profile("business_name", clean(insured.group(1)), ("insured_name", "named_insured", "account_name"))
+
+  account = re.search(r"(?is)\bAccount\s*#\s*:\s*([A-Z0-9./_-]+)", raw_text)
+  if account:
+    put_profile("account_number", clean(account.group(1)), ("account_no", "account"))
+
+  customer = re.search(r"(?is)\bCustomer\s+No\s*:\s*([A-Z0-9./_-]+)", raw_text)
+  if customer:
+    put_profile("customer_number", clean(customer.group(1)))
+
+  agency = re.search(r"(?is)\bProducing\s+Agency\s*:\s*(.+?)(?=\s+Evaluation\s+Date|\n)", raw_text)
+  if agency:
+    put_profile("producing_agency", clean(agency.group(1)), ("agency_name", "producer"))
+
+  evaluation_date = re.search(r"(?is)\bEvaluation\s+Date\s*:\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})", raw_text)
+  if evaluation_date:
+    put_profile("evaluation_date", norm_date(evaluation_date.group(1)), ("valuation_date",))
+
+  term = re.search(
+    r"(?is)\bPolicy\s+Term\s*:\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+to\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+    raw_text,
+  )
+  if term:
+    put_profile("effective_date", norm_date(term.group(1)), ("policy_effective_date",))
+    put_profile("expiration_date", norm_date(term.group(2)), ("policy_expiration_date",))
+
+  carrier_name = parsed_profile.get("carrier_name") or direct_profile.get("carrier_name") or ""
+
+  schedule_match = re.search(
+    r"(?is)\bPolicy\s+Schedule\b(.+?)(?=\n\s*(?:Carrier\s+comment|CLAIM\s+DETAIL|Claim\s+Number)\b)",
+    raw_text,
+  )
+  schedule_text = schedule_match.group(1) if schedule_match else ""
+
+  policy_re = re.compile(
+    r"(?im)^\s*([A-Za-z][A-Za-z &'/-]{2,70}?)\s+([A-Z]{1,12}-[A-Z0-9-]{3,})\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*-\s*(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+(\$?[\d,]+(?:\.\d{2})?)"
+  )
+
+  policies = []
+  seen_policies = set()
+
+  for match in policy_re.finditer(schedule_text):
+    line_name = clean(match.group(1))
+    policy_number = clean(match.group(2)).upper()
+
+    if policy_number in seen_policies:
+      continue
+
+    seen_policies.add(policy_number)
+
+    policies.append({
+      "policy_number": policy_number,
+      "policy_type": line_name,
+      "line_of_business": line_name,
+      "coverage": line_name,
+      "carrier": carrier_name,
+      "carrier_name": carrier_name,
+      "writing_carrier": carrier_name,
+      "effective_date": norm_date(match.group(3)),
+      "expiration_date": norm_date(match.group(4)),
+      "premium": clean(match.group(5)),
+      "current_premium": clean(match.group(5)),
+      "claim_count": 0,
+      "total_incurred": 0.0,
+    })
+
+  claim_re = re.compile(
+    r"(?is)\bClaim\s+Number\s+([A-Z0-9][A-Z0-9./-]{2,45})\s+Policy\s+([A-Z0-9][A-Z0-9./-]{2,45})"
+  )
+
+  starts = list(claim_re.finditer(raw_text))
+  extracted_claims = []
+
+  for index, match in enumerate(starts):
+    claim_number = clean(match.group(1)).upper()
+    policy_number = clean(match.group(2)).upper()
+
+    if claim_number == policy_number:
+      continue
+    if not re.search(r"\d", claim_number):
+      continue
+    if re.search(r"\b(POLICY|CLAIM|NUMBER|LINE|COVERAGE|STATUS|SUMMARY|TOTAL)\b", claim_number):
+      continue
+
+    end = starts[index + 1].start() if index + 1 < len(starts) else len(raw_text)
+    body = raw_text[match.end():end]
+
+    line_status = re.search(
+      r"(?is)\bLine\s*/\s*Coverage\s+(.+?)\s+Status\s+(.+?)(?=\s+Claimant\b|\n)",
+      body,
+    )
+    line_name = clean(line_status.group(1)) if line_status else ""
+    status = clean(line_status.group(2)) if line_status else ""
+
+    claimant_state = re.search(r"(?is)\bClaimant\s+(.+?)\s+Jurisdiction\s+([A-Z]{2})\b", body)
+    claimant = clean(claimant_state.group(1)) if claimant_state else ""
+    state = clean(claimant_state.group(2)).upper() if claimant_state else ""
+
+    dates = re.search(
+      r"(?is)\bDate\s+of\s+Loss\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s+Reported\s*/\s*Closed\s+(\d{1,2}[/-]\d{1,2}[/-]\d{2,4})\s*/\s*(OPEN|\d{1,2}[/-]\d{1,2}[/-]\d{2,4})",
+      body,
+    )
+    date_of_loss = norm_date(dates.group(1)) if dates else ""
+    date_reported = norm_date(dates.group(2)) if dates else ""
+    closed_raw = clean(dates.group(3)) if dates else ""
+    date_closed = "" if closed_raw.upper() == "OPEN" else norm_date(closed_raw)
+
+    amounts = re.search(
+      r"(?is)\bPaid\s+(\$?[\d,]+(?:\.\d{2})?)\s+Reserve\s*/\s*Incurred\s+(\$?[\d,]+(?:\.\d{2})?)\s*/\s*(\$?[\d,]+(?:\.\d{2})?)",
+      body,
+    )
+    paid = money(amounts.group(1)) if amounts else 0.0
+    reserve = money(amounts.group(2)) if amounts else 0.0
+    incurred = money(amounts.group(3)) if amounts else paid + reserve
+
+    examiner = ""
+    examiner_match = re.search(r"(?is)\bExaminer\s+(.+?)\s+Description\b", body)
+    if examiner_match:
+      examiner = clean(examiner_match.group(1))
+
+    description = ""
+    description_match = re.search(
+      r"(?is)\bDescription\s+(.+?)(?=\n\s*(?:CLAIM\s+DETAIL\s+BLOCK|LOSS\s+SUMMARY)\b|$)",
+      body,
+    )
+    if description_match:
+      description = clean(description_match.group(1))
+
+    extracted_claims.append({
+      "business_name": parsed_profile.get("business_name", ""),
+      "named_insured": parsed_profile.get("named_insured", ""),
+      "insured_name": parsed_profile.get("insured_name", ""),
+      "carrier_name": carrier_name,
+      "writing_carrier": carrier_name,
+      "producing_agency": parsed_profile.get("producing_agency", ""),
+      "policy_number": policy_number,
+      "policy": policy_number,
+      "policy_type": line_name,
+      "line_of_business": line_name,
+      "claim_type": line_name,
+      "coverage": line_name,
+      "claim_number": claim_number,
+      "claim_no": claim_number,
+      "status": status,
+      "claim_status": status,
+      "claimant": claimant,
+      "claimant_name": claimant,
+      "jurisdiction": state,
+      "state": state,
+      "date_of_loss": date_of_loss,
+      "loss_date": date_of_loss,
+      "date_reported": date_reported,
+      "reported_date": date_reported,
+      "date_closed": date_closed,
+      "closed_date": date_closed,
+      "paid_amount": paid,
+      "paid": paid,
+      "reserve_amount": reserve,
+      "reserve": reserve,
+      "total_incurred": incurred,
+      "incurred": incurred,
+      "total": incurred,
+      "adjuster": examiner,
+      "examiner": examiner,
+      "description": description,
+      "loss_description": description,
+    })
+
+  if policies:
+    stats = {}
+    for claim in extracted_claims:
+      policy_key = clean(claim.get("policy_number")).upper()
+      stats.setdefault(policy_key, {"claim_count": 0, "total_incurred": 0.0})
+      stats[policy_key]["claim_count"] += 1
+      stats[policy_key]["total_incurred"] += money(claim.get("total_incurred"))
+
+    for policy in policies:
+      policy_key = clean(policy.get("policy_number")).upper()
+      if policy_key in stats:
+        policy["claim_count"] = stats[policy_key]["claim_count"]
+        policy["total_incurred"] = stats[policy_key]["total_incurred"]
+
+    parsed_profile["policies"] = policies
+    parsed_profile["policy_schedule"] = policies
+    parsed_profile["policy_numbers"] = [p.get("policy_number") for p in policies if p.get("policy_number")]
+    direct_profile["policies"] = policies
+    direct_profile["policy_schedule"] = policies
+    direct_profile["policy_numbers"] = parsed_profile["policy_numbers"]
+
+  existing_total = sum(money(c.get("total_incurred") or c.get("incurred")) for c in parsed_claims if isinstance(c, dict))
+  extracted_total = sum(money(c.get("total_incurred") or c.get("incurred")) for c in extracted_claims)
+
+  if extracted_claims and (len(extracted_claims) >= len(parsed_claims or []) or extracted_total > existing_total):
+    parsed_claims = extracted_claims
+    parsed_profile["claims"] = extracted_claims
+    parsed_profile["parsed_claims"] = extracted_claims
+    parsed_profile["claim_count"] = len(extracted_claims)
+    parsed_profile["total_claims"] = len(extracted_claims)
+    parsed_profile["open_claims"] = sum(1 for c in extracted_claims if clean(c.get("status")).lower() == "open")
+    parsed_profile["closed_claims"] = sum(1 for c in extracted_claims if clean(c.get("status")).lower() == "closed")
+    parsed_profile["total_paid"] = sum(money(c.get("paid_amount")) for c in extracted_claims)
+    parsed_profile["total_reserve"] = sum(money(c.get("reserve_amount")) for c in extracted_claims)
+    parsed_profile["total_incurred"] = extracted_total
+
+    direct_profile["claims"] = extracted_claims
+    direct_profile["parsed_claims"] = extracted_claims
+    direct_profile["claim_count"] = len(extracted_claims)
+    direct_profile["total_claims"] = len(extracted_claims)
+    direct_profile["open_claims"] = parsed_profile["open_claims"]
+    direct_profile["closed_claims"] = parsed_profile["closed_claims"]
+    direct_profile["total_paid"] = parsed_profile["total_paid"]
+    direct_profile["total_reserve"] = parsed_profile["total_reserve"]
+    direct_profile["total_incurred"] = extracted_total
+
+  print("LOSSQ_PDF_MESSY_BLOCK_MINI_REPAIR_V1:", {
+    "business_name": parsed_profile.get("business_name"),
+    "carrier_name": parsed_profile.get("carrier_name"),
+    "producing_agency": parsed_profile.get("producing_agency"),
+    "policies": len(policies),
+    "claims": len(parsed_claims or []),
+    "claim_numbers": [c.get("claim_number") for c in (parsed_claims or [])[:10] if isinstance(c, dict)],
+  })
+
+  return parsed_claims, parsed_profile, direct_profile
+
 # LOSSQ_PDF_FINAL_CARRIER_LABEL_REPAIR_V1
 def lossq_pdf_final_carrier_label_repair_v1(file_path, parsed_profile=None, direct_profile=None):
   """
@@ -15346,6 +15658,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     )
 
 
+    # LOSSQ_PDF_MESSY_BLOCK_MINI_REPAIR_CALL_V1
+    parsed_claims, parsed_profile, direct_profile = lossq_pdf_messy_block_mini_repair_v1(
+      file_path,
+      parsed_claims,
+      parsed_profile,
+      direct_profile,
+    )
     all_parsed_claims.extend(parsed_claims)
 
     # LOSSQ_CANONICAL_UPLOAD_CLAIM_PURGE_V1
