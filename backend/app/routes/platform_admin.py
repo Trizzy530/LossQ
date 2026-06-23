@@ -24,6 +24,23 @@ def get_db():
 
 
 # LOSSQ_INTERNAL_PLATFORM_ACCESS_GUARD_V2
+# LOSSQ_PLATFORM_ADMIN_EMAIL_HELPERS_SPLIT_V1
+def _lossq_platform_admin_emails():
+  return {
+    item.strip().lower()
+    for item in os.getenv("PLATFORM_ADMIN_EMAILS", "").split(",")
+    if item.strip()
+  }
+
+
+def _lossq_tech_support_emails():
+  return {
+    item.strip().lower()
+    for item in os.getenv("TECH_SUPPORT_EMAILS", "").split(",")
+    if item.strip()
+  }
+
+
 def _lossq_internal_access_emails():
   platform_emails = [
     item.strip().lower()
@@ -49,19 +66,11 @@ def _lossq_current_user_value(current_user, key):
     return ""
 
 
+# LOSSQ_PLATFORM_ADMIN_STRICT_ROLE_GATE_V1
 def require_platform_admin(current_user: dict):
   """
-  Platform Admin is LossQ-internal only.
-
-  Allowed:
-  - Emails explicitly listed in PLATFORM_ADMIN_EMAILS or TECH_SUPPORT_EMAILS
-  - Internal platform/support roles
-
-  Not allowed:
-  - Regular customer owners
-  - Regular customer admins
-  - Regular customer users
-  - Founding Agency customers unless explicitly allowlisted
+  Full Platform Admin is LossQ-internal only.
+  Support roles are intentionally excluded from full platform-admin control.
   """
   user_email = (
     _lossq_current_user_value(current_user, "email")
@@ -76,12 +85,9 @@ def require_platform_admin(current_user: dict):
     "platform_owner",
     "platform_admin",
     "super_admin",
-    "support",
-    "support_admin",
-    "tech_support",
   }
 
-  if user_email and user_email in _lossq_internal_access_emails():
+  if user_email and user_email in _lossq_platform_admin_emails():
     return current_user
 
   if user_role and user_role in allowed_roles:
@@ -118,12 +124,37 @@ def row_to_dict(row):
 
 
 # LOSSQ_FOUNDER_TECH_SUPPORT_LOOKUP_GATE_V2
+# LOSSQ_SUPPORT_LOOKUP_LIMITED_ROLE_GATE_V1
 def require_founder_or_tech_support(current_user=Depends(get_current_user)):
   """
-  Support Lookup is a LossQ internal tool.
-  Uses the same internal-access rule as Platform Admin.
+  Support Lookup is available to full platform admins and tech support.
+  Tech support does not automatically receive full platform-admin control.
   """
-  return require_platform_admin(current_user)
+  user_email = (
+    _lossq_current_user_value(current_user, "email")
+    or _lossq_current_user_value(current_user, "user_email")
+    or _lossq_current_user_value(current_user, "sub")
+  ).lower()
+
+  user_role = _lossq_current_user_value(current_user, "role").lower()
+
+  allowed_roles = {
+    "founder",
+    "platform_owner",
+    "platform_admin",
+    "super_admin",
+    "support",
+    "support_admin",
+    "tech_support",
+  }
+
+  if user_email and user_email in (_lossq_platform_admin_emails() | _lossq_tech_support_emails()):
+    return current_user
+
+  if user_role and user_role in allowed_roles:
+    return current_user
+
+  raise HTTPException(status_code=403, detail="Support lookup access required.")
 
 
 # LOSSQ_PLATFORM_ADMIN_AUDIT_EVENTS_V1
