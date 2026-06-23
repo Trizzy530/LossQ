@@ -88,6 +88,10 @@ def build_user_identity_lookup(db: Session, org_id: Any) -> dict:
       return lookup
 
     cols = columns_for(db, "users")
+
+    # LOSSQ_AUDIT_LOGS_USER_LOOKUP_FAIL_CLOSED_V1
+    if org_id is not None and "organization_id" not in cols:
+      return lookup
     wanted = [col for col in ["id", "email", "first_name", "last_name", "organization_id"] if col in cols]
 
     if not wanted:
@@ -193,6 +197,19 @@ def safe_table_query(
   org_id: Any = None,
 ) -> list[dict]:
   cols = columns_for(db, table_name)
+
+  # LOSSQ_AUDIT_LOGS_FAIL_CLOSED_ORG_SCOPE_V1
+  org_scoped_tables = {
+    "audit_logs",
+    "claims",
+    "upload_history",
+    "upload_histories",
+    "uploads",
+    "uploaded_files",
+    "users",
+  }
+  if org_id is not None and table_name in org_scoped_tables and "organization_id" not in cols:
+    return []
   if not cols:
     return []
 
