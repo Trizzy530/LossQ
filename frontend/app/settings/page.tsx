@@ -96,11 +96,16 @@ export default function SettingsPage() {
   const isAdmin = String(me?.role || "").toLowerCase() === "admin";
   const canManageUsers = isOwner || isAdmin;
 
-  // LOSSQ_INTERNAL_ADMIN_LINK_VISIBILITY_V1
+  // LOSSQ_INTERNAL_ADMIN_LINK_VISIBILITY_V2
   // Platform Admin and Support Lookup are LossQ-internal tools.
-  // Customer organization owners/admins can manage their users, but should not see platform-wide admin links.
+  // Do not allow normal customer owners/admins or generic @lossq.com test users.
   const internalRole = String(me?.role || "").trim().toLowerCase();
   const internalEmail = String(me?.email || "").trim().toLowerCase();
+
+  const LOSSQ_INTERNAL_ADMIN_EMAIL_ALLOWLIST = new Set([
+    "tmckenzie49@gmail.com",
+    "support@lossq.com",
+  ]);
 
   const canSeePlatformAdminLinks =
     [
@@ -112,8 +117,7 @@ export default function SettingsPage() {
       "support_admin",
       "tech_support",
     ].includes(internalRole) ||
-    internalEmail.endsWith("@lossq.com") ||
-    internalEmail === "tmckenzie49@gmail.com";
+    LOSSQ_INTERNAL_ADMIN_EMAIL_ALLOWLIST.has(internalEmail);
 
   const activeUsers = useMemo(
     () => users.filter((user) => user.is_active !== false),
