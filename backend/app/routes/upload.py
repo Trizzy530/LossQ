@@ -5430,6 +5430,20 @@ def lossq_pdf_messy_block_mini_repair_v1(file_path, parsed_claims=None, parsed_p
     put_profile("effective_date", norm_date(term.group(1)), ("policy_effective_date",))
     put_profile("expiration_date", norm_date(term.group(2)), ("policy_expiration_date",))
 
+  current_premium = re.search(
+    r"(?is)\bCurrent\s+Premium\s*:\s*(\$?\s*\d[\d,]*(?:\.\d{2})?)",
+    raw_text,
+  )
+  if current_premium:
+    put_profile("current_premium", money_text(current_premium.group(1)), ("expiring_premium",))
+
+  target_renewal_premium = re.search(
+    r"(?is)\bTarget\s+Renewal\s+Premium\s*:\s*(\$?\s*\d[\d,]*(?:\.\d{2})?)",
+    raw_text,
+  )
+  if target_renewal_premium:
+    put_profile("target_renewal_premium", money_text(target_renewal_premium.group(1)))
+
   carrier_name = parsed_profile.get("carrier_name") or direct_profile.get("carrier_name") or ""
 
   schedule_match = re.search(
@@ -5469,6 +5483,10 @@ def lossq_pdf_messy_block_mini_repair_v1(file_path, parsed_claims=None, parsed_p
       "claim_count": 0,
       "total_incurred": 0.0,
     })
+
+  policy_premium_total = sum(money(policy.get("premium")) for policy in policies if isinstance(policy, dict))
+  if policy_premium_total and not plausible_premium(parsed_profile.get("current_premium")):
+    put_profile("current_premium", money_text(policy_premium_total), ("expiring_premium",))
 
   claim_re = re.compile(
     r"(?is)\bClaim\s+Number\s+([A-Z0-9][A-Z0-9./-]{2,45})\s+Policy\s+([A-Z0-9][A-Z0-9./-]{2,45})"
@@ -15665,6 +15683,43 @@ async def save_uploaded_files(files, policy_number, db, current_user):
       parsed_profile,
       direct_profile,
     )
+
+    # LOSSQ_PDF_MESSY_BLOCK_MINI_REPAIR_PROFILE_SYNC_V1
+    if "profile_data" in locals() and isinstance(profile_data, dict) and isinstance(parsed_profile, dict):
+      for _lossq_pdf_key in (
+        "business_name",
+        "insured_name",
+        "named_insured",
+        "account_name",
+        "account_number",
+        "customer_number",
+        "carrier_name",
+        "writing_carrier",
+        "carrier",
+        "producing_agency",
+        "agency_name",
+        "producer",
+        "effective_date",
+        "expiration_date",
+        "evaluation_date",
+        "valuation_date",
+        "current_premium",
+        "expiring_premium",
+        "target_renewal_premium",
+        "policies",
+        "policy_schedule",
+        "policy_numbers",
+        "claim_count",
+        "total_claims",
+        "open_claims",
+        "closed_claims",
+        "total_paid",
+        "total_reserve",
+        "total_incurred",
+      ):
+        _lossq_pdf_value = parsed_profile.get(_lossq_pdf_key)
+        if _lossq_pdf_value not in ("", None, [], {}):
+          profile_data[_lossq_pdf_key] = _lossq_pdf_value
     all_parsed_claims.extend(parsed_claims)
 
     # LOSSQ_CANONICAL_UPLOAD_CLAIM_PURGE_V1
