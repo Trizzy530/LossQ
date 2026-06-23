@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+from datetime import datetime, timezone
 import json
 from typing import Any
 
@@ -118,6 +118,7 @@ def record_audit_event(
                 details=safe_json(details),
                 ip_address=ip_address,
                 user_agent=user_agent,
+                created_at=datetime.now(timezone.utc),
             )
 
             audit_db.add(audit)

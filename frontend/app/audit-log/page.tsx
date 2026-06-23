@@ -174,6 +174,9 @@ function prettyAction(action?: string) {
     claim_record_saved: "Claim Saved",
     executive_report_generated: "Executive Report Generated",
     carrier_packet_generated: "Carrier Packet Generated",
+    carrier_packet_pdf_generated: "Carrier Packet PDF Generated",
+    carrier_packet_pdf_downloaded: "Carrier Packet PDF Downloaded",
+    pdf_export_generated: "PDF Export Generated",
     renewal_memo_generated: "Renewal Memo Generated",
     user_login: "User Login",
     user_logout: "User Logout",
@@ -241,8 +244,20 @@ function safeText(value: any) {
   return cleanDisplayText(value);
 }
 
+// LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V1
 function eventTime(event: AuditEvent) {
-  return event.created_at || event.timestamp || "";
+  const details = toDetails(event.details);
+
+  return (
+    event.created_at ||
+    event.timestamp ||
+    details.created_at ||
+    details.generated_at_utc ||
+    details.generated_at ||
+    details.exported_at ||
+    details.submitted_at ||
+    ""
+  );
 }
 
 function optionalDisplayText(value: any) {
@@ -907,6 +922,11 @@ export default function AuditLogPage() {
                         <h3 className="text-xl font-black tracking-tight">
                           {prettyAction(event.action)}
                         </h3>
+                        {eventTime(event) && (
+                          <span className="rounded-full border border-white/10 bg-white/5 px-3 py-1 text-xs font-bold text-slate-300">
+                            Generated {formatDate(eventTime(event))}
+                          </span>
+                        )}
                       </div>
 
                       <EventDetails event={event} />
