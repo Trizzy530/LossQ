@@ -57,6 +57,34 @@ from app.routes.renewal import (
 
 from app.services.audit import record_audit_event
 
+# LOSSQ_PDF_CREATOR_DISPLAY_NAME_V1
+def lossq_pdf_creator_display_name(current_user=None, fallback="LossQ User"):
+    user = current_user or {}
+
+    if isinstance(user, dict):
+        first = str(user.get("first_name") or user.get("firstName") or "").strip()
+        last = str(user.get("last_name") or user.get("lastName") or "").strip()
+        full = " ".join([first, last]).strip()
+
+        candidates = [
+            user.get("full_name"),
+            user.get("name"),
+            user.get("display_name"),
+            user.get("username"),
+            full,
+            user.get("agency_name"),
+            user.get("organization_name"),
+            user.get("company_name"),
+        ]
+
+        for value in candidates:
+            clean = str(value or "").strip()
+            if clean and "@" not in clean:
+                return clean
+
+    return fallback
+
+
 router = APIRouter(prefix="/reports", tags=["Reports"])
 
 NAVY = colors.HexColor("#0f172a")
