@@ -56,6 +56,7 @@ from app.routes.renewal import (
 )
 
 from app.services.audit import record_audit_event
+import re
 
 # LOSSQ_PDF_CREATOR_DISPLAY_NAME_V1
 def lossq_pdf_creator_display_name(current_user=None, fallback="LossQ User"):
