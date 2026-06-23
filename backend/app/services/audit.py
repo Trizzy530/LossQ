@@ -78,6 +78,24 @@ def ensure_audit_log_storage(db: Session) -> None:
         print(f"LOSSQ AUDIT STORAGE REPAIR FAILED: {type(exc).__name__}: {exc}")
 
 
+# LOSSQ_AUDIT_FORCE_EVENT_TIMESTAMP_V1
+def lossq_audit_details_with_timestamp(details):
+    now = datetime.now(timezone.utc).isoformat()
+
+    if isinstance(details, dict):
+        payload = dict(details)
+    elif details is None:
+        payload = {}
+    else:
+        payload = {"raw_details": str(details)}
+
+    payload.setdefault("created_at", now)
+    payload.setdefault("generated_at_utc", now)
+    payload.setdefault("event_timestamp_utc", now)
+
+    return payload
+
+
 def record_audit_event(
     db: Session,
     *,
@@ -115,7 +133,7 @@ def record_audit_event(
                 action=str(action or "audit_event"),
                 resource_type=resource_type,
                 resource_id=str(resource_id) if resource_id is not None else None,
-                details=safe_json(details),
+                details=safe_json(lossq_audit_details_with_timestamp(details)),
                 ip_address=ip_address,
                 user_agent=user_agent,
                 created_at=datetime.now(timezone.utc),

@@ -11144,6 +11144,83 @@ def lossq_record_pdf_export_audit(
         print("LOSSQ_PDF_EXPORT_AUDIT_ERROR:", str(exc)[:300])
 
 
+# LOSSQ_PDF_AUDIT_TIMESTAMP_HELPER_V2
+def lossq_pdf_export_generated_timestamp():
+    try:
+        from datetime import datetime, timezone
+        return datetime.now(timezone.utc).isoformat()
+    except Exception:
+        return ""
+
+
+def lossq_record_pdf_export_audit_v2(
+    db,
+    current_user,
+    ctx,
+    action,
+    report_type,
+    route,
+    method,
+):
+    """
+    Best-effort report export audit.
+    Never blocks PDF generation.
+    """
+    try:
+        generated_at = lossq_pdf_export_generated_timestamp()
+        profile = ctx.get("profile", {}) if isinstance(ctx, dict) else {}
+        metrics = ctx.get("metrics", {}) if isinstance(ctx, dict) else {}
+        claims = ctx.get("claims", []) if isinstance(ctx, dict) else []
+
+        policy_number = (
+            locals().get("policy_number")
+            or profile.get("policy_number")
+            or profile.get("policy")
+            or ""
+        )
+
+        business_name = (
+            profile.get("business_name")
+            or profile.get("insured_name")
+            or profile.get("company_name")
+            or profile.get("account_name")
+            or ""
+        )
+
+        account_number = (
+            profile.get("account_number")
+            or profile.get("customer_number")
+            or profile.get("account_id")
+            or ""
+        )
+
+        record_audit_event(
+            db,
+            current_user=current_user,
+            action=action,
+            resource_type="report",
+            resource_id=str(policy_number or account_number or report_type or ""),
+            details={
+                "event": action,
+                "report_type": report_type,
+                "route": route,
+                "method": method,
+                "created_at": generated_at,
+                "generated_at_utc": generated_at,
+                "event_timestamp_utc": generated_at,
+                "policy_number": policy_number,
+                "business_name": business_name,
+                "account_number": account_number,
+                "claim_count": len(claims) if isinstance(claims, list) else None,
+                "total_claims": metrics.get("total_claims") if isinstance(metrics, dict) else None,
+                "open_claims": metrics.get("open_claims") if isinstance(metrics, dict) else None,
+                "total_incurred": metrics.get("total_incurred") if isinstance(metrics, dict) else None,
+            },
+        )
+    except Exception as exc:
+        print("LOSSQ_PDF_EXPORT_AUDIT_V2_ERROR:", str(exc)[:300])
+
+
 @router.post("/executive-report-pdf")
 def executive_report_pdf_post(
     report_payload: dict | None = Body(default=None),
@@ -11166,6 +11243,16 @@ def executive_report_pdf_post(
         profile_id=profile_id or payload.get("profile_id"),
         report_payload=payload,
     )
+    lossq_record_pdf_export_audit_v2(
+        db=db,
+        current_user=current_user,
+        ctx=ctx,
+        action="executive_report_generated",
+        report_type="executive_underwriting_report",
+        route="/reports/executive-report-pdf",
+        method="POST",
+    )
+
     lossq_record_pdf_export_audit(
         db=db,
         current_user=current_user,
@@ -11206,6 +11293,16 @@ def carrier_packet_pdf_post(
         profile_id=profile_id or payload.get("profile_id"),
         report_payload=payload,
     )
+    lossq_record_pdf_export_audit_v2(
+        db=db,
+        current_user=current_user,
+        ctx=ctx,
+        action="carrier_packet_pdf_generated",
+        report_type="carrier_submission_packet",
+        route="/reports/carrier-packet-pdf",
+        method="POST",
+    )
+
     lossq_record_pdf_export_audit(
         db=db,
         current_user=current_user,
@@ -11232,6 +11329,16 @@ def executive_report_pdf(
     current_user: dict = Depends(require_package_access),
 ):
     ctx = build_context(db, current_user, policy_number, profile_id=profile_id)
+    lossq_record_pdf_export_audit_v2(
+        db=db,
+        current_user=current_user,
+        ctx=ctx,
+        action="executive_report_generated",
+        report_type="executive_underwriting_report",
+        route="/reports/executive-report-pdf",
+        method="GET",
+    )
+
     lossq_record_pdf_export_audit(
         db=db,
         current_user=current_user,
@@ -11364,6 +11471,16 @@ def carrier_packet_pdf(
     current_user: dict = Depends(require_package_access),
 ):
     ctx = build_context(db, current_user, policy_number, profile_id=profile_id)
+    lossq_record_pdf_export_audit_v2(
+        db=db,
+        current_user=current_user,
+        ctx=ctx,
+        action="carrier_packet_pdf_generated",
+        report_type="carrier_submission_packet",
+        route="/reports/carrier-packet-pdf",
+        method="GET",
+    )
+
     lossq_record_pdf_export_audit(
         db=db,
         current_user=current_user,

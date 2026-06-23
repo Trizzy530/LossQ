@@ -245,6 +245,7 @@ function safeText(value: any) {
 }
 
 // LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V1
+// LOSSQ_AUDIT_EVENT_TIME_DISPLAY_FALLBACK_V2
 function eventTime(event: AuditEvent) {
   const details = toDetails(event.details);
 
@@ -253,6 +254,7 @@ function eventTime(event: AuditEvent) {
     event.timestamp ||
     details.created_at ||
     details.generated_at_utc ||
+    details.event_timestamp_utc ||
     details.generated_at ||
     details.exported_at ||
     details.submitted_at ||

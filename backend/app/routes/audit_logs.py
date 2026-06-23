@@ -236,6 +236,7 @@ def safe_table_query(
 
 
 # LOSSQ_AUDIT_EVENT_TIMESTAMP_FALLBACK_V1
+# LOSSQ_AUDIT_EVENT_TIMESTAMP_FALLBACK_V2
 def normalize_audit_event(row: dict) -> dict:
   details = parse_json(row.get("details"))
 
@@ -245,6 +246,7 @@ def normalize_audit_event(row: dict) -> dict:
     or row.get("updated_at")
     or details.get("created_at")
     or details.get("generated_at_utc")
+    or details.get("event_timestamp_utc")
     or details.get("generated_at")
     or details.get("exported_at")
     or details.get("submitted_at")
@@ -253,6 +255,7 @@ def normalize_audit_event(row: dict) -> dict:
   return {
     "id": row.get("id"),
     "created_at": iso_or_string(created_at),
+    "timestamp": iso_or_string(created_at),
     "user_id": row.get("user_id") or row.get("uploaded_by_user_id"),
     "user_email": row.get("user_email") or row.get("email") or "",
     "user_full_name": row.get("user_full_name") or row.get("actor_name") or "",
@@ -477,6 +480,26 @@ def build_events(db: Session, current_user: Any, limit: int) -> tuple[list[dict]
   events.sort(key=lambda item: item.get("created_at") or "", reverse=True)
 
   source = "_with_".join(dict.fromkeys(sources)) if sources else "no_events_found"
+  # LOSSQ_AUDIT_SORT_BY_EVENT_TIMESTAMP_V1
+  def _audit_event_sort_key(event):
+    value = str(
+      event.get("created_at")
+      or event.get("timestamp")
+      or toDetails(event.get("details")).get("generated_at_utc") if False else ""
+    )
+
+    value = str(event.get("created_at") or event.get("timestamp") or "").strip()
+
+    if not value:
+      return 0.0
+
+    try:
+      return datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+    except Exception:
+      return 0.0
+
+  events.sort(key=_audit_event_sort_key, reverse=True)
+
   return events[:limit], source
 
 
