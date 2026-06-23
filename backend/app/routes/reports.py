@@ -11080,6 +11080,70 @@ def build_executive_pdf_response(ctx, policy_number=None, db=None, current_user=
 
 
 
+# LOSSQ_PDF_EXPORT_AUDIT_HELPER_V1
+def lossq_record_pdf_export_audit(
+    db: Session,
+    current_user: dict,
+    ctx: dict,
+    policy_number: str | None,
+    profile_id=None,
+    action: str = "pdf_export_generated",
+    report_type: str = "pdf_report",
+    route: str = "",
+    method: str = "",
+):
+    """
+    Best-effort PDF export audit logging.
+    One event per PDF export. Never block PDF generation if audit logging fails.
+    """
+    try:
+        profile = ctx.get("profile", {}) if isinstance(ctx, dict) else {}
+        metrics = ctx.get("metrics", {}) if isinstance(ctx, dict) else {}
+        claims = ctx.get("claims", []) if isinstance(ctx, dict) else []
+
+        business_name = ""
+        account_number = ""
+
+        if isinstance(profile, dict):
+            business_name = clean(
+                profile.get("business_name")
+                or profile.get("insured_name")
+                or profile.get("company_name")
+                or profile.get("account_name")
+                or ""
+            )
+            account_number = clean(
+                profile.get("account_number")
+                or profile.get("customer_number")
+                or profile.get("account_id")
+                or ""
+            )
+
+        record_audit_event(
+            db,
+            current_user=current_user,
+            action=action,
+            resource_type="report",
+            resource_id=str(policy_number or account_number or profile_id or ""),
+            details={
+                "event": action,
+                "report_type": report_type,
+                "policy_number": policy_number,
+                "profile_id": profile_id,
+                "business_name": business_name,
+                "account_number": account_number,
+                "route": route,
+                "method": method,
+                "claim_count": len(claims) if isinstance(claims, list) else None,
+                "total_claims": metrics.get("total_claims") if isinstance(metrics, dict) else None,
+                "open_claims": metrics.get("open_claims") if isinstance(metrics, dict) else None,
+                "total_incurred": metrics.get("total_incurred") if isinstance(metrics, dict) else None,
+            },
+        )
+    except Exception as exc:
+        print("LOSSQ_PDF_EXPORT_AUDIT_ERROR:", str(exc)[:300])
+
+
 @router.post("/executive-report-pdf")
 def executive_report_pdf_post(
     report_payload: dict | None = Body(default=None),
@@ -11102,37 +11166,20 @@ def executive_report_pdf_post(
         profile_id=profile_id or payload.get("profile_id"),
         report_payload=payload,
     )
-    record_audit_event(
-        db,
+    lossq_record_pdf_export_audit(
+        db=db,
         current_user=current_user,
+        ctx=ctx,
+        policy_number=effective_policy,
+        profile_id=profile_id or payload.get("profile_id"),
         action="executive_report_generated",
-        resource_type="report",
-        resource_id=str(effective_policy or ""),
-        details={
-            "event": "executive_report_generated",
-            "report_type": "executive_underwriting_report",
-            "policy_number": effective_policy,
-            "route": "/reports/executive-report-pdf",
-            "method": "POST",
-        },
+        report_type="executive_underwriting_report",
+        route="/reports/executive-report-pdf",
+        method="POST",
     )
 
+
     profile_for_audit = ctx.get("profile", {}) if isinstance(ctx, dict) else {}
-    record_audit_event(
-        db,
-        current_user=current_user,
-        action="executive_report_generated",
-        resource_type="report",
-        resource_id=str(effective_policy or ""),
-        details={
-            "event": "executive_report_generated",
-            "report_type": "executive_underwriting_report",
-            "policy_number": effective_policy,
-            "business_name": profile_for_audit.get("business_name") if isinstance(profile_for_audit, dict) else "",
-            "route": "/reports/executive-report-pdf",
-            "method": "POST",
-        },
-    )
 
     return build_executive_pdf_response(ctx, effective_policy, db=db, current_user=current_user)
 
@@ -11159,37 +11206,20 @@ def carrier_packet_pdf_post(
         profile_id=profile_id or payload.get("profile_id"),
         report_payload=payload,
     )
-    record_audit_event(
-        db,
+    lossq_record_pdf_export_audit(
+        db=db,
         current_user=current_user,
+        ctx=ctx,
+        policy_number=effective_policy,
+        profile_id=profile_id or payload.get("profile_id"),
         action="carrier_packet_pdf_generated",
-        resource_type="report",
-        resource_id=str(effective_policy or ""),
-        details={
-            "event": "carrier_packet_pdf_generated",
-            "report_type": "carrier_submission_packet",
-            "policy_number": effective_policy,
-            "route": "/reports/carrier-packet-pdf",
-            "method": "POST",
-        },
+        report_type="carrier_submission_packet",
+        route="/reports/carrier-packet-pdf",
+        method="POST",
     )
 
+
     profile_for_audit = ctx.get("profile", {}) if isinstance(ctx, dict) else {}
-    record_audit_event(
-        db,
-        current_user=current_user,
-        action="carrier_packet_pdf_generated",
-        resource_type="report",
-        resource_id=str(effective_policy or ""),
-        details={
-            "event": "carrier_packet_pdf_generated",
-            "report_type": "carrier_submission_packet",
-            "policy_number": effective_policy,
-            "business_name": profile_for_audit.get("business_name") if isinstance(profile_for_audit, dict) else "",
-            "route": "/reports/carrier-packet-pdf",
-            "method": "POST",
-        },
-    )
 
     return build_carrier_packet_pdf_response(ctx, effective_policy, db=db, current_user=current_user)
 
@@ -11202,37 +11232,20 @@ def executive_report_pdf(
     current_user: dict = Depends(require_package_access),
 ):
     ctx = build_context(db, current_user, policy_number, profile_id=profile_id)
-    record_audit_event(
-        db,
+    lossq_record_pdf_export_audit(
+        db=db,
         current_user=current_user,
+        ctx=ctx,
+        policy_number=policy_number,
+        profile_id=profile_id,
         action="executive_report_generated",
-        resource_type="report",
-        resource_id=str(policy_number or ""),
-        details={
-            "event": "executive_report_generated",
-            "report_type": "executive_underwriting_report",
-            "policy_number": policy_number,
-            "route": "/reports/executive-report-pdf",
-            "method": "GET",
-        },
+        report_type="executive_underwriting_report",
+        route="/reports/executive-report-pdf",
+        method="GET",
     )
 
+
     profile_for_audit = ctx.get("profile", {}) if isinstance(ctx, dict) else {}
-    record_audit_event(
-        db,
-        current_user=current_user,
-        action="executive_report_generated",
-        resource_type="report",
-        resource_id=str(policy_number or ""),
-        details={
-            "event": "executive_report_generated",
-            "report_type": "executive_underwriting_report",
-            "policy_number": policy_number,
-            "business_name": profile_for_audit.get("business_name") if isinstance(profile_for_audit, dict) else "",
-            "route": "/reports/executive-report-pdf",
-            "method": "GET",
-        },
-    )
 
     return build_executive_pdf_response(ctx, policy_number, db=db, current_user=current_user)
 
@@ -11351,37 +11364,20 @@ def carrier_packet_pdf(
     current_user: dict = Depends(require_package_access),
 ):
     ctx = build_context(db, current_user, policy_number, profile_id=profile_id)
-    record_audit_event(
-        db,
+    lossq_record_pdf_export_audit(
+        db=db,
         current_user=current_user,
+        ctx=ctx,
+        policy_number=policy_number,
+        profile_id=profile_id,
         action="carrier_packet_pdf_generated",
-        resource_type="report",
-        resource_id=str(policy_number or ""),
-        details={
-            "event": "carrier_packet_pdf_generated",
-            "report_type": "carrier_submission_packet",
-            "policy_number": policy_number,
-            "route": "/reports/carrier-packet-pdf",
-            "method": "GET",
-        },
+        report_type="carrier_submission_packet",
+        route="/reports/carrier-packet-pdf",
+        method="GET",
     )
 
+
     profile_for_audit = ctx.get("profile", {}) if isinstance(ctx, dict) else {}
-    record_audit_event(
-        db,
-        current_user=current_user,
-        action="carrier_packet_pdf_generated",
-        resource_type="report",
-        resource_id=str(policy_number or ""),
-        details={
-            "event": "carrier_packet_pdf_generated",
-            "report_type": "carrier_submission_packet",
-            "policy_number": policy_number,
-            "business_name": profile_for_audit.get("business_name") if isinstance(profile_for_audit, dict) else "",
-            "route": "/reports/carrier-packet-pdf",
-            "method": "GET",
-        },
-    )
 
     return build_carrier_packet_pdf_response(ctx, policy_number, db=db, current_user=current_user)
 
