@@ -7064,6 +7064,84 @@ def lossq_pdf_current_user_agency_name(db=None, current_user=None):
         lossq_pdf_get_any(agency, "agency_name", "company_name", "organization_name", "name")
     ) or "Agency Not Set"
 
+
+# LOSSQ_PDF_CREATED_BY_NO_EMAIL_FALLBACK_V1
+def lossq_pdf_display_name_from_email_local_part(value):
+    email = lossq_pdf_clean_display(value)
+    if not email or "@" not in email:
+        return ""
+
+    local = email.split("@", 1)[0]
+    local = re.sub(r"[._\-]+", " ", local)
+    local = re.sub(r"\d+", " ", local)
+    local = re.sub(r"\s+", " ", local).strip()
+
+    if not local:
+        return "Account User"
+
+    return " ".join(part.capitalize() for part in local.split())
+
+
+def lossq_pdf_user_name_from_db(db=None, current_user=None):
+    if not db or not current_user:
+        return ""
+
+    try:
+        user_id = None
+        email = ""
+
+        if isinstance(current_user, dict):
+            user_id = (
+                current_user.get("id")
+                or current_user.get("user_id")
+                or current_user.get("userId")
+            )
+            email = current_user.get("email") or current_user.get("user_email") or ""
+        else:
+            user_id = getattr(current_user, "id", None) or getattr(current_user, "user_id", None)
+            email = getattr(current_user, "email", "") or ""
+
+        user_row = None
+
+        if user_id:
+            try:
+                user_row = db.query(User).filter(User.id == user_id).first()
+            except Exception:
+                user_row = None
+
+        if not user_row and email:
+            try:
+                user_row = db.query(User).filter(User.email == email).first()
+            except Exception:
+                user_row = None
+
+        if not user_row:
+            return ""
+
+        first = lossq_pdf_clean_display(getattr(user_row, "first_name", "") or getattr(user_row, "firstName", ""))
+        last = lossq_pdf_clean_display(getattr(user_row, "last_name", "") or getattr(user_row, "lastName", ""))
+        full = f"{first} {last}".strip()
+
+        candidates = [
+            full,
+            getattr(user_row, "full_name", ""),
+            getattr(user_row, "name", ""),
+            getattr(user_row, "display_name", ""),
+            getattr(user_row, "username", ""),
+        ]
+
+        for candidate in candidates:
+            clean_name = lossq_pdf_clean_display(candidate)
+            if clean_name and "@" not in clean_name:
+                return clean_name
+
+    except Exception:
+        return ""
+
+    return ""
+
+
+
 def lossq_pdf_current_user_report_created_by(current_user):
     current_user = current_user or lossq_get_active_pdf_user() or {}
     first_name = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "first_name"))
@@ -7078,8 +7156,9 @@ def lossq_pdf_current_user_report_created_by(current_user):
         return name
 
     email = lossq_pdf_clean_display(lossq_pdf_user_value(current_user, "email"))
-    if email:
-        return email
+    email_display_name = lossq_pdf_display_name_from_email_local_part(email)
+    if email_display_name:
+        return email_display_name
 
     return "Account User"
 
@@ -7186,26 +7265,40 @@ def get_report_agency_info(db, current_user):
     }
 
 
-def get_creator(current_user: dict | None):
+def get_creator(current_user: dict | None, db=None):
     user = current_user or {}
-    # Prefer a real first and last name on PDF reports. Do not display the email as the preparer name.
+
+    db_name = lossq_pdf_user_name_from_db(db, user)
+    if db_name and "@" not in db_name:
+        return db_name
+
+    first = clean(user.get("first_name") or user.get("firstName") or "")
+    last = clean(user.get("last_name") or user.get("lastName") or "")
+    full_name = f"{first} {last}".strip()
+
     creator = (
-        user.get("full_name")
+        full_name
+        or user.get("full_name")
+        or user.get("fullName")
         or user.get("name")
         or user.get("display_name")
+        or user.get("displayName")
         or user.get("username")
-        or ""
+        or user.get("agency_user_name")
+        or user.get("producer_name")
     )
-    creator = clean(creator)
 
-    email = clean(user.get("email") or "")
-    if email.lower() == "tmckenzie49@gmail.com":
-        return "Tristan Mckenzie"
+    creator = clean(creator)
 
     if creator and "@" not in creator:
         return creator
 
-    return lossq_pdf_current_user_report_created_by(locals().get('current_user')) if "current_user" in locals() else "Account User"
+    email = clean(user.get("email") or user.get("user_email") or "")
+    email_display_name = lossq_pdf_display_name_from_email_local_part(email)
+    if email_display_name:
+        return email_display_name
+
+    return "Account User"
 
 def get_logo_path():
     candidates = [
@@ -7668,7 +7761,7 @@ def build_context(
         "carrier_match": carrier_match,
         "forecast": forecast,
         "metrics": metrics,
-        "creator": get_creator(current_user),
+        "creator": get_creator(current_user, db),
         "agency_info": get_report_agency_info(db, current_user),
     }
 
@@ -9513,7 +9606,8 @@ def lossq_pdf_prepared_by_name_v1(db=None, current_user=None):
             return text
 
     email = lossq_pdf_current_user_email(current_user)
-    return email if email and email != "-" else "Account User"
+    email_display_name = lossq_pdf_display_name_from_email_local_part(email)
+    return email_display_name if email_display_name else "Account User"
 
 
 def lossq_pdf_policy_number_only_v1(value):
