@@ -121,11 +121,37 @@ export default function SettingsPage() {
   // LOSSQ_INTERNAL_ADMIN_LINK_VISIBILITY_V2
   // Platform Admin and Support Lookup are LossQ-internal tools.
   // Do not allow normal customer owners/admins or generic @lossq.com test users.
-  // LOSSQ_SETTINGS_INTERNAL_USER_VISIBILITY_FIX_V1
+  // LOSSQ_SETTINGS_INTERNAL_USER_VISIBILITY_FIX_V2
   // /auth/me can return either the user directly or nested under { user }.
-  const internalUser = (me as any)?.user || me;
-  const internalRole = String(internalUser?.role || "").trim().toLowerCase();
-  const internalEmail = String(internalUser?.email || "").trim().toLowerCase();
+  // Also fall back to the JWT payload so founder/internal links do not disappear while /auth/me is loading.
+  let internalTokenPayload: any = {};
+  if (typeof window !== "undefined") {
+    try {
+      const token =
+        localStorage.getItem("token") ||
+        localStorage.getItem("access_token") ||
+        localStorage.getItem("lossq_token") ||
+        localStorage.getItem("authToken") ||
+        "";
+      const payload = token.split(".")[1];
+      if (payload) {
+        const normalizedPayload = payload.replace(/-/g, "+").replace(/_/g, "/");
+        internalTokenPayload = JSON.parse(atob(normalizedPayload));
+      }
+    } catch {
+      internalTokenPayload = {};
+    }
+  }
+
+  const internalUser = (me as any)?.user || me || {};
+  const internalRole = String(internalUser?.role || internalTokenPayload?.role || "").trim().toLowerCase();
+  const internalEmail = String(
+    internalUser?.email ||
+      internalTokenPayload?.email ||
+      internalTokenPayload?.user_email ||
+      internalTokenPayload?.sub ||
+      ""
+  ).trim().toLowerCase();
 
   const LOSSQ_INTERNAL_ADMIN_EMAIL_ALLOWLIST = new Set([
     "tmckenzie49@gmail.com",
