@@ -2011,6 +2011,311 @@ def lossq_apply_canada_carrier_match_v1(result, profile_data=None, claims=None):
   })
   return result
 
+
+
+# LOSSQ_CANADA_CARRIER_MATCH_REAL_STATS_V2
+def lossq_canada_get_value_v2(obj, keys):
+  if obj is None:
+    return None
+  for key in keys:
+    try:
+      if isinstance(obj, dict) and obj.get(key) not in (None, ""):
+        return obj.get(key)
+      if hasattr(obj, key):
+        value = getattr(obj, key)
+        if value not in (None, ""):
+          return value
+    except Exception:
+      continue
+  return None
+
+def lossq_canada_money_v2(value):
+  try:
+    if value is None:
+      return 0.0
+    if isinstance(value, (int, float)):
+      return float(value)
+    text_value = str(value or "")
+    text_value = re.sub(r"(?i)\b(?:cad|cdn|cnd|usd)\b", "", text_value)
+    text_value = text_value.replace("CA$", "").replace("C$", "").replace("$", "")
+    text_value = text_value.replace(",", "").replace("(", "-").replace(")", "")
+    match = re.search(r"-?\d+(?:\.\d+)?", text_value)
+    return float(match.group(0)) if match else 0.0
+  except Exception:
+    return 0.0
+
+def lossq_canada_parse_policy_rows_v2(value):
+  rows = []
+  if isinstance(value, list):
+    rows.extend(value)
+  elif isinstance(value, str) and value.strip():
+    try:
+      import json
+      parsed = json.loads(value)
+      if isinstance(parsed, list):
+        rows.extend(parsed)
+    except Exception:
+      pass
+  return rows
+
+def lossq_canada_line_key_v2(value):
+  text_value = str(value or "").strip().lower()
+  compact = re.sub(r"[^a-z0-9]+", "", text_value)
+
+  if compact in {"cgl", "commercialgeneralliability", "generalliability"} or "general liability" in text_value:
+    return "gl"
+  if any(x in text_value for x in ["fleet", "auto", "automobile"]) or compact in {"auto", "commercialauto", "commercialautomobile"}:
+    return "auto"
+  if any(x in text_value for x in ["wcb", "wsib", "workers", "comp", "worksafebc", "cnesst"]):
+    return "wc"
+  if any(x in text_value for x in ["errors", "omissions", "e&o", "professional"]):
+    return "professional"
+  if "cyber" in text_value:
+    return "cyber"
+  if any(x in text_value for x in ["umbrella", "excess"]):
+    return "umbrella"
+  if "property" in text_value or "bop" in text_value:
+    return "property"
+  if "cargo" in text_value or "transit" in text_value:
+    return "cargo"
+  return ""
+
+def lossq_canada_line_label_v2(line_key):
+  labels = {
+    "gl": "General Liability",
+    "auto": "Commercial Auto",
+    "wc": "Workers Compensation",
+    "professional": "Professional Liability",
+    "cyber": "Cyber",
+    "umbrella": "Umbrella / Excess",
+    "property": "Property / Package",
+    "cargo": "Cargo / Inland Marine",
+  }
+  return labels.get(line_key, line_key)
+
+def lossq_canada_collect_lines_v2(profile_data=None, claims=None, result=None):
+  lines = set()
+
+  if isinstance(profile_data, dict):
+    for key in ["line_of_business", "primary_line_of_business", "coverage", "policy_type"]:
+      line_key = lossq_canada_line_key_v2(profile_data.get(key))
+      if line_key:
+        lines.add(line_key)
+
+    for schedule_key in ["policies", "policy_schedule", "policySchedule"]:
+      for row in lossq_canada_parse_policy_rows_v2(profile_data.get(schedule_key)):
+        if isinstance(row, dict):
+          line_key = lossq_canada_line_key_v2(
+            row.get("line_of_business")
+            or row.get("coverage")
+            or row.get("policy_type")
+            or row.get("line")
+            or row.get("lob")
+          )
+          if line_key:
+            lines.add(line_key)
+
+  if isinstance(result, dict):
+    metrics = result.get("carrier_match_metrics") or result.get("appetite_metrics") or {}
+    detected = metrics.get("coverage_lines_detected") or metrics.get("lines") or []
+    if isinstance(detected, str):
+      detected = [detected]
+    if isinstance(detected, list):
+      for value in detected:
+        line_key = lossq_canada_line_key_v2(value)
+        if line_key:
+          lines.add(line_key)
+
+  if isinstance(claims, list):
+    for claim in claims:
+      value = lossq_canada_get_value_v2(claim, [
+        "line_of_business",
+        "claim_type",
+        "coverage",
+        "policy_type",
+        "lob",
+        "line",
+      ])
+      line_key = lossq_canada_line_key_v2(value)
+      if line_key:
+        lines.add(line_key)
+
+  return lines
+
+def lossq_canada_collect_metrics_v2(result=None, claims=None):
+  metrics = {}
+  if isinstance(result, dict):
+    metrics.update(result.get("carrier_match_metrics") or {})
+    metrics.update(result.get("appetite_metrics") or {})
+
+  total_claims = 0
+  open_claims = 0
+  total_incurred = 0.0
+  total_reserve = 0.0
+  litigation_claims = 0
+
+  if isinstance(claims, list):
+    for claim in claims:
+      total_claims += 1
+
+      status = str(lossq_canada_get_value_v2(claim, ["status", "claim_status", "claimStatus"]) or "").lower()
+      reserve = lossq_canada_money_v2(lossq_canada_get_value_v2(claim, ["reserve_amount", "reserve", "reserves"]))
+      paid = lossq_canada_money_v2(lossq_canada_get_value_v2(claim, ["paid_amount", "paid", "paid_loss"]))
+      incurred = lossq_canada_money_v2(lossq_canada_get_value_v2(claim, ["total_incurred", "incurred", "total", "total_amount"]))
+
+      if incurred <= 0 and (paid or reserve):
+        incurred = paid + reserve
+
+      if "open" in status or reserve > 0:
+        open_claims += 1
+
+      total_incurred += incurred
+      total_reserve += reserve
+
+      attorney_flag = lossq_canada_get_value_v2(claim, [
+        "attorney_assigned",
+        "attorney_involved",
+        "litigation",
+        "litigation_flag",
+        "suit_filed",
+      ])
+      attorney_text = str(attorney_flag or "").lower()
+      if attorney_flag is True or attorney_text in {"true", "yes", "y", "1"}:
+        litigation_claims += 1
+
+  if total_claims == 0:
+    total_claims = int(metrics.get("total_claims") or 0)
+  if open_claims == 0:
+    open_claims = int(metrics.get("open_claims") or 0)
+  if total_incurred == 0:
+    total_incurred = lossq_canada_money_v2(metrics.get("total_incurred"))
+  if total_reserve == 0:
+    total_reserve = lossq_canada_money_v2(metrics.get("total_reserve"))
+  if litigation_claims == 0:
+    litigation_claims = int(metrics.get("litigation_claims") or 0)
+
+  return {
+    **metrics,
+    "total_claims": total_claims,
+    "open_claims": open_claims,
+    "total_incurred": total_incurred,
+    "total_reserve": total_reserve,
+    "litigation_claims": litigation_claims,
+  }
+
+def lossq_apply_canada_carrier_match_real_stats_v2(result, profile_data=None, claims=None):
+  result = dict(result or {})
+
+  if not callable(globals().get("lossq_canada_market_is_account_v1")):
+    return result
+
+  if not lossq_canada_market_is_account_v1(profile_data, claims):
+    return result
+
+  metrics = lossq_canada_collect_metrics_v2(result, claims)
+  lines = lossq_canada_collect_lines_v2(profile_data, claims, result) or {"gl"}
+
+  total_claims = int(metrics.get("total_claims") or 0)
+  open_claims = int(metrics.get("open_claims") or 0)
+  litigation_claims = int(metrics.get("litigation_claims") or 0)
+  total_incurred = float(metrics.get("total_incurred") or 0)
+  total_reserve = float(metrics.get("total_reserve") or 0)
+
+  directory = [
+    {"carrier": "Intact Insurance", "lines": {"gl", "property", "auto", "umbrella"}, "base": 82, "category": "Canadian standard commercial / middle market"},
+    {"carrier": "Aviva Canada", "lines": {"gl", "property", "auto", "umbrella"}, "base": 79, "category": "Canadian commercial package"},
+    {"carrier": "Northbridge Insurance", "lines": {"gl", "auto", "cargo", "property"}, "base": 78, "category": "Canadian commercial specialty"},
+    {"carrier": "Zurich Canada", "lines": {"gl", "property", "professional", "cyber", "umbrella"}, "base": 77, "category": "Canadian middle market / specialty"},
+    {"carrier": "CNA Canada", "lines": {"gl", "professional", "cyber", "property"}, "base": 75, "category": "Canadian casualty / professional"},
+    {"carrier": "Chubb Canada", "lines": {"property", "professional", "cyber", "umbrella"}, "base": 74, "category": "Canadian specialty / executive risk"},
+    {"carrier": "Lloyd’s Canada", "lines": {"professional", "cyber", "umbrella", "property"}, "base": 73, "category": "Canadian specialty market"},
+    {"carrier": "Definity / Economical Insurance", "lines": {"gl", "auto", "property"}, "base": 72, "category": "Canadian regional commercial"},
+    {"carrier": "Wawanesa Commercial", "lines": {"gl", "auto", "property"}, "base": 70, "category": "Canadian regional commercial"},
+  ]
+
+  matches = []
+  readable_lines = [lossq_canada_line_label_v2(line) for line in sorted(lines)]
+
+  for market in directory:
+    overlap = lines.intersection(market["lines"])
+    if not overlap:
+      continue
+
+    score = market["base"] + len(overlap) * 4
+    score -= min(open_claims * 3, 12)
+    score -= min(litigation_claims * 4, 12)
+
+    if total_incurred >= 250000:
+      score -= 15
+    elif total_incurred >= 100000:
+      score -= 8
+    elif total_incurred >= 50000:
+      score -= 4
+
+    if total_reserve >= 100000:
+      score -= 8
+    elif total_reserve >= 50000:
+      score -= 5
+
+    score = max(0, min(100, int(score)))
+
+    overlap_labels = [lossq_canada_line_label_v2(line) for line in sorted(overlap)]
+    reason = (
+      f"{market['carrier']}: Canada-market fit for {', '.join(overlap_labels)}. "
+      f"Account lines reviewed: {', '.join(readable_lines)}. "
+      f"Reviewed {total_claims} claim(s), {open_claims} open claim(s), "
+      f"{litigation_claims} attorney/litigation indicator(s), "
+      f"CAD ${total_incurred:,.0f} incurred, and CAD ${total_reserve:,.0f} reserves."
+    )
+
+    matches.append({
+      "carrier": market["carrier"],
+      "group": market["carrier"],
+      "match_score": score,
+      "score": score,
+      "market_category": market["category"],
+      "reason": reason,
+      "match_reason": reason,
+      "country": "Canada",
+      "currency": "CAD",
+      "matched_lines": overlap_labels,
+      "account_lines_reviewed": readable_lines,
+    })
+
+  matches = sorted(matches, key=lambda row: row.get("match_score", 0), reverse=True)
+
+  if not matches:
+    return result
+
+  recommended = matches[0]
+
+  result.update({
+    "top_carriers": matches[:5],
+    "recommended_carrier": recommended.get("carrier"),
+    "recommended_score": recommended.get("match_score"),
+    "recommended_market_category": recommended.get("market_category"),
+    "carrier_match_reasons": [row.get("reason") for row in matches[:5]],
+    "carrier_match_summary": (
+      f"LossQ recommends {recommended.get('carrier')} with a {recommended.get('match_score')}/100 Canada-market match. "
+      f"The ranking used Canadian jurisdiction/currency signals, account lines {', '.join(readable_lines)}, "
+      f"{total_claims} claim(s), {open_claims} open claim(s), {litigation_claims} attorney/litigation indicator(s), "
+      f"CAD ${total_incurred:,.0f} incurred, and CAD ${total_reserve:,.0f} reserves."
+    ),
+    "carrier_match_metrics": {
+      **metrics,
+      "coverage_lines_detected": readable_lines,
+      "coverage_line_keys_detected": sorted(lines),
+      "currency": "CAD",
+      "country": "Canada",
+    },
+    "carrier_country": "Canada",
+    "market_currency": "CAD",
+    "lossq_canada_carrier_match_version": "LOSSQ_CANADA_CARRIER_MATCH_REAL_STATS_V2",
+  })
+
+  return result
+
+
 # LOSSQ_EXPOSURE_ALIGNED_CARRIER_MATCH_RERANK_V1
 def lossq_apply_exposure_to_carrier_match(result, profile_data, claims):
   result = dict(result or {})
@@ -3187,6 +3492,8 @@ def carrier_match(policy_number: str | None = Query(default=None), db: Session =
   elif callable(globals().get("lossq_canada_carrier_match_v1")):
     result = lossq_canada_carrier_match_v1(result, profile_data, claims)
     result["lossq_canada_carrier_match_endpoint_version"] = "LOSSQ_CANADA_CARRIER_MATCH_ENDPOINT_OVERRIDE_V2"
+  # LOSSQ_CANADA_CARRIER_MATCH_REAL_STATS_CALL_V2
+  result = lossq_apply_canada_carrier_match_real_stats_v2(result, profile_data, claims)
   return result
 
 
