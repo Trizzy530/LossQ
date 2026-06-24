@@ -8092,7 +8092,7 @@ const openVisibleClaims = visibleClaims.filter((claim: any) => isOpenClaimStatus
 const closedVisibleClaims = visibleClaims.filter((claim: any) => !isOpenClaimStatus(claim));
 const groupedVisibleClaims = [...openVisibleClaims,...closedVisibleClaims];
 
-// LOSSQ_DASHBOARD_CLAIM_ATTORNEY_FLAG_V1
+// LOSSQ_DASHBOARD_CLAIM_ATTORNEY_FLAG_STRICT_V2
 const lossqDashboardClaimFlagV1 = (claim: any) => {
  const cleanLocal = (value: any) => String(value ?? "").replace(/\s+/g, " ").trim();
 
@@ -8111,11 +8111,30 @@ const lossqDashboardClaimFlagV1 = (claim: any) => {
   return existingFlag;
  }
 
- const explicitValues = [
+ const isExplicitYes = (value: any) => {
+  if (value === true) return true;
+  const clean = cleanLocal(value).toLowerCase();
+  return ["yes", "y", "true", "1"].includes(clean);
+ };
+
+ const isExplicitNo = (value: any) => {
+  if (value === false) return true;
+  const clean = cleanLocal(value).toLowerCase();
+  return ["no", "n", "false", "0", "none", "n/a", "na", "not represented", "no attorney", "no litigation", "no suit"].includes(clean);
+ };
+
+ const attorneyValues = [
   claim?.attorney_assigned,
   claim?.attorneyAssigned,
   claim?.attorney_involved,
   claim?.attorneyInvolved,
+ ];
+
+ if (attorneyValues.some(isExplicitYes)) {
+  return "Attorney";
+ }
+
+ const suitValues = [
   claim?.suit_filed,
   claim?.suitFiled,
   claim?.litigation,
@@ -8124,52 +8143,27 @@ const lossqDashboardClaimFlagV1 = (claim: any) => {
   claim?.represented,
  ];
 
- const explicitYes = explicitValues.some((value) => {
-  if (value === true) return true;
-  const clean = cleanLocal(value).toLowerCase();
-  return ["yes", "y", "true", "1", "attorney assigned", "attorney involved", "suit filed", "represented"].includes(clean);
- });
-
- if (explicitYes) {
-  return "Attorney";
+ if (suitValues.some(isExplicitYes)) {
+  return "Litigation";
  }
 
- const textSignal = [
-  claim?.litigation_status,
-  claim?.litigationStatus,
-  claim?.attorney,
-  claim?.attorney_status,
-  claim?.attorneyStatus,
-  claim?.counsel,
-  claim?.suit,
-  claim?.lawsuit,
-  claim?.represented,
-  claim?.description,
-  claim?.claim_description,
-  claim?.loss_description,
-  claim?.notes,
-  claim?.underwriting_notes,
- ].map(cleanLocal).join(" ").toLowerCase();
+ if ([...attorneyValues, ...suitValues].some(isExplicitNo)) {
+  return "None";
+ }
 
- const negativeAttorney =
-  /\b(no|none|not|without)\s+(attorney|counsel|suit|lawsuit|litigation|legal|representation|represented)\b|\b(no\s+suit|no\s+attorney|no\s+counsel|no\s+litigation|no\s+legal|not\s+represented|unrepresented)\b/;
+ const litigationStatus = cleanLocal(
+  claim?.litigation_status ||
+   claim?.litigationStatus ||
+   claim?.attorney_status ||
+   claim?.attorneyStatus
+ ).toLowerCase();
 
  if (
-  textSignal &&
-  !negativeAttorney.test(textSignal) &&
-  /\b(attorney|counsel|suit|lawsuit|litigation|litigated|represented|demand letter)\b/.test(textSignal)
+  litigationStatus &&
+  !["none", "no", "n/a", "na", "unknown", "not set", "no attorney", "no litigation", "no suit"].includes(litigationStatus)
  ) {
-  return textSignal.includes("attorney") || textSignal.includes("counsel") ? "Attorney" : "Litigation";
- }
-
- const reserve = Number(
-  String(claim?.reserve_amount ?? claim?.reserve ?? claim?.reserveAmount ?? 0).replace(/[$,]/g, "")
- );
-
- const status = cleanLocal(claim?.status || claim?.claim_status || claim?.claimStatus).toLowerCase();
-
- if (status.includes("open") && reserve > 0) {
-  return "Open Reserve";
+  if (/\b(attorney|counsel|represented)\b/.test(litigationStatus)) return "Attorney";
+  if (/\b(suit filed|lawsuit|litigation|litigated)\b/.test(litigationStatus)) return "Litigation";
  }
 
  return "None";
