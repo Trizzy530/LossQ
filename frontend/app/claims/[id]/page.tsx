@@ -31,24 +31,171 @@ function numberValue(value: any) {
   return Number.isFinite(parsed) ? parsed : 0;
 }
 
-function boolValue(value: any) {
-  if (value === true) return true;
-  if (value === false) return false;
+// LOSSQ_UNIVERSAL_ATTORNEY_STATUS_V1
+function claimDetailMoney(value: any) {
+  const number = Number(value || 0);
+  if (!Number.isFinite(number)) return "$0";
+  return number.toLocaleString("en-US", {
+    style: "currency",
+    currency: "USD",
+    maximumFractionDigits: 0,
+  });
+}
 
-  const normalized = String(value || "").trim().toLowerCase();
+function attorneyTextSignal(value: any) {
+  const raw = clean(value);
+  const normalized = raw.toLowerCase();
+
+  if (!normalized || normalized === "-") return null;
+
+  const negativePattern =
+    /\b(no|none|not|without)\s+(attorney|counsel|suit|lawsuit|litigation|legal|representation|represented)\b|\b(no\s+suit|no\s+attorney|no\s+counsel|no\s+litigation|no\s+legal|not\s+represented|unrepresented)\b/;
+
+  if (
+    ["false", "no", "n", "0", "none", "n/a", "na"].includes(normalized) ||
+    negativePattern.test(normalized)
+  ) {
+    return {
+      status: "No",
+      involved: false,
+      display: "Attorney Involved: No",
+      detail: raw || "No attorney, suit, counsel, or litigation involvement is identified.",
+    };
+  }
+
+  const positivePattern =
+    /\b(attorney\s+involved|attorney\s+assigned|counsel\s+assigned|defense\s+counsel|plaintiff\s+counsel|represented\s+by|suit\s+filed|lawsuit|litigated|in\s+litigation|legal\s+counsel|demand\s+letter)\b/;
+
+  if (
+    ["true", "yes", "y", "1"].includes(normalized) ||
+    positivePattern.test(normalized)
+  ) {
+    return {
+      status: "Yes",
+      involved: true,
+      display: "Attorney Involved: Yes",
+      detail: raw || "Attorney, suit, counsel, or litigation involvement is identified.",
+    };
+  }
+
+  return null;
+}
+
+function attorneyStatusFromClaim(claim: AnyObject | null | undefined) {
+  const textFields = [
+    "litigation_status",
+    "attorney_involved",
+    "attorney",
+    "counsel",
+    "suit",
+    "represented",
+    "lit",
+    "description",
+    "claim_description",
+    "loss_description",
+    "notes",
+    "underwriting_notes",
+  ];
+
+  for (const key of textFields) {
+    const result = attorneyTextSignal(getValue(claim, [key]));
+    if (result) return result;
+  }
+
+  const explicitBoolean = getValue(claim, [
+    "attorney_assigned",
+    "suit_filed",
+    "litigation",
+    "litigation_flag",
+  ]);
+
+  if (explicitBoolean === false) {
+    return {
+      status: "No",
+      involved: false,
+      display: "Attorney Involved: No",
+      detail: "No attorney, suit, counsel, or litigation involvement is identified.",
+    };
+  }
+
+  if (explicitBoolean === true) {
+    return {
+      status: "Unknown",
+      involved: false,
+      display: "Attorney Involved: Unknown",
+      detail:
+        "A litigation flag exists, but the claim detail does not include a clear attorney, suit, counsel, or litigation description. Verify before treating this as represented.",
+    };
+  }
+
+  return {
+    status: "Unknown",
+    involved: false,
+    display: "Attorney Involved: Unknown",
+    detail: "The loss run did not state whether attorney, suit, counsel, or litigation involvement exists.",
+  };
+}
+
+function boolValue(value: any) {
+  const signal = attorneyTextSignal(value);
+  return Boolean(signal?.involved);
+}
+
+function universalClaimNextAction(display: AnyObject) {
+  const status = clean(display?.status).toLowerCase();
+  const line = clean(display?.lineOfBusiness).toLowerCase();
+  const cause = clean(display?.causeOfLoss).toLowerCase();
+  const reserve = Number(display?.reserve || 0);
+  const incurred = Number(display?.totalIncurred || 0);
+
+  if (display?.attorneyStatus === "Yes") {
+    return "Obtain current attorney/counsel status, suit status if filed, demand amount, defense plan, expected resolution timeline, and whether reserves reflect legal exposure.";
+  }
+
+  if (display?.attorneyStatus === "Unknown") {
+    return "Confirm whether attorney, counsel, suit, demand letter, or litigation involvement exists. Update the claim file before carrier submission.";
+  }
+
+  if (status.includes("open") || reserve > 0) {
+    return "Request the latest adjuster status, reserve rationale, expected closure date, and documentation showing how the claim is being controlled.";
+  }
+
+  if (incurred >= 50000) {
+    return "Prepare a severity-loss explanation with facts of loss, final resolution, corrective action, and why recurrence is less likely.";
+  }
+
+  if (line.includes("workers") || line.includes("comp")) {
+    return "Confirm return-to-work status, medical-only versus indemnity exposure, closure status, and safety steps taken to prevent recurrence.";
+  }
+
+  if (line.includes("liquor")) {
+    return "Collect incident report, alcohol-service procedures, staff training, security controls, and corrective action taken after the event.";
+  }
+
+  if (line.includes("property") || cause.includes("water") || cause.includes("fire")) {
+    return "Collect repair invoices, mitigation records, photos if available, and confirmation that repairs are complete with no continuing exposure.";
+  }
+
+  return "Document final resolution, amount paid, no outstanding reserve, attorney status, and corrective action if applicable.";
+}
+
+function universalClaimNarrative(display: AnyObject) {
+  const claimNumber = clean(display?.claimNumber) || "this claim";
+  const line = clean(display?.lineOfBusiness) || "the applicable coverage";
+  const status = clean(display?.status) || "status not provided";
+  const cause = clean(display?.causeOfLoss) || "the reported loss";
+  const claimant = clean(display?.claimant);
+  const adjuster = clean(display?.adjuster);
+  const state = clean(display?.state);
 
   return [
-    "yes",
-    "y",
-    "true",
-    "1",
-    "litigation",
-    "attorney",
-    "attorney involved",
-    "suit",
-    "lawsuit",
-    "represented",
-  ].some((item) => normalized.includes(item));
+    `Claim ${claimNumber} is a ${line} claim currently shown as ${status}.`,
+    `The reported cause is ${cause}${claimant ? ` involving ${claimant}` : ""}.`,
+    `Financially, the claim shows ${claimDetailMoney(display?.paid)} paid, ${claimDetailMoney(display?.reserve)} reserved, and ${claimDetailMoney(display?.totalIncurred)} total incurred.`,
+    `${display?.attorneyDisplay || "Attorney Involved: Unknown"}.`,
+    adjuster ? `The assigned adjuster/examiner is ${adjuster}.` : "No adjuster or examiner was provided.",
+    state ? `Jurisdiction/state is ${state}.` : "No jurisdiction/state was provided.",
+  ].join(" ");
 }
 
 function getValue(obj: AnyObject | null | undefined, keys: string[]) {
@@ -222,17 +369,19 @@ function getClaimDisplay(claim: AnyObject | null, fallbackId: string) {
   const totalIncurred = incurredRaw !== undefined ? numberValue(incurredRaw) : paid + reserve;
 
   const litigationRaw = getValue(claim, [
-    "litigation",
-    "litigation_flag",
     "litigation_status",
     "attorney_involved",
     "attorney",
     "suit",
     "represented",
     "lit",
+    "litigation",
+    "litigation_flag",
   ]);
 
-  const litigation = boolValue(litigationRaw);
+  // LOSSQ_UNIVERSAL_ATTORNEY_STATUS_DISPLAY_V1
+  const attorneySignal = attorneyStatusFromClaim(claim);
+  const litigation = attorneySignal.involved;
   const status = clean(getValue(claim, ["status", "claim_status", "claimStatus"]));
   const isOpen = status.toLowerCase().includes("open");
 
@@ -281,6 +430,9 @@ function getClaimDisplay(claim: AnyObject | null, fallbackId: string) {
     totalIncurred,
     litigation,
     litigationRaw,
+    attorneyStatus: attorneySignal.status,
+    attorneyDisplay: attorneySignal.display,
+    attorneyDetail: attorneySignal.detail,
     severity,
     reservePressure,
     adjuster: clean(getValue(claim, ["adjuster", "examiner", "claim_adjuster"])),
@@ -505,7 +657,11 @@ export default function ClaimDetailPage() {
 
   const display = useMemo(() => getClaimDisplay(claim, queryClaimNumber || claimId), [claim, claimId, queryClaimNumber]);
 
-  const litigationTone = display.litigation ? "red" : "green";
+  // LOSSQ_UNIVERSAL_CLAIM_DETAIL_ACTIONS_V1
+  const claimNarrativeText = useMemo(() => universalClaimNarrative(display), [display]);
+  const nextActionText = useMemo(() => universalClaimNextAction(display), [display]);
+
+  const litigationTone = display.litigation ? "red" : display.attorneyStatus === "Unknown" ? "yellow" : "green";
   const statusTone = display.status.toLowerCase().includes("open") ? "yellow" : "green";
   const severityTone =
     display.severity === "High" ? "red" : display.severity === "Moderate" ? "yellow" : "green";
@@ -556,8 +712,8 @@ export default function ClaimDetailPage() {
               </h1>
 
               <p className="mt-4 max-w-3xl text-slate-300">
-                Modern claim detail view with underwriting context, litigation factor,
-                financial pressure, reserve status, and source claim fields.
+                Modern claim detail view with underwriting context, attorney status,
+                financial pressure, reserve status, source claim fields, and next course of action.
               </p>
 
               {source && (
@@ -597,9 +753,9 @@ export default function ClaimDetailPage() {
               <MetricCard label="Paid" value={money(display.paid)} />
               <MetricCard label="Reserve" value={money(display.reserve)} />
               <MetricCard
-                label="Litigation Factor"
-                value={display.litigation ? "High" : "Low"}
-                subtext={display.litigation ? "Attorney / suit signal detected" : "No litigation signal detected"}
+                label="Attorney / Suit Status"
+                value={display.attorneyStatus || "Unknown"}
+                subtext={display.attorneyDetail || "Attorney involvement was not stated in the loss run."}
               />
             </section>
 
@@ -626,19 +782,24 @@ export default function ClaimDetailPage() {
                   <DetailCard label="Severity Level" value={display.severity} />
                   <DetailCard label="Reserve Pressure" value={display.reservePressure} />
                   <DetailCard
-                    label="Litigation Factor"
-                    value={
-                      display.litigation
-                        ? clean(display.litigationRaw || "Litigation / attorney involvement detected")
-                        : "No litigation flag detected"
-                    }
+                    label="Attorney / Litigation Status"
+                    value={display.attorneyDisplay || "Attorney Involved: Unknown"}
                   />
                   <DetailCard label="Source File" value={display.sourceFile} />
                 </div>
               </Panel>
             </section>
 
-            <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
+            {/* LOSSQ_UNIVERSAL_CLAIM_STORY_NEXT_ACTION_PANEL_V1 */}
+            <section className="mb-6">
+              <Panel title="Claim Story & Next Course of Action" subtitle="Universal claim-level underwriting explanation based on the selected claim fields.">
+                <p className="text-slate-300 leading-7 mb-4">{claimNarrativeText}</p>
+                <div className="rounded-2xl border border-blue-400/20 bg-blue-500/10 p-5">
+                  <p className="text-xs uppercase tracking-[0.25em] text-blue-300 mb-3">Recommended Next Step</p>
+                  <p className="text-blue-100 leading-7">{nextActionText}</p>
+                </div>
+              </Panel>
+            </section>            <section className="grid grid-cols-1 lg:grid-cols-2 gap-6 mb-6">
               <Panel title="Financial Breakdown" subtitle="Paid, reserve, and incurred values used for severity review.">
                 <div className="grid grid-cols-1 gap-4">
                   <DetailCard label="Paid Amount" value={money(display.paid)} />
