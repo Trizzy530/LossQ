@@ -11158,9 +11158,259 @@ def lossq_sanitize_profile_policies_before_upsert_v6(profile_data: dict):
 
 
 
+# LOSSQ_EXPOSURE_INPUT_UNIVERSAL_TERMINOLOGY_V1
+def lossq_exposure_input_universal_terminology_v1(profile_data):
+  if not isinstance(profile_data, dict):
+    return profile_data
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+  def norm_key(value):
+    return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+  def set_if_blank(field, value):
+    cleaned = clean(value)
+    if cleaned and not clean(profile_data.get(field)):
+      profile_data[field] = cleaned
+
+  def money_clean(value):
+    text = clean(value)
+    if not text:
+      return ""
+    text = re.sub(r"(?i)\b(?:cad|cdn|cnd|usd)\b", "", text)
+    text = text.replace("CA$", "").replace("C$", "").replace("US$", "")
+    text = text.replace("$", "").replace(",", "").strip()
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    return match.group(0) if match else ""
+
+  def count_clean(value):
+    text = clean(value).replace(",", "")
+    match = re.search(r"\d+", text)
+    return match.group(0) if match else ""
+
+  aliases = {
+    # Premium
+    "currentpremium": "current_premium",
+    "annualpremium": "current_premium",
+    "writtenpremium": "current_premium",
+    "policypremium": "current_premium",
+    "termpremium": "current_premium",
+    "inforcepremium": "current_premium",
+    "expiringpremium": "expiring_premium",
+    "priorpremium": "expiring_premium",
+    "previoustermpremium": "expiring_premium",
+    "targetrenewalpremium": "target_renewal_premium",
+    "renewaltargetpremium": "target_renewal_premium",
+
+    # Line / classification
+    "primarylineofbusiness": "line_of_business",
+    "lineofbusiness": "line_of_business",
+    "lob": "line_of_business",
+    "coverage": "line_of_business",
+    "policytype": "line_of_business",
+    "classcode": "class_code",
+    "classcodes": "class_codes",
+    "naics": "naics",
+    "sic": "sic",
+    "industrycode": "industry_code",
+
+    # Geography: U.S. and Canada
+    "state": "state",
+    "primarystate": "state",
+    "jurisdiction": "state",
+    "province": "state",
+    "provincecode": "state",
+    "territory": "state",
+    "riskprovince": "state",
+    "postalcode": "postal_code",
+    "postcode": "postal_code",
+    "zip": "zip_code",
+    "zipcode": "zip_code",
+
+    # Payroll / revenue
+    "payroll": "payroll",
+    "annualpayroll": "payroll",
+    "grosspayroll": "payroll",
+    "estimatedpayroll": "payroll",
+    "insurableearnings": "payroll",
+    "remuneration": "payroll",
+    "wages": "payroll",
+    "annualrevenue": "revenue",
+    "revenue": "revenue",
+    "grosssales": "revenue",
+    "sales": "sales",
+    "turnover": "revenue",
+    "receipts": "receipts",
+    "grossreceipts": "receipts",
+    "professionalrevenue": "professional_revenue",
+    "cyberrevenue": "cyber_revenue",
+
+    # Counts
+    "employeecount": "employee_count",
+    "employees": "employee_count",
+    "numberofemployees": "employee_count",
+    "fte": "employee_count",
+    "fulltimeequivalents": "employee_count",
+    "vehiclecount": "vehicle_count",
+    "vehicles": "vehicle_count",
+    "scheduledautos": "vehicle_count",
+    "powerunits": "vehicle_count",
+    "fleetunits": "vehicle_count",
+    "ownedautos": "vehicle_count",
+    "drivercount": "driver_count",
+    "drivers": "driver_count",
+    "listeddrivers": "driver_count",
+    "operators": "driver_count",
+
+    # Property / limits
+    "propertytiv": "property_tiv",
+    "tiv": "property_tiv",
+    "totalinsuredvalue": "property_tiv",
+    "statementofvalues": "property_tiv",
+    "sov": "property_tiv",
+    "locationtiv": "property_tiv",
+    "buildingandcontents": "property_tiv",
+    "buildingvalue": "building_value",
+    "buildinglimit": "building_value",
+    "buildingsuminsured": "building_value",
+    "contentsvalue": "contents_value",
+    "contentslimit": "contents_value",
+    "businesspersonalproperty": "contents_value",
+    "bpp": "contents_value",
+    "stockandequipment": "contents_value",
+    "policylimits": "limits",
+    "limitofliability": "limits",
+    "coverageLimit": "coverage_limit",
+    "coveragelimit": "coverage_limit",
+    "eachoccurrence": "limits",
+    "aggregate": "limits",
+    "deductible": "deductible",
+    "retention": "retention",
+    "sir": "retention",
+    "selfinsuredretention": "retention",
+    "umbrellalimit": "umbrella_limit",
+    "excesslimit": "umbrella_limit",
+    "cargolimit": "cargo_limit",
+  }
+
+  def normalize_line(value):
+    text = clean(value).lower()
+    compact = norm_key(value)
+    if compact in {"cgl", "commercialgeneralliability", "generalliability"} or "general liability" in text:
+      return "General Liability"
+    if any(x in text for x in ["fleet", "auto", "automobile", "scheduled autos", "business auto"]):
+      return "Commercial Auto"
+    if any(x in text for x in ["wcb", "wsib", "worksafebc", "cnesst", "workers", "compensation"]):
+      return "Workers Compensation"
+    if any(x in text for x in ["errors", "omissions", "e&o", "professional"]):
+      return "Professional Liability"
+    if "cyber" in text:
+      return "Cyber"
+    if any(x in text for x in ["umbrella", "excess"]):
+      return "Umbrella / Excess"
+    if any(x in text for x in ["property", "bop", "package"]):
+      return "Property / Package"
+    if any(x in text for x in ["cargo", "transit", "inland marine"]):
+      return "Cargo / Inland Marine"
+    return clean(value)
+
+  # Map any raw/Canadian/U.S. terminology keys already captured by parser.
+  for source in [profile_data, profile_data.get("exposure_inputs"), profile_data.get("exposures")]:
+    if isinstance(source, dict):
+      for source_key, source_value in list(source.items()):
+        mapped = aliases.get(norm_key(source_key))
+        if mapped:
+          set_if_blank(mapped, source_value)
+
+  # Clean money/count fields.
+  for field in [
+    "current_premium", "expiring_premium", "target_renewal_premium",
+    "payroll", "revenue", "sales", "receipts", "professional_revenue",
+    "cyber_revenue", "property_tiv", "tiv", "building_value",
+    "contents_value", "limits", "coverage_limit", "deductible",
+    "retention", "umbrella_limit", "cargo_limit",
+  ]:
+    if profile_data.get(field) not in (None, ""):
+      fixed = money_clean(profile_data.get(field))
+      if fixed:
+        profile_data[field] = fixed
+
+  for field in ["employee_count", "vehicle_count", "driver_count", "location_count", "unit_count", "square_footage"]:
+    if profile_data.get(field) not in (None, ""):
+      fixed = count_clean(profile_data.get(field))
+      if fixed:
+        profile_data[field] = fixed
+
+  # Split combined fleet wording: '12 vehicles / 18 drivers'.
+  combined = clean(profile_data.get("vehicle_count") or profile_data.get("fleet_size") or profile_data.get("fleet"))
+  if combined:
+    vehicle_match = re.search(r"(\d+)\s*(?:vehicles?|autos?|power units?|fleet units?)", combined, re.I)
+    driver_match = re.search(r"(\d+)\s*(?:drivers?|operators?)", combined, re.I)
+    if vehicle_match:
+      profile_data["vehicle_count"] = vehicle_match.group(1)
+    if driver_match:
+      profile_data["driver_count"] = driver_match.group(1)
+
+  # Build multi-line exposure from policy schedule when multiple policies exist.
+  lines = []
+  for row in profile_data.get("policies") or profile_data.get("policy_schedule") or []:
+    if isinstance(row, dict):
+      line = normalize_line(row.get("line_of_business") or row.get("policy_type") or row.get("coverage") or row.get("line"))
+      if line and line not in lines:
+        lines.append(line)
+
+  if len(lines) > 1:
+    profile_data["line_of_business"] = "Multi-line: " + ", ".join(lines)
+    profile_data["primary_line_of_business"] = profile_data["line_of_business"]
+  elif len(lines) == 1:
+    profile_data["line_of_business"] = lines[0]
+    profile_data["primary_line_of_business"] = lines[0]
+  elif profile_data.get("line_of_business"):
+    profile_data["line_of_business"] = normalize_line(profile_data.get("line_of_business"))
+    profile_data["primary_line_of_business"] = profile_data["line_of_business"]
+
+  # Province/state normalization, including Canadian postal code first-letter logic.
+  province_map = {
+    "ontario": "ON", "on": "ON", "alberta": "AB", "ab": "AB",
+    "british columbia": "BC", "bc": "BC", "quebec": "QC", "québec": "QC", "qc": "QC",
+    "manitoba": "MB", "mb": "MB", "saskatchewan": "SK", "sk": "SK",
+    "nova scotia": "NS", "ns": "NS", "new brunswick": "NB", "nb": "NB",
+    "newfoundland": "NL", "newfoundland and labrador": "NL", "nl": "NL",
+    "prince edward island": "PE", "pei": "PE", "pe": "PE",
+    "yukon": "YT", "yt": "YT", "northwest territories": "NT", "nt": "NT",
+    "nunavut": "NU", "nu": "NU",
+  }
+  postal_prefix_map = {
+    "A": "NL", "B": "NS", "C": "PE", "E": "NB", "G": "QC", "H": "QC", "J": "QC",
+    "K": "ON", "L": "ON", "M": "ON", "N": "ON", "P": "ON", "R": "MB", "S": "SK",
+    "T": "AB", "V": "BC", "X": "NT", "Y": "YT",
+  }
+  postal = clean(profile_data.get("postal_code") or profile_data.get("postcode"))
+  postal_state = postal_prefix_map.get(postal.upper().replace(" ", "")[:1], "")
+  explicit_state = province_map.get(clean(profile_data.get("province") or profile_data.get("province_code") or profile_data.get("state")).lower(), "")
+  final_state = postal_state or explicit_state
+  if final_state:
+    profile_data["state"] = final_state
+    profile_data["province"] = final_state
+    profile_data["province_code"] = final_state
+
+  print("LOSSQ_EXPOSURE_INPUT_UNIVERSAL_TERMINOLOGY_V1", {
+    "line_of_business": profile_data.get("line_of_business"),
+    "state": profile_data.get("state"),
+    "vehicle_count": profile_data.get("vehicle_count"),
+    "driver_count": profile_data.get("driver_count"),
+    "property_tiv": profile_data.get("property_tiv"),
+  })
+
+  return profile_data
+
+
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
   # LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_CALL_V6
   profile_data = lossq_sanitize_profile_policies_before_upsert_v6(profile_data)
+  # LOSSQ_EXPOSURE_INPUT_UNIVERSAL_TERMINOLOGY_CALL_V1
+  profile_data = lossq_exposure_input_universal_terminology_v1(profile_data)
 
   policy_number = clean_profile_value(
     profile_data.get("policy_number")
