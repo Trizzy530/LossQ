@@ -1813,6 +1813,204 @@ def lossq_apply_exposure_to_appetite(result, profile_data, claims):
   return result
 
 
+
+# LOSSQ_CANADA_MARKET_INTELLIGENCE_V1
+def lossq_canada_market_text_v1(value):
+  try:
+    return str(value or '').strip()
+  except Exception:
+    return ''
+
+def lossq_canada_market_is_account_v1(profile_data=None, claims=None):
+  parts = []
+  if isinstance(profile_data, dict):
+    parts.extend([lossq_canada_market_text_v1(v) for v in profile_data.values()])
+    for row in profile_data.get('policies') or profile_data.get('policy_schedule') or []:
+      if isinstance(row, dict):
+        parts.extend([lossq_canada_market_text_v1(v) for v in row.values()])
+  if isinstance(claims, list):
+    for claim in claims[:50]:
+      if isinstance(claim, dict):
+        parts.extend([lossq_canada_market_text_v1(v) for v in claim.values()])
+  text = ' '.join(parts).lower()
+  tokens = ['canada', 'cad', 'ca$', 'c$', 'ontario', 'alberta', 'british columbia', 'quebec', 'québec', 'wsib', 'wcb', 'worksafebc', 'cnesst']
+  return any(token in text for token in tokens)
+
+def lossq_canada_market_line_key_v1(value):
+  text = lossq_canada_market_text_v1(value).lower()
+  if any(x in text for x in ['cgl', 'general liability']):
+    return 'gl'
+  if any(x in text for x in ['fleet', 'auto', 'automobile']):
+    return 'auto'
+  if any(x in text for x in ['wcb', 'wsib', 'workers', 'comp', 'worksafebc', 'cnesst']):
+    return 'wc'
+  if any(x in text for x in ['errors', 'omissions', 'e&o', 'professional']):
+    return 'professional'
+  if 'cyber' in text:
+    return 'cyber'
+  if any(x in text for x in ['umbrella', 'excess']):
+    return 'umbrella'
+  if 'property' in text:
+    return 'property'
+  if any(x in text for x in ['cargo', 'transit']):
+    return 'cargo'
+  return ''
+
+def lossq_canada_market_lines_v1(profile_data=None, claims=None):
+  lines = set()
+  if isinstance(profile_data, dict):
+    for row in profile_data.get('policies') or profile_data.get('policy_schedule') or []:
+      if isinstance(row, dict):
+        key = lossq_canada_market_line_key_v1(row.get('line_of_business') or row.get('coverage') or row.get('policy_type'))
+        if key:
+          lines.add(key)
+  if isinstance(claims, list):
+    for claim in claims:
+      if isinstance(claim, dict):
+        key = lossq_canada_market_line_key_v1(claim.get('line_of_business') or claim.get('claim_type'))
+        if key:
+          lines.add(key)
+  return lines
+
+def lossq_canada_market_metrics_v1(result=None, claims=None):
+  metrics = {}
+  if isinstance(result, dict):
+    metrics.update(result.get('carrier_match_metrics') or {})
+    metrics.update(result.get('appetite_metrics') or {})
+  if isinstance(claims, list) and claims:
+    total_claims = len(claims)
+    open_claims = 0
+    total_incurred = 0.0
+    total_reserve = 0.0
+    litigation_claims = 0
+    for claim in claims:
+      if not isinstance(claim, dict):
+        continue
+      status = lossq_canada_market_text_v1(claim.get('status') or claim.get('claim_status')).lower()
+      if 'open' in status:
+        open_claims += 1
+      try:
+        total_incurred += float(claim.get('total_incurred') or claim.get('incurred') or 0)
+      except Exception:
+        pass
+      try:
+        total_reserve += float(claim.get('reserve_amount') or claim.get('reserve') or 0)
+      except Exception:
+        pass
+      if claim.get('litigation') is True or claim.get('attorney_assigned') is True or claim.get('suit_filed') is True:
+        litigation_claims += 1
+    metrics.update({
+      'total_claims': total_claims,
+      'open_claims': open_claims,
+      'total_incurred': total_incurred,
+      'total_reserve': total_reserve,
+      'litigation_claims': litigation_claims,
+    })
+  return metrics
+
+def lossq_canada_carrier_directory_v1():
+  return [
+    {'carrier': 'Intact Insurance', 'lines': {'gl', 'property', 'auto', 'umbrella'}, 'base': 82, 'category': 'Canadian standard commercial / middle market'},
+    {'carrier': 'Aviva Canada', 'lines': {'gl', 'property', 'auto', 'umbrella'}, 'base': 79, 'category': 'Canadian commercial package'},
+    {'carrier': 'Northbridge Insurance', 'lines': {'gl', 'auto', 'cargo', 'property'}, 'base': 78, 'category': 'Canadian commercial specialty'},
+    {'carrier': 'Zurich Canada', 'lines': {'gl', 'property', 'professional', 'cyber', 'umbrella'}, 'base': 77, 'category': 'Canadian middle market / specialty'},
+    {'carrier': 'CNA Canada', 'lines': {'gl', 'professional', 'cyber', 'property'}, 'base': 75, 'category': 'Canadian casualty / professional'},
+    {'carrier': 'Chubb Canada', 'lines': {'property', 'professional', 'cyber', 'umbrella'}, 'base': 74, 'category': 'Canadian specialty / executive risk'},
+    {'carrier': 'Lloyd’s Canada', 'lines': {'professional', 'cyber', 'umbrella', 'property'}, 'base': 73, 'category': 'Canadian specialty market'},
+    {'carrier': 'Definity / Economical Insurance', 'lines': {'gl', 'auto', 'property'}, 'base': 72, 'category': 'Canadian regional commercial'},
+    {'carrier': 'Wawanesa Commercial', 'lines': {'gl', 'auto', 'property'}, 'base': 70, 'category': 'Canadian regional commercial'},
+  ]
+
+def lossq_apply_canada_carrier_appetite_v1(result, profile_data=None, claims=None, policy_numbers_used=None, policy_number=None):
+  result = dict(result or {})
+  if not lossq_canada_market_is_account_v1(profile_data, claims):
+    return result
+  metrics = lossq_canada_market_metrics_v1(result, claims)
+  lines = lossq_canada_market_lines_v1(profile_data, claims) or {'gl'}
+  total_claims = int(metrics.get('total_claims') or 0)
+  open_claims = int(metrics.get('open_claims') or 0)
+  litigation_claims = int(metrics.get('litigation_claims') or 0)
+  total_incurred = float(metrics.get('total_incurred') or 0)
+  total_reserve = float(metrics.get('total_reserve') or 0)
+  score = 82
+  score -= min(open_claims * 5, 20)
+  score -= min(litigation_claims * 8, 20)
+  if total_incurred >= 250000:
+    score -= 18
+  elif total_incurred >= 100000:
+    score -= 10
+  elif total_incurred >= 50000:
+    score -= 5
+  if total_reserve >= 100000:
+    score -= 10
+  elif total_reserve >= 50000:
+    score -= 6
+  score = max(0, min(100, int(score)))
+  level = 'Strong' if score >= 75 else 'Moderate' if score >= 55 else 'Restricted' if score >= 35 else 'Critical'
+  target_carriers = [row['carrier'] for row in lossq_canada_carrier_directory_v1() if lines.intersection(row['lines'])][:5]
+  result.update({
+    'carrier_appetite_score': score,
+    'carrier_appetite_level': level,
+    'best_fit_carriers': target_carriers,
+    'best_fit_markets': target_carriers,
+    'carrier_match_reasons': [
+      f'Canada account detected from uploaded country/currency/province signals.',
+      f'Coverage lines detected: {', '.join(sorted(lines))}.',
+      f'Reviewed {total_claims} claim(s), {open_claims} open claim(s), CAD ${total_incurred:,.0f} incurred, CAD ${total_reserve:,.0f} reserves.',
+    ],
+    'market_strategy': f'Market as a Canadian commercial account. Prioritize Canadian carriers comfortable with {', '.join(sorted(lines))} and attach current claim narratives/reserve status.',
+    'placement_summary': f'Canadian carrier appetite is {score}/100, rated {level}, based on {total_claims} claim(s), {open_claims} open claim(s), CAD ${total_incurred:,.0f} incurred, and detected lines {', '.join(sorted(lines))}.',
+    'appetite_metrics': {**metrics, 'coverage_lines_detected': sorted(lines), 'currency': 'CAD', 'country': 'Canada'},
+    'carrier_country': 'Canada',
+    'market_currency': 'CAD',
+    'lossq_canada_appetite_version': 'LOSSQ_CANADA_CARRIER_APPETITE_V1',
+  })
+  return result
+
+def lossq_apply_canada_carrier_match_v1(result, profile_data=None, claims=None):
+  result = dict(result or {})
+  if not lossq_canada_market_is_account_v1(profile_data, claims):
+    return result
+  metrics = lossq_canada_market_metrics_v1(result, claims)
+  lines = lossq_canada_market_lines_v1(profile_data, claims) or {'gl'}
+  total_claims = int(metrics.get('total_claims') or 0)
+  open_claims = int(metrics.get('open_claims') or 0)
+  total_incurred = float(metrics.get('total_incurred') or 0)
+  total_reserve = float(metrics.get('total_reserve') or 0)
+  matches = []
+  for market in lossq_canada_carrier_directory_v1():
+    overlap = lines.intersection(market['lines'])
+    if not overlap:
+      continue
+    score = market['base'] + len(overlap) * 4
+    score -= min(open_claims * 3, 12)
+    if total_incurred >= 250000:
+      score -= 15
+    elif total_incurred >= 100000:
+      score -= 8
+    if total_reserve >= 50000:
+      score -= 5
+    score = max(0, min(100, int(score)))
+    reason = f"{market['carrier']}: Canada-market fit for {', '.join(sorted(overlap))}. Reviewed {total_claims} claim(s), {open_claims} open claim(s), CAD ${total_incurred:,.0f} incurred, and CAD ${total_reserve:,.0f} reserves."
+    matches.append({'carrier': market['carrier'], 'group': market['carrier'], 'match_score': score, 'score': score, 'market_category': market['category'], 'reason': reason, 'match_reason': reason, 'country': 'Canada', 'currency': 'CAD'})
+  matches = sorted(matches, key=lambda row: row.get('match_score', 0), reverse=True)
+  if not matches:
+    return result
+  recommended = matches[0]
+  result.update({
+    'top_carriers': matches[:5],
+    'recommended_carrier': recommended.get('carrier'),
+    'recommended_score': recommended.get('match_score'),
+    'recommended_market_category': recommended.get('market_category'),
+    'carrier_match_reasons': [row.get('reason') for row in matches[:5]],
+    'carrier_match_summary': f"LossQ recommends {recommended.get('carrier')} with a {recommended.get('match_score')}/100 Canada-market match. Ranking used Canadian jurisdiction/currency signals, coverage lines {', '.join(sorted(lines))}, {total_claims} claim(s), {open_claims} open claim(s), CAD ${total_incurred:,.0f} incurred, and CAD ${total_reserve:,.0f} reserves.",
+    'carrier_match_metrics': {**metrics, 'coverage_lines_detected': sorted(lines), 'currency': 'CAD', 'country': 'Canada'},
+    'carrier_country': 'Canada',
+    'market_currency': 'CAD',
+    'lossq_canada_carrier_match_version': 'LOSSQ_CANADA_CARRIER_MATCH_V1',
+  })
+  return result
+
 # LOSSQ_EXPOSURE_ALIGNED_CARRIER_MATCH_RERANK_V1
 def lossq_apply_exposure_to_carrier_match(result, profile_data, claims):
   result = dict(result or {})
@@ -2231,6 +2429,8 @@ def renewal_decision(policy_number: str | None = Query(default=None), db: Sessio
   result = lossq_apply_exposure_to_decision(result, profile_data, claims)
   result["policy_numbers_used"] = policy_numbers_used
   result = lossq_force_exposure_from_result_profile(result)
+  # LOSSQ_CANADA_CARRIER_MATCH_CALL_V1
+  result = lossq_apply_canada_carrier_match_v1(result, profile_data, claims)
   return result
 
 
@@ -2466,6 +2666,8 @@ def carrier_appetite(policy_number: str | None = Query(default=None), db: Sessio
 
   result["account_profile"] = profile_data
   result = lossq_marketable_carrier_appetite(result, profile_data, claims, policy_numbers_used, policy_number)
+  # LOSSQ_CANADA_CARRIER_APPETITE_CALL_V1
+  result = lossq_apply_canada_carrier_appetite_v1(result, profile_data, claims, policy_numbers_used, policy_number)
   return result
 
 
