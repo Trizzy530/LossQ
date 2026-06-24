@@ -120,11 +120,12 @@ function attorneyStatusFromClaim(claim: AnyObject | null | undefined) {
 
   if (explicitBoolean === true) {
     return {
-      status: "Unknown",
-      involved: false,
-      display: "Attorney Involved: Unknown",
+      // LOSSQ_ATTORNEY_BOOLEAN_TRUE_IS_YES_V1
+      status: "Yes",
+      involved: true,
+      display: "Attorney Involved: Yes",
       detail:
-        "A litigation flag exists, but the claim detail does not include a clear attorney, suit, counsel, or litigation description. Verify before treating this as represented.",
+        "Attorney, suit, counsel, or litigation involvement is identified by an explicit loss-run flag.",
     };
   }
 
