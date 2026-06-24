@@ -8092,7 +8092,7 @@ const openVisibleClaims = visibleClaims.filter((claim: any) => isOpenClaimStatus
 const closedVisibleClaims = visibleClaims.filter((claim: any) => !isOpenClaimStatus(claim));
 const groupedVisibleClaims = [...openVisibleClaims,...closedVisibleClaims];
 
-// LOSSQ_DASHBOARD_CLAIM_ATTORNEY_FLAG_STRICT_V3
+// LOSSQ_DASHBOARD_CLAIM_ATTORNEY_FLAG_STRICT_V4
 const lossqDashboardClaimFlagV1 = (claim: any) => {
  const cleanLocal = (value: any) => String(value ?? "").replace(/\s+/g, " ").trim();
 
@@ -8180,26 +8180,31 @@ const lossqDashboardClaimFlagV1 = (claim: any) => {
    return "None";
   }
 
-  if (
-   clean === "attorney assigned" ||
-   clean === "attorney involved" ||
-   clean === "counsel assigned" ||
-   clean === "represented"
-  ) {
+  if (["attorney assigned", "attorney involved", "counsel assigned", "represented"].includes(clean)) {
    return "Attorney";
   }
 
-  if (
-   clean === "litigation" ||
-   clean === "litigated" ||
-   clean === "suit filed" ||
-   clean === "lawsuit filed"
-  ) {
+  if (["litigation", "litigated", "suit filed", "lawsuit filed"].includes(clean)) {
    return "Litigation";
   }
  }
 
- return "None";
+ const existingFlag = cleanLocal(
+  claim?.flag ||
+   claim?.claim_flag ||
+   claim?.claimFlag ||
+   claim?.risk_flag ||
+   claim?.riskFlag
+ );
+
+ const existingLower = existingFlag.toLowerCase();
+
+ // Do not trust legacy/generated legal flags because they may be account-level or polluted.
+ if (["attorney", "litigation", "suit", "open reserve", "none", "no", "n/a", "na", "-", "unknown", "not set"].includes(existingLower)) {
+  return "None";
+ }
+
+ return existingFlag || "None";
 };
 
 const lossqDashboardClaimIsFlaggedV1 = (claim: any) => {
