@@ -471,6 +471,14 @@ export default function SettingsPage() {
 {/* LOSSQ_FOUNDER_BETA_ADMIN_LINKS_V1 */}
             {canSeePlatformAdminLinks && (
               <>
+                {/* LOSSQ_SETTINGS_PLATFORM_ADMIN_BUTTON_RESTORE_V1 */}
+                <a
+                  href="/platform-admin"
+                  className="rounded-xl border border-sky-400/30 bg-sky-500/10 px-5 py-3 font-semibold text-sky-100 hover:bg-sky-500/20"
+                >
+                  Platform Admin
+                </a>
+
                 <a
                   href="/platform-admin/beta-requests"
                   className="rounded-xl border border-cyan-400/30 bg-cyan-500/10 px-5 py-3 font-semibold text-cyan-100 hover:bg-cyan-500/20"
