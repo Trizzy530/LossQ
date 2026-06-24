@@ -3973,61 +3973,66 @@ function lossqSafeWritingCarrierDisplay(profileLike: any): string {
 // Universal producer/agency display. Do not hardcode LossQ, a demo agency,
 // a carrier, or a specific customer. Prefer true producing agency values,
 // then fall back to the user's saved organization/company profile.
-function lossqProducingAgencyFromObject(obj: any): string {
- const dashboardOrganization =
-  obj?.dashboardIdentity?.organization ||
-  obj?.currentUser?.organization ||
-  {};
+function lossqProducingAgencyFromObject(source: any) {
+  // LOSSQ_PRODUCING_AGENCY_UPLOAD_FIRST_DASHBOARD_V1
+  // Uploaded Producing Agency / Brokerage wins. Logged-in agency is fallback only.
+  const cleanLocal = (value: any) => String(value || "").trim();
 
- const organization =
-  obj?.organization ||
-  obj?.org ||
-  obj?.agency_profile ||
-  obj?.company_profile ||
-  dashboardOrganization ||
-  {};
+  const directUploadedKeys = [
+    "producing_agency",
+    "producingAgency",
+    "brokerage",
+    "broker",
+    "producer",
+    "producer_name",
+    "producerName",
+  ];
 
- const billingOrganization =
-  obj?.billingStatus?.organization ||
-  obj?.billing_status?.organization ||
-  obj?.subscription?.organization ||
-  {};
+  const fallbackAgencyKeys = [
+    "agency_name",
+    "agencyName",
+    "agency",
+  ];
 
- return lossqFirstValue(
-  obj?.agency_name,
-  obj?.producing_agency,
-  obj?.producingAgency,
-  obj?.producer,
-  obj?.agency,
-  obj?.agencyName,
-  obj?.broker,
-  obj?.brokerage,
-  obj?.company_name,
-  obj?.organization_name,
-  obj?.organizationName,
-  obj?.org_name,
-  obj?.name,
-  obj?.["Producing Agency"],
-  obj?.["Producer"],
-  obj?.["Agency Name"],
-  obj?.["Company Name"],
-  obj?.["Organization Name"],
-  organization?.agency_name,
-  organization?.producing_agency,
-  organization?.company_name,
-  organization?.organization_name,
-  organization?.name,
-  dashboardOrganization?.agency_name,
-  dashboardOrganization?.producing_agency,
-  dashboardOrganization?.company_name,
-  dashboardOrganization?.organization_name,
-  dashboardOrganization?.name,
-  billingOrganization?.agency_name,
-  billingOrganization?.producing_agency,
-  billingOrganization?.company_name,
-  billingOrganization?.organization_name,
-  billingOrganization?.name
- ) || "Agency Not Set";
+  const nestedSources = [
+    source,
+    source?.account_profile,
+    source?.accountProfile,
+    source?.profile,
+    source?.uploadedProfile,
+    source?.uploaded_profile,
+    source?.loss_run_profile,
+    source?.lossRunProfile,
+  ].filter(Boolean);
+
+  for (const item of nestedSources) {
+    for (const key of directUploadedKeys) {
+      const value = cleanLocal(item?.[key]);
+      if (value && !["not set", "agency not set", "unknown", "none", "null"].includes(value.toLowerCase())) {
+        return value;
+      }
+    }
+  }
+
+  for (const item of nestedSources) {
+    for (const key of fallbackAgencyKeys) {
+      const value = cleanLocal(item?.[key]);
+      if (value && !["not set", "agency not set", "unknown", "none", "null"].includes(value.toLowerCase())) {
+        return value;
+      }
+    }
+  }
+
+  const organizationFallback =
+    cleanLocal(source?.organization?.agency_name) ||
+    cleanLocal(source?.organization?.name) ||
+    cleanLocal(source?.company_profile?.agency_name) ||
+    cleanLocal(source?.agency_profile?.agency_name) ||
+    cleanLocal(source?.dashboardIdentity?.organization?.name) ||
+    cleanLocal(source?.dashboardIdentity?.agency_name) ||
+    cleanLocal(source?.billingStatus?.organization?.name);
+
+  return organizationFallback || "";
 }
 
 
@@ -9409,8 +9414,8 @@ const modelChartNarrative =
           })}
          />
          <ProfileDetail label="Main Policy" value={mainPolicyNumber || "-"} />
-         <ProfileDetail label="Effective Date" value={lossqEffectiveDateFromObject(displayProfile) || lossqFirstPolicyEffectiveDate(policySchedule) || "Not set"} />
-         <ProfileDetail label="Expiration Date" value={lossqExpirationDateFromObject(displayProfile) || lossqFirstPolicyExpirationDate(policySchedule) || "Not set"} />
+         <ProfileDetail label="Effective Date" value={lossqFirstPolicyEffectiveDate(policySchedule) || lossqEffectiveDateFromObject(displayProfile) || "Not set"} />
+         <ProfileDetail label="Expiration Date" value={lossqFirstPolicyExpirationDate(policySchedule) || lossqExpirationDateFromObject(displayProfile) || "Not set"} />
          <ProfileDetail label="Evaluation Date" value={getBestEvaluationDate(displayProfile) || lossqAnyEvaluationDate(displayProfile) || lossqFirstPolicyEvaluationDate(policySchedule) || "Not set"} />
         </div>
 
