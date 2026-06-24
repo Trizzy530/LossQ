@@ -7814,6 +7814,55 @@ def lossq_safe_money_float_currency_v4(value, default=0.0):
 
   return amount
 
+
+# LOSSQ_FINAL_CLAIM_AMOUNT_DATE_COERCE_BEFORE_SAVE_V1
+def lossq_final_claim_amount_date_coerce_before_save_v1(normalized_claim):
+  if not isinstance(normalized_claim, dict):
+    return normalized_claim
+
+  def money(value):
+    try:
+      return lossq_safe_money_float_currency_v4(value, 0.0)
+    except Exception:
+      try:
+        raw_value = str(value or "").replace("\\u00a0", " ").strip()
+        raw_value = re.sub(r"(?i)\\b(?:cad|usd|cdn|cnd)\\b", "", raw_value)
+        raw_value = raw_value.replace("CA$", "").replace("US$", "").replace("C$", "").replace("$", "")
+        raw_value = raw_value.replace(",", "").replace("(", "-").replace(")", "")
+        match = re.search(r"-?\\d+(?:\\.\\d+)?", raw_value)
+        return float(match.group(0)) if match else 0.0
+      except Exception:
+        return 0.0
+
+  for field in ["paid_amount", "reserve_amount", "total_incurred"]:
+    normalized_claim[field] = money(normalized_claim.get(field))
+
+  if normalized_claim.get("total_incurred", 0.0) == 0.0:
+    paid = normalized_claim.get("paid_amount", 0.0) or 0.0
+    reserve = normalized_claim.get("reserve_amount", 0.0) or 0.0
+    if paid or reserve:
+      normalized_claim["total_incurred"] = paid + reserve
+
+  def repair_date(value):
+    raw_date = str(value or "").strip()
+    if not raw_date:
+      return value
+    match = re.match(r"^(20\\d{2}|19\\d{2})-(\\d{1,2})-(\\d{1,2})$", raw_date)
+    if not match:
+      return value
+    year = int(match.group(1))
+    middle = int(match.group(2))
+    last = int(match.group(3))
+    # Repair accidental YYYY-DD-MM from Canadian DD/MM/YYYY parsing.
+    if middle > 12 and 1 <= last <= 12:
+      return f"{year:04d}-{last:02d}-{middle:02d}"
+    return raw_date
+
+  for field in ["date_of_loss", "date_reported", "date_closed"]:
+    normalized_claim[field] = repair_date(normalized_claim.get(field))
+
+  return normalized_claim
+
 def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: dict):
   extracted_policy_number = clean_profile_value(
     pick(raw, ["policy_number", "policy_no", "policy"], "")
@@ -16499,6 +16548,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
       if total_value <= 0 and (paid_value or reserve_value):
         normalized["total_incurred"] = paid_value + reserve_value
 
+      # LOSSQ_FINAL_CLAIM_AMOUNT_DATE_COERCE_CORRECT_SAVE_CALL_V1
+      normalized = lossq_final_claim_amount_date_coerce_before_save_v1(normalized)
       clean_claim_payload = lossq_filter_claim_model_fields(normalized)
 
       db.add(Claim(**clean_claim_payload))
