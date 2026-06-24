@@ -8092,11 +8092,102 @@ const openVisibleClaims = visibleClaims.filter((claim: any) => isOpenClaimStatus
 const closedVisibleClaims = visibleClaims.filter((claim: any) => !isOpenClaimStatus(claim));
 const groupedVisibleClaims = [...openVisibleClaims,...closedVisibleClaims];
 
+// LOSSQ_DASHBOARD_CLAIM_ATTORNEY_FLAG_V1
+const lossqDashboardClaimFlagV1 = (claim: any) => {
+ const cleanLocal = (value: any) => String(value ?? "").replace(/\s+/g, " ").trim();
+
+ const existingFlag = cleanLocal(
+  claim?.flag ||
+   claim?.claim_flag ||
+   claim?.claimFlag ||
+   claim?.risk_flag ||
+   claim?.riskFlag
+ );
+
+ if (
+  existingFlag &&
+  !["none", "no", "n/a", "na", "-", "unknown", "not set"].includes(existingFlag.toLowerCase())
+ ) {
+  return existingFlag;
+ }
+
+ const explicitValues = [
+  claim?.attorney_assigned,
+  claim?.attorneyAssigned,
+  claim?.attorney_involved,
+  claim?.attorneyInvolved,
+  claim?.suit_filed,
+  claim?.suitFiled,
+  claim?.litigation,
+  claim?.litigation_flag,
+  claim?.litigationFlag,
+  claim?.represented,
+ ];
+
+ const explicitYes = explicitValues.some((value) => {
+  if (value === true) return true;
+  const clean = cleanLocal(value).toLowerCase();
+  return ["yes", "y", "true", "1", "attorney assigned", "attorney involved", "suit filed", "represented"].includes(clean);
+ });
+
+ if (explicitYes) {
+  return "Attorney";
+ }
+
+ const textSignal = [
+  claim?.litigation_status,
+  claim?.litigationStatus,
+  claim?.attorney,
+  claim?.attorney_status,
+  claim?.attorneyStatus,
+  claim?.counsel,
+  claim?.suit,
+  claim?.lawsuit,
+  claim?.represented,
+  claim?.description,
+  claim?.claim_description,
+  claim?.loss_description,
+  claim?.notes,
+  claim?.underwriting_notes,
+ ].map(cleanLocal).join(" ").toLowerCase();
+
+ const negativeAttorney =
+  /\b(no|none|not|without)\s+(attorney|counsel|suit|lawsuit|litigation|legal|representation|represented)\b|\b(no\s+suit|no\s+attorney|no\s+counsel|no\s+litigation|no\s+legal|not\s+represented|unrepresented)\b/;
+
+ if (
+  textSignal &&
+  !negativeAttorney.test(textSignal) &&
+  /\b(attorney|counsel|suit|lawsuit|litigation|litigated|represented|demand letter)\b/.test(textSignal)
+ ) {
+  return textSignal.includes("attorney") || textSignal.includes("counsel") ? "Attorney" : "Litigation";
+ }
+
+ const reserve = Number(
+  String(claim?.reserve_amount ?? claim?.reserve ?? claim?.reserveAmount ?? 0).replace(/[$,]/g, "")
+ );
+
+ const status = cleanLocal(claim?.status || claim?.claim_status || claim?.claimStatus).toLowerCase();
+
+ if (status.includes("open") && reserve > 0) {
+  return "Open Reserve";
+ }
+
+ return "None";
+};
+
+const lossqDashboardClaimIsFlaggedV1 = (claim: any) => {
+ return lossqDashboardClaimFlagV1(claim) !== "None";
+};
+
+const lossqDashboardClaimAttorneyLitigationV1 = (claim: any) => {
+ const flag = lossqDashboardClaimFlagV1(claim).toLowerCase();
+ return flag.includes("attorney") || flag.includes("litigation") || flag.includes("suit");
+};
+
 const localClaimTotal = intelligenceClaims.reduce((sum: number, c: any) => sum + getClaimIncurred(c), 0);
 const localOpenClaimCount = intelligenceClaims.filter((claim: any) => isOpenClaimStatus(claim)).length;
 const localLitigationCount = intelligenceClaims.filter((c: any) => {
- const text = `${c?.litigation || ""} ${c?.litigation_status || ""} ${c?.description || ""} ${c?.flag || ""}`.toLowerCase();
- return text.includes("litigation") || text.includes("attorney") || text.includes("suit");
+ return lossqDashboardClaimAttorneyLitigationV1(c);
 }).length;
 const localLargeLossCount = intelligenceClaims.filter((c: any) => getClaimIncurred(c) >= 50000).length;
 const localRenewalPenalty = Math.min(70, localOpenClaimCount * 10 + localLitigationCount * 15 + localLargeLossCount * 10 + Math.max(0, intelligenceClaims.length - 3) * 4);
@@ -8719,7 +8810,7 @@ const scheduleClaimStats = visibleClaims.reduce((acc: AnyObject, claim: any) => 
 }, {});
 
 const flaggedClaims = hasActiveAccount
- ? visibleClaims.filter((c: any) => c.flag).length
+ ? visibleClaims.filter((c: any) => lossqDashboardClaimIsFlaggedV1(c)).length
  : Number(backendMetrics?.flagged_claims ?? 0);
 
 const totalClaimsDisplay = hasActiveAccount ? totalClaims : "-";
@@ -10301,8 +10392,7 @@ const modelChartNarrative =
   const openClaimCount = claimRows.filter((claim: any) => isOpenClaimStatus(claim)).length;
   const largeLossCount = claimRows.filter((claim: any) => getClaimIncurred(claim) >= 50000).length;
   const litigationCount = claimRows.filter((claim: any) => {
-   const text = `${claim?.litigation || ""} ${claim?.litigation_status || ""} ${claim?.description || ""} ${claim?.flag || ""}`.toLowerCase();
-   return text.includes("litigation") || text.includes("attorney") || text.includes("suit");
+   return lossqDashboardClaimAttorneyLitigationV1(claim);
   }).length;
 
   const hasPremiumData = currentPremium > 0;
@@ -11022,7 +11112,7 @@ const modelChartNarrative =
      case "policy":
       return textValue(claim?.policy_number || claim?.policy || claim?.policyNumber);
      case "flag":
-      return textValue(claim?.flag);
+      return textValue(lossqDashboardClaimFlagV1(claim));
      default:
       return total;
     }
@@ -11156,11 +11246,15 @@ const modelChartNarrative =
    <td>{displayPolicyNumber}</td>
 
    <td>
-    {claim.flag ? (
-     <span className="text-red-300">{claim.flag}</span>
-    ) : (
-     <span className="text-slate-500">None</span>
-    )}
+    {(() => {
+     const dashboardFlag = lossqDashboardClaimFlagV1(claim);
+
+     return dashboardFlag !== "None" ? (
+      <span className="text-red-300">{dashboardFlag}</span>
+     ) : (
+      <span className="text-slate-500">None</span>
+     );
+    })()}
    </td>
   </tr>
    );
