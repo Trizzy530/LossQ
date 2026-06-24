@@ -8,6 +8,14 @@ import json
 from datetime import datetime
 from typing import List, Any
 
+# LOSSQ_MARKET_INTELLIGENCE_IMPORT_V1
+try:
+  from app.services.market_intelligence import lossq_normalize_market_profile, lossq_market_intelligence_summary
+except Exception as lossq_market_intelligence_import_error:
+  lossq_normalize_market_profile = None
+  lossq_market_intelligence_summary = None
+  print("LOSSQ_MARKET_INTELLIGENCE_IMPORT_FAILED_V1", str(lossq_market_intelligence_import_error))
+
 from app.database import SessionLocal
 from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
@@ -11406,9 +11414,88 @@ def lossq_exposure_input_universal_terminology_v1(profile_data):
   return profile_data
 
 
+# LOSSQ_MARKET_INTELLIGENCE_PROFILE_APPLY_V1
+def lossq_apply_market_intelligence_to_profile_v1(profile_data, raw_text=None):
+  if not isinstance(profile_data, dict):
+    return profile_data
+
+  if lossq_normalize_market_profile is None:
+    return profile_data
+
+  try:
+    raw_parts = []
+    if raw_text:
+      raw_parts.append(str(raw_text))
+
+    for key in [
+      "raw_text",
+      "document_text",
+      "upload_text",
+      "ocr_text",
+      "extracted_text",
+      "loss_run_text",
+      "business_name",
+      "carrier_name",
+      "writing_carrier",
+      "insurer",
+      "state",
+      "province",
+      "province_code",
+      "postal_code",
+      "postcode",
+      "line_of_business",
+      "exposure_basis",
+    ]:
+      value = profile_data.get(key)
+      if value not in (None, ""):
+        raw_parts.append(str(value))
+
+    market_raw_text = "\n".join(raw_parts)
+    normalized = lossq_normalize_market_profile(profile_data, market_raw_text)
+
+    if not isinstance(normalized, dict):
+      return profile_data
+
+    # Keep this safe for the existing database schema.
+    # These flattened fields only persist if AccountProfile/upsert already supports them.
+    context = normalized.get("market_context") or {}
+    region_context = context.get("region_context") or {}
+
+    if context.get("country"):
+      normalized.setdefault("market_country", context.get("country"))
+    if context.get("currency"):
+      normalized.setdefault("market_currency", context.get("currency"))
+    if context.get("language"):
+      normalized.setdefault("market_language", context.get("language"))
+    if context.get("region_code"):
+      normalized.setdefault("market_region_code", context.get("region_code"))
+    if region_context.get("regulator"):
+      normalized.setdefault("market_regulator", region_context.get("regulator"))
+    if region_context.get("date_format"):
+      normalized.setdefault("market_date_format", region_context.get("date_format"))
+
+    print("LOSSQ_MARKET_INTELLIGENCE_PROFILE_APPLIED_V1", {
+      "country": normalized.get("market_country"),
+      "region": normalized.get("market_region_code") or normalized.get("state"),
+      "currency": normalized.get("market_currency"),
+      "regulator": normalized.get("market_regulator"),
+      "line_of_business": normalized.get("line_of_business"),
+      "carrier_name": normalized.get("carrier_name"),
+      "vehicle_count": normalized.get("vehicle_count"),
+      "driver_count": normalized.get("driver_count"),
+      "property_tiv": normalized.get("property_tiv"),
+    })
+
+    return normalized
+  except Exception as exc:
+    print("LOSSQ_MARKET_INTELLIGENCE_PROFILE_APPLY_FAILED_V1", str(exc))
+    return profile_data
+
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
   # LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_CALL_V6
   profile_data = lossq_sanitize_profile_policies_before_upsert_v6(profile_data)
+  # LOSSQ_MARKET_INTELLIGENCE_PROFILE_APPLY_CALL_V1
+  profile_data = lossq_apply_market_intelligence_to_profile_v1(profile_data)
   # LOSSQ_EXPOSURE_INPUT_UNIVERSAL_TERMINOLOGY_CALL_V1
   profile_data = lossq_exposure_input_universal_terminology_v1(profile_data)
 
