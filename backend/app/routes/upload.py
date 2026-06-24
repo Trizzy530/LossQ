@@ -16,6 +16,15 @@ import re
 from app.services.audit import record_audit_event
 from app.services.loss_run_pipeline import parse_loss_run_file
 from app.services.universal_profile import extract_universal_profile_from_text
+# LOSSQ_CANADA_UPLOAD_SUPPORT_IMPORT_V3
+try:
+  from app.services.canada_loss_run_support import (
+    enhance_claim_for_canada as lossq_canada_enhance_claim_for_canada,
+    enhance_profile_for_canada as lossq_canada_enhance_profile_for_canada,
+  )
+except Exception:
+  lossq_canada_enhance_claim_for_canada = None
+  lossq_canada_enhance_profile_for_canada = None
 import traceback
 from app.role_utils import require_permission
 from app.services.row_policy_preservation import preserve_row_policy_fields
@@ -7644,6 +7653,111 @@ def lossq_extract_true_account_number_from_upload_csv(file_path):
   return ""
 
 
+# LOSSQ_CANADA_UPLOAD_SUPPORT_HOOKS_V3
+def lossq_canada_context_text_v3(*values):
+  parts = []
+
+  def add(value):
+    if value in (None, "", [], {}):
+      return
+    if isinstance(value, dict):
+      for key, item in value.items():
+        add(key)
+        add(item)
+      return
+    if isinstance(value, (list, tuple, set)):
+      for item in value:
+        add(item)
+      return
+    parts.append(str(value))
+
+  for value in values:
+    add(value)
+
+  return " ".join(parts)[:50000]
+
+
+def lossq_canada_profile_hook_v3(profile_data, parsed_claims=None):
+  if lossq_canada_enhance_profile_for_canada is None:
+    return profile_data
+  if not isinstance(profile_data, dict):
+    return profile_data
+
+  try:
+    context = lossq_canada_context_text_v3(profile_data, parsed_claims)
+    enhanced = lossq_canada_enhance_profile_for_canada(dict(profile_data), context)
+    if not isinstance(enhanced, dict):
+      return profile_data
+
+    for key in [
+      "country",
+      "currency",
+      "postal_code",
+      "province",
+      "province_code",
+      "state",
+      "carrier_name",
+      "writing_carrier",
+      "producing_agency",
+      "effective_date",
+      "expiration_date",
+      "evaluation_date",
+      "valuation_date",
+    ]:
+      value = enhanced.get(key)
+      if value not in ("", None, [], {}):
+        profile_data[key] = value
+
+    print("LOSSQ_CANADA_PROFILE_HOOK_V3", {
+      "country": profile_data.get("country"),
+      "currency": profile_data.get("currency"),
+      "province": profile_data.get("province") or profile_data.get("province_code"),
+      "postal_code": profile_data.get("postal_code"),
+    })
+  except Exception as exc:
+    print("LOSSQ_CANADA_PROFILE_HOOK_SKIPPED_V3:", str(exc)[:200])
+
+  return profile_data
+
+
+def lossq_canada_claim_hook_v3(normalized_claim, raw_claim=None):
+  if lossq_canada_enhance_claim_for_canada is None:
+    return normalized_claim
+  if not isinstance(normalized_claim, dict):
+    return normalized_claim
+
+  raw_claim = raw_claim if isinstance(raw_claim, dict) else {}
+
+  try:
+    combined = {}
+    combined.update(raw_claim)
+    combined.update(normalized_claim)
+
+    context = lossq_canada_context_text_v3(raw_claim, normalized_claim)
+    enhanced = lossq_canada_enhance_claim_for_canada(combined, context)
+    if not isinstance(enhanced, dict):
+      return normalized_claim
+
+    for key in [
+      "jurisdiction_state",
+      "venue_state",
+      "line_of_business",
+      "paid_amount",
+      "reserve_amount",
+      "total_incurred",
+      "date_of_loss",
+      "date_reported",
+      "date_closed",
+    ]:
+      value = enhanced.get(key)
+      if value not in ("", None, [], {}):
+        normalized_claim[key] = value
+
+  except Exception as exc:
+    print("LOSSQ_CANADA_CLAIM_HOOK_SKIPPED_V3:", str(exc)[:200])
+
+  return normalized_claim
+
 def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: dict):
   extracted_policy_number = clean_profile_value(
     pick(raw, ["policy_number", "policy_no", "policy"], "")
@@ -7703,11 +7817,15 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
   }
 
   # LOSSQ_NORMALIZE_ROW_POLICY_PRESERVATION_V1
-  return preserve_row_policy_fields(
+  normalized_claim = preserve_row_policy_fields(
     raw=raw,
     normalized=normalized,
     fallback_policy_number=fallback_policy_number,
   )
+
+  # LOSSQ_CANADA_NORMALIZE_CLAIM_CALL_V3
+  normalized_claim = lossq_canada_claim_hook_v3(normalized_claim, raw)
+  return normalized_claim
 
 
 # LOSSQ_CLEAN_EXPOSURE_LIMITS_FIELD_V1
@@ -17107,6 +17225,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
   # LOSSQ_CLEAN_EXPOSURE_LIMITS_FIELD_V1
   profile_data = lossq_clean_exposure_limits_field(profile_data)
+
+  # LOSSQ_CANADA_PROFILE_ENHANCEMENT_CALL_V3
+  profile_data = lossq_canada_profile_hook_v3(profile_data, all_parsed_claims)
 
   profile = upsert_account_profile(db, profile_data, current_user)
 
