@@ -8092,24 +8092,9 @@ const openVisibleClaims = visibleClaims.filter((claim: any) => isOpenClaimStatus
 const closedVisibleClaims = visibleClaims.filter((claim: any) => !isOpenClaimStatus(claim));
 const groupedVisibleClaims = [...openVisibleClaims,...closedVisibleClaims];
 
-// LOSSQ_DASHBOARD_CLAIM_ATTORNEY_FLAG_STRICT_V2
+// LOSSQ_DASHBOARD_CLAIM_ATTORNEY_FLAG_STRICT_V3
 const lossqDashboardClaimFlagV1 = (claim: any) => {
  const cleanLocal = (value: any) => String(value ?? "").replace(/\s+/g, " ").trim();
-
- const existingFlag = cleanLocal(
-  claim?.flag ||
-   claim?.claim_flag ||
-   claim?.claimFlag ||
-   claim?.risk_flag ||
-   claim?.riskFlag
- );
-
- if (
-  existingFlag &&
-  !["none", "no", "n/a", "na", "-", "unknown", "not set"].includes(existingFlag.toLowerCase())
- ) {
-  return existingFlag;
- }
 
  const isExplicitYes = (value: any) => {
   if (value === true) return true;
@@ -8120,7 +8105,25 @@ const lossqDashboardClaimFlagV1 = (claim: any) => {
  const isExplicitNo = (value: any) => {
   if (value === false) return true;
   const clean = cleanLocal(value).toLowerCase();
-  return ["no", "n", "false", "0", "none", "n/a", "na", "not represented", "no attorney", "no litigation", "no suit"].includes(clean);
+  return [
+   "no",
+   "n",
+   "false",
+   "0",
+   "none",
+   "n/a",
+   "na",
+   "none present",
+   "not present",
+   "no attorney",
+   "no attorney present",
+   "no litigation",
+   "no litigation present",
+   "no suit",
+   "no suit filed",
+   "not represented",
+   "unrepresented",
+  ].includes(clean);
  };
 
  const attorneyValues = [
@@ -8134,7 +8137,7 @@ const lossqDashboardClaimFlagV1 = (claim: any) => {
   return "Attorney";
  }
 
- const suitValues = [
+ const litigationValues = [
   claim?.suit_filed,
   claim?.suitFiled,
   claim?.litigation,
@@ -8143,27 +8146,57 @@ const lossqDashboardClaimFlagV1 = (claim: any) => {
   claim?.represented,
  ];
 
- if (suitValues.some(isExplicitYes)) {
+ if (litigationValues.some(isExplicitYes)) {
   return "Litigation";
  }
 
- if ([...attorneyValues, ...suitValues].some(isExplicitNo)) {
+ const statusValues = [
+  claim?.litigation_status,
+  claim?.litigationStatus,
+  claim?.attorney_status,
+  claim?.attorneyStatus,
+ ];
+
+ if ([...attorneyValues, ...litigationValues, ...statusValues].some(isExplicitNo)) {
   return "None";
  }
 
- const litigationStatus = cleanLocal(
-  claim?.litigation_status ||
-   claim?.litigationStatus ||
-   claim?.attorney_status ||
-   claim?.attorneyStatus
- ).toLowerCase();
+ for (const value of statusValues) {
+  const clean = cleanLocal(value).toLowerCase();
 
- if (
-  litigationStatus &&
-  !["none", "no", "n/a", "na", "unknown", "not set", "no attorney", "no litigation", "no suit"].includes(litigationStatus)
- ) {
-  if (/\b(attorney|counsel|represented)\b/.test(litigationStatus)) return "Attorney";
-  if (/\b(suit filed|lawsuit|litigation|litigated)\b/.test(litigationStatus)) return "Litigation";
+  if (!clean || ["unknown", "not set", "-", "pending review"].includes(clean)) {
+   continue;
+  }
+
+  if (
+   clean.includes("none present") ||
+   clean.includes("not present") ||
+   clean.includes("no attorney") ||
+   clean.includes("no litigation") ||
+   clean.includes("no suit") ||
+   clean.includes("not represented") ||
+   clean.includes("unrepresented")
+  ) {
+   return "None";
+  }
+
+  if (
+   clean === "attorney assigned" ||
+   clean === "attorney involved" ||
+   clean === "counsel assigned" ||
+   clean === "represented"
+  ) {
+   return "Attorney";
+  }
+
+  if (
+   clean === "litigation" ||
+   clean === "litigated" ||
+   clean === "suit filed" ||
+   clean === "lawsuit filed"
+  ) {
+   return "Litigation";
+  }
  }
 
  return "None";
