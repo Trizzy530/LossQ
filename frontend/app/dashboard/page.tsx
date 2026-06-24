@@ -9500,9 +9500,7 @@ const modelChartNarrative =
         )}
        </section>
 
-       {Array.isArray(profile?.policies) && profile.policies.length > 0 && (
-        {/* LOSSQ_HIDE_DUPLICATE_POLICY_LINES_COVERAGE_SCHEDULE_V2 */}
-       )}
+       {/* LOSSQ_HIDE_DUPLICATE_POLICY_LINES_COVERAGE_SCHEDULE_FIXED_V2 */}
 
       </>
      )}
