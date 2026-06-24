@@ -9758,7 +9758,7 @@ const modelChartNarrative =
         <Input label="Target Renewal Premium" value={displayProfile?.target_renewal_premium || profile?.target_renewal_premium || deriveExposureInputsFromPolicyRows(profile)?.target_renewal_premium || ""} onChange={(v) => setProfile({...profile, target_renewal_premium: v })} />
 
         <Input label="Primary Line of Business" value={displayProfile?.line_of_business || profile?.line_of_business || deriveExposureInputsFromPolicyRows(profile)?.line_of_business || ""} onChange={(v) => setProfile({...profile, line_of_business: v })} />
-        <Input label="State" value={displayProfile?.state || profile?.state || deriveExposureInputsFromPolicyRows(profile)?.state || ""} onChange={(v) => setProfile({...profile, state: v })} />
+        <Input label="State / Province" value={displayProfile?.state || profile?.state || deriveExposureInputsFromPolicyRows(profile)?.state || ""} onChange={(v) => setProfile({...profile, state: v })} />
         <Input label="Class Code(s)" value={profile?.class_code || editableProfileValue("class_codes")} onChange={(v) => setProfile({...profile, class_code: v, class_codes: v })} />
 
         <Input label="Policy Limits" value={safePolicyLimitsValue()} onChange={(v) => setProfile({...profile, limits: v, coverage_limit: v })} />
