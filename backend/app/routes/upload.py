@@ -8032,6 +8032,118 @@ def lossq_safe_money_float_currency_v4(value, default=0.0):
   return amount
 
 
+# LOSSQ_CLAIM_LEGAL_SIGNAL_STRICT_SAVE_V1
+def lossq_claim_legal_signal_strict_save_v1(normalized_claim, raw_claim=None):
+  if not isinstance(normalized_claim, dict):
+    return normalized_claim
+
+  raw_claim = raw_claim if isinstance(raw_claim, dict) else {}
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+  def key(value):
+    return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+  def get_any(source, labels):
+    if not isinstance(source, dict):
+      return None
+    wanted = {key(label) for label in labels}
+    for label in labels:
+      if label in source and source.get(label) not in (None, ""):
+        return source.get(label)
+    for source_key, source_value in source.items():
+      if key(source_key) in wanted and source_value not in (None, ""):
+        return source_value
+    return None
+
+  def yes_no_signal(value):
+    if value is True:
+      return True
+    if value is False:
+      return False
+    text = clean(value).lower()
+    if not text:
+      return None
+    yes_values = {"yes", "y", "true", "1"}
+    no_values = {
+      "no", "n", "false", "0", "none", "n/a", "na", "none present",
+      "not present", "no attorney", "no attorney present", "no litigation",
+      "no litigation present", "no suit", "no suit filed", "not represented",
+      "unrepresented"
+    }
+    if text in yes_values:
+      return True
+    if text in no_values:
+      return False
+    if any(phrase in text for phrase in [
+      "no attorney", "no litigation", "no suit", "none present",
+      "not represented", "unrepresented"
+    ]):
+      return False
+    return None
+
+  attorney_labels = [
+    "Attorney Assigned", "Attorney Involved", "attorney_assigned",
+    "attorneyAssigned", "attorney_involved", "attorneyInvolved",
+    "Counsel Assigned", "Defense Counsel"
+  ]
+
+  litigation_labels = [
+    "Litigation", "Litigation Flag", "litigation", "litigation_flag",
+    "litigationFlag", "Suit Filed", "suit_filed", "suitFiled",
+    "Lawsuit", "Represented", "represented"
+  ]
+
+  attorney_value = get_any(raw_claim, attorney_labels)
+  if attorney_value is None:
+    attorney_value = get_any(normalized_claim, attorney_labels)
+
+  litigation_value = get_any(raw_claim, litigation_labels)
+  if litigation_value is None:
+    litigation_value = get_any(normalized_claim, litigation_labels)
+
+  attorney_signal = yes_no_signal(attorney_value)
+  litigation_signal = yes_no_signal(litigation_value)
+
+  legal_flag_values = {"attorney", "litigation", "suit", "open reserve"}
+  existing_flag = clean(normalized_claim.get("flag") or normalized_claim.get("claim_flag") or normalized_claim.get("risk_flag"))
+
+  if attorney_signal is True:
+    normalized_claim["attorney_assigned"] = True
+    normalized_claim["attorney_involved"] = True
+    normalized_claim["flag"] = "Attorney"
+    normalized_claim["claim_flag"] = "Attorney"
+    return normalized_claim
+
+  if litigation_signal is True:
+    normalized_claim["litigation"] = True
+    normalized_claim["litigation_flag"] = True
+    normalized_claim["flag"] = "Litigation"
+    normalized_claim["claim_flag"] = "Litigation"
+    return normalized_claim
+
+  if attorney_signal is False or litigation_signal is False:
+    normalized_claim["attorney_assigned"] = False
+    normalized_claim["attorney_involved"] = False
+    normalized_claim["suit_filed"] = False
+    normalized_claim["litigation"] = False
+    normalized_claim["litigation_flag"] = False
+    normalized_claim["represented"] = False
+    if existing_flag.lower() in legal_flag_values:
+      normalized_claim["flag"] = ""
+      normalized_claim["claim_flag"] = ""
+      normalized_claim["risk_flag"] = ""
+    return normalized_claim
+
+  if existing_flag.lower() in legal_flag_values:
+    normalized_claim["flag"] = ""
+    normalized_claim["claim_flag"] = ""
+    normalized_claim["risk_flag"] = ""
+
+  return normalized_claim
+
+
 # LOSSQ_FINAL_CLAIM_AMOUNT_DATE_COERCE_BEFORE_SAVE_V1
 def lossq_final_claim_amount_date_coerce_before_save_v1(normalized_claim):
   if not isinstance(normalized_claim, dict):
@@ -16767,6 +16879,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
       # LOSSQ_FINAL_CLAIM_AMOUNT_DATE_COERCE_CORRECT_SAVE_CALL_V1
       normalized = lossq_final_claim_amount_date_coerce_before_save_v1(normalized)
+      # LOSSQ_CLAIM_LEGAL_SIGNAL_STRICT_SAVE_CALL_V1
+      normalized = lossq_claim_legal_signal_strict_save_v1(normalized, claim_data)
       clean_claim_payload = lossq_filter_claim_model_fields(normalized)
 
       db.add(Claim(**clean_claim_payload))
