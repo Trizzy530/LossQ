@@ -3179,6 +3179,14 @@ def carrier_match(policy_number: str | None = Query(default=None), db: Session =
   result = lossq_apply_exposure_to_carrier_match(result, profile_data, claims)
   result["policy_numbers_used"] = policy_numbers_used
   result = lossq_force_exposure_from_result_profile(result)
+  # LOSSQ_CANADA_CARRIER_MATCH_ENDPOINT_OVERRIDE_V2
+  # Carrier Match must use Canada markets after exposure rerank/force logic.
+  if callable(globals().get("lossq_apply_canada_carrier_match_v1")):
+    result = lossq_apply_canada_carrier_match_v1(result, profile_data, claims)
+    result["lossq_canada_carrier_match_endpoint_version"] = "LOSSQ_CANADA_CARRIER_MATCH_ENDPOINT_OVERRIDE_V2"
+  elif callable(globals().get("lossq_canada_carrier_match_v1")):
+    result = lossq_canada_carrier_match_v1(result, profile_data, claims)
+    result["lossq_canada_carrier_match_endpoint_version"] = "LOSSQ_CANADA_CARRIER_MATCH_ENDPOINT_OVERRIDE_V2"
   return result
 
 
