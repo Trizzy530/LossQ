@@ -6476,6 +6476,14 @@ def parse_file(file_path: str, filename: str):
   # LOSSQ_DO_NOT_PARSE_XLSX_AS_CSV_V1
   # XLSX files are ZIP workbooks and must not be read by csv.reader.
   if lower_name.endswith(".csv"):
+    # LOSSQ_FRENCH_CSV_SECTION_PARSER_CALL_V1
+    try:
+      french_claims, french_profile = lossq_parse_french_section_csv_v1(file_path)
+      if french_claims or (isinstance(french_profile, dict) and (french_profile.get("business_name") or french_profile.get("account_number") or french_profile.get("policy_number"))):
+        return french_claims, french_profile
+    except Exception as exc:
+      print("LOSSQ_FRENCH_CSV_SECTION_PARSE_ERROR_V1", str(exc)[:500])
+
     # LOSSQ_CSV_PARSE_ORDER_V3
     # Important: clean flat CSVs may still expose account/profile fields.
     # Do not return a profile-only section result before trying the clean flat parser.
@@ -15251,6 +15259,316 @@ def lossq_apply_claim_detail_fields_to_normalized_claim_v2(normalized_claim, raw
 
   return normalized_claim
 
+
+# LOSSQ_FRENCH_CSV_SECTION_PARSER_V1
+def lossq_parse_french_section_csv_v1(file_path):
+  """
+  Universal French / Quebec CSV parser.
+  Normalizes French loss-run labels into the standard LossQ schema.
+  This is language/terminology support, not company-specific logic.
+  """
+  try:
+    import csv as _lossq_fr_csv
+    import unicodedata as _lossq_fr_unicodedata
+  except Exception:
+    return [], {}
+
+  try:
+    with open(file_path, "r", encoding="utf-8-sig", errors="replace", newline="") as handle:
+      rows = list(_lossq_fr_csv.reader(handle))
+  except Exception:
+    return [], {}
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+  def key(value):
+    text = clean(value).lower()
+    text = _lossq_fr_unicodedata.normalize("NFKD", text)
+    text = "".join(ch for ch in text if not _lossq_fr_unicodedata.combining(ch))
+    return re.sub(r"[^a-z0-9]+", "", text)
+
+  all_text = "\n".join(" | ".join(clean(cell) for cell in row) for row in rows).lower()
+  french_signals = [
+    "numéro de sinistre",
+    "numero de sinistre",
+    "date de survenance",
+    "date de déclaration",
+    "montant payé",
+    "provision",
+    "responsabilité civile",
+    "biens commerciaux",
+    "détails des sinistres",
+    "details des sinistres",
+    "réclamant",
+    "reclamant",
+  ]
+  if not any(signal in all_text for signal in french_signals):
+    return [], {}
+
+  def value_at(row, index):
+    if index is None or index < 0 or index >= len(row):
+      return ""
+    return clean(row[index])
+
+  def header_index(headers, aliases):
+    alias_keys = {key(alias) for alias in aliases}
+    for index, header in enumerate(headers):
+      if key(header) in alias_keys:
+        return index
+    return None
+
+  def first_value(*labels):
+    label_keys = {key(label) for label in labels}
+    for row in rows:
+      if len(row) >= 3 and key(row[1]) in label_keys:
+        return clean(row[2])
+    return ""
+
+  def money(value):
+    text = clean(value)
+    text = re.sub(r"(?i)\b(?:cad|cdn|cnd|usd)\b", "", text)
+    text = text.replace("CA$", "").replace("C$", "").replace("$", "").replace(",", "")
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    return match.group(0) if match else ""
+
+  def count(value):
+    match = re.search(r"\d+", clean(value).replace(",", ""))
+    return match.group(0) if match else ""
+
+  def date_fr(value):
+    text = clean(value)
+    match = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", text)
+    if not match:
+      return text
+    day, month, year = match.groups()
+    if len(year) == 2:
+      year = "20" + year
+    return f"{int(year):04d}-{int(month):02d}-{int(day):02d}"
+
+  def status_fr(value):
+    text = key(value)
+    if text in {"ferme", "fermee", "clos", "cloture", "cloturee", "closed"}:
+      return "Closed"
+    if text in {"ouvert", "ouverte", "open"}:
+      return "Open"
+    return clean(value) or "Open"
+
+  def yes_no(value):
+    text = key(value)
+    if text in {"oui", "yes", "y", "true", "1", "o"}:
+      return "Yes"
+    if text in {"non", "no", "n", "false", "0"}:
+      return "No"
+    return clean(value)
+
+  def is_yes(value):
+    return key(value) in {"oui", "yes", "y", "true", "1", "o"}
+
+  def line_fr(value):
+    text = key(value)
+    mapping = {
+      "responsabilitecivilecommerciale": "General Liability",
+      "responsabilitecivile": "General Liability",
+      "bienscommerciaux": "Commercial Property",
+      "proprietecommerciale": "Commercial Property",
+      "automobilecommerciale": "Commercial Auto",
+      "flotteautomobile": "Commercial Auto",
+      "indemnisationdestravailleurs": "Workers Compensation",
+      "accidentsdutravail": "Workers Compensation",
+      "erreursetomissions": "Professional Liability",
+      "responsabiliteprofessionnelle": "Professional Liability",
+      "cyberresponsabilite": "Cyber",
+      "responsabilitelieealalcool": "Liquor Liability",
+      "interruptiondesaffaires": "Business Interruption",
+      "assuranceexcedentaire": "Umbrella / Excess",
+    }
+    return mapping.get(text, clean(value))
+
+  profile = {
+    "business_name": first_value("Nom de l'assuré", "Nom assuré", "Assuré", "Entreprise"),
+    "named_insured": first_value("Nom de l'assuré", "Nom assuré", "Assuré", "Entreprise"),
+    "account_number": first_value("Numéro de compte", "No de compte", "Compte"),
+    "customer_number": first_value("Numéro client", "No client", "Client"),
+    "country": first_value("Pays"),
+    "state": first_value("Province", "Territoire"),
+    "province": first_value("Province", "Territoire"),
+    "province_code": first_value("Province", "Territoire"),
+    "postal_code": first_value("Code postal", "Code postal canadien"),
+    "market_currency": first_value("Devise", "Monnaie") or "CAD",
+    "currency": first_value("Devise", "Monnaie") or "CAD",
+    "producing_agency": first_value("Courtier producteur", "Agence productrice", "Courtier", "Maison de courtage"),
+    "agency_name": first_value("Courtier producteur", "Agence productrice", "Courtier", "Maison de courtage"),
+    "broker_name": first_value("Courtier responsable", "Courtier", "Producteur"),
+    "carrier_name": first_value("Compagnie d'assurance", "Assureur", "Transporteur", "Marché"),
+    "writing_carrier": first_value("Compagnie d'assurance", "Assureur", "Transporteur", "Marché"),
+    "underwriter": first_value("Souscripteur", "Souscription"),
+    "evaluation_date": date_fr(first_value("Date d'évaluation", "Date de valorisation", "Date d'analyse")),
+    "market_country": "Canada",
+    "market_language": "fr",
+    "market_currency": "CAD",
+  }
+
+  period = first_value("Période de police", "Terme de police", "Période d'assurance")
+  period_dates = re.findall(r"\b\d{1,2}/\d{1,2}/\d{2,4}\b", period)
+  if len(period_dates) >= 2:
+    profile["effective_date"] = date_fr(period_dates[0])
+    profile["expiration_date"] = date_fr(period_dates[1])
+
+  # Exposure terms.
+  profile["current_premium"] = money(first_value("Prime actuelle", "Prime annuelle"))
+  profile["revenue"] = money(first_value("Chiffre d'affaires", "Revenu annuel", "Ventes brutes"))
+  profile["payroll"] = money(first_value("Paie assurable", "Masse salariale", "Rémunération"))
+  profile["employee_count"] = count(first_value("Nombre d'employés", "Employés"))
+  profile["property_tiv"] = money(first_value("SOV / Valeur totale assurée", "Valeur totale assurée", "SOV", "TIV"))
+  profile["liquor_sales"] = money(first_value("Ventes d'alcool", "Ventes alcool"))
+
+  fleet_text = first_value("Véhicules / conducteurs", "Vehicules / conducteurs", "Véhicules", "Conducteurs")
+  if fleet_text:
+    vehicle_match = re.search(r"(\d+)\s*(?:véhicules?|vehicules?|autos?)", fleet_text, re.I)
+    driver_match = re.search(r"(\d+)\s*(?:conducteurs?|drivers?)", fleet_text, re.I)
+    if vehicle_match:
+      profile["vehicle_count"] = vehicle_match.group(1)
+    if driver_match:
+      profile["driver_count"] = driver_match.group(1)
+
+  policies = []
+  claims = []
+
+  for row_index, row in enumerate(rows):
+    headers = [clean(cell) for cell in row]
+    header_keys = {key(cell) for cell in headers}
+
+    if "numerodepolice" in header_keys and "lignedaffaires" in header_keys:
+      policy_i = header_index(headers, ["Numéro de police", "No de police", "Police"])
+      line_i = header_index(headers, ["Ligne d'affaires", "Garantie", "Couverture"])
+      eff_i = header_index(headers, ["Date d'effet", "Date effective"])
+      exp_i = header_index(headers, ["Date d'expiration", "Expiration"])
+      limit_i = header_index(headers, ["Limite", "Limite de garantie"])
+      deductible_i = header_index(headers, ["Franchise", "Déductible"])
+
+      for data in rows[row_index + 1:]:
+        if not any(clean(cell) for cell in data):
+          break
+        if key(data[0]) not in {"horairedespolices", "calendrierdespolices", "polices"}:
+          break
+        policy_number = value_at(data, policy_i)
+        if not policy_number:
+          continue
+        line = line_fr(value_at(data, line_i))
+        policies.append({
+          "policy_number": policy_number,
+          "policy": policy_number,
+          "line_of_business": line,
+          "policy_type": line,
+          "coverage": line,
+          "effective_date": date_fr(value_at(data, eff_i)),
+          "expiration_date": date_fr(value_at(data, exp_i)),
+          "limit": money(value_at(data, limit_i)),
+          "deductible": money(value_at(data, deductible_i)),
+          "carrier": profile.get("carrier_name", ""),
+          "writing_carrier": profile.get("writing_carrier", ""),
+        })
+
+    if "numerodesinistre" in header_keys:
+      claim_i = header_index(headers, ["Numéro de sinistre", "No de sinistre", "Sinistre"])
+      policy_i = header_index(headers, ["Numéro de police", "No de police", "Police"])
+      line_i = header_index(headers, ["Ligne d'affaires", "Garantie", "Couverture"])
+      status_i = header_index(headers, ["Statut", "État", "Etat"])
+      loss_i = header_index(headers, ["Date de survenance", "Date du sinistre", "Date de perte"])
+      reported_i = header_index(headers, ["Date de déclaration", "Date rapportée"])
+      closed_i = header_index(headers, ["Date de fermeture", "Date fermée"])
+      claimant_i = header_index(headers, ["Réclamant", "Reclamant", "Demandeur"])
+      province_i = header_index(headers, ["Province", "Territoire", "Juridiction"])
+      adjuster_i = header_index(headers, ["Expert en sinistres", "Expert", "Ajusteur", "Régleur"])
+      paid_i = header_index(headers, ["Montant payé", "Payé", "Indemnité payée"])
+      reserve_i = header_index(headers, ["Provision", "Réserve", "Montant réservé"])
+      total_i = header_index(headers, ["Total encouru", "Total engagé", "Incurred"])
+      attorney_i = header_index(headers, ["Avocat assigné", "Avocat", "Conseiller juridique"])
+      litigation_i = header_index(headers, ["Litige", "Poursuite", "En litige"])
+      desc_i = header_index(headers, ["Description", "Description du sinistre", "Cause"])
+
+      for data in rows[row_index + 1:]:
+        if not any(clean(cell) for cell in data):
+          break
+        if key(data[0]) not in {"detailsdessinistres", "detaildessinistres", "sinistres"}:
+          break
+        claim_number = value_at(data, claim_i)
+        if not claim_number:
+          continue
+
+        paid = money(value_at(data, paid_i))
+        reserve = money(value_at(data, reserve_i))
+        total = money(value_at(data, total_i))
+        if not total and (paid or reserve):
+          try:
+            total = str(float(paid or 0) + float(reserve or 0))
+          except Exception:
+            total = ""
+
+        attorney_value = yes_no(value_at(data, attorney_i))
+        litigation_value = yes_no(value_at(data, litigation_i))
+        flag = "Attorney" if is_yes(attorney_value) else "Litigation" if is_yes(litigation_value) else ""
+
+        line = line_fr(value_at(data, line_i))
+        status = status_fr(value_at(data, status_i))
+        jurisdiction = value_at(data, province_i) or profile.get("state", "")
+        adjuster = value_at(data, adjuster_i)
+
+        claims.append({
+          "claim_number": claim_number,
+          "claim_no": claim_number,
+          "policy_number": value_at(data, policy_i),
+          "policy": value_at(data, policy_i),
+          "line_of_business": line,
+          "claim_type": line,
+          "coverage": line,
+          "status": status,
+          "claim_status": status,
+          "date_of_loss": date_fr(value_at(data, loss_i)),
+          "loss_date": date_fr(value_at(data, loss_i)),
+          "date_reported": date_fr(value_at(data, reported_i)),
+          "reported_date": date_fr(value_at(data, reported_i)),
+          "date_closed": date_fr(value_at(data, closed_i)),
+          "closed_date": date_fr(value_at(data, closed_i)),
+          "claimant": value_at(data, claimant_i),
+          "jurisdiction_state": jurisdiction,
+          "venue_state": jurisdiction,
+          "adjuster": adjuster,
+          "examiner": adjuster,
+          "paid_amount": paid,
+          "paid": paid,
+          "reserve_amount": reserve,
+          "reserve": reserve,
+          "total_incurred": total,
+          "incurred": total,
+          "attorney_assigned": attorney_value,
+          "attorney_involved": attorney_value,
+          "litigation": litigation_value,
+          "suit_filed": litigation_value,
+          "flag": flag,
+          "description": value_at(data, desc_i),
+          "loss_description": value_at(data, desc_i),
+        })
+
+  if policies:
+    profile["policies"] = policies
+    profile["policy_schedule"] = policies
+    profile["policy_number"] = policies[0].get("policy_number", "")
+    profile["effective_date"] = profile.get("effective_date") or policies[0].get("effective_date", "")
+    profile["expiration_date"] = profile.get("expiration_date") or policies[0].get("expiration_date", "")
+    profile["line_of_business"] = "Multi-line: " + ", ".join(dict.fromkeys([p.get("line_of_business", "") for p in policies if p.get("line_of_business")]))
+    profile["primary_line_of_business"] = profile["line_of_business"]
+
+  if lossq_normalize_market_profile is not None:
+    try:
+      profile = lossq_normalize_market_profile(profile, all_text)
+    except Exception as exc:
+      print("LOSSQ_FRENCH_MARKET_PROFILE_NORMALIZE_FAILED_V1", str(exc)[:300])
+
+  profile = {k: v for k, v in profile.items() if v not in (None, "")}
+  print("LOSSQ_FRENCH_CSV_SECTION_PARSER_V1", {"claims": len(claims), "policies": len(policies), "business_name": profile.get("business_name"), "state": profile.get("state")})
+  return claims, profile
 
 # LOSSQ_UNIVERSAL_CSV_ACCOUNT_EXPOSURE_CLAIM_DETAIL_OVERLAY_V1
 def lossq_universal_csv_account_exposure_claim_detail_overlay(file_path, parsed_claims=None, parsed_profile=None):

@@ -270,6 +270,72 @@ LOB_ALIASES: Dict[str, str] = {
 }
 
 
+
+# LOSSQ_MARKET_INTELLIGENCE_FRENCH_ALIASES_V1
+EXPOSURE_ALIASES.update({
+    "primeactuelle": "current_premium",
+    "primeannuelle": "current_premium",
+    "primeexpirante": "expiring_premium",
+    "primeciblederenouvellement": "target_renewal_premium",
+    "chiffredaffaires": "revenue",
+    "revenuannuel": "revenue",
+    "ventesbrutes": "revenue",
+    "recettesbrutes": "receipts",
+    "paieassurable": "payroll",
+    "masse salariale": "payroll",
+    "massesalariale": "payroll",
+    "remuneration": "payroll",
+    "rémunération": "payroll",
+    "nombredemployes": "employee_count",
+    "nombredemployés": "employee_count",
+    "employes": "employee_count",
+    "employés": "employee_count",
+    "vehicules": "vehicle_count",
+    "véhicules": "vehicle_count",
+    "vehiculesconducteurs": "vehicle_count",
+    "véhiculesconducteurs": "vehicle_count",
+    "conducteurs": "driver_count",
+    "operateurs": "driver_count",
+    "opérateurs": "driver_count",
+    "sov": "property_tiv",
+    "valeurtotaleassuree": "property_tiv",
+    "valeurtotaleassurée": "property_tiv",
+    "valeurassuree": "property_tiv",
+    "valeurassurée": "property_tiv",
+    "valeurdubâtiment": "building_value",
+    "valeurdubatiment": "building_value",
+    "valeurducontenu": "contents_value",
+    "biensmeubles": "contents_value",
+    "province": "state",
+    "territoire": "state",
+    "codepostal": "postal_code",
+    "devise": "currency",
+})
+
+LOB_ALIASES.update({
+    "responsabilitecivilecommerciale": "General Liability",
+    "responsabilitécivilecommerciale": "General Liability",
+    "responsabilitecivile": "General Liability",
+    "responsabilitécivile": "General Liability",
+    "bienscommerciaux": "Commercial Property",
+    "proprietecommerciale": "Commercial Property",
+    "propriétécommerciale": "Commercial Property",
+    "automobilecommerciale": "Commercial Auto",
+    "flotteautomobile": "Commercial Auto",
+    "indemnisationdestravailleurs": "Workers Compensation",
+    "accidentsdutravail": "Workers Compensation",
+    "erreursetomissions": "Professional Liability",
+    "responsabiliteprofessionnelle": "Professional Liability",
+    "responsabilitéprofessionnelle": "Professional Liability",
+    "cyberresponsabilite": "Cyber",
+    "cyberresponsabilité": "Cyber",
+    "responsabilitelieealalcool": "Liquor Liability",
+    "responsabilitéliéeàlalcool": "Liquor Liability",
+    "interruptiondesaffaires": "Business Interruption",
+    "assuranceexcedentaire": "Umbrella / Excess",
+    "assuranceexcédentaire": "Umbrella / Excess",
+})
+
 def lossq_market_clean(value: Any) -> str:
     return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
 
