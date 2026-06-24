@@ -8092,7 +8092,7 @@ const openVisibleClaims = visibleClaims.filter((claim: any) => isOpenClaimStatus
 const closedVisibleClaims = visibleClaims.filter((claim: any) => !isOpenClaimStatus(claim));
 const groupedVisibleClaims = [...openVisibleClaims,...closedVisibleClaims];
 
-// LOSSQ_DASHBOARD_CLAIM_ATTORNEY_FLAG_STRICT_V4
+// LOSSQ_DASHBOARD_CLAIM_ATTORNEY_FLAG_STRICT_V5
 const lossqDashboardClaimFlagV1 = (claim: any) => {
  const cleanLocal = (value: any) => String(value ?? "").replace(/\s+/g, " ").trim();
 
@@ -8137,16 +8137,14 @@ const lossqDashboardClaimFlagV1 = (claim: any) => {
   return "Attorney";
  }
 
- const litigationValues = [
+ // Do NOT trust claim.litigation or claim.litigation_flag here.
+ // Those generic fields can be polluted by account-level notes and mark every claim.
+ const suitValues = [
   claim?.suit_filed,
   claim?.suitFiled,
-  claim?.litigation,
-  claim?.litigation_flag,
-  claim?.litigationFlag,
-  claim?.represented,
  ];
 
- if (litigationValues.some(isExplicitYes)) {
+ if (suitValues.some(isExplicitYes)) {
   return "Litigation";
  }
 
@@ -8157,7 +8155,7 @@ const lossqDashboardClaimFlagV1 = (claim: any) => {
   claim?.attorneyStatus,
  ];
 
- if ([...attorneyValues, ...litigationValues, ...statusValues].some(isExplicitNo)) {
+ if ([...attorneyValues, ...suitValues, ...statusValues].some(isExplicitNo)) {
   return "None";
  }
 
