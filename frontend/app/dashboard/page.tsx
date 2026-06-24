@@ -1061,6 +1061,125 @@ function lossqPolicyFamilyTokens(policyNumber: any) {
  .filter((token) => /[A-Z]/.test(token) && token.length >= 2);
 }
 
+// LOSSQ_OVERVIEW_POLICY_SCHEDULE_CLAIM_LEAK_FILTER_V1
+function lossqOverviewPolicyScheduleText(value: any) {
+ return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function lossqOverviewPolicyScheduleDateLike(value: any) {
+ const raw = lossqOverviewPolicyScheduleText(value);
+ if (!raw) return false;
+
+ return Boolean(
+  /^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$/.test(raw) ||
+  /^\d{4}[/-]\d{1,2}[/-]\d{1,2}$/.test(raw) ||
+  /^(19|20)\d{2}$/.test(raw)
+ );
+}
+
+function lossqOverviewPolicyNumberLike(value: any) {
+ const raw = lossqOverviewPolicyScheduleText(value).toUpperCase();
+ if (!raw) return false;
+
+ if (/(19|20)\d{2}/.test(raw) && /[A-Z]/.test(raw) && /\d/.test(raw)) {
+  return true;
+ }
+
+ return Boolean(
+  /\b(GL|WC|BOP|CPP|CP|AUTO|AL|LIQ|LIQUOR|UMB|UMBRELLA|PROP|PROPERTY|CARGO|IM|EPLI|CYBER|D&O|DO|PL|PROF|GARAGE)\b/.test(raw) &&
+  /\d/.test(raw)
+ );
+}
+
+function lossqOverviewClaimNumberLike(value: any) {
+ const raw = lossqOverviewPolicyScheduleText(value).toUpperCase();
+ if (!raw) return false;
+
+ if (/\b(CLAIM|CLM|LOSS)\b/.test(raw) && /\d/.test(raw)) {
+  return true;
+ }
+
+ if (/(19|20)\d{2}/.test(raw)) {
+  return false;
+ }
+
+ return Boolean(
+  /[A-Z]{1,8}[-_][A-Z]{1,8}[-_]\d{4,}/.test(raw) ||
+  /[A-Z]{1,8}[-_]\d{5,}/.test(raw) ||
+  (/[A-Z]/.test(raw) && /\d{5,}/.test(raw))
+ );
+}
+
+function lossqOverviewPolicyScheduleRowIsClaimLeak(row: any) {
+ if (!row || typeof row !== "object") return false;
+
+ const explicitClaimNumber = lossqOverviewPolicyScheduleText(
+  row?.claim_number ||
+   row?.claimNumber ||
+   row?.claim_no ||
+   row?.claim ||
+   row?.loss_number ||
+   row?.claim_id
+ );
+
+ if (explicitClaimNumber) {
+  return true;
+ }
+
+ const policyNumber = lossqOverviewPolicyScheduleText(
+  row?.policy_number ||
+   row?.policyNumber ||
+   row?.policy_no ||
+   row?.policy ||
+   row?.number
+ );
+
+ const lineOrCoverage = lossqOverviewPolicyScheduleText(
+  row?.policy_type ||
+   row?.coverage ||
+   row?.line_of_business ||
+   row?.line ||
+   row?.lob
+ );
+
+ const effectiveValue = lossqOverviewPolicyScheduleText(
+  row?.effective_date ||
+   row?.policy_effective_date ||
+   row?.effective ||
+   row?.start_date
+ );
+
+ const expirationValue = lossqOverviewPolicyScheduleText(
+  row?.expiration_date ||
+   row?.policy_expiration_date ||
+   row?.expiration ||
+   row?.end_date
+ );
+
+ const hasClaimPersonInDateColumn =
+  Boolean(effectiveValue && /[A-Za-z]/.test(effectiveValue) && !lossqOverviewPolicyScheduleDateLike(effectiveValue));
+
+ const hasStateInExpirationColumn =
+  Boolean(/^[A-Z]{2}$/.test(expirationValue.toUpperCase()));
+
+ const policyCellLooksLikeClaim = lossqOverviewClaimNumberLike(policyNumber);
+ const coverageCellLooksLikePolicy = lossqOverviewPolicyNumberLike(lineOrCoverage);
+
+ return Boolean(
+  policyCellLooksLikeClaim &&
+   (
+    coverageCellLooksLikePolicy ||
+    hasClaimPersonInDateColumn ||
+    hasStateInExpirationColumn
+   )
+ );
+}
+
+function lossqOverviewPolicyScheduleRows(rows: any) {
+ return lossqStrictCleanPolicySchedule(rows).filter(
+  (row: any) => !lossqOverviewPolicyScheduleRowIsClaimLeak(row)
+ );
+}
 function lossqLooksLikeClaimRow(row: any) {
  if (!row || typeof row !== "object") return false;
 
@@ -9327,7 +9446,7 @@ const modelChartNarrative =
             </thead>
 
             <tbody>
-             {lossqStrictCleanPolicySchedule(policySchedule).map((policy: any, index: number) => {
+             {lossqOverviewPolicyScheduleRows(policySchedule).map((policy: any, index: number) => {
               // LOSSQ_POLICY_SCHEDULE_TABLE_CLEAN_RENDER_V1
               const policyNumber = normalizePolicyNumber(policy?.policy_number);
               const stats = scheduleClaimStats[policyNumber];
