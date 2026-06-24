@@ -7677,6 +7677,223 @@ def lossq_canada_context_text_v3(*values):
   return " ".join(parts)[:50000]
 
 
+
+# LOSSQ_CANADA_UPLOAD_CLEANUP_V1_1
+def lossq_canada_clean_text_v11(value):
+  return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
+
+def lossq_canada_key_v11(value):
+  return re.sub(r"[^a-z0-9]+", "", lossq_canada_clean_text_v11(value).lower())
+
+def lossq_canada_is_context_v11(profile_data=None, claims=None):
+  text = lossq_canada_clean_text_v11(profile_data)
+  if isinstance(profile_data, dict):
+    text += " " + " ".join(lossq_canada_clean_text_v11(v) for v in profile_data.values())
+  if isinstance(claims, list):
+    for claim in claims[:20]:
+      if isinstance(claim, dict):
+        text += " " + " ".join(lossq_canada_clean_text_v11(v) for v in claim.values())
+  lower = text.lower()
+  return any(token in lower for token in ["canada", "cad", "ca$", "c$", "ontario", "quebec", "québec", "alberta", "british columbia", "wsib", "worksafebc", "wcb"])
+
+def lossq_canada_line_v11(value):
+  raw_value = lossq_canada_clean_text_v11(value)
+  key = lossq_canada_key_v11(raw_value)
+  mapping = {
+    "cgl": "General Liability",
+    "commercialgeneralliability": "General Liability",
+    "fleetautomobile": "Commercial Auto",
+    "commercialautomobile": "Commercial Auto",
+    "automobile": "Commercial Auto",
+    "auto": "Commercial Auto",
+    "wcbwsib": "Workers Compensation",
+    "wsib": "Workers Compensation",
+    "wcb": "Workers Compensation",
+    "worksafebc": "Workers Compensation",
+    "workerscompensation": "Workers Compensation",
+    "errorsandomissions": "Professional Liability",
+    "eo": "Professional Liability",
+    "professional liability": "Professional Liability",
+    "professionalliability": "Professional Liability",
+    "cyberliability": "Cyber",
+    "cyber": "Cyber",
+    "excessliability": "Umbrella",
+    "umbrella": "Umbrella",
+    "commercialproperty": "Commercial Property",
+    "property": "Commercial Property",
+  }
+  return mapping.get(key) or raw_value
+
+def lossq_canada_date_v11(value):
+  raw_value = lossq_canada_clean_text_v11(value)
+  if not raw_value:
+    return value
+  month_map = {
+    "jan": 1, "january": 1, "feb": 2, "february": 2, "mar": 3, "march": 3,
+    "apr": 4, "april": 4, "may": 5, "jun": 6, "june": 6, "jul": 7, "july": 7,
+    "aug": 8, "august": 8, "sep": 9, "sept": 9, "september": 9, "oct": 10, "october": 10,
+    "nov": 11, "november": 11, "dec": 12, "december": 12,
+  }
+  m = re.match(r"^(\d{1,2})[-\s]([A-Za-zéûÉÛ]{3,})[-\s](\d{2,4})$", raw_value)
+  if m:
+    day = int(m.group(1))
+    mon = month_map.get(m.group(2).lower().replace("é", "e"))
+    year = int(m.group(3))
+    if year < 100:
+      year += 2000
+    if mon:
+      return f"{year:04d}-{mon:02d}-{day:02d}"
+  m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$", raw_value)
+  if m:
+    day = int(m.group(1))
+    month = int(m.group(2))
+    year = int(m.group(3))
+    if year < 100:
+      year += 2000
+    if 1 <= day <= 31 and 1 <= month <= 12:
+      return f"{year:04d}-{month:02d}-{day:02d}"
+  m = re.match(r"^(20\d{2}|19\d{2})[/-](\d{1,2})[/-](\d{1,2})$", raw_value)
+  if m:
+    year = int(m.group(1))
+    middle = int(m.group(2))
+    last = int(m.group(3))
+    if middle > 12 and 1 <= last <= 12:
+      return f"{year:04d}-{last:02d}-{middle:02d}"
+    return f"{year:04d}-{middle:02d}-{last:02d}"
+  return value
+
+def lossq_canada_policy_number_v11(value):
+  policy_number = lossq_canada_clean_text_v11(value).upper().replace(" ", "")
+  if not policy_number:
+    return ""
+  blocked = {"CLAIMSDETAIL", "CLAIMNUMBER", "UNDERWRITINGNOTES", "NOTE", "EXPECTEDTOTALCLAIMS", "EXPECTEDOPENCLAIMS", "EXPECTEDTOTALINCURREDCAD"}
+  if lossq_canada_key_v11(policy_number).upper() in blocked:
+    return ""
+  if re.search(r"-(?:19|20)\d{2}-", policy_number):
+    return policy_number
+  return ""
+
+def lossq_canada_read_csv_preamble_v11(file_path):
+  result = {}
+  try:
+    import csv
+    with open(file_path, "r", encoding="utf-8-sig", newline="") as handle:
+      reader = csv.reader(handle)
+      for row in reader:
+        cells = [lossq_canada_clean_text_v11(cell) for cell in row]
+        cells = [cell for cell in cells if cell]
+        if len(cells) < 2:
+          continue
+        key = lossq_canada_key_v11(cells[0])
+        value = cells[1]
+        if key in {"exposurepolicyinformation", "claimsdetail", "underwritingnotes"}:
+          break
+        if key in {"insurer", "carrier", "insurancecompany", "underwriter"}:
+          result["carrier_name"] = result.get("carrier_name") or value
+          result["writing_carrier"] = result.get("writing_carrier") or value
+        elif key in {"brokerage", "producingagency", "agency"}:
+          result["producing_agency"] = result.get("producing_agency") or value
+        elif key in {"broker", "producer"}:
+          result["agency_name"] = result.get("agency_name") or value
+        elif key in {"province", "provincecode"}:
+          result["province"] = result.get("province") or value
+        elif key in {"postalcode", "postcode"}:
+          result["postal_code"] = result.get("postal_code") or value
+        elif key == "country":
+          result["country"] = value
+        elif key in {"currency", "losscurrency"}:
+          result["currency"] = value
+  except Exception as exc:
+    print("LOSSQ_CANADA_PREAMBLE_READ_SKIPPED_V11:", str(exc)[:200])
+  return result
+
+def lossq_canada_upload_cleanup_v11(profile_data, claims=None, file_path=None):
+  if not isinstance(profile_data, dict):
+    return profile_data
+  if not lossq_canada_is_context_v11(profile_data, claims):
+    return profile_data
+
+  preamble = lossq_canada_read_csv_preamble_v11(file_path) if file_path else {}
+
+  carrier = preamble.get("carrier_name") or profile_data.get("carrier_name") or profile_data.get("writing_carrier")
+  if carrier:
+    profile_data["carrier_name"] = carrier
+    profile_data["writing_carrier"] = carrier
+
+  if preamble.get("producing_agency"):
+    profile_data["producing_agency"] = preamble.get("producing_agency")
+  if preamble.get("agency_name"):
+    profile_data["agency_name"] = preamble.get("agency_name")
+  if preamble.get("postal_code"):
+    profile_data["postal_code"] = preamble.get("postal_code")
+  if preamble.get("province"):
+    profile_data["province"] = preamble.get("province")
+  profile_data["country"] = "Canada"
+  profile_data["currency"] = "CAD"
+
+  claim_counts = {}
+  claim_totals = {}
+  if isinstance(claims, list):
+    for claim in claims:
+      if not isinstance(claim, dict):
+        continue
+      policy_number = lossq_canada_clean_text_v11(claim.get("policy_number") or claim.get("policy"))
+      if not policy_number:
+        continue
+      claim_counts[policy_number] = claim_counts.get(policy_number, 0) + 1
+      try:
+        claim_totals[policy_number] = claim_totals.get(policy_number, 0.0) + float(claim.get("total_incurred") or 0)
+      except Exception:
+        pass
+
+  cleaned_policies = []
+  seen = set()
+  for source_key in ["policies", "policy_schedule"]:
+    rows = profile_data.get(source_key)
+    if not isinstance(rows, list):
+      continue
+    for row in rows:
+      if not isinstance(row, dict):
+        continue
+      policy_number = lossq_canada_policy_number_v11(row.get("policy_number") or row.get("policy") or row.get("policy_no"))
+      if not policy_number or policy_number in seen:
+        continue
+      seen.add(policy_number)
+      line = lossq_canada_line_v11(row.get("line_of_business") or row.get("coverage") or row.get("policy_type"))
+      item = dict(row)
+      item["policy_number"] = policy_number
+      item["line_of_business"] = line
+      item["coverage"] = line
+      item["policy_type"] = line
+      item["carrier"] = carrier or item.get("carrier") or item.get("carrier_name") or item.get("writing_carrier") or ""
+      item["carrier_name"] = carrier or item.get("carrier_name") or item.get("carrier") or ""
+      item["writing_carrier"] = carrier or item.get("writing_carrier") or item.get("carrier") or ""
+      item["effective_date"] = lossq_canada_date_v11(item.get("effective_date"))
+      item["expiration_date"] = lossq_canada_date_v11(item.get("expiration_date"))
+      item["claim_count"] = claim_counts.get(policy_number, item.get("claim_count") or item.get("claims") or 0)
+      item["claims"] = item["claim_count"]
+      item["total_incurred"] = claim_totals.get(policy_number, item.get("total_incurred") or 0.0)
+      cleaned_policies.append(item)
+
+  if cleaned_policies:
+    profile_data["policies"] = cleaned_policies
+    profile_data["policy_schedule"] = cleaned_policies
+    profile_data["policy_numbers"] = [p.get("policy_number") for p in cleaned_policies]
+
+  for key in ["effective_date", "expiration_date", "policy_effective_date", "policy_expiration_date"]:
+    if profile_data.get(key):
+      profile_data[key] = lossq_canada_date_v11(profile_data.get(key))
+
+  print("LOSSQ_CANADA_UPLOAD_CLEANUP_V1_1", {
+    "carrier": profile_data.get("carrier_name"),
+    "producing_agency": profile_data.get("producing_agency"),
+    "policy_count": len(profile_data.get("policies") or []),
+    "country": profile_data.get("country"),
+    "currency": profile_data.get("currency"),
+  })
+
+  return profile_data
+
 def lossq_canada_profile_hook_v3(profile_data, parsed_claims=None):
   if lossq_canada_enhance_profile_for_canada is None:
     return profile_data
@@ -17331,6 +17548,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
   # LOSSQ_CANADA_PROFILE_ENHANCEMENT_CALL_V3
   profile_data = lossq_canada_profile_hook_v3(profile_data, all_parsed_claims)
+  # LOSSQ_CANADA_UPLOAD_CLEANUP_CALL_V1_1
+  profile_data = lossq_canada_upload_cleanup_v11(profile_data, all_parsed_claims, file_path)
 
   profile = upsert_account_profile(db, profile_data, current_user)
 
