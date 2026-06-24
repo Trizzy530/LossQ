@@ -9477,34 +9477,90 @@ const modelChartNarrative =
         <MetricCard title="Submission Readiness" value={effectiveSubmissionReadiness?.submission_readiness_score != null ? `${effectiveSubmissionReadiness.submission_readiness_score}/100` : "-"} />
        </section>
 
-       {/* LOSSQ_DASHBOARD_MARKET_CONTEXT_PANEL_V1 */}
+       {/* LOSSQ_DASHBOARD_MARKET_CONTEXT_PANEL_V2 */}
        {(() => {
         const marketContext = displayProfile?.market_context || displayProfile?.marketContext || {};
         const regionContext = marketContext?.region_context || marketContext?.regionContext || {};
         const narrativeContext = marketContext?.narrative_localization || marketContext?.narrativeLocalization || {};
 
-        const marketCountry =
-         displayProfile?.market_country ||
-         displayProfile?.marketCountry ||
-         marketContext?.country ||
-         "Auto-detect";
+        const cleanMarketText = (value: any) => String(value ?? "").replace(/\s+/g, " ").trim();
+        const upperMarketText = (value: any) => cleanMarketText(value).toUpperCase();
 
-        const marketRegion =
+        const canadianProvinceRegulators: Record<string, string> = {
+         ON: "FSRA",
+         BC: "BCFSA",
+         AB: "AIC",
+         QC: "AMF",
+         MB: "Insurance Council of Manitoba",
+         SK: "Insurance Councils of Saskatchewan",
+         NS: "Nova Scotia Superintendent of Insurance",
+         NB: "FCNB",
+         PE: "PEI Superintendent of Insurance",
+         NL: "Digital Government and Service NL",
+         YT: "Yukon Superintendent of Insurance",
+         NT: "NWT Superintendent of Insurance",
+         NU: "Nunavut Superintendent of Insurance",
+        };
+
+        const rawCountry = cleanMarketText(
+         displayProfile?.market_country ||
+          displayProfile?.marketCountry ||
+          marketContext?.country
+        );
+
+        const marketRegion = upperMarketText(
          displayProfile?.market_region_code ||
-         displayProfile?.marketRegionCode ||
-         marketContext?.region_code ||
-         marketContext?.regionCode ||
-         displayProfile?.province_code ||
-         displayProfile?.province ||
-         displayProfile?.state ||
-         "-";
+          displayProfile?.marketRegionCode ||
+          marketContext?.region_code ||
+          marketContext?.regionCode ||
+          displayProfile?.province_code ||
+          displayProfile?.province ||
+          displayProfile?.state
+        );
+
+        const rawCurrency = upperMarketText(
+         displayProfile?.market_currency ||
+          displayProfile?.marketCurrency ||
+          marketContext?.currency ||
+          regionContext?.currency
+        );
+
+        const postalValue = cleanMarketText(
+         displayProfile?.postal_code ||
+          displayProfile?.postalCode ||
+          displayProfile?.postcode ||
+          displayProfile?.zip_code ||
+          displayProfile?.zipCode
+        );
+
+        const carrierSignal = cleanMarketText(
+         displayProfile?.carrier_name ||
+          displayProfile?.carrierName ||
+          displayProfile?.writing_carrier ||
+          displayProfile?.writingCarrier ||
+          displayProfile?.insurer ||
+          displayProfile?.carrier
+        ).toLowerCase();
+
+        const hasCanadianPostalCode = /^[A-Z]\d[A-Z][ -]?\d[A-Z]\d$/i.test(postalValue);
+        const hasCanadianProvince = Boolean(marketRegion && canadianProvinceRegulators[marketRegion]);
+        const hasCanadianCarrier = /intact|aviva canada|wawanesa|northbridge|definity|economical|lloyd|chubb canada|zurich canada|cna canada|co-operators|gore mutual|heartland/.test(carrierSignal);
+        const isCanadaMarket =
+         rawCountry.toLowerCase().includes("canada") ||
+         rawCurrency === "CAD" ||
+         hasCanadianProvince ||
+         hasCanadianPostalCode ||
+         hasCanadianCarrier;
+
+        const marketCountry = rawCountry && rawCountry.toLowerCase() !== "auto-detect"
+         ? rawCountry
+         : isCanadaMarket
+          ? "Canada"
+          : "Auto-detect";
 
         const marketCurrency =
-         displayProfile?.market_currency ||
-         displayProfile?.marketCurrency ||
-         marketContext?.currency ||
-         regionContext?.currency ||
-         "-";
+         rawCurrency ||
+         (isCanadaMarket ? "CAD" : "");
 
         const marketDateFormat =
          displayProfile?.market_date_format ||
@@ -9513,35 +9569,26 @@ const modelChartNarrative =
          regionContext?.dateFormat ||
          narrativeContext?.date_format ||
          narrativeContext?.dateFormat ||
-         "-";
+         (isCanadaMarket ? "DD/MM/YYYY" : "");
 
         const marketRegulator =
          displayProfile?.market_regulator ||
          displayProfile?.marketRegulator ||
          regionContext?.regulator ||
          narrativeContext?.regulator ||
-         "-";
+         (isCanadaMarket ? canadianProvinceRegulators[marketRegion] : "") ||
+         "";
 
-        const marketLanguage =
+        const rawLanguage = cleanMarketText(
          displayProfile?.market_language ||
-         displayProfile?.marketLanguage ||
-         marketContext?.language ||
-         narrativeContext?.language ||
-         "English";
+          displayProfile?.marketLanguage ||
+          marketContext?.language ||
+          narrativeContext?.language ||
+          "en"
+        );
 
-        const geographyLabel =
-         regionContext?.field_label ||
-         regionContext?.fieldLabel ||
-         narrativeContext?.geography_label ||
-         narrativeContext?.geographyLabel ||
-         (String(marketCountry).toLowerCase().includes("canada") ? "State / Province" : "State");
-
-        const postalLabel =
-         regionContext?.postal_label ||
-         regionContext?.postalLabel ||
-         narrativeContext?.postal_label ||
-         narrativeContext?.postalLabel ||
-         (String(marketCountry).toLowerCase().includes("canada") ? "Postal Code" : "ZIP Code");
+        const geographyLabel = isCanadaMarket ? "State / Province" : "State";
+        const postalLabel = isCanadaMarket ? "Postal Code" : "ZIP Code";
 
         return (
          <section className="glass-panel border border-blue-400/20 bg-blue-500/5 p-5 md:p-6">
@@ -9570,17 +9617,17 @@ const modelChartNarrative =
            <ProfileDetail label="Currency" value={marketCurrency || "-"} />
            <ProfileDetail label="Date Format" value={marketDateFormat || "-"} />
            <ProfileDetail label="Regulator" value={marketRegulator || "-"} />
-           <ProfileDetail label="Language" value={marketLanguage === "fr" ? "French" : marketLanguage === "en" ? "English" : marketLanguage} />
+           <ProfileDetail label="Language" value={rawLanguage === "fr" ? "French" : rawLanguage === "en" ? "English" : rawLanguage} />
           </div>
 
           <p className="mt-4 text-xs leading-5 text-slate-500">
-           Current labels: {geographyLabel} / {postalLabel}. Manual country override will be added after saved market fields are confirmed across uploads.
+           Current labels: {geographyLabel} / {postalLabel}. Market context is inferred from saved profile fields and will be overrideable in the next release.
           </p>
          </section>
         );
        })()}
 
-       <section className="glass-panel p-6 md:p-8">
+<section className="glass-panel p-6 md:p-8">
         <h2 className="text-2xl md:text-3xl font-bold mb-4">Account Snapshot</h2>
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
