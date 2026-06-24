@@ -7758,6 +7758,62 @@ def lossq_canada_claim_hook_v3(normalized_claim, raw_claim=None):
 
   return normalized_claim
 
+# LOSSQ_SAFE_MONEY_FLOAT_CURRENCY_V4
+def lossq_safe_money_float_currency_v4(value, default=0.0):
+  if value in (None, "", [], {}):
+    return default
+
+  if isinstance(value, (int, float)):
+    try:
+      return float(value)
+    except Exception:
+      return default
+
+  raw_value = str(value or "").replace("\u00a0", " ").strip()
+  if not raw_value:
+    return default
+
+  if raw_value.lower() in {"n/a", "na", "none", "null", "-", "--", "—"}:
+    return default
+
+  negative = raw_value.startswith("-") or ("(" in raw_value and ")" in raw_value)
+
+  cleaned = raw_value
+  cleaned = re.sub(r"(?i)\b(?:cad|usd|cdn|cnd)\b", "", cleaned)
+  cleaned = cleaned.replace("CA$", "")
+  cleaned = cleaned.replace("US$", "")
+  cleaned = cleaned.replace("C$", "")
+  cleaned = cleaned.replace("$", "")
+  cleaned = cleaned.replace("(", "")
+  cleaned = cleaned.replace(")", "")
+  cleaned = re.sub(r"[^0-9,\.\- ]+", "", cleaned).strip()
+
+  compact = cleaned.replace(" ", "")
+  if not compact:
+    return default
+
+  if "," in compact and "." not in compact:
+    if compact.count(",") == 1 and re.search(r",\d{1,2}$", compact):
+      compact = compact.replace(",", ".")
+    else:
+      compact = compact.replace(",", "")
+  else:
+    compact = compact.replace(",", "")
+
+  match = re.search(r"-?\d+(?:\.\d+)?", compact)
+  if not match:
+    return default
+
+  try:
+    amount = float(match.group(0))
+  except Exception:
+    return default
+
+  if negative and amount > 0:
+    amount = -amount
+
+  return amount
+
 def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: dict):
   extracted_policy_number = clean_profile_value(
     pick(raw, ["policy_number", "policy_no", "policy"], "")
@@ -7797,13 +7853,9 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
     "claim_age": claim_age,
     "status": status,
     "description": pick(raw, ["description", "loss_description", "claim_description", "claim_notes", "loss_notes", "notes", "narrative", "Claim Notes", "Loss Notes", "Notes", "Narrative", "Claim Description", "Description", "Loss Description"]),
-    "paid_amount": float(pick(raw, ["paid_amount", "paid", "total_paid"], 0) or 0),
-    "reserve_amount": float(
-      pick(raw, ["reserve_amount", "reserve", "outstanding_reserve"], 0) or 0
-    ),
-    "total_incurred": float(
-      pick(raw, ["total_incurred", "incurred", "total"], 0) or 0
-    ),
+    "paid_amount": lossq_safe_money_float_currency_v4(pick(raw, ["paid_amount", "paid", "total_paid"], 0), 0.0),
+    "reserve_amount": lossq_safe_money_float_currency_v4(pick(raw, ["reserve_amount", "reserve", "outstanding_reserve"], 0), 0.0),
+    "total_incurred": lossq_safe_money_float_currency_v4(pick(raw, ["total_incurred", "incurred", "total"], 0), 0.0),
     "litigation": bool(pick(raw, ["litigation", "is_litigated"], False)),
     "litigation_status": pick(raw, ["litigation_status"]),
     "attorney_assigned": bool(pick(raw, ["attorney_assigned"], False)),
