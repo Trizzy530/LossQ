@@ -3474,6 +3474,190 @@ def premium_forecast(policy_number: str | None = Query(default=None), db: Sessio
   result["policy_numbers_used"] = policy_numbers_used
   return result
 
+
+# LOSSQ_CANADA_MARKET_CARRIER_MATCH_FINAL_V1
+def lossq_apply_canada_market_carrier_match_final_v1(result, profile_data, claims):
+  result = dict(result or {})
+  profile_data = profile_data if isinstance(profile_data, dict) else {}
+  claims = claims or []
+
+  import re as _lossq_ca_re
+
+  def clean(value):
+    return _lossq_ca_re.sub(r"\s+", " ", str(value or "").strip())
+
+  def get_value(obj, *keys):
+    for key in keys:
+      if isinstance(obj, dict):
+        value = obj.get(key)
+      else:
+        value = getattr(obj, key, None)
+      if value not in (None, ""):
+        return value
+    return ""
+
+  def money_value(value):
+    text = clean(value)
+    if not text:
+      return 0.0
+    text = _lossq_ca_re.sub(r"(?i)\b(?:cad|cdn|cnd|usd)\b", "", text)
+    text = text.replace("CA$", "").replace("C$", "").replace("US$", "").replace("$", "").replace(",", "")
+    match = _lossq_ca_re.search(r"-?\d+(?:\.\d+)?", text)
+    try:
+      return float(match.group(0)) if match else 0.0
+    except Exception:
+      return 0.0
+
+  canadian_regions = {"ON", "BC", "AB", "QC", "MB", "SK", "NS", "NB", "PE", "NL", "YT", "NT", "NU"}
+  market_context = profile_data.get("market_context") or {}
+  if not isinstance(market_context, dict):
+    market_context = {}
+
+  region = clean(
+    profile_data.get("market_region_code")
+    or profile_data.get("province_code")
+    or profile_data.get("province")
+    or profile_data.get("state")
+    or market_context.get("region_code")
+  ).upper()
+
+  country = clean(profile_data.get("market_country") or profile_data.get("country") or market_context.get("country"))
+  currency = clean(profile_data.get("market_currency") or profile_data.get("currency") or market_context.get("currency")).upper()
+  language = clean(profile_data.get("market_language") or market_context.get("language")).lower()
+  postal = clean(profile_data.get("postal_code") or profile_data.get("postcode"))
+  profile_blob = " ".join(clean(v) for v in profile_data.values() if not isinstance(v, (dict, list))).lower()
+
+  claim_blob_parts = []
+  for claim in claims:
+    if isinstance(claim, dict):
+      claim_blob_parts.extend(str(v) for v in claim.values() if v not in (None, ""))
+    else:
+      for name in ["line_of_business", "claim_type", "coverage", "status", "jurisdiction_state", "venue_state", "description"]:
+        claim_blob_parts.append(str(getattr(claim, name, "") or ""))
+  claim_blob = " ".join(claim_blob_parts).lower()
+
+  is_canada = bool(
+    country.lower() == "canada"
+    or currency == "CAD"
+    or language == "fr"
+    or region in canadian_regions
+    or _lossq_ca_re.search(r"\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b", postal, _lossq_ca_re.I)
+    or any(term in profile_blob for term in ["canada", "cad", "fsra", "bcfsa", "aic", "amf", "wsib", "wcb", "code postal", "province", "quebec", "québec"])
+    or any(term in claim_blob for term in ["qc", "on", "bc", "ab", "ouvert", "fermé", "responsabilité", "biens commerciaux", "litige"])
+  )
+
+  if not is_canada:
+    return result
+
+  total_claims = len(claims)
+  open_claims = 0
+  reserve_total = 0.0
+  incurred_total = 0.0
+  litigation_claims = 0
+  lines = []
+
+  for claim in claims:
+    status = clean(get_value(claim, "status", "claim_status")).lower()
+    if status in {"open", "ouvert", "ouverte", "pending"} or "open" in status or "ouvert" in status:
+      open_claims += 1
+
+    paid = money_value(get_value(claim, "paid_amount", "paid", "total_paid"))
+    reserve = money_value(get_value(claim, "reserve_amount", "reserve", "total_reserve"))
+    incurred = money_value(get_value(claim, "total_incurred", "incurred", "total")) or paid + reserve
+
+    reserve_total += reserve
+    incurred_total += incurred
+
+    legal = clean(get_value(claim, "attorney_assigned", "attorney_involved", "attorney", "litigation", "suit_filed", "flag")).lower()
+    if legal in {"yes", "oui", "true", "1", "attorney", "litigation"}:
+      litigation_claims += 1
+
+    line = clean(get_value(claim, "line_of_business", "claim_type", "coverage", "policy_type"))
+    if line and line not in lines:
+      lines.append(line)
+
+  for policy in profile_data.get("policies") or profile_data.get("policy_schedule") or []:
+    if isinstance(policy, dict):
+      line = clean(policy.get("line_of_business") or policy.get("policy_type") or policy.get("coverage") or policy.get("line"))
+      if line and line not in lines:
+        lines.append(line)
+
+  line_blob = " ".join(lines).lower()
+  has_liquor = "liquor" in line_blob or "alcool" in line_blob
+  has_property = "property" in line_blob or "biens" in line_blob or "interruption" in line_blob
+  has_auto = "auto" in line_blob or "fleet" in line_blob or "automobile" in line_blob
+  has_cyber = "cyber" in line_blob
+  has_professional = "professional" in line_blob or "errors" in line_blob or "omissions" in line_blob
+
+  base_carriers = [
+    ("Intact Insurance", 84, "Largest Canadian commercial P&C market with broad casualty, property, auto, and multi-line appetite."),
+    ("Aviva Canada", 81, "Strong Canadian commercial lines market for property, casualty, package, fleet, and mid-market accounts."),
+    ("Wawanesa Mutual", 78, "Canadian mutual market with useful fit for regional property, hospitality, and package business."),
+    ("Northbridge Financial", 76, "Canadian commercial specialist with strong middle-market and casualty underwriting capability."),
+    ("Definity / Economical", 73, "Canadian standard commercial market suitable for controlled package and casualty accounts."),
+    ("Lloyd's Canada", 70, "Specialty option for tougher liability, liquor, hospitality, cyber, or layered placements."),
+    ("Zurich Canada", 68, "Specialty and larger-account Canadian market for complex property, liability, and multinational risks."),
+    ("CNA Canada", 66, "Commercial casualty and specialty option when documentation and loss explanation are strong."),
+  ]
+
+  adjusted = []
+  for carrier, base_score, reason in base_carriers:
+    score = base_score
+    if has_liquor and carrier in {"Wawanesa Mutual", "Lloyd's Canada", "Intact Insurance", "Aviva Canada"}:
+      score += 5
+    if has_property and carrier in {"Intact Insurance", "Aviva Canada", "Wawanesa Mutual", "Northbridge Financial"}:
+      score += 3
+    if has_auto and carrier in {"Intact Insurance", "Aviva Canada", "Northbridge Financial"}:
+      score += 2
+    if has_cyber and carrier in {"Lloyd's Canada", "Zurich Canada", "CNA Canada"}:
+      score += 4
+    if has_professional and carrier in {"Lloyd's Canada", "Zurich Canada", "CNA Canada"}:
+      score += 4
+
+    score -= min(12, open_claims * 3)
+    score -= min(8, litigation_claims * 3)
+    if incurred_total >= 100000:
+      score -= 3
+
+    score = max(35, min(95, int(score)))
+    fit = "Strong Canadian market fit" if score >= 80 else "Conditional Canadian market fit" if score >= 65 else "Canadian backup market"
+
+    adjusted.append({
+      "carrier": carrier,
+      "carrier_name": carrier,
+      "match_score": score,
+      "score": score,
+      "fit": fit,
+      "market_category": "Canadian Commercial Insurance",
+      "reason": (
+        f"{carrier}: {reason} Canada-market review used {region or 'Canadian'} context, "
+        f"{total_claims} claim(s), {open_claims} open claim(s), CAD ${incurred_total:,.0f} incurred, "
+        f"CAD ${reserve_total:,.0f} reserves, and detected lines: {', '.join(lines) if lines else 'Needs classification'}."
+      ),
+    })
+
+  adjusted = sorted(adjusted, key=lambda item: int(item.get("match_score") or 0), reverse=True)
+  recommended = adjusted[0] if adjusted else {}
+
+  result["top_carriers"] = adjusted[:5]
+  result["recommended_carrier"] = recommended.get("carrier") or "Intact Insurance"
+  result["recommended_score"] = recommended.get("match_score") or recommended.get("score") or 0
+  result["carriers_ranked"] = len(adjusted)
+  result["recommended_market_category"] = "Canadian Commercial Insurance"
+  result["market_country"] = "Canada"
+  result["market_region_code"] = region
+  result["market_currency"] = "CAD"
+  result["market_regulator"] = {"ON": "FSRA", "BC": "BCFSA", "AB": "AIC", "QC": "AMF"}.get(region, result.get("market_regulator"))
+  result["carrier_match_reasons"] = [row.get("reason") for row in adjusted[:5]]
+  result["carrier_match_summary"] = (
+    f"LossQ used Canadian market context for this account. Recommended carrier: {result['recommended_carrier']} "
+    f"with a {result['recommended_score']}/100 match. The review considered {total_claims} claim(s), "
+    f"{open_claims} open claim(s), CAD ${incurred_total:,.0f} incurred, CAD ${reserve_total:,.0f} reserves, "
+    f"and detected lines: {', '.join(lines) if lines else 'Needs classification'}."
+  )
+  result["lossq_canada_market_carrier_match_version"] = "LOSSQ_CANADA_MARKET_CARRIER_MATCH_FINAL_V1"
+  return result
+
 @router.get("/carrier-match")
 def carrier_match(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(require_package_access)):
   result = engine_response(build_carrier_match_engine, db, current_user, policy_number)
@@ -3494,6 +3678,8 @@ def carrier_match(policy_number: str | None = Query(default=None), db: Session =
     result["lossq_canada_carrier_match_endpoint_version"] = "LOSSQ_CANADA_CARRIER_MATCH_ENDPOINT_OVERRIDE_V2"
   # LOSSQ_CANADA_CARRIER_MATCH_REAL_STATS_CALL_V2
   result = lossq_apply_canada_carrier_match_real_stats_v2(result, profile_data, claims)
+  # LOSSQ_CANADA_MARKET_CARRIER_MATCH_FINAL_CALL_V1
+  result = lossq_apply_canada_market_carrier_match_final_v1(result, profile_data, claims)
   return result
 
 
