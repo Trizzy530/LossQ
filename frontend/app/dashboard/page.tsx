@@ -9477,6 +9477,109 @@ const modelChartNarrative =
         <MetricCard title="Submission Readiness" value={effectiveSubmissionReadiness?.submission_readiness_score != null ? `${effectiveSubmissionReadiness.submission_readiness_score}/100` : "-"} />
        </section>
 
+       {/* LOSSQ_DASHBOARD_MARKET_CONTEXT_PANEL_V1 */}
+       {(() => {
+        const marketContext = displayProfile?.market_context || displayProfile?.marketContext || {};
+        const regionContext = marketContext?.region_context || marketContext?.regionContext || {};
+        const narrativeContext = marketContext?.narrative_localization || marketContext?.narrativeLocalization || {};
+
+        const marketCountry =
+         displayProfile?.market_country ||
+         displayProfile?.marketCountry ||
+         marketContext?.country ||
+         "Auto-detect";
+
+        const marketRegion =
+         displayProfile?.market_region_code ||
+         displayProfile?.marketRegionCode ||
+         marketContext?.region_code ||
+         marketContext?.regionCode ||
+         displayProfile?.province_code ||
+         displayProfile?.province ||
+         displayProfile?.state ||
+         "-";
+
+        const marketCurrency =
+         displayProfile?.market_currency ||
+         displayProfile?.marketCurrency ||
+         marketContext?.currency ||
+         regionContext?.currency ||
+         "-";
+
+        const marketDateFormat =
+         displayProfile?.market_date_format ||
+         displayProfile?.marketDateFormat ||
+         regionContext?.date_format ||
+         regionContext?.dateFormat ||
+         narrativeContext?.date_format ||
+         narrativeContext?.dateFormat ||
+         "-";
+
+        const marketRegulator =
+         displayProfile?.market_regulator ||
+         displayProfile?.marketRegulator ||
+         regionContext?.regulator ||
+         narrativeContext?.regulator ||
+         "-";
+
+        const marketLanguage =
+         displayProfile?.market_language ||
+         displayProfile?.marketLanguage ||
+         marketContext?.language ||
+         narrativeContext?.language ||
+         "English";
+
+        const geographyLabel =
+         regionContext?.field_label ||
+         regionContext?.fieldLabel ||
+         narrativeContext?.geography_label ||
+         narrativeContext?.geographyLabel ||
+         (String(marketCountry).toLowerCase().includes("canada") ? "State / Province" : "State");
+
+        const postalLabel =
+         regionContext?.postal_label ||
+         regionContext?.postalLabel ||
+         narrativeContext?.postal_label ||
+         narrativeContext?.postalLabel ||
+         (String(marketCountry).toLowerCase().includes("canada") ? "Postal Code" : "ZIP Code");
+
+        return (
+         <section className="glass-panel border border-blue-400/20 bg-blue-500/5 p-5 md:p-6">
+          <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
+           <div>
+            <p className="text-xs uppercase tracking-[0.25em] text-blue-300">Market Context</p>
+            <h2 className="mt-2 text-xl font-bold text-white">
+             Auto-detected: {marketCountry || "Review Required"}
+            </h2>
+            <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
+             LossQ uses this market context to adjust geography labels, currency, date format, carrier terminology, exposure inputs, regulatory language, and narrative wording for this account.
+            </p>
+           </div>
+           <button
+            type="button"
+            onClick={() => changeActiveTool("exposure-inputs")}
+            className="rounded-xl border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-bold text-blue-100 hover:bg-blue-500/20"
+           >
+            Review Market Context
+           </button>
+          </div>
+
+          <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-6">
+           <ProfileDetail label="Country / Market" value={marketCountry || "-"} />
+           <ProfileDetail label={geographyLabel} value={marketRegion || "-"} />
+           <ProfileDetail label="Currency" value={marketCurrency || "-"} />
+           <ProfileDetail label="Date Format" value={marketDateFormat || "-"} />
+           <ProfileDetail label="Regulator" value={marketRegulator || "-"} />
+           <ProfileDetail label="Language" value={marketLanguage === "fr" ? "French" : marketLanguage === "en" ? "English" : marketLanguage} />
+          </div>
+
+          <p className="mt-4 text-xs leading-5 text-slate-500">
+           Current labels: {geographyLabel} / {postalLabel}. Manual country override will be added after saved market fields are confirmed across uploads.
+          </p>
+         </section>
+        );
+       })()}
+
        <section className="glass-panel p-6 md:p-8">
         <h2 className="text-2xl md:text-3xl font-bold mb-4">Account Snapshot</h2>
 
