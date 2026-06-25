@@ -87,6 +87,7 @@ export default function LossQOnboardingPage() {
   const router = useRouter();
   const audioContextRef = useRef<AudioContext | null>(null);
   const gainRef = useRef<GainNode | null>(null);
+  const filterRef = useRef<BiquadFilterNode | null>(null);
   const oscillatorsRef = useRef<OscillatorNode[]>([]);
 
   const [started, setStarted] = useState(false);
@@ -153,6 +154,51 @@ export default function LossQOnboardingPage() {
     });
   }
 
+  // LOSSQ_ONBOARDING_PREMIUM_VOICE_MUSIC_V1
+  function getPreferredFemaleVoice() {
+    try {
+      if (!("speechSynthesis" in window)) return null;
+
+      const voices = window.speechSynthesis.getVoices() || [];
+      if (!voices.length) return null;
+
+      const preferredNames = [
+        "jenny",
+        "aria",
+        "zira",
+        "samantha",
+        "victoria",
+        "karen",
+        "serena",
+        "susan",
+        "hazel",
+        "heather",
+        "moira",
+        "tessa",
+        "fiona",
+      ];
+
+      const englishVoices = voices.filter((voice) => String(voice.lang || "").toLowerCase().startsWith("en"));
+      const candidatePool = englishVoices.length ? englishVoices : voices;
+
+      const namedVoice = candidatePool.find((voice) => {
+        const name = String(voice.name || "").toLowerCase();
+        return preferredNames.some((preferred) => name.includes(preferred));
+      });
+
+      if (namedVoice) return namedVoice;
+
+      const naturalVoice = candidatePool.find((voice) => {
+        const name = String(voice.name || "").toLowerCase();
+        return name.includes("natural") || name.includes("premium") || name.includes("enhanced");
+      });
+
+      return naturalVoice || candidatePool[0] || null;
+    } catch {
+      return null;
+    }
+  }
+
   function speakWelcome() {
     try {
       if (!("speechSynthesis" in window)) return;
@@ -160,12 +206,20 @@ export default function LossQOnboardingPage() {
       window.speechSynthesis.cancel();
 
       const utterance = new SpeechSynthesisUtterance(
-        `Welcome, ${welcomeName}. I’m LossQ, your underwriting intelligence assistant. Let’s set up your company profile so your reports, carrier packets, and loss run analysis are branded correctly from the start.`
+        `Welcome, ${welcomeName}. I’m LossQ, your underwriting intelligence assistant. I’ll help you set up your company profile so your reports, carrier packets, and loss run analysis feel ready from the start.`
       );
 
-      utterance.rate = 0.92;
-      utterance.pitch = 1;
-      utterance.volume = 0.9;
+      const preferredVoice = getPreferredFemaleVoice();
+      if (preferredVoice) {
+        utterance.voice = preferredVoice;
+        utterance.lang = preferredVoice.lang || "en-US";
+      } else {
+        utterance.lang = "en-US";
+      }
+
+      utterance.rate = 0.86;
+      utterance.pitch = 1.08;
+      utterance.volume = 0.82;
 
       window.speechSynthesis.speak(utterance);
     } catch {}
@@ -179,22 +233,40 @@ export default function LossQOnboardingPage() {
       if (!AudioContextClass) return;
 
       const context = new AudioContextClass();
-      const gain = context.createGain();
-      gain.gain.value = 0.025;
-      gain.connect(context.destination);
+      const masterGain = context.createGain();
+      const filter = context.createBiquadFilter();
 
-      const frequencies = [196, 246.94, 329.63];
-      const oscillators = frequencies.map((frequency) => {
+      filter.type = "lowpass";
+      filter.frequency.setValueAtTime(820, context.currentTime);
+      filter.Q.setValueAtTime(0.35, context.currentTime);
+
+      masterGain.gain.setValueAtTime(0.0001, context.currentTime);
+      masterGain.gain.exponentialRampToValueAtTime(0.018, context.currentTime + 3.2);
+
+      filter.connect(masterGain);
+      masterGain.connect(context.destination);
+
+      const frequencies = [174.61, 220.0, 261.63, 329.63, 392.0];
+      const oscillators = frequencies.map((frequency, index) => {
         const oscillator = context.createOscillator();
-        oscillator.type = "sine";
-        oscillator.frequency.value = frequency;
-        oscillator.connect(gain);
+        const noteGain = context.createGain();
+
+        oscillator.type = index % 2 === 0 ? "sine" : "triangle";
+        oscillator.frequency.setValueAtTime(frequency, context.currentTime);
+
+        noteGain.gain.setValueAtTime(0.0001, context.currentTime);
+        noteGain.gain.exponentialRampToValueAtTime(index < 3 ? 0.16 : 0.07, context.currentTime + 2.5 + index * 0.35);
+
+        oscillator.connect(noteGain);
+        noteGain.connect(filter);
         oscillator.start();
+
         return oscillator;
       });
 
       audioContextRef.current = context;
-      gainRef.current = gain;
+      gainRef.current = masterGain;
+      filterRef.current = filter;
       oscillatorsRef.current = oscillators;
       setMusicOn(true);
     } catch {}
@@ -202,28 +274,51 @@ export default function LossQOnboardingPage() {
 
   function stopMusic() {
     try {
-      oscillatorsRef.current.forEach((oscillator) => {
-        try {
-          oscillator.stop();
-          oscillator.disconnect();
-        } catch {}
-      });
-      oscillatorsRef.current = [];
+      const context = audioContextRef.current;
+      const gain = gainRef.current;
 
-      if (gainRef.current) {
+      if (context && gain) {
         try {
-          gainRef.current.disconnect();
+          gain.gain.cancelScheduledValues(context.currentTime);
+          gain.gain.setValueAtTime(Math.max(gain.gain.value || 0.0001, 0.0001), context.currentTime);
+          gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.8);
         } catch {}
       }
 
-      if (audioContextRef.current) {
+      window.setTimeout(() => {
         try {
-          audioContextRef.current.close();
-        } catch {}
-      }
+          oscillatorsRef.current.forEach((oscillator) => {
+            try {
+              oscillator.stop();
+              oscillator.disconnect();
+            } catch {}
+          });
+          oscillatorsRef.current = [];
 
-      audioContextRef.current = null;
-      gainRef.current = null;
+          if (filterRef.current) {
+            try {
+              filterRef.current.disconnect();
+            } catch {}
+          }
+
+          if (gainRef.current) {
+            try {
+              gainRef.current.disconnect();
+            } catch {}
+          }
+
+          if (audioContextRef.current) {
+            try {
+              audioContextRef.current.close();
+            } catch {}
+          }
+
+          audioContextRef.current = null;
+          gainRef.current = null;
+          filterRef.current = null;
+        } catch {}
+      }, 900);
+
       setMusicOn(false);
     } catch {}
   }
@@ -293,7 +388,7 @@ export default function LossQOnboardingPage() {
               <p className="text-sm font-semibold text-slate-200">
                 {started
                   ? `Welcome, ${welcomeName}. I’ll help get your LossQ workspace ready.`
-                  : "Click Start Setup to hear your welcome message and begin."}
+                  : "Click Start Setup to hear your welcome message and begin. Voice and music start only after your permission."}
               </p>
 
               <div className="mt-5 flex flex-wrap gap-3">
