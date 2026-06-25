@@ -226,14 +226,11 @@ export default function LossQOnboardingPage() {
     setMusicOn(false);
   }
 
-  // LOSSQ_ONBOARDING_START_VOICE_AND_MUSIC_V1
+  // LOSSQ_ONBOARDING_START_AUDIO_SYNC_V2
   function handleStartSetup() {
     setStarted(true);
+    startMusic();
     void playRealAiWelcome();
-
-    window.setTimeout(() => {
-      startMusic();
-    }, 350);
   }
 
   async function completeSetup() {
