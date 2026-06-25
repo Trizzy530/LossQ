@@ -7,6 +7,22 @@ import { useRouter } from "next/navigation";
 
 
 import { useEffect, useState, useRef, type ReactNode } from "react";
+
+function lossqCompanyProfileSetupAlreadyCompleteInBrowser() {
+ if (typeof window === "undefined") return false;
+
+ try {
+  return (
+   localStorage.getItem("lossq_onboarding_complete") === "true" ||
+   localStorage.getItem("lossq_company_profile_onboarding_complete") === "true" ||
+   Boolean(String(localStorage.getItem("lossq_company_name") || "").trim()) ||
+   Boolean(String(localStorage.getItem("lossq_producing_agency") || "").trim())
+  );
+ } catch {
+  return false;
+ }
+}
+
 import {
 
 
@@ -10001,7 +10017,7 @@ const modelChartNarrative =
         <Input label="Revenue / Sales" value={profile?.revenue || editableProfileValue("sales")} onChange={(v) => setProfile({...profile, revenue: v, sales: v })} />
         <Input label="Receipts" value={displayProfile?.receipts || profile?.receipts || deriveExposureInputsFromPolicyRows(profile)?.receipts || ""} onChange={(v) => setProfile({...profile, receipts: v })} />
 
-        <Input label="Employee Count" value={displayProfile?.employee_count || profile?.employee_count || deriveExposureInputsFromPolicyRows(profile)?.employee_count || ""} onChange={(v) => setProfile({...profile, employee_count: v })} />$1
+        <Input label="Employee Count" value={displayProfile?.employee_count || profile?.employee_count || deriveExposureInputsFromPolicyRows(profile)?.employee_count || ""} onChange={(v) => setProfile({...profile, employee_count: v })} />
         {/* LOSSQ_AUTO_EXPOSURE_VEHICLE_DETAIL_FIELDS_V1 */}
         <Input label="Vehicle Count" value={displayProfile?.vehicle_count || profile?.vehicle_count || deriveExposureInputsFromPolicyRows(profile)?.vehicle_count || ""} onChange={(v) => setProfile({...profile, vehicle_count: v })} />
         <Input label="Vehicle Make" value={displayProfile?.vehicle_make || profile?.vehicle_make || deriveExposureInputsFromPolicyRows(profile)?.vehicle_make || ""} onChange={(v) => setProfile({...profile, vehicle_make: v })} />
@@ -10038,6 +10054,30 @@ const modelChartNarrative =
          onChange={(e) => setProfile({...profile, underwriter_notes: e.target.value })}
          className="w-full min-h-[150px] rounded-2xl bg-slate-950/70 border border-white/10 px-4 py-4 text-white outline-none focus:border-blue-400 focus:ring-4 focus:ring-blue-500/20"
          placeholder="Enter exposure assumptions, underwriting notes, class details, loss control updates, or renewal pricing assumptions..."
+        />
+       </div>
+
+
+       {/* LOSSQ_EXPOSURE_VEHICLE_SCHEDULE_UNDER_NOTES_V1 */}
+       <div className="mt-6 rounded-2xl border border-blue-400/20 bg-blue-500/5 p-4">
+        <div className="flex flex-wrap items-center justify-between gap-3">
+         <div>
+          <p className="text-sm font-bold text-white">Scheduled Vehicles</p>
+          <p className="mt-1 text-xs text-slate-400">
+           Use this section when the account has more than one vehicle. Add one vehicle per line.
+          </p>
+         </div>
+         <span className="rounded-full border border-blue-300/30 bg-blue-400/10 px-3 py-1 text-xs font-bold text-blue-100">
+          Multiple Vehicles
+         </span>
+        </div>
+
+        <textarea
+         value={displayProfile?.vehicle_schedule || displayProfile?.vehicleSchedule || profile?.vehicle_schedule || profile?.vehicleSchedule || deriveExposureInputsFromPolicyRows(profile)?.vehicle_schedule || ""}
+         onChange={(event) => setProfile({ ...profile, vehicle_schedule: event.target.value, vehicleSchedule: event.target.value })}
+         placeholder={"Example:\n2022 Ford Transit | VIN 1FTYE1CM2NKA00001 | Value $42,000\n2021 Freightliner M2 | VIN 1FVACWFC1MHM00002 | Value $78,500"}
+         rows={5}
+         className="mt-4 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-300/70 focus:bg-black/35"
         />
        </div>
 
@@ -10288,28 +10328,9 @@ const modelChartNarrative =
         </div>
        </div>
 
-       {/* LOSSQ_EXPOSURE_VEHICLE_SCHEDULE_BOTTOM_V1 */}
-       <div className="mt-6 rounded-2xl border border-blue-400/20 bg-blue-500/5 p-4">
-        <div className="flex flex-wrap items-center justify-between gap-3">
-         <div>
-          <p className="text-sm font-bold text-white">Scheduled Vehicles</p>
-          <p className="mt-1 text-xs text-slate-400">
-           Use this section when the account has more than one vehicle. Add one vehicle per line.
-          </p>
-         </div>
-         <span className="rounded-full border border-blue-300/30 bg-blue-400/10 px-3 py-1 text-xs font-bold text-blue-100">
-          Multiple Vehicles
-         </span>
-        </div>
+       {/* LOSSQ_EXPOSURE_VEHICLE_SCHEDULE_BOTTOM_V2 */}
 
-        <textarea
-         value={displayProfile?.vehicle_schedule || displayProfile?.vehicleSchedule || profile?.vehicle_schedule || profile?.vehicleSchedule || deriveExposureInputsFromPolicyRows(profile)?.vehicle_schedule || ""}
-         onChange={(event) => setProfile({ ...profile, vehicle_schedule: event.target.value, vehicleSchedule: event.target.value })}
-         placeholder={"Example:\n2022 Ford Transit | VIN 1FTYE1CM2NKA00001 | Value $42,000\n2021 Freightliner M2 | VIN 1FVACWFC1MHM00002 | Value $78,500"}
-         rows={5}
-         className="mt-4 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-300/70 focus:bg-black/35"
-        />
-       </div>
+       {/* LOSSQ_EXPOSURE_VEHICLE_SCHEDULE_BOTTOM_V1 */}
 
        {Array.isArray(effectiveSummary?.exposure_drivers) &&
         effectiveSummary.exposure_drivers.length > 0 && (

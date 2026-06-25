@@ -332,6 +332,14 @@ export default function LossQOnboardingPage() {
       localStorage.setItem("lossq_market_currency", form.currency);
       // LOSSQ_REMOVE_AUTO_LANGUAGE_OPTION_V1
       localStorage.setItem("lossq_language_output_mode", form.languageOutput);
+      // LOSSQ_ONBOARDING_COMPLETE_FLAGS_V2
+      localStorage.setItem("lossq_onboarding_complete", "true");
+      localStorage.setItem("lossq_company_profile_onboarding_complete", "true");
+      localStorage.setItem("lossq_onboarding_completed_at", new Date().toISOString());
+      // LOSSQ_ONBOARDING_COMPLETE_FLAGS_V1
+      localStorage.setItem("lossq_onboarding_complete", "true");
+      localStorage.setItem("lossq_company_profile_onboarding_complete", "true");
+      localStorage.setItem("lossq_onboarding_completed_at", new Date().toISOString());
 
       await saveAgencyProfileFromOnboarding();
 
