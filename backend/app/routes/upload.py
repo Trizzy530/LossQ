@@ -6342,6 +6342,82 @@ def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, dir
       return ""
     return value
 
+  # LOSSQ_DAY_MONTH_YEAR_DATE_FORMAT_V1
+  def lossq_day_month_year_date_format_v1(value):
+    """
+    Universal display-safe date formatter for profile dates.
+    Always returns DD/MM/YYYY when a clear date is detected.
+    """
+    import re
+    from datetime import datetime
+
+    raw_value = clean(value)
+    if not raw_value:
+      return ""
+
+    month_map = {
+      "jan": 1, "january": 1,
+      "feb": 2, "february": 2,
+      "mar": 3, "march": 3,
+      "apr": 4, "april": 4,
+      "may": 5,
+      "jun": 6, "june": 6,
+      "jul": 7, "july": 7,
+      "aug": 8, "august": 8,
+      "sep": 9, "sept": 9, "september": 9,
+      "oct": 10, "october": 10,
+      "nov": 11, "november": 11,
+      "dec": 12, "december": 12,
+    }
+
+    def out(day, month, year):
+      try:
+        day = int(day)
+        month = int(month)
+        year = int(year)
+        if year < 100:
+          year += 2000 if year < 50 else 1900
+        if day < 1 or day > 31 or month < 1 or month > 12:
+          return raw_value
+        return f"{day:02d}/{month:02d}/{year:04d}"
+      except Exception:
+        return raw_value
+
+    # ISO / database style: YYYY-MM-DD or YYYY/MM/DD.
+    m = re.search(r"\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b", raw_value)
+    if m:
+      return out(m.group(3), m.group(2), m.group(1))
+
+    # Month-name style: November 15, 2024.
+    m = re.search(r"(?i)\b([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{2,4})\b", raw_value)
+    if m:
+      month = month_map.get(m.group(1).lower())
+      if month:
+        return out(m.group(2), month, m.group(3))
+
+    # Day month-name style: 15 November 2024.
+    m = re.search(r"(?i)\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})[,]?\s+(\d{2,4})\b", raw_value)
+    if m:
+      month = month_map.get(m.group(2).lower())
+      if month:
+        return out(m.group(1), month, m.group(3))
+
+    # Slash style. Output must still be DD/MM/YYYY.
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", raw_value)
+    if m:
+      first = int(m.group(1))
+      second = int(m.group(2))
+
+      # If obvious US-style MM/DD/YYYY, convert to DD/MM/YYYY.
+      if first <= 12 and second > 12:
+        return out(second, first, m.group(3))
+
+      # If already DD/MM/YYYY or ambiguous, keep first as day.
+      return out(first, second, m.group(3))
+
+    return raw_value
+
+
   province_to_code = {
     "alberta": "AB",
     "britishcolumbia": "BC",
@@ -6443,9 +6519,10 @@ def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, dir
       target["expiration"] = expiration_date
 
     if report_date:
-      target["evaluation_date"] = report_date
-      target["valuation_date"] = report_date
-      target["report_date"] = report_date
+      formatted_report_date = lossq_day_month_year_date_format_v1(report_date)
+      target["evaluation_date"] = formatted_report_date
+      target["valuation_date"] = formatted_report_date
+      target["report_date"] = formatted_report_date
 
     if currency:
       target["currency"] = currency.upper()
