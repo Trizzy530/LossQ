@@ -141,13 +141,44 @@ export default function LossQOnboardingPage() {
         return;
       }
 
+      // LOSSQ_ONBOARDING_USE_CURRENT_USER_IDENTITY_V2
+      const currentUserEmail = String(
+        user?.email ||
+        user?.user_email ||
+        user?.email_address ||
+        user?.username ||
+        ""
+      ).trim();
+
+      const currentUserName = String(
+        user?.first_name ||
+        user?.firstName ||
+        user?.name ||
+        user?.full_name ||
+        user?.fullName ||
+        ""
+      ).trim();
+
+      const currentUserFirstName = currentUserName.split(/\s+/)[0] || "";
+
       const signupFirstName = String(localStorage.getItem("lossq_signup_first_name") || "").trim();
       const signupEmail = String(localStorage.getItem("lossq_signup_email") || "").trim();
 
+      const signupEmailMatchesCurrentUser =
+        Boolean(currentUserEmail) &&
+        Boolean(signupEmail) &&
+        signupEmail.toLowerCase() === currentUserEmail.toLowerCase();
+
+      if (currentUserEmail && signupEmail && !signupEmailMatchesCurrentUser) {
+        localStorage.removeItem("lossq_signup_first_name");
+        localStorage.removeItem("lossq_signup_full_name");
+        localStorage.removeItem("lossq_signup_email");
+      }
+
       setForm((current) => ({
         ...current,
-        firstName: current.firstName || signupFirstName,
-        supportEmail: current.supportEmail || signupEmail,
+        firstName: current.firstName || currentUserFirstName || (signupEmailMatchesCurrentUser ? signupFirstName : ""),
+        supportEmail: current.supportEmail || currentUserEmail || (signupEmailMatchesCurrentUser ? signupEmail : ""),
       }));
     } catch {
       router.replace("/dashboard");
