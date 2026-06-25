@@ -154,10 +154,16 @@ function lossqIsCompanyProfileAdminUser(user: any, fallbackRole = "") {
 function lossqCompanyProfileIncomplete() {
   if (typeof window === "undefined") return false;
 
-  const completed = localStorage.getItem("lossq_onboarding_completed_v1") === "true";
-  const companyName = String(localStorage.getItem("lossq_company_name") || "").trim();
+  const completed =
+    localStorage.getItem("lossq_onboarding_completed_v1") === "true" ||
+    localStorage.getItem("lossq_onboarding_complete") === "true" ||
+    localStorage.getItem("lossq_company_profile_onboarding_complete") === "true";
 
-  return !completed || !companyName;
+  const companyName = String(localStorage.getItem("lossq_company_name") || "").trim();
+  const producingAgency = String(localStorage.getItem("lossq_producing_agency") || "").trim();
+  const supportEmail = String(localStorage.getItem("lossq_support_email") || "").trim();
+
+  return !completed || (!companyName && !producingAgency && !supportEmail);
 }
 
 function lossqSaveSignupIdentityForOnboarding(user: any, fallbackEmail = "", fallbackName = "", fallbackRole = "") {
@@ -190,6 +196,89 @@ function lossqSaveSignupIdentityForOnboarding(user: any, fallbackEmail = "", fal
     lossqIsCompanyProfileAdminUser(user, fallbackRole) ? "true" : "false"
   );
 }
+
+
+async function lossqLoginBackendCompanyProfileCompleteV1(API: string, token: string) {
+  if (typeof window === "undefined") return false;
+
+  try {
+    if (!token) return false;
+
+    const res = await fetch(`${API}/auth/agency-profile`, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+      },
+    });
+
+    if (!res.ok) return false;
+
+    const data = await res.json().catch(() => ({}));
+    const profile = data?.profile || data?.agency_profile || data?.agencyProfile || data || {};
+
+    const companyName = String(
+      profile.company_name ||
+      profile.companyName ||
+      profile.agency_name ||
+      profile.agencyName ||
+      profile.organization_name ||
+      profile.organizationName ||
+      ""
+    ).trim();
+
+    const producingAgency = String(
+      profile.producing_agency ||
+      profile.producingAgency ||
+      profile.agency_name ||
+      profile.agencyName ||
+      ""
+    ).trim();
+
+    const supportEmail = String(
+      profile.support_email ||
+      profile.supportEmail ||
+      profile.agency_email ||
+      profile.email ||
+      ""
+    ).trim();
+
+    if (!companyName && !producingAgency && !supportEmail) return false;
+
+    // LOSSQ_LOGIN_BACKEND_COMPANY_PROFILE_COMPLETE_V1
+    localStorage.setItem("lossq_onboarding_completed_v1", "true");
+    localStorage.setItem("lossq_onboarding_complete", "true");
+    localStorage.setItem("lossq_company_profile_onboarding_complete", "true");
+    localStorage.setItem("lossq_onboarding_completed_at", new Date().toISOString());
+
+    if (companyName) localStorage.setItem("lossq_company_name", companyName);
+    if (producingAgency) localStorage.setItem("lossq_producing_agency", producingAgency);
+    if (supportEmail) localStorage.setItem("lossq_support_email", supportEmail);
+
+    if (profile.market_country || profile.country) {
+      localStorage.setItem("lossq_market_country", String(profile.market_country || profile.country));
+    }
+
+    if (profile.market_region_code || profile.state || profile.province) {
+      localStorage.setItem("lossq_market_region_code", String(profile.market_region_code || profile.state || profile.province));
+    }
+
+    if (profile.market_currency || profile.currency) {
+      localStorage.setItem("lossq_market_currency", String(profile.market_currency || profile.currency));
+    }
+
+    if (profile.language_output_mode || profile.languageOutput || profile.market_language) {
+      localStorage.setItem("lossq_language_output_mode", String(profile.language_output_mode || profile.languageOutput || profile.market_language));
+    }
+
+    if (profile.agency_license_number || profile.license_number || profile.licenseNumber) {
+      localStorage.setItem("lossq_agency_license_number", String(profile.agency_license_number || profile.license_number || profile.licenseNumber));
+    }
+
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
@@ -287,7 +376,12 @@ lossqSaveSignupIdentityForOnboarding(loginUserRecord, cleanEmail, welcomeName, r
       lossqIsCompanyProfileAdminUser(loginUserRecord, role) &&
       lossqCompanyProfileIncomplete();
 
-    const nextPath = shouldCompleteCompanyProfile
+    const companyProfileAlreadySaved =
+      !isNewUser && shouldCompleteCompanyProfile
+        ? await lossqLoginBackendCompanyProfileCompleteV1(API, token)
+        : false;
+
+    const nextPath = shouldCompleteCompanyProfile && !companyProfileAlreadySaved
       ? "/onboarding"
       : isNewUser
         ? "/dashboard?welcome=1"
