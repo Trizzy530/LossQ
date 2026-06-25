@@ -5953,6 +5953,302 @@ def lossq_pdf_messy_block_mini_repair_v1(file_path, parsed_claims=None, parsed_p
   return parsed_claims, parsed_profile, direct_profile
 
 
+
+# LOSSQ_PDF_WIDE_CLAIMS_TABLE_FINAL_SAVE_RESCUE_V2
+def lossq_pdf_wide_claims_table_final_save_rescue_v2(file_path, parsed_claims=None, parsed_profile=None, direct_profile=None):
+  """
+  Final universal PDF claims-table rescue immediately before DB save.
+
+  Adds value without replacing the existing parser:
+  - only activates for PDFs with a real CLAIMS DETAIL table
+  - extracts row-based claim data from text-readable wide tables
+  - does not hardcode company names, carriers, provinces, claim numbers, or demo files
+  - only replaces parsed_claims when it finds at least as many real claims as current parser
+  """
+  import re
+
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+  parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+  direct_profile = direct_profile if isinstance(direct_profile, dict) else {}
+
+  if not str(file_path or "").lower().endswith(".pdf"):
+    return parsed_claims, parsed_profile, direct_profile
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
+
+  def money_float(value):
+    raw = re.sub(r"[^0-9.\-]", "", str(value or ""))
+    try:
+      return float(raw or 0)
+    except Exception:
+      return 0.0
+
+  def money_text(value):
+    amount = money_float(value)
+    if abs(amount - round(amount)) < 0.005:
+      return str(int(round(amount)))
+    return f"{amount:.2f}"
+
+  def read_pdf_text():
+    try:
+      from pypdf import PdfReader
+      reader = PdfReader(file_path)
+      return "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception as exc:
+      print("LOSSQ_PDF_WIDE_CLAIMS_TABLE_FINAL_SAVE_RESCUE_READ_ERROR_V2:", str(exc)[:200])
+      return ""
+
+  raw_text = read_pdf_text()
+  if not raw_text or not re.search(r"(?i)\bCLAIMS\s+DETAIL\b", raw_text):
+    return parsed_claims, parsed_profile, direct_profile
+
+  normalized = re.sub(r"\s+", " ", raw_text).strip()
+
+  start = re.search(r"(?i)\bCLAIMS\s+DETAIL\b", normalized)
+  if not start:
+    return parsed_claims, parsed_profile, direct_profile
+
+  section = normalized[start.end():]
+  end = re.search(r"(?i)\bLOSS\s+SUMMARY\b|\bLOSS\s+SUMMARY\s+BY\s+COVERAGE\b|\bEarned\s+Premium\b|\bOpen\s+Claims\b|\bClosed\s+Claims\b", section)
+  if end:
+    section = section[:end.start()]
+
+  claim_matches = list(re.finditer(r"\b[A-Z]{1,10}-\d{4}-\d{3,8}\b", section))
+  if not claim_matches:
+    print("LOSSQ_PDF_WIDE_CLAIMS_TABLE_FINAL_SAVE_RESCUE_V2:", {
+      "rescued_claims": 0,
+      "reason": "no_claim_row_ids_found",
+      "existing_claims": len(parsed_claims),
+    })
+    return parsed_claims, parsed_profile, direct_profile
+
+  policy_number = clean(
+    parsed_profile.get("policy_number")
+    or parsed_profile.get("main_policy_number")
+    or direct_profile.get("policy_number")
+    or direct_profile.get("main_policy_number")
+  )
+
+  if not policy_number:
+    m_policy = re.search(r"(?i)\bPolicy\s+Number\s*[:#-]\s*([A-Z0-9][A-Z0-9 ./_-]{3,80}?)(?=\s+IBC\s+Line\s+of\s+Business|\s+Policy\s+Period|\s+Retroactive\s+Date|\s+Occurrence\s+Limit|$)", normalized)
+    if m_policy:
+      policy_number = clean(m_policy.group(1))
+
+  carrier = clean(
+    parsed_profile.get("carrier_name")
+    or parsed_profile.get("writing_carrier")
+    or direct_profile.get("carrier_name")
+    or direct_profile.get("writing_carrier")
+  )
+
+  business_name = clean(
+    parsed_profile.get("business_name")
+    or parsed_profile.get("insured_name")
+    or parsed_profile.get("named_insured")
+    or parsed_profile.get("insured")
+    or direct_profile.get("business_name")
+    or direct_profile.get("insured_name")
+    or direct_profile.get("named_insured")
+  )
+
+  lob = clean(
+    parsed_profile.get("line_of_business")
+    or parsed_profile.get("policy_type")
+    or parsed_profile.get("coverage")
+    or direct_profile.get("line_of_business")
+    or direct_profile.get("policy_type")
+    or direct_profile.get("coverage")
+  )
+
+  if not lob:
+    m_lob = re.search(r"(?i)\bIBC\s+Line\s+of\s+Business\s*[:#-]\s*(.{3,160}?)(?=\s+Policy\s+Period|\s+Retroactive\s+Date|\s+Occurrence\s+Limit|\s+Aggregate\s+Limit|\s+Deductible|\s+Report\s+Date|\s+Currency|$)", normalized)
+    if m_lob:
+      lob = clean(m_lob.group(1))
+
+  coverage_terms = [
+    "Products & Completed Operations",
+    "Products and Completed Operations",
+    "Completed Operations",
+    "Commercial General Liability",
+    "Commercial Property",
+    "General Liability",
+    "Employer's Liability",
+    "Employers Liability",
+    "Professional Liability",
+    "Commercial Auto",
+    "Bodily Injury",
+    "Property Damage",
+    "Completed Ops",
+    "Liquor Liability",
+    "Business Interruption",
+    "Cyber Liability",
+    "Umbrella",
+    "Excess",
+  ]
+
+  incident_start = re.compile(
+    r"(?i)\b(excavation|slip|fall|faulty|underground|repetitive|rented|fire|water|theft|collision|injury|damage|alleged|disputed|claim|leak|wind|hail|property|bodily|remediation|foundation|surgery|utility|strain)\b"
+  )
+
+  rescued = []
+  seen = set()
+
+  for idx, match in enumerate(claim_matches):
+    claim_number = clean(match.group(0))
+    if not claim_number or claim_number.upper() in seen:
+      continue
+
+    next_start = claim_matches[idx + 1].start() if idx + 1 < len(claim_matches) else len(section)
+    chunk = clean(section[match.start():next_start])
+
+    dates = re.findall(r"\b(?:\d{4}-\d{2}-\d{2}|\d{1,2}/\d{1,2}/\d{2,4})\b", chunk)
+    if len(dates) < 2:
+      continue
+
+    amount_matches = re.findall(r"\$\s*\d[\d,]*(?:\.\d{2})?", chunk)
+    if len(amount_matches) < 4:
+      continue
+
+    status_match = re.search(r"(?i)\b(Open|Closed|Reopened|Pending|Ouvert|Ouverte|Fermé|Fermée|Clos|Clôturé)\b(?=\s+\$\s*\d)", chunk)
+    if not status_match:
+      status_match = re.search(r"(?i)\b(Open|Closed|Reopened|Pending|Ouvert|Ouverte|Fermé|Fermée|Clos|Clôturé)\b", chunk)
+
+    if not status_match:
+      continue
+
+    seen.add(claim_number.upper())
+
+    loss_date = dates[0]
+    reported_date = dates[1]
+    status = clean(status_match.group(1))
+
+    if status.lower() in {"ouvert", "ouverte"}:
+      status = "Open"
+    elif status.lower() in {"fermé", "fermée", "clos", "clôturé"}:
+      status = "Closed"
+
+    paid_indemnity = money_text(amount_matches[-4])
+    paid_expense = money_text(amount_matches[-3])
+    reserve = money_text(amount_matches[-2])
+    total_incurred = money_text(amount_matches[-1])
+    paid_total = money_text(money_float(paid_indemnity) + money_float(paid_expense))
+
+    body_start = chunk.find(reported_date) + len(reported_date)
+    body_end = status_match.start()
+    body = clean(chunk[body_start:body_end])
+
+    coverage = ""
+    coverage_index = -1
+    for term in sorted(coverage_terms, key=len, reverse=True):
+      pos = body.lower().rfind(term.lower())
+      if pos >= 0 and pos > coverage_index:
+        coverage = term
+        coverage_index = pos
+
+    pre_coverage = body[:coverage_index].strip(" -–") if coverage_index >= 0 else body
+
+    claimant = ""
+    description = pre_coverage
+
+    incident_match = incident_start.search(pre_coverage)
+    if incident_match and incident_match.start() > 0:
+      claimant = clean(pre_coverage[:incident_match.start()])
+      description = clean(pre_coverage[incident_match.start():])
+    else:
+      words = pre_coverage.split()
+      if len(words) <= 6:
+        claimant = pre_coverage
+      else:
+        claimant = clean(" ".join(words[:4]))
+        description = clean(" ".join(words[4:]))
+
+    note_text = ""
+    note_match = re.search(r"(?i)\bClaim\s+" + re.escape(claim_number) + r"\b(.{0,320})", normalized)
+    if note_match:
+      note_text = clean(note_match.group(1))
+
+    litigation = ""
+    attorney = ""
+    if re.search(r"(?i)\b(active\s+litigation|litigation|counsel\s+retained|attorney|lawyer)\b", note_text):
+      litigation = "Yes"
+      attorney = "Yes"
+
+    rescued.append({
+      "claim_number": claim_number,
+      "claim_no": claim_number,
+      "policy_number": policy_number,
+      "line_of_business": lob or coverage,
+      "coverage": coverage or lob,
+      "claim_type": coverage or lob,
+      "date_of_loss": loss_date,
+      "loss_date": loss_date,
+      "date_reported": reported_date,
+      "reported_date": reported_date,
+      "status": status,
+      "claimant": claimant,
+      "description": note_text or description or body,
+      "cause_of_loss": coverage,
+      "paid_indemnity": paid_indemnity,
+      "paid_expense": paid_expense,
+      "paid": paid_total,
+      "paid_amount": paid_total,
+      "reserve": reserve,
+      "reserve_amount": reserve,
+      "total_incurred": total_incurred,
+      "incurred": total_incurred,
+      "carrier_name": carrier,
+      "writing_carrier": carrier,
+      "business_name": business_name,
+      "named_insured": business_name,
+      "litigation": litigation,
+      "attorney_involved": attorney,
+      "represented": attorney,
+    })
+
+  if not rescued:
+    print("LOSSQ_PDF_WIDE_CLAIMS_TABLE_FINAL_SAVE_RESCUE_V2:", {
+      "rescued_claims": 0,
+      "reason": "rows_failed_validation",
+      "existing_claims": len(parsed_claims),
+    })
+    return parsed_claims, parsed_profile, direct_profile
+
+  if parsed_claims and len(rescued) < len(parsed_claims):
+    print("LOSSQ_PDF_WIDE_CLAIMS_TABLE_FINAL_SAVE_RESCUE_V2_SKIPPED:", {
+      "rescued_claims": len(rescued),
+      "existing_claims": len(parsed_claims),
+    })
+    return parsed_claims, parsed_profile, direct_profile
+
+  total_paid = sum(money_float(c.get("paid_amount")) for c in rescued)
+  total_reserve = sum(money_float(c.get("reserve_amount")) for c in rescued)
+  total_incurred = sum(money_float(c.get("total_incurred")) for c in rescued)
+  open_claims = sum(1 for c in rescued if clean(c.get("status")).lower() == "open")
+  closed_claims = sum(1 for c in rescued if clean(c.get("status")).lower() == "closed")
+
+  for target in (parsed_profile, direct_profile):
+    target["claims"] = rescued
+    target["parsed_claims"] = rescued
+    target["claim_count"] = len(rescued)
+    target["total_claims"] = len(rescued)
+    target["open_claims"] = open_claims
+    target["closed_claims"] = closed_claims
+    target["total_paid"] = total_paid
+    target["total_reserve"] = total_reserve
+    target["total_incurred"] = total_incurred
+
+  print("LOSSQ_PDF_WIDE_CLAIMS_TABLE_FINAL_SAVE_RESCUE_V2:", {
+    "rescued_claims": len(rescued),
+    "open_claims": open_claims,
+    "closed_claims": closed_claims,
+    "total_incurred": total_incurred,
+    "claim_numbers": [c.get("claim_number") for c in rescued],
+  })
+
+  return rescued, parsed_profile, direct_profile
+
+
 # LOSSQ_PDF_ACCOUNT_PROFILE_GRID_REPAIR_V1
 def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, direct_profile=None):
   """
@@ -18191,6 +18487,15 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         _lossq_vertical_value = parsed_profile.get(_lossq_vertical_key)
         if _lossq_vertical_value not in ("", None, [], {}):
           profile_data[_lossq_vertical_key] = _lossq_vertical_value
+
+
+    # LOSSQ_PDF_WIDE_CLAIMS_TABLE_FINAL_SAVE_RESCUE_CALL_V2
+    parsed_claims, parsed_profile, direct_profile = lossq_pdf_wide_claims_table_final_save_rescue_v2(
+      file_path,
+      parsed_claims,
+      parsed_profile,
+      direct_profile,
+    )
 
     all_parsed_claims.extend(parsed_claims)
 
