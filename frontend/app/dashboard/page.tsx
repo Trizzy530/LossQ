@@ -10007,6 +10007,29 @@ const modelChartNarrative =
         <Input label="Vehicle Model" value={displayProfile?.vehicle_model || profile?.vehicle_model || deriveExposureInputsFromPolicyRows(profile)?.vehicle_model || ""} onChange={(v) => setProfile({...profile, vehicle_model: v })} />
         <Input label="VIN" value={displayProfile?.vehicle_vin || profile?.vehicle_vin || deriveExposureInputsFromPolicyRows(profile)?.vehicle_vin || ""} onChange={(v) => setProfile({...profile, vehicle_vin: v })} />
         <Input label="Vehicle Value" value={displayProfile?.vehicle_value || profile?.vehicle_value || deriveExposureInputsFromPolicyRows(profile)?.vehicle_value || ""} onChange={(v) => setProfile({...profile, vehicle_value: v })} />
+
+        {/* LOSSQ_EXPOSURE_VEHICLE_SCHEDULE_SECTION_V1 */}
+        <div className="md:col-span-3 rounded-2xl border border-blue-400/20 bg-blue-500/5 p-4">
+         <div className="flex flex-wrap items-center justify-between gap-3">
+          <div>
+           <p className="text-sm font-bold text-white">Scheduled Vehicles</p>
+           <p className="mt-1 text-xs text-slate-400">
+            Use this section when the account has more than one vehicle. Add one vehicle per line.
+           </p>
+          </div>
+          <span className="rounded-full border border-blue-300/30 bg-blue-400/10 px-3 py-1 text-xs font-bold text-blue-100">
+           Multiple Vehicles
+          </span>
+         </div>
+
+         <textarea
+          value={displayProfile?.vehicle_schedule || displayProfile?.vehicleSchedule || profile?.vehicle_schedule || profile?.vehicleSchedule || deriveExposureInputsFromPolicyRows(profile)?.vehicle_schedule || ""}
+          onChange={(event) => setProfile({ ...profile, vehicle_schedule: event.target.value, vehicleSchedule: event.target.value })}
+          placeholder={"Example:\n2022 Ford Transit | VIN 1FTYE1CM2NKA00001 | Value $42,000\n2021 Freightliner M2 | VIN 1FVACWFC1MHM00002 | Value $78,500"}
+          rows={5}
+          className="mt-4 w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-blue-300/70 focus:bg-black/35"
+         />
+        </div>
         <Input label="Driver Count" value={displayProfile?.driver_count || profile?.driver_count || deriveExposureInputsFromPolicyRows(profile)?.driver_count || ""} onChange={(v) => setProfile({...profile, driver_count: v })} />
 
         <Input label="Property TIV" value={profile?.property_tiv || editableProfileValue("tiv")} onChange={(v) => setProfile({...profile, property_tiv: v, tiv: v })} />
