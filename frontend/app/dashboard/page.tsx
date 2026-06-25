@@ -9486,6 +9486,71 @@ const modelChartNarrative =
         const cleanMarketText = (value: any) => String(value ?? "").replace(/\s+/g, " ").trim();
         const upperMarketText = (value: any) => cleanMarketText(value).toUpperCase();
 
+        // LOSSQ_MARKET_CONTEXT_COMPANY_PROFILE_DISPLAY_V2
+        const storedMarketText = (key: string) => {
+         try {
+          return typeof window !== "undefined" ? cleanMarketText(localStorage.getItem(key)) : "";
+         } catch {
+          return "";
+         }
+        };
+
+        const languageOutputLabel = (value: any) => {
+         const clean = cleanMarketText(value).toLowerCase();
+
+         const labels: Record<string, string> = {
+          english: "English",
+          en: "English",
+          french: "French / Français",
+          fr: "French / Français",
+          spanish: "Spanish / Español",
+          es: "Spanish / Español",
+          portuguese: "Portuguese / Português",
+          pt: "Portuguese / Português",
+          german: "German / Deutsch",
+          de: "German / Deutsch",
+          italian: "Italian / Italiano",
+          it: "Italian / Italiano",
+          dutch: "Dutch / Nederlands",
+          nl: "Dutch / Nederlands",
+          arabic: "Arabic / العربية",
+          ar: "Arabic / العربية",
+          chinese: "Chinese / 中文",
+          zh: "Chinese / 中文",
+          japanese: "Japanese / 日本語",
+          ja: "Japanese / 日本語",
+          korean: "Korean / 한국어",
+          ko: "Korean / 한국어",
+          hindi: "Hindi / हिन्दी",
+          hi: "Hindi / हिन्दी",
+          punjabi: "Punjabi / ਪੰਜਾਬੀ",
+          pa: "Punjabi / ਪੰਜਾਬੀ",
+          urdu: "Urdu / اردو",
+          ur: "Urdu / اردو",
+          vietnamese: "Vietnamese / Tiếng Việt",
+          vi: "Vietnamese / Tiếng Việt",
+          tagalog: "Tagalog / Filipino",
+          filipino: "Tagalog / Filipino",
+          tl: "Tagalog / Filipino",
+          polish: "Polish / Polski",
+          pl: "Polish / Polski",
+          russian: "Russian / Русский",
+          ru: "Russian / Русский",
+          ukrainian: "Ukrainian / Українська",
+          uk: "Ukrainian / Українська",
+          greek: "Greek / Ελληνικά",
+          el: "Greek / Ελληνικά",
+          turkish: "Turkish / Türkçe",
+          tr: "Turkish / Türkçe",
+          hebrew: "Hebrew / עברית",
+          he: "Hebrew / עברית",
+          swahili: "Swahili / Kiswahili",
+          sw: "Swahili / Kiswahili",
+         };
+
+         return labels[clean] || cleanMarketText(value) || "English";
+        };
+
         const canadianProvinceRegulators: Record<string, string> = {
          ON: "FSRA",
          BC: "BCFSA",
@@ -9505,7 +9570,8 @@ const modelChartNarrative =
         const rawCountry = cleanMarketText(
          displayProfile?.market_country ||
           displayProfile?.marketCountry ||
-          marketContext?.country
+          marketContext?.country ||
+          storedMarketText("lossq_market_country")
         );
 
         const marketRegion = upperMarketText(
@@ -9515,14 +9581,16 @@ const modelChartNarrative =
           marketContext?.regionCode ||
           displayProfile?.province_code ||
           displayProfile?.province ||
-          displayProfile?.state
+          displayProfile?.state ||
+          storedMarketText("lossq_market_region_code")
         );
 
         const rawCurrency = upperMarketText(
          displayProfile?.market_currency ||
           displayProfile?.marketCurrency ||
           marketContext?.currency ||
-          regionContext?.currency
+          regionContext?.currency ||
+          storedMarketText("lossq_market_currency")
         );
 
         const postalValue = cleanMarketText(
@@ -9569,7 +9637,7 @@ const modelChartNarrative =
          regionContext?.dateFormat ||
          narrativeContext?.date_format ||
          narrativeContext?.dateFormat ||
-         (isCanadaMarket ? "DD/MM/YYYY" : "");
+         (isCanadaMarket ? "DD/MM/YYYY" : "MM/DD/YYYY");
 
         const marketRegulator =
          displayProfile?.market_regulator ||
@@ -9584,7 +9652,20 @@ const modelChartNarrative =
           displayProfile?.marketLanguage ||
           marketContext?.language ||
           narrativeContext?.language ||
-          "en"
+          storedMarketText("lossq_language_output_mode") ||
+          "english"
+        );
+
+        const marketLanguageOutput = languageOutputLabel(
+         storedMarketText("lossq_language_output_mode") || rawLanguage || "english"
+        );
+
+        const agencyLicenseNumber = cleanMarketText(
+         displayProfile?.agency_license_number ||
+          displayProfile?.agencyLicenseNumber ||
+          displayProfile?.license_number ||
+          displayProfile?.licenseNumber ||
+          storedMarketText("lossq_agency_license_number")
         );
 
         const geographyLabel = isCanadaMarket ? "State / Province" : "State";
@@ -9596,7 +9677,7 @@ const modelChartNarrative =
            <div>
             <p className="text-xs uppercase tracking-[0.25em] text-blue-300">Market Context</p>
             <h2 className="mt-2 text-xl font-bold text-white">
-             Auto-detected: {marketCountry || "Review Required"}
+             {marketCountry || "Review Required"}
             </h2>
             <p className="mt-2 max-w-3xl text-sm leading-6 text-slate-300">
              LossQ uses this market context to adjust geography labels, currency, date format, carrier terminology, exposure inputs, regulatory language, and narrative wording for this account.
@@ -9611,60 +9692,18 @@ const modelChartNarrative =
            </button>
           </div>
 
-          <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-6">
+          <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-7">
            <ProfileDetail label="Country / Market" value={marketCountry || "-"} />
            <ProfileDetail label={geographyLabel} value={marketRegion || "-"} />
            <ProfileDetail label="Currency" value={marketCurrency || "-"} />
            <ProfileDetail label="Date Format" value={marketDateFormat || "-"} />
            <ProfileDetail label="Regulator" value={marketRegulator || "-"} />
-           {/* LOSSQ_LANGUAGE_OUTPUT_MODE_SELECT_V1 */}
-    <div className="rounded-xl border border-white/10 bg-black/20 p-3">
-     <p className="text-[10px] uppercase tracking-[0.2em] text-slate-500">Language Output</p>
-     <select
-      defaultValue={
-       typeof window !== "undefined"
-        ? localStorage.getItem("lossq_language_output_mode") || rawLanguage || "auto"
-        : rawLanguage || "auto"
-      }
-      onChange={(event) => {
-       try {
-        localStorage.setItem("lossq_language_output_mode", event.target.value);
-        window.dispatchEvent(new CustomEvent("lossq-language-output-change", { detail: event.target.value }));
-       } catch {}
-       window.location.reload();
-      }}
-      className="mt-2 w-full rounded-lg border border-white/10 bg-slate-950 px-2 py-2 text-xs font-semibold text-white outline-none"
-     >
-      <option value="auto">Auto - Follow File</option>
-      <option value="en">English</option>
-      <option value="fr">French / Français</option>
-      <option value="es">Spanish / Español</option>
-      <option value="pt">Portuguese / Português</option>
-      <option value="de">German / Deutsch</option>
-      <option value="it">Italian / Italiano</option>
-      <option value="nl">Dutch / Nederlands</option>
-      <option value="ar">Arabic / العربية</option>
-      <option value="zh">Chinese / 中文</option>
-      <option value="ja">Japanese / 日本語</option>
-      <option value="ko">Korean / 한국어</option>
-      <option value="hi">Hindi / हिन्दी</option>
-      <option value="pa">Punjabi / ਪੰਜਾਬੀ</option>
-      <option value="ur">Urdu / اردو</option>
-      <option value="vi">Vietnamese / Tiếng Việt</option>
-      <option value="tl">Tagalog / Filipino</option>
-      <option value="pl">Polish / Polski</option>
-      <option value="ru">Russian / Русский</option>
-      <option value="uk">Ukrainian / Українська</option>
-      <option value="el">Greek / Ελληνικά</option>
-      <option value="tr">Turkish / Türkçe</option>
-      <option value="he">Hebrew / עברית</option>
-      <option value="sw">Swahili / Kiswahili</option>
-     </select>
-    </div>
+           <ProfileDetail label="Language Output" value={marketLanguageOutput || "-"} />
+           <ProfileDetail label="License Number" value={agencyLicenseNumber || "-"} />
           </div>
 
           <p className="mt-4 text-xs leading-5 text-slate-500">
-           Current labels: {geographyLabel} / {postalLabel}. Market context is inferred from saved profile fields and will be overrideable in the next release.
+           Current labels: {geographyLabel} / {postalLabel}. Market context is pulled from company setup, saved profile fields, and uploaded account data.
           </p>
          </section>
         );
@@ -9962,8 +10001,12 @@ const modelChartNarrative =
         <Input label="Revenue / Sales" value={profile?.revenue || editableProfileValue("sales")} onChange={(v) => setProfile({...profile, revenue: v, sales: v })} />
         <Input label="Receipts" value={displayProfile?.receipts || profile?.receipts || deriveExposureInputsFromPolicyRows(profile)?.receipts || ""} onChange={(v) => setProfile({...profile, receipts: v })} />
 
-        <Input label="Employee Count" value={displayProfile?.employee_count || profile?.employee_count || deriveExposureInputsFromPolicyRows(profile)?.employee_count || ""} onChange={(v) => setProfile({...profile, employee_count: v })} />
-        <Input label="Vehicle Count" value={displayProfile?.vehicle_count || profile?.vehicle_count || deriveExposureInputsFromPolicyRows(profile)?.vehicle_count || ""} onChange={(v) => setProfile({...profile, vehicle_count: v })} />
+        <Input label="Employee Count" value={displayProfile?.employee_count || profile?.employee_count || deriveExposureInputsFromPolicyRows(profile)?.employee_count || ""} onChange={(v) => setProfile({...profile, employee_count: v })} />$1
+        {/* LOSSQ_AUTO_EXPOSURE_VEHICLE_DETAIL_FIELDS_V1 */}
+        <Input label="Vehicle Make" value={displayProfile?.vehicle_make || profile?.vehicle_make || deriveExposureInputsFromPolicyRows(profile)?.vehicle_make || ""} onChange={(v) => setProfile({...profile, vehicle_make: v })} />
+        <Input label="Vehicle Model" value={displayProfile?.vehicle_model || profile?.vehicle_model || deriveExposureInputsFromPolicyRows(profile)?.vehicle_model || ""} onChange={(v) => setProfile({...profile, vehicle_model: v })} />
+        <Input label="VIN" value={displayProfile?.vehicle_vin || profile?.vehicle_vin || deriveExposureInputsFromPolicyRows(profile)?.vehicle_vin || ""} onChange={(v) => setProfile({...profile, vehicle_vin: v })} />
+        <Input label="Vehicle Value" value={displayProfile?.vehicle_value || profile?.vehicle_value || deriveExposureInputsFromPolicyRows(profile)?.vehicle_value || ""} onChange={(v) => setProfile({...profile, vehicle_value: v })} />
         <Input label="Driver Count" value={displayProfile?.driver_count || profile?.driver_count || deriveExposureInputsFromPolicyRows(profile)?.driver_count || ""} onChange={(v) => setProfile({...profile, driver_count: v })} />
 
         <Input label="Property TIV" value={profile?.property_tiv || editableProfileValue("tiv")} onChange={(v) => setProfile({...profile, property_tiv: v, tiv: v })} />
