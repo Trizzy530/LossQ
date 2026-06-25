@@ -83,16 +83,36 @@ function readStoredUserFirstName() {
   return "";
 }
 
+
+// LOSSQ_ELEVENLABS_ONBOARDING_FRONTEND_V1
+function getLossQApiBase() {
+  const configured =
+    process.env.NEXT_PUBLIC_API_URL ||
+    process.env.NEXT_PUBLIC_BACKEND_URL ||
+    process.env.NEXT_PUBLIC_API_BASE_URL ||
+    "";
+
+  if (configured) return configured.replace(/\/+$/, "");
+
+  if (typeof window !== "undefined" && window.location.hostname.includes("lossq.com")) {
+    return "https://lossq-production.up.railway.app";
+  }
+
+  return "http://localhost:8000";
+}
+
 export default function LossQOnboardingPage() {
   const router = useRouter();
   const audioContextRef = useRef<AudioContext | null>(null);
   const gainRef = useRef<GainNode | null>(null);
   const filterRef = useRef<BiquadFilterNode | null>(null);
   const oscillatorsRef = useRef<OscillatorNode[]>([]);
+  const realVoiceRef = useRef<HTMLAudioElement | null>(null);
 
   const [started, setStarted] = useState(false);
   const [musicOn, setMusicOn] = useState(false);
   const [saving, setSaving] = useState(false);
+  const [voiceLoading, setVoiceLoading] = useState(false);
   const [message, setMessage] = useState("");
 
   const [form, setForm] = useState<OnboardingForm>({
@@ -131,6 +151,12 @@ export default function LossQOnboardingPage() {
   useEffect(() => {
     return () => {
       stopMusic();
+      try {
+        if (realVoiceRef.current) {
+          realVoiceRef.current.pause();
+          realVoiceRef.current = null;
+        }
+      } catch {}
       try {
         window.speechSynthesis?.cancel();
       } catch {}
@@ -223,6 +249,55 @@ export default function LossQOnboardingPage() {
 
       window.speechSynthesis.speak(utterance);
     } catch {}
+  }
+
+
+  async function playRealAiWelcome() {
+    setVoiceLoading(true);
+
+    try {
+      const response = await fetch(`${getLossQApiBase()}/voice/onboarding-welcome`, {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+        },
+        body: JSON.stringify({
+          first_name: welcomeName,
+          language: form.languageOutput || "auto",
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`Voice request failed with ${response.status}`);
+      }
+
+      const blob = await response.blob();
+      const audioUrl = URL.createObjectURL(blob);
+
+      try {
+        if (realVoiceRef.current) {
+          realVoiceRef.current.pause();
+          if (realVoiceRef.current.src.startsWith("blob:")) {
+            URL.revokeObjectURL(realVoiceRef.current.src);
+          }
+        }
+      } catch {}
+
+      const audio = new Audio(audioUrl);
+      audio.volume = 0.88;
+      audio.onended = () => {
+        try {
+          URL.revokeObjectURL(audioUrl);
+        } catch {}
+      };
+
+      realVoiceRef.current = audio;
+      await audio.play();
+    } catch {
+      speakWelcome();
+    } finally {
+      setVoiceLoading(false);
+    }
   }
 
   function startMusic() {
@@ -325,7 +400,7 @@ export default function LossQOnboardingPage() {
 
   function handleStartSetup() {
     setStarted(true);
-    speakWelcome();
+    void playRealAiWelcome();
     startMusic();
   }
 
@@ -352,6 +427,12 @@ export default function LossQOnboardingPage() {
       localStorage.setItem("lossq_language_output_mode", form.languageOutput);
 
       stopMusic();
+      try {
+        if (realVoiceRef.current) {
+          realVoiceRef.current.pause();
+          realVoiceRef.current = null;
+        }
+      } catch {}
       try {
         window.speechSynthesis?.cancel();
       } catch {}
@@ -404,7 +485,7 @@ export default function LossQOnboardingPage() {
                   <>
                     <button
                       type="button"
-                      onClick={speakWelcome}
+                      onClick={() => void playRealAiWelcome()}
                       className="rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/15"
                     >
                       Replay Voice

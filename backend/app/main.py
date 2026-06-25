@@ -1,6 +1,7 @@
 import os
 from dotenv import load_dotenv
 from fastapi import FastAPI, Request, Response
+from app.routes import voice
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.database import Base, engine
@@ -122,6 +123,7 @@ app.include_router(submission_builder.router)
 app.include_router(audit_logs.router)
 app.include_router(audit_logs.compat_router)
 app.include_router(billing.router)
+app.include_router(voice.router, prefix="/voice", tags=["voice"])
 
 @app.get("/version")
 def version():
