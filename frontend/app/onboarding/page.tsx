@@ -17,74 +17,58 @@ type OnboardingForm = {
   languageOutput: string;
 };
 
-const LANGUAGE_OPTIONS = [
-  ["auto", "Auto - Follow Uploaded File"],
-  ["en", "English"],
-  ["fr", "French / Français"],
-  ["es", "Spanish / Español"],
-  ["pt", "Portuguese / Português"],
-  ["de", "German / Deutsch"],
-  ["it", "Italian / Italiano"],
-  ["nl", "Dutch / Nederlands"],
-  ["ar", "Arabic / العربية"],
-  ["zh", "Chinese / 中文"],
-  ["ja", "Japanese / 日本語"],
-  ["ko", "Korean / 한국어"],
-  ["hi", "Hindi / हिन्दी"],
-  ["pa", "Punjabi / ਪੰਜਾਬੀ"],
-  ["ur", "Urdu / اردو"],
-  ["vi", "Vietnamese / Tiếng Việt"],
-  ["tl", "Tagalog / Filipino"],
-  ["pl", "Polish / Polski"],
-  ["ru", "Russian / Русский"],
-  ["uk", "Ukrainian / Українська"],
-  ["el", "Greek / Ελληνικά"],
-  ["tr", "Turkish / Türkçe"],
-  ["he", "Hebrew / עברית"],
-  ["sw", "Swahili / Kiswahili"],
+type SelectOption = {
+  value: string;
+  label: string;
+};
+
+const LANGUAGE_OPTIONS: SelectOption[] = [
+  { value: "auto", label: "Auto - Follow Uploaded File" },
+  { value: "en", label: "English" },
+  { value: "fr", label: "French / Français" },
+  { value: "es", label: "Spanish / Español" },
+  { value: "pt", label: "Portuguese / Português" },
+  { value: "de", label: "German / Deutsch" },
+  { value: "it", label: "Italian / Italiano" },
+  { value: "nl", label: "Dutch / Nederlands" },
+  { value: "ar", label: "Arabic / العربية" },
+  { value: "zh", label: "Chinese / 中文" },
+  { value: "ja", label: "Japanese / 日本語" },
+  { value: "ko", label: "Korean / 한국어" },
+  { value: "hi", label: "Hindi / हिन्दी" },
+  { value: "pa", label: "Punjabi / ਪੰਜਾਬੀ" },
+  { value: "ur", label: "Urdu / اردو" },
+  { value: "vi", label: "Vietnamese / Tiếng Việt" },
+  { value: "tl", label: "Tagalog / Filipino" },
+  { value: "pl", label: "Polish / Polski" },
+  { value: "ru", label: "Russian / Русский" },
+  { value: "uk", label: "Ukrainian / Українська" },
+  { value: "el", label: "Greek / Ελληνικά" },
+  { value: "tr", label: "Turkish / Türkçe" },
+  { value: "he", label: "Hebrew / עברית" },
+  { value: "sw", label: "Swahili / Kiswahili" },
 ];
 
-const COUNTRY_OPTIONS = [
-  "United States",
-  "Canada",
-  "United Kingdom",
-  "Australia",
-  "Mexico",
-  "France",
-  "Germany",
-  "Spain",
-  "Portugal",
-  "Italy",
-  "Netherlands",
-  "Other",
+const COUNTRY_OPTIONS: SelectOption[] = [
+  { value: "United States", label: "United States" },
+  { value: "Canada", label: "Canada" },
+  { value: "United Kingdom", label: "United Kingdom" },
+  { value: "Australia", label: "Australia" },
+  { value: "Mexico", label: "Mexico" },
+  { value: "France", label: "France" },
+  { value: "Germany", label: "Germany" },
+  { value: "Spain", label: "Spain" },
+  { value: "Portugal", label: "Portugal" },
+  { value: "Italy", label: "Italy" },
+  { value: "Netherlands", label: "Netherlands" },
+  { value: "Other", label: "Other" },
 ];
 
-const CURRENCY_OPTIONS = ["USD", "CAD", "GBP", "EUR", "AUD", "MXN"];
+const CURRENCY_OPTIONS: SelectOption[] = ["USD", "CAD", "GBP", "EUR", "AUD", "MXN"].map((value) => ({
+  value,
+  label: value,
+}));
 
-function readStoredUserFirstName() {
-  if (typeof window === "undefined") return "";
-  const possibleKeys = ["first_name", "firstName", "user_first_name", "lossq_first_name", "name"];
-  for (const key of possibleKeys) {
-    const value = localStorage.getItem(key);
-    if (value && value.trim()) {
-      return value.trim().split(" ")[0] || "";
-    }
-  }
-
-  try {
-    const rawUser = localStorage.getItem("user") || localStorage.getItem("lossq_user") || "";
-    if (rawUser) {
-      const parsed = JSON.parse(rawUser);
-      const value = parsed?.first_name || parsed?.firstName || parsed?.name || "";
-      return String(value || "").trim().split(" ")[0] || "";
-    }
-  } catch {}
-
-  return "";
-}
-
-
-// LOSSQ_ELEVENLABS_ONBOARDING_FRONTEND_V1
 function getLossQApiBase() {
   const configured =
     process.env.NEXT_PUBLIC_API_URL ||
@@ -103,11 +87,8 @@ function getLossQApiBase() {
 
 export default function LossQOnboardingPage() {
   const router = useRouter();
-  const audioContextRef = useRef<AudioContext | null>(null);
-  const gainRef = useRef<GainNode | null>(null);
-  const filterRef = useRef<BiquadFilterNode | null>(null);
-  const oscillatorsRef = useRef<OscillatorNode[]>([]);
   const realVoiceRef = useRef<HTMLAudioElement | null>(null);
+  const musicAudioRef = useRef<HTMLAudioElement | null>(null);
 
   const [started, setStarted] = useState(false);
   const [musicOn, setMusicOn] = useState(false);
@@ -130,35 +111,32 @@ export default function LossQOnboardingPage() {
   });
 
   const welcomeName = useMemo(() => {
-    return form.firstName?.trim() || "there";
+    return form.firstName.trim() || "there";
   }, [form.firstName]);
 
-  useEffect(() => {
-    const storedFirstName = readStoredUserFirstName();
-    const storedLanguage = localStorage.getItem("lossq_language_output_mode") || "auto";
-    const storedCompany = localStorage.getItem("lossq_company_name") || "";
-    const storedAgency = localStorage.getItem("lossq_producing_agency") || "";
+  const completionScore = useMemo(() => {
+    const required = [
+      form.companyName,
+      form.producingAgency,
+      form.country,
+      form.stateProvince,
+      form.currency,
+      form.languageOutput,
+    ];
 
-    setForm((current) => ({
-      ...current,
-      firstName: current.firstName || storedFirstName,
-      companyName: current.companyName || storedCompany,
-      producingAgency: current.producingAgency || storedAgency,
-      languageOutput: storedLanguage,
-    }));
-  }, []);
+    const completed = required.filter((value) => String(value || "").trim()).length;
+    return Math.round((completed / required.length) * 100);
+  }, [form]);
 
   useEffect(() => {
     return () => {
       stopMusic();
+
       try {
         if (realVoiceRef.current) {
           realVoiceRef.current.pause();
           realVoiceRef.current = null;
         }
-      } catch {}
-      try {
-        window.speechSynthesis?.cancel();
       } catch {}
     };
   }, []);
@@ -180,80 +158,9 @@ export default function LossQOnboardingPage() {
     });
   }
 
-  // LOSSQ_ONBOARDING_PREMIUM_VOICE_MUSIC_V1
-  function getPreferredFemaleVoice() {
-    try {
-      if (!("speechSynthesis" in window)) return null;
-
-      const voices = window.speechSynthesis.getVoices() || [];
-      if (!voices.length) return null;
-
-      const preferredNames = [
-        "jenny",
-        "aria",
-        "zira",
-        "samantha",
-        "victoria",
-        "karen",
-        "serena",
-        "susan",
-        "hazel",
-        "heather",
-        "moira",
-        "tessa",
-        "fiona",
-      ];
-
-      const englishVoices = voices.filter((voice) => String(voice.lang || "").toLowerCase().startsWith("en"));
-      const candidatePool = englishVoices.length ? englishVoices : voices;
-
-      const namedVoice = candidatePool.find((voice) => {
-        const name = String(voice.name || "").toLowerCase();
-        return preferredNames.some((preferred) => name.includes(preferred));
-      });
-
-      if (namedVoice) return namedVoice;
-
-      const naturalVoice = candidatePool.find((voice) => {
-        const name = String(voice.name || "").toLowerCase();
-        return name.includes("natural") || name.includes("premium") || name.includes("enhanced");
-      });
-
-      return naturalVoice || candidatePool[0] || null;
-    } catch {
-      return null;
-    }
-  }
-
-  function speakWelcome() {
-    try {
-      if (!("speechSynthesis" in window)) return;
-
-      window.speechSynthesis.cancel();
-
-      const utterance = new SpeechSynthesisUtterance(
-        `Welcome, ${welcomeName}. I’m LossQ, your underwriting intelligence assistant. I’ll help you set up your company profile so your reports, carrier packets, and loss run analysis feel ready from the start.`
-      );
-
-      const preferredVoice = getPreferredFemaleVoice();
-      if (preferredVoice) {
-        utterance.voice = preferredVoice;
-        utterance.lang = preferredVoice.lang || "en-US";
-      } else {
-        utterance.lang = "en-US";
-      }
-
-      utterance.rate = 0.86;
-      utterance.pitch = 1.08;
-      utterance.volume = 0.82;
-
-      window.speechSynthesis.speak(utterance);
-    } catch {}
-  }
-
-
   async function playRealAiWelcome() {
     setVoiceLoading(true);
+    setMessage("");
 
     try {
       const response = await fetch(`${getLossQApiBase()}/voice/onboarding-welcome`, {
@@ -294,7 +201,7 @@ export default function LossQOnboardingPage() {
       realVoiceRef.current = audio;
       await audio.play();
     } catch {
-      speakWelcome();
+      setMessage("The real AI voice could not load. Check Railway ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID, then try again.");
     } finally {
       setVoiceLoading(false);
     }
@@ -302,106 +209,50 @@ export default function LossQOnboardingPage() {
 
   function startMusic() {
     try {
-      if (audioContextRef.current) return;
+      if (musicAudioRef.current) {
+        musicAudioRef.current.play().catch(() => {
+          setMessage("Calm music track is not installed yet. Add frontend/public/audio/lossq-calm-onboarding.mp3.");
+        });
+        setMusicOn(true);
+        return;
+      }
 
-      const AudioContextClass = window.AudioContext || (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
-      if (!AudioContextClass) return;
+      const audio = new Audio("/audio/lossq-calm-onboarding.mp3");
+      audio.loop = true;
+      audio.volume = 0.16;
 
-      const context = new AudioContextClass();
-      const masterGain = context.createGain();
-      const filter = context.createBiquadFilter();
+      musicAudioRef.current = audio;
 
-      filter.type = "lowpass";
-      filter.frequency.setValueAtTime(820, context.currentTime);
-      filter.Q.setValueAtTime(0.35, context.currentTime);
-
-      masterGain.gain.setValueAtTime(0.0001, context.currentTime);
-      masterGain.gain.exponentialRampToValueAtTime(0.018, context.currentTime + 3.2);
-
-      filter.connect(masterGain);
-      masterGain.connect(context.destination);
-
-      const frequencies = [174.61, 220.0, 261.63, 329.63, 392.0];
-      const oscillators = frequencies.map((frequency, index) => {
-        const oscillator = context.createOscillator();
-        const noteGain = context.createGain();
-
-        oscillator.type = index % 2 === 0 ? "sine" : "triangle";
-        oscillator.frequency.setValueAtTime(frequency, context.currentTime);
-
-        noteGain.gain.setValueAtTime(0.0001, context.currentTime);
-        noteGain.gain.exponentialRampToValueAtTime(index < 3 ? 0.16 : 0.07, context.currentTime + 2.5 + index * 0.35);
-
-        oscillator.connect(noteGain);
-        noteGain.connect(filter);
-        oscillator.start();
-
-        return oscillator;
-      });
-
-      audioContextRef.current = context;
-      gainRef.current = masterGain;
-      filterRef.current = filter;
-      oscillatorsRef.current = oscillators;
-      setMusicOn(true);
-    } catch {}
+      audio
+        .play()
+        .then(() => {
+          setMusicOn(true);
+        })
+        .catch(() => {
+          setMusicOn(false);
+          setMessage("Calm music track is not installed yet. Add frontend/public/audio/lossq-calm-onboarding.mp3.");
+        });
+    } catch {
+      setMusicOn(false);
+      setMessage("Calm music track is not available yet.");
+    }
   }
 
   function stopMusic() {
     try {
-      const context = audioContextRef.current;
-      const gain = gainRef.current;
-
-      if (context && gain) {
-        try {
-          gain.gain.cancelScheduledValues(context.currentTime);
-          gain.gain.setValueAtTime(Math.max(gain.gain.value || 0.0001, 0.0001), context.currentTime);
-          gain.gain.exponentialRampToValueAtTime(0.0001, context.currentTime + 0.8);
-        } catch {}
+      if (musicAudioRef.current) {
+        musicAudioRef.current.pause();
+        musicAudioRef.current.currentTime = 0;
+        musicAudioRef.current = null;
       }
-
-      window.setTimeout(() => {
-        try {
-          oscillatorsRef.current.forEach((oscillator) => {
-            try {
-              oscillator.stop();
-              oscillator.disconnect();
-            } catch {}
-          });
-          oscillatorsRef.current = [];
-
-          if (filterRef.current) {
-            try {
-              filterRef.current.disconnect();
-            } catch {}
-          }
-
-          if (gainRef.current) {
-            try {
-              gainRef.current.disconnect();
-            } catch {}
-          }
-
-          if (audioContextRef.current) {
-            try {
-              audioContextRef.current.close();
-            } catch {}
-          }
-
-          audioContextRef.current = null;
-          gainRef.current = null;
-          filterRef.current = null;
-        } catch {}
-      }, 900);
-
-      setMusicOn(false);
     } catch {}
+
+    setMusicOn(false);
   }
 
   function handleStartSetup() {
     setStarted(true);
     void playRealAiWelcome();
-    startMusic();
   }
 
   async function completeSetup() {
@@ -427,14 +278,12 @@ export default function LossQOnboardingPage() {
       localStorage.setItem("lossq_language_output_mode", form.languageOutput);
 
       stopMusic();
+
       try {
         if (realVoiceRef.current) {
           realVoiceRef.current.pause();
           realVoiceRef.current = null;
         }
-      } catch {}
-      try {
-        window.speechSynthesis?.cancel();
       } catch {}
 
       router.push("/dashboard");
@@ -446,30 +295,62 @@ export default function LossQOnboardingPage() {
   }
 
   return (
-    <main className="min-h-screen bg-slate-950 text-white">
-      <div className="pointer-events-none fixed inset-0 bg-[radial-gradient(circle_at_top_left,_rgba(34,211,238,0.18),_transparent_32%),radial-gradient(circle_at_bottom_right,_rgba(59,130,246,0.16),_transparent_32%)]" />
+    <main className="relative min-h-screen overflow-hidden bg-[#030712] text-white">
+      <div className="absolute inset-0 bg-[radial-gradient(circle_at_15%_15%,rgba(56,189,248,0.25),transparent_28%),radial-gradient(circle_at_85%_20%,rgba(124,58,237,0.22),transparent_30%),radial-gradient(circle_at_50%_100%,rgba(34,197,94,0.12),transparent_35%)]" />
+      <div className="absolute inset-0 bg-[linear-gradient(rgba(255,255,255,0.035)_1px,transparent_1px),linear-gradient(90deg,rgba(255,255,255,0.035)_1px,transparent_1px)] bg-[size:56px_56px] opacity-30" />
+      <div className="absolute left-1/2 top-10 h-72 w-72 -translate-x-1/2 rounded-full bg-cyan-400/10 blur-3xl" />
 
-      <section className="relative mx-auto flex min-h-screen w-full max-w-6xl items-center px-6 py-10">
-        <div className="grid w-full gap-8 lg:grid-cols-[0.9fr_1.1fr]">
-          <div className="rounded-3xl border border-white/10 bg-white/[0.04] p-8 shadow-2xl shadow-cyan-950/30 backdrop-blur">
-            <div className="mb-8 inline-flex rounded-full border border-cyan-400/30 bg-cyan-400/10 px-4 py-2 text-xs font-bold uppercase tracking-[0.28em] text-cyan-200">
-              Welcome to LossQ
+      <section className="relative mx-auto flex min-h-screen w-full max-w-7xl items-center px-5 py-8">
+        <div className="grid w-full gap-6 lg:grid-cols-[0.9fr_1.1fr]">
+          <aside className="rounded-[2rem] border border-white/10 bg-white/[0.055] p-7 shadow-2xl shadow-black/40 backdrop-blur-2xl">
+            <div className="mb-7 flex items-center justify-between gap-4">
+              <div>
+                <div className="inline-flex rounded-full border border-cyan-300/30 bg-cyan-300/10 px-4 py-2 text-[11px] font-black uppercase tracking-[0.28em] text-cyan-200">
+                  LossQ Onboarding
+                </div>
+                <h1 className="mt-5 max-w-xl text-4xl font-black leading-tight tracking-tight md:text-6xl">
+                  Build your underwriting workspace.
+                </h1>
+              </div>
             </div>
 
-            <h1 className="text-4xl font-black tracking-tight md:text-5xl">
-              Let’s personalize your underwriting workspace.
-            </h1>
-
-            <p className="mt-5 text-base leading-7 text-slate-300">
-              Set your company profile, preferred language, and market context so your dashboard,
-              reports, carrier packets, and loss run analysis feel ready from the first upload.
+            <p className="max-w-xl text-base leading-7 text-slate-300">
+              Add your company profile, choose your market, and set the language LossQ should use for
+              dashboard output, underwriting narratives, and future report generation.
             </p>
 
-            <div className="mt-8 rounded-2xl border border-white/10 bg-black/20 p-5">
+            <div className="mt-7 grid gap-3 sm:grid-cols-3">
+              <FeatureCard title="Voice Guided" description="Real AI welcome voice." />
+              <FeatureCard title="Market Aware" description="Country, currency, and region." />
+              <FeatureCard title="Report Ready" description="Branding details from day one." />
+            </div>
+
+            <div className="mt-7 rounded-3xl border border-white/10 bg-black/25 p-5">
+              <div className="flex items-center justify-between gap-4">
+                <div>
+                  <p className="text-xs font-bold uppercase tracking-[0.24em] text-slate-500">Setup Progress</p>
+                  <p className="mt-2 text-2xl font-black">{completionScore}% Complete</p>
+                </div>
+                <div className="h-16 w-16 rounded-2xl border border-cyan-300/30 bg-cyan-300/10 p-2">
+                  <div className="flex h-full w-full items-center justify-center rounded-xl bg-cyan-300/15 text-lg font-black text-cyan-100">
+                    LQ
+                  </div>
+                </div>
+              </div>
+
+              <div className="mt-4 h-2 overflow-hidden rounded-full bg-white/10">
+                <div
+                  className="h-full rounded-full bg-gradient-to-r from-cyan-300 via-blue-400 to-violet-400 transition-all duration-500"
+                  style={{ width: `${completionScore}%` }}
+                />
+              </div>
+            </div>
+
+            <div className="mt-7 rounded-3xl border border-cyan-300/20 bg-cyan-300/[0.06] p-5">
               <p className="text-sm font-semibold text-slate-200">
                 {started
-                  ? `Welcome, ${welcomeName}. I’ll help get your LossQ workspace ready.`
-                  : "Click Start Setup to hear your welcome message and begin. Voice and music start only after your permission."}
+                  ? `Welcome, ${welcomeName}. LossQ is preparing your setup experience.`
+                  : "Click Start Setup to play your real AI welcome voice."}
               </p>
 
               <div className="mt-5 flex flex-wrap gap-3">
@@ -477,58 +358,62 @@ export default function LossQOnboardingPage() {
                   <button
                     type="button"
                     onClick={handleStartSetup}
-                    className="rounded-xl bg-cyan-400 px-5 py-3 text-sm font-black text-slate-950 transition hover:bg-cyan-300"
+                    className="rounded-2xl bg-gradient-to-r from-cyan-300 to-blue-500 px-5 py-3 text-sm font-black text-slate-950 shadow-lg shadow-cyan-950/40 transition hover:scale-[1.02]"
                   >
-                    Start Setup
+                    {voiceLoading ? "Loading Voice..." : "Start Setup"}
                   </button>
                 ) : (
                   <>
                     <button
                       type="button"
                       onClick={() => void playRealAiWelcome()}
-                      className="rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/15"
+                      className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/15"
                     >
-                      Replay Voice
+                      {voiceLoading ? "Loading Voice..." : "Replay AI Voice"}
                     </button>
                     <button
                       type="button"
                       onClick={musicOn ? stopMusic : startMusic}
-                      className="rounded-xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/15"
+                      className="rounded-2xl border border-white/10 bg-white/10 px-4 py-3 text-sm font-bold text-white transition hover:bg-white/15"
                     >
-                      {musicOn ? "Music Off" : "Music On"}
+                      {musicOn ? "Calm Music Off" : "Calm Music On"}
                     </button>
                   </>
                 )}
               </div>
             </div>
-          </div>
+          </aside>
 
-          <div className="rounded-3xl border border-white/10 bg-slate-900/80 p-6 shadow-2xl shadow-black/30 backdrop-blur">
-            <div className="mb-6">
-              <p className="text-xs font-bold uppercase tracking-[0.25em] text-cyan-300">Company Setup</p>
-              <h2 className="mt-2 text-2xl font-black">Profile Details</h2>
-              <p className="mt-2 text-sm text-slate-400">
-                This will become the foundation for branded reports and market-aware output.
-              </p>
+          <section className="rounded-[2rem] border border-white/10 bg-slate-950/70 p-6 shadow-2xl shadow-black/40 backdrop-blur-2xl">
+            <div className="mb-6 flex flex-wrap items-start justify-between gap-4">
+              <div>
+                <p className="text-xs font-black uppercase tracking-[0.25em] text-blue-300">Company Profile</p>
+                <h2 className="mt-2 text-3xl font-black">Tell LossQ how to brand your workspace.</h2>
+                <p className="mt-2 max-w-2xl text-sm leading-6 text-slate-400">
+                  These fields are blank by default. The examples below are sample data only.
+                </p>
+              </div>
+              <div className="rounded-2xl border border-white/10 bg-white/[0.06] px-4 py-3 text-xs font-bold text-slate-300">
+                Required fields marked *
+              </div>
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <Field label="First Name" value={form.firstName} onChange={(value) => updateField("firstName", value)} placeholder="Tristan" />
-              <Field label="Company / Agency Name" value={form.companyName} onChange={(value) => updateField("companyName", value)} placeholder="LossQ Demo Agency" required />
-              <Field label="Producing Agency Name" value={form.producingAgency} onChange={(value) => updateField("producingAgency", value)} placeholder="Agency shown on reports" />
-              <Field label="Support Email" value={form.supportEmail} onChange={(value) => updateField("supportEmail", value)} placeholder="support@lossq.com" />
-              <Field label="Phone Number" value={form.phone} onChange={(value) => updateField("phone", value)} placeholder="(555) 555-5555" />
-              <Field label="Website" value={form.website} onChange={(value) => updateField("website", value)} placeholder="https://www.company.com" />
-              <Field label="Address" value={form.address} onChange={(value) => updateField("address", value)} placeholder="Street, City, State / Province" />
-
-              <SelectField label="Country / Market" value={form.country} onChange={(value) => updateField("country", value)} options={COUNTRY_OPTIONS.map((item) => [item, item])} />
-              <Field label="State / Province" value={form.stateProvince} onChange={(value) => updateField("stateProvince", value)} placeholder="NC, ON, QC, etc." />
-              <SelectField label="Default Currency" value={form.currency} onChange={(value) => updateField("currency", value)} options={CURRENCY_OPTIONS.map((item) => [item, item])} />
+              <Field label="First Name" value={form.firstName} onChange={(value) => updateField("firstName", value)} placeholder="Jordan" />
+              <Field label="Company / Agency Name" value={form.companyName} onChange={(value) => updateField("companyName", value)} placeholder="Northstar Risk Partners" required />
+              <Field label="Producing Agency Name" value={form.producingAgency} onChange={(value) => updateField("producingAgency", value)} placeholder="Meridian Advisory Group" />
+              <Field label="Support Email" value={form.supportEmail} onChange={(value) => updateField("supportEmail", value)} placeholder="support@northstarrisk.example" />
+              <Field label="Phone Number" value={form.phone} onChange={(value) => updateField("phone", value)} placeholder="(555) 218-4400" />
+              <Field label="Website" value={form.website} onChange={(value) => updateField("website", value)} placeholder="https://www.northstarrisk.example" />
+              <Field label="Address" value={form.address} onChange={(value) => updateField("address", value)} placeholder="123 Harbor Street, Suite 400" />
+              <SelectField label="Country / Market" value={form.country} onChange={(value) => updateField("country", value)} options={COUNTRY_OPTIONS} />
+              <Field label="State / Province" value={form.stateProvince} onChange={(value) => updateField("stateProvince", value)} placeholder="NC, ON, QC, CA, TX" />
+              <SelectField label="Default Currency" value={form.currency} onChange={(value) => updateField("currency", value)} options={CURRENCY_OPTIONS} />
               <SelectField label="Language Output Mode" value={form.languageOutput} onChange={(value) => updateField("languageOutput", value)} options={LANGUAGE_OPTIONS} />
             </div>
 
             {message ? (
-              <div className="mt-5 rounded-xl border border-amber-400/30 bg-amber-400/10 px-4 py-3 text-sm font-semibold text-amber-100">
+              <div className="mt-5 rounded-2xl border border-amber-300/30 bg-amber-300/10 px-4 py-3 text-sm font-semibold text-amber-100">
                 {message}
               </div>
             ) : null}
@@ -537,7 +422,7 @@ export default function LossQOnboardingPage() {
               <button
                 type="button"
                 onClick={() => router.push("/dashboard")}
-                className="rounded-xl border border-white/10 bg-white/5 px-5 py-3 text-sm font-bold text-slate-200 transition hover:bg-white/10"
+                className="rounded-2xl border border-white/10 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-200 transition hover:bg-white/10"
               >
                 Skip for Now
               </button>
@@ -546,15 +431,24 @@ export default function LossQOnboardingPage() {
                 type="button"
                 onClick={completeSetup}
                 disabled={saving}
-                className="rounded-xl bg-blue-500 px-6 py-3 text-sm font-black text-white transition hover:bg-blue-400 disabled:cursor-not-allowed disabled:opacity-60"
+                className="rounded-2xl bg-gradient-to-r from-blue-500 via-cyan-400 to-blue-500 px-6 py-3 text-sm font-black text-white shadow-xl shadow-blue-950/40 transition hover:scale-[1.02] disabled:cursor-not-allowed disabled:opacity-60"
               >
                 {saving ? "Saving..." : "Complete Setup & Go to Dashboard"}
               </button>
             </div>
-          </div>
+          </section>
         </div>
       </section>
     </main>
+  );
+}
+
+function FeatureCard({ title, description }: { title: string; description: string }) {
+  return (
+    <div className="rounded-2xl border border-white/10 bg-white/[0.06] p-4">
+      <p className="text-sm font-black text-white">{title}</p>
+      <p className="mt-1 text-xs leading-5 text-slate-400">{description}</p>
+    </div>
   );
 }
 
@@ -573,14 +467,14 @@ function Field({
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-400">
         {label} {required ? <span className="text-cyan-300">*</span> : null}
       </span>
       <input
         value={value}
         onChange={(event) => onChange(event.target.value)}
         placeholder={placeholder}
-        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-3 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-400/60"
+        className="w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-sm font-semibold text-white outline-none transition placeholder:text-slate-600 focus:border-cyan-300/70 focus:bg-black/35"
       />
     </label>
   );
@@ -595,19 +489,19 @@ function SelectField({
   label: string;
   value: string;
   onChange: (value: string) => void;
-  options: string[][];
+  options: SelectOption[];
 }) {
   return (
     <label className="block">
-      <span className="mb-2 block text-xs font-bold uppercase tracking-[0.16em] text-slate-400">{label}</span>
+      <span className="mb-2 block text-xs font-black uppercase tracking-[0.16em] text-slate-400">{label}</span>
       <select
         value={value}
         onChange={(event) => onChange(event.target.value)}
-        className="w-full rounded-xl border border-white/10 bg-slate-950 px-3 py-3 text-sm font-semibold text-white outline-none transition focus:border-cyan-400/60"
+        className="w-full rounded-2xl border border-white/10 bg-black/25 px-4 py-3 text-sm font-semibold text-white outline-none transition focus:border-cyan-300/70 focus:bg-black/35"
       >
-        {options.map(([optionValue, optionLabel]) => (
-          <option key={optionValue} value={optionValue}>
-            {optionLabel}
+        {options.map((option) => (
+          <option key={option.value} value={option.value}>
+            {option.label}
           </option>
         ))}
       </select>
