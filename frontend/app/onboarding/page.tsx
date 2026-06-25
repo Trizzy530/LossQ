@@ -420,13 +420,7 @@ export default function LossQOnboardingPage() {
               <Field label="Company / Agency Name" value={form.companyName} onChange={(value) => updateField("companyName", value)} placeholder="Northstar Risk Partners" required />
               <Field label="Producing Agency Name" value={form.producingAgency} onChange={(value) => updateField("producingAgency", value)} placeholder="Meridian Advisory Group" />
               <Field label="Support Email" value={form.supportEmail} onChange={(value) => updateField("supportEmail", value)} placeholder="support@northstarrisk.example" />
-              <Field label="Phone Number" value={form.phone} onChange={(value) => updateField("phone", value)} placeholder="(555) 218-4400" />
-              <Field label="Website" value={form.website} onChange={(value) => updateField("website", value)} placeholder="https://www.northstarrisk.example" />
-              <Field label="Address" value={form.address} onChange={(value) => updateField("address", value)} placeholder="123 Harbor Street, Suite 400" />
-              <SelectField label="Country / Market" value={form.country} onChange={(value) => updateField("country", value)} options={COUNTRY_OPTIONS} />
-              <Field label="State / Province" value={form.stateProvince} onChange={(value) => updateField("stateProvince", value)} placeholder="NC, ON, QC, CA, TX" />
-              <SelectField label="Default Currency" value={form.currency} onChange={(value) => updateField("currency", value)} options={CURRENCY_OPTIONS} />
-              {/* LOSSQ_LANGUAGE_OUTPUT_CARD_SELECTOR_V2 */}
+              {/* LOSSQ_LANGUAGE_OUTPUT_CARD_SELECTOR_FINAL_V2 */}
               <div className="md:col-span-2 rounded-3xl border border-white/10 bg-white/[0.03] p-5">
                 <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
                   <div>
@@ -464,6 +458,12 @@ export default function LossQOnboardingPage() {
                   })}
                 </div>
               </div>
+              <Field label="Phone Number" value={form.phone} onChange={(value) => updateField("phone", value)} placeholder="(555) 218-4400" />
+              <Field label="Website" value={form.website} onChange={(value) => updateField("website", value)} placeholder="https://www.northstarrisk.example" />
+              <Field label="Address" value={form.address} onChange={(value) => updateField("address", value)} placeholder="123 Harbor Street, Suite 400" />
+              <SelectField label="Country / Market" value={form.country} onChange={(value) => updateField("country", value)} options={COUNTRY_OPTIONS} />
+              <Field label="State / Province" value={form.stateProvince} onChange={(value) => updateField("stateProvince", value)} placeholder="NC, ON, QC, CA, TX" />
+              <SelectField label="Default Currency" value={form.currency} onChange={(value) => updateField("currency", value)} options={CURRENCY_OPTIONS} />
             </div>
 
             {message ? (

@@ -129,6 +129,68 @@ function toggleLossQPrimaryLine(current: string[], value: string) {
 }
 
 
+
+// LOSSQ_COMPANY_PROFILE_ONBOARDING_ROLE_GATE_V1
+function lossqIsCompanyProfileAdminUser(user: any, fallbackRole = "") {
+  const roleText = [
+    user?.role,
+    user?.user_role,
+    user?.account_role,
+    user?.organization_role,
+    user?.permissions,
+    fallbackRole,
+  ]
+    .filter(Boolean)
+    .join(" ")
+    .toLowerCase();
+
+  return (
+    roleText.includes("owner") ||
+    roleText.includes("admin") ||
+    roleText.includes("agency owner")
+  );
+}
+
+function lossqCompanyProfileIncomplete() {
+  if (typeof window === "undefined") return false;
+
+  const completed = localStorage.getItem("lossq_onboarding_completed_v1") === "true";
+  const companyName = String(localStorage.getItem("lossq_company_name") || "").trim();
+
+  return !completed || !companyName;
+}
+
+function lossqSaveSignupIdentityForOnboarding(user: any, fallbackEmail = "", fallbackName = "", fallbackRole = "") {
+  if (typeof window === "undefined") return;
+
+  const fullName =
+    String(fallbackName || "").trim() ||
+    String(user?.full_name || user?.fullName || user?.name || "").trim() ||
+    `${user?.first_name || user?.firstName || ""} ${user?.last_name || user?.lastName || ""}`.trim();
+
+  const nameParts = fullName.split(/\s+/).filter(Boolean);
+  const firstName =
+    String(user?.first_name || user?.firstName || "").trim() ||
+    nameParts[0] ||
+    "";
+  const lastName =
+    String(user?.last_name || user?.lastName || "").trim() ||
+    nameParts.slice(1).join(" ");
+
+  const email =
+    String(user?.email || user?.user_email || fallbackEmail || "").trim().toLowerCase();
+
+  localStorage.setItem("lossq_signup_first_name", firstName);
+  localStorage.setItem("lossq_signup_last_name", lastName);
+  localStorage.setItem("lossq_signup_email", email);
+  localStorage.setItem("lossq_signup_full_name", fullName);
+  localStorage.setItem("lossq_signup_business_role", String(fallbackRole || user?.role || "").trim());
+  localStorage.setItem(
+    "lossq_can_manage_company_profile",
+    lossqIsCompanyProfileAdminUser(user, fallbackRole) ? "true" : "false"
+  );
+}
+
 export default function LoginPage() {
   const [mode, setMode] = useState<"login" | "register">("login");
   const [step, setStep] = useState(1);
@@ -153,6 +215,8 @@ export default function LoginPage() {
   const [message, setMessage] = useState("");
   const [successMessage, setSuccessMessage] = useState("");
   const [loading, setLoading] = useState(false);
+  const [resendLoading, setResendLoading] = useState(false);
+  const [resendMessage, setResendMessage] = useState("");
 
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
@@ -191,10 +255,12 @@ export default function LoginPage() {
     }
 
 clearLossQAccountCacheBeforeLogin();
+const loginUserRecord = loginData?.user || { email: cleanEmail };
 localStorage.setItem("lossq_token", token);
-        sessionStorage.setItem("lossq_tab_token", token);
-localStorage.setItem("lossq_user", JSON.stringify(loginData?.user || { email: cleanEmail }));
+sessionStorage.setItem("lossq_tab_token", token);
+localStorage.setItem("lossq_user", JSON.stringify(loginUserRecord));
 localStorage.setItem("lossq_login_time", Date.now().toString());
+lossqSaveSignupIdentityForOnboarding(loginUserRecord, cleanEmail, welcomeName, role);
 
     if (isNewUser) {
       const cleanWelcomeName =
@@ -216,7 +282,17 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
       localStorage.removeItem("lossq_new_user_welcome_name");
     }
 
-    const nextPath = isNewUser ? "/dashboard?welcome=1" : getSafeNextPath();
+    const safeNextPath = getSafeNextPath();
+    const shouldCompleteCompanyProfile =
+      lossqIsCompanyProfileAdminUser(loginUserRecord, role) &&
+      lossqCompanyProfileIncomplete();
+
+    const nextPath = shouldCompleteCompanyProfile
+      ? "/onboarding"
+      : isNewUser
+        ? "/dashboard?welcome=1"
+        : safeNextPath;
+
     sessionStorage.removeItem("lossq_next_after_login");
     window.location.href = nextPath;
   }
@@ -323,6 +399,40 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
     }
   }
 
+
+  // LOSSQ_REGISTER_RESEND_VERIFICATION_UI_V1
+  async function resendVerificationEmail() {
+    const cleanEmail = email.trim().toLowerCase();
+
+    if (!cleanEmail || !cleanEmail.includes("@")) {
+      setResendMessage("Enter your work email first, then resend the verification link.");
+      return;
+    }
+
+    setResendLoading(true);
+    setResendMessage("");
+
+    try {
+      const res = await fetch(`${API}/auth/resend-verification`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ email: cleanEmail }),
+      });
+
+      const data = await safeJson(res);
+
+      if (!res.ok) {
+        throw new Error(errorToText(data, "Verification email could not be resent."));
+      }
+
+      setResendMessage(data?.message || "Verification email resent. Check your inbox.");
+    } catch (err: any) {
+      setResendMessage(err?.message || "Verification email could not be resent.");
+    } finally {
+      setResendLoading(false);
+    }
+  }
+
   function switchMode() {
     setMode(mode === "login" ? "register" : "login");
     setStep(1);
@@ -335,7 +445,7 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
       <div className="fixed inset-0 bg-[linear-gradient(rgba(0,120,255,0.05)_1px,transparent_1px),linear-gradient(90deg,rgba(0,120,255,0.05)_1px,transparent_1px)] bg-[size:60px_60px]" />
       <div className="fixed inset-0 bg-[radial-gradient(circle_at_top,rgba(0,120,255,0.25),transparent_45%)]" />
 
-      <div className="relative w-full max-w-xl bg-[#0A1628] border border-blue-500/20 rounded-3xl p-8 shadow-2xl">
+      <div className={`relative w-full ${mode === "register" ? "max-w-5xl" : "max-w-xl"} bg-[#0A1628] border border-blue-500/20 rounded-3xl p-8 shadow-2xl`}>
         <h1 className="text-5xl font-black mb-3">
           Loss<span className="text-blue-500">Q</span>
         </h1>
@@ -362,13 +472,13 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
         )}
 
         {message && (
-          <div className="bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg p-3 mb-5 text-sm whitespace-pre-wrap">
+          <div className="sticky top-4 z-20 bg-red-500/10 border border-red-500/30 text-red-300 rounded-lg p-3 mb-5 text-sm whitespace-pre-wrap shadow-xl backdrop-blur">
             {message}
           </div>
         )}
 
         {successMessage && (
-          <div className="bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-lg p-3 mb-5 text-sm">
+          <div className="sticky top-4 z-20 bg-emerald-500/10 border border-emerald-500/30 text-emerald-300 rounded-lg p-3 mb-5 text-sm shadow-xl backdrop-blur">
             {successMessage}
           </div>
         )}
@@ -552,8 +662,27 @@ localStorage.setItem("lossq_login_time", Date.now().toString());
               className="w-full bg-slate-900 border border-blue-400/40 rounded-lg px-4 py-3 mb-6 outline-none focus:border-blue-500"
             />
 
-            <div className="bg-blue-500/10 border border-blue-500/30 text-blue-200 text-sm rounded-lg p-3 mb-6">
-              Email verification placeholder: after registration, users will be marked as pending verification until email confirmation is added.
+            <div className="rounded-2xl border border-cyan-400/30 bg-cyan-400/10 p-4 text-sm text-cyan-100 mb-6">
+              <div className="flex flex-col gap-3 md:flex-row md:items-center md:justify-between">
+                <div>
+                  <p className="font-black">Email verification required</p>
+                  <p className="mt-1 text-cyan-50/80">
+                    After creating your account, check your inbox for the verification link.
+                  </p>
+                  {resendMessage && (
+                    <p className="mt-2 text-xs font-semibold text-cyan-50">{resendMessage}</p>
+                  )}
+                </div>
+
+                <button
+                  type="button"
+                  onClick={resendVerificationEmail}
+                  disabled={resendLoading || !email.trim()}
+                  className="rounded-xl border border-cyan-300/40 bg-cyan-300/10 px-4 py-2 text-sm font-black text-cyan-50 hover:bg-cyan-300/20 disabled:cursor-not-allowed disabled:opacity-50"
+                >
+                  {resendLoading ? "Sending..." : "Resend verification link"}
+                </button>
+              </div>
             </div>
           </>
         )}
