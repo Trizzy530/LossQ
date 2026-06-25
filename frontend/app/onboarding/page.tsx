@@ -85,6 +85,7 @@ function getLossQApiBase() {
   return "http://localhost:8000";
 }
 
+// LOSSQ_STATIC_MP3_ONLY_ONBOARDING_VOICE_V1
 export default function LossQOnboardingPage() {
   const router = useRouter();
   const realVoiceRef = useRef<HTMLAudioElement | null>(null);
@@ -163,45 +164,20 @@ export default function LossQOnboardingPage() {
     setMessage("");
 
     try {
-      const response = await fetch(`${getLossQApiBase()}/voice/onboarding-welcome`, {
-        method: "POST",
-        headers: {
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          first_name: welcomeName,
-          language: form.languageOutput || "auto",
-        }),
-      });
-
-      if (!response.ok) {
-        throw new Error(`Voice request failed with ${response.status}`);
-      }
-
-      const blob = await response.blob();
-      const audioUrl = URL.createObjectURL(blob);
+      const audio = new Audio("/audio/lossq-onboarding-welcome.mp3");
+      audio.volume = 0.9;
 
       try {
         if (realVoiceRef.current) {
           realVoiceRef.current.pause();
-          if (realVoiceRef.current.src.startsWith("blob:")) {
-            URL.revokeObjectURL(realVoiceRef.current.src);
-          }
+          realVoiceRef.current = null;
         }
       } catch {}
-
-      const audio = new Audio(audioUrl);
-      audio.volume = 0.88;
-      audio.onended = () => {
-        try {
-          URL.revokeObjectURL(audioUrl);
-        } catch {}
-      };
 
       realVoiceRef.current = audio;
       await audio.play();
     } catch {
-      setMessage("The real AI voice could not load. Check Railway ELEVENLABS_API_KEY and ELEVENLABS_VOICE_ID, then try again.");
+      setMessage("The onboarding voice file is missing. Add frontend/public/audio/lossq-onboarding-welcome.mp3.");
     } finally {
       setVoiceLoading(false);
     }
