@@ -708,3 +708,155 @@ def lossq_market_intelligence_summary(profile_data: Optional[Dict[str, Any]] = N
         "revenue": normalized.get("revenue"),
         "market_context": context,
     }
+
+
+# LOSSQ_US_MARKET_DETECTION_OVERRIDE_V1
+# Stronger U.S. auto-detect layered on top of the existing universal market service.
+_LOSSQ_ORIGINAL_DETECT_COUNTRY_V1 = lossq_detect_country if "lossq_detect_country" in globals() else None
+_LOSSQ_ORIGINAL_STATE_PROVINCE_CONTEXT_V1 = lossq_state_province_context if "lossq_state_province_context" in globals() else None
+
+US_STATE_REGULATORS_V1: Dict[str, Dict[str, str]] = {
+    "AL": {"name": "Alabama", "regulator": "Alabama Department of Insurance"},
+    "AK": {"name": "Alaska", "regulator": "Alaska Division of Insurance"},
+    "AZ": {"name": "Arizona", "regulator": "Arizona Department of Insurance and Financial Institutions"},
+    "AR": {"name": "Arkansas", "regulator": "Arkansas Insurance Department"},
+    "CA": {"name": "California", "regulator": "California Department of Insurance"},
+    "CO": {"name": "Colorado", "regulator": "Colorado Division of Insurance"},
+    "CT": {"name": "Connecticut", "regulator": "Connecticut Insurance Department"},
+    "DE": {"name": "Delaware", "regulator": "Delaware Department of Insurance"},
+    "FL": {"name": "Florida", "regulator": "Florida Office of Insurance Regulation"},
+    "GA": {"name": "Georgia", "regulator": "Georgia Office of Insurance and Safety Fire Commissioner"},
+    "IL": {"name": "Illinois", "regulator": "Illinois Department of Insurance"},
+    "IN": {"name": "Indiana", "regulator": "Indiana Department of Insurance"},
+    "MA": {"name": "Massachusetts", "regulator": "Massachusetts Division of Insurance"},
+    "MI": {"name": "Michigan", "regulator": "Michigan Department of Insurance and Financial Services"},
+    "NC": {"name": "North Carolina", "regulator": "North Carolina Department of Insurance"},
+    "NY": {"name": "New York", "regulator": "New York Department of Financial Services"},
+    "OH": {"name": "Ohio", "regulator": "Ohio Department of Insurance"},
+    "PA": {"name": "Pennsylvania", "regulator": "Pennsylvania Insurance Department"},
+    "SC": {"name": "South Carolina", "regulator": "South Carolina Department of Insurance"},
+    "TN": {"name": "Tennessee", "regulator": "Tennessee Department of Commerce and Insurance"},
+    "TX": {"name": "Texas", "regulator": "Texas Department of Insurance"},
+    "VA": {"name": "Virginia", "regulator": "Virginia Bureau of Insurance"},
+    "WA": {"name": "Washington", "regulator": "Washington Office of the Insurance Commissioner"},
+    "DC": {"name": "District of Columbia", "regulator": "DC Department of Insurance, Securities and Banking"},
+}
+
+
+def lossq_us_market_context_blob_v1(profile_data: Optional[Dict[str, Any]] = None, raw_text: Any = "") -> str:
+    profile_data = profile_data if isinstance(profile_data, dict) else {}
+    parts: List[str] = [str(raw_text or "")]
+
+    for key in [
+        "country",
+        "market_country",
+        "currency",
+        "market_currency",
+        "state",
+        "jurisdiction",
+        "jurisdiction_state",
+        "venue_state",
+        "loss_state",
+        "postal_code",
+        "zip",
+        "zip_code",
+        "carrier_name",
+        "writing_carrier",
+        "insurer",
+        "raw_text_preview",
+        "ocr_text",
+        "extracted_text",
+        "loss_run_text",
+    ]:
+        value = profile_data.get(key)
+        if value not in (None, ""):
+            parts.append(str(value))
+
+    return " ".join(parts)
+
+
+def lossq_detect_us_state_v1(profile_data: Optional[Dict[str, Any]] = None, raw_text: Any = "") -> str:
+    profile_data = profile_data if isinstance(profile_data, dict) else {}
+    context = lossq_us_market_context_blob_v1(profile_data, raw_text)
+    context_upper = context.upper()
+    context_low = context.lower()
+
+    for key in ["state", "jurisdiction", "jurisdiction_state", "venue_state", "loss_state", "market_region_code"]:
+        candidate = lossq_market_clean(profile_data.get(key)).upper()
+        if candidate in US_STATE_REGULATORS_V1:
+            return candidate
+
+    for code, info in US_STATE_REGULATORS_V1.items():
+        if re.search(rf"\b{code}\b", context_upper):
+            return code
+        if re.search(rf"\b{re.escape(info.get('name', '').lower())}\b", context_low):
+            return code
+
+    return ""
+
+
+def lossq_detect_country(profile_data: Optional[Dict[str, Any]] = None, raw_text: Any = "") -> str:
+    profile_data = profile_data if isinstance(profile_data, dict) else {}
+    context = lossq_us_market_context_blob_v1(profile_data, raw_text)
+    context_upper = context.upper()
+    context_low = context.lower()
+
+    explicit_country = lossq_market_clean(
+        profile_data.get("country") or profile_data.get("market_country")
+    ).lower()
+
+    canadian_province = any(re.search(rf"\b{province}\b", context_upper) for province in CANADIAN_PROVINCES)
+    canadian_postal = bool(re.search(r"\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b", context_upper))
+    canadian_currency = " cad" in context_low or "canadian dollar" in context_low or lossq_market_clean(profile_data.get("currency")).upper() == "CAD"
+    canadian_text = "canada" in context_low or "canadian" in context_low
+
+    if explicit_country in {"canada", "ca"} or canadian_postal or canadian_province or canadian_currency or canadian_text:
+        return "Canada"
+
+    us_state = lossq_detect_us_state_v1(profile_data, raw_text)
+    us_zip = bool(re.search(r"\b\d{5}(?:-\d{4})?\b", context))
+    us_currency = " usd" in context_low or "u.s. dollar" in context_low or lossq_market_clean(profile_data.get("currency")).upper() == "USD"
+    us_text = any(token in context_low for token in ["united states", " usa", " u.s.", "us loss run", "naic", "zip code"])
+    us_carrier = any(token in context_low for token in [
+        "travelers",
+        "hartford",
+        "liberty mutual",
+        "nationwide",
+        "cna",
+        "chubb",
+        "berkley",
+        "zurich",
+        "amtrust",
+        "selective",
+        "hanover",
+    ])
+
+    if explicit_country in {"united states", "usa", "u.s.", "us"} or us_state or us_zip or us_currency or us_text or us_carrier:
+        return "United States"
+
+    if _LOSSQ_ORIGINAL_DETECT_COUNTRY_V1:
+        return _LOSSQ_ORIGINAL_DETECT_COUNTRY_V1(profile_data, raw_text)
+
+    return ""
+
+
+def lossq_state_province_context(region_code: Any) -> Dict[str, str]:
+    code = lossq_market_clean(region_code).upper()
+
+    if code in US_STATE_REGULATORS_V1:
+        return {
+            "name": US_STATE_REGULATORS_V1[code]["name"],
+            "regulator": US_STATE_REGULATORS_V1[code]["regulator"],
+            "date_format": "MM/DD/YYYY",
+            "field_label": "State",
+        }
+
+    if _LOSSQ_ORIGINAL_STATE_PROVINCE_CONTEXT_V1:
+        return _LOSSQ_ORIGINAL_STATE_PROVINCE_CONTEXT_V1(region_code)
+
+    return {
+        "name": code,
+        "regulator": "",
+        "date_format": "MM/DD/YYYY",
+        "field_label": "State",
+    }

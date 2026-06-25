@@ -930,7 +930,12 @@ def lossq_clean_standard_csv_override(file_path, parsed_claims=None, parsed_prof
       "total_incurred": incurred,
       "incurred": incurred,
       "total_amount": incurred,
-      "litigation": get(row, "Litigation", "Litigated", "Attorney Involvement", "Counsel"),
+      "litigation": get(row, "Litigation", "Litigated", "Attorney Involvement", "Counsel", "Suit Filed", "Lawsuit", "Legal Status"),
+      "litigation_status": get(row, "Litigation Status", "Legal Status", "Suit Status", "Lawsuit Status"),
+      "attorney_assigned": get(row, "Attorney Assigned", "Attorney", "Attorney Name", "Attorney Involvement", "Counsel", "Claimant Counsel", "Plaintiff Attorney", "Defense Counsel", "Represented", "Claimant Represented"),
+      "suit_filed": get(row, "Suit Filed", "Lawsuit Filed", "Complaint Filed"),
+      "venue_state": get(row, "Venue State", "Venue", "Jurisdiction", "Jurisdiction/State", "Loss State", "State"),
+      "flag": get(row, "Flag", "Flags", "Red Flag", "Red Flags", "Claim Flag", "Alert", "Concern"),
       "account_number": account_number,
       "customer_number": account_number,
     }
@@ -1224,7 +1229,12 @@ def lossq_authoritative_flat_csv_snapshot_v1(file_path):
       "total_incurred": incurred,
       "incurred": incurred,
       "total_amount": incurred,
-      "litigation": get(row, "Litigation", "Litigated", "Attorney Involvement", "Counsel"),
+      "litigation": get(row, "Litigation", "Litigated", "Attorney Involvement", "Counsel", "Suit Filed", "Lawsuit", "Legal Status"),
+      "litigation_status": get(row, "Litigation Status", "Legal Status", "Suit Status", "Lawsuit Status"),
+      "attorney_assigned": get(row, "Attorney Assigned", "Attorney", "Attorney Name", "Attorney Involvement", "Counsel", "Claimant Counsel", "Plaintiff Attorney", "Defense Counsel", "Represented", "Claimant Represented"),
+      "suit_filed": get(row, "Suit Filed", "Lawsuit Filed", "Complaint Filed"),
+      "venue_state": get(row, "Venue State", "Venue", "Jurisdiction", "Jurisdiction/State", "Loss State", "State"),
+      "flag": get(row, "Flag", "Flags", "Red Flag", "Red Flags", "Claim Flag", "Alert", "Concern"),
       "account_number": account_number,
       "customer_number": account_number,
     }
@@ -7421,8 +7431,12 @@ def lossq_v4_parse_csv_sections(file_path):
         "paid_amount": lossq_v4_money(lossq_v4_first(row_map, "Paid", "Paid Amount", "Total Paid")),
         "reserve_amount": lossq_v4_money(lossq_v4_first(row_map, "Reserve", "Reserve Amount", "Outstanding Reserve")),
         "total_incurred": lossq_v4_money(lossq_v4_first(row_map, "Total Incurred", "Incurred", "Gross Incurred", "Net Incurred")),
-        "litigation": lossq_v4_bool(lossq_v4_first(row_map, "Litigation", "Litigated")),
-        "attorney_assigned": lossq_v4_bool(lossq_v4_first(row_map, "Attorney Assigned", "Attorney", "Counsel")),
+        "litigation": lossq_v4_bool(lossq_v4_first(row_map, "Litigation", "Litigated", "Suit Filed", "Lawsuit", "Legal Status")),
+        "litigation_status": lossq_v4_first(row_map, "Litigation Status", "Legal Status", "Suit Status", "Lawsuit Status"),
+        "attorney_assigned": lossq_v4_first(row_map, "Attorney Assigned", "Attorney", "Attorney Name", "Attorney Involvement", "Counsel", "Claimant Counsel", "Plaintiff Attorney", "Defense Counsel", "Represented", "Claimant Represented"),
+        "suit_filed": lossq_v4_bool(lossq_v4_first(row_map, "Suit Filed", "Lawsuit Filed", "Complaint Filed")),
+        "venue_state": lossq_v4_first(row_map, "Venue State", "Venue", "Jurisdiction", "Jurisdiction/State", "Loss State", "State"),
+        "flag": lossq_v4_first(row_map, "Flag", "Flags", "Red Flag", "Red Flags", "Claim Flag", "Alert", "Concern"),
       })
 
   return result
@@ -8271,6 +8285,274 @@ def normalize_claim_data(raw: dict, fallback_policy_number: str, current_user: d
 
   # LOSSQ_CANADA_NORMALIZE_CLAIM_CALL_V3
   normalized_claim = lossq_canada_claim_hook_v3(normalized_claim, raw)
+  return normalized_claim
+
+
+
+# LOSSQ_ATTORNEY_FLAGS_BEFORE_SAVE_V1
+def lossq_claim_text_clean_v1(value):
+  return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+
+def lossq_claim_pick_v1(data, *keys):
+  if not isinstance(data, dict):
+    return ""
+
+  lowered = {str(k).strip().lower(): v for k, v in data.items()}
+
+  for key in keys:
+    if key in data and lossq_claim_text_clean_v1(data.get(key)):
+      return lossq_claim_text_clean_v1(data.get(key))
+
+    lookup = str(key).strip().lower()
+    if lookup in lowered and lossq_claim_text_clean_v1(lowered.get(lookup)):
+      return lossq_claim_text_clean_v1(lowered.get(lookup))
+
+  return ""
+
+
+def lossq_claim_truthy_v1(value):
+  clean = lossq_claim_text_clean_v1(value)
+  low = clean.lower()
+
+  if not clean:
+    return False
+
+  if low in {"yes", "y", "true", "1", "attorney", "represented", "litigated", "suit filed", "open"}:
+    return True
+
+  if low in {"no", "n", "false", "0", "none", "n/a", "na", "not represented", "not litigated", "unknown", "-"}:
+    return False
+
+  return any(token in low for token in [
+    "attorney",
+    "counsel",
+    "law firm",
+    "law office",
+    "esq",
+    "plaintiff",
+    "defense",
+    "litigation",
+    "lawsuit",
+    "suit filed",
+    "docket",
+    "represented",
+  ])
+
+
+def lossq_claim_money_float_v1(value):
+  raw_value = lossq_claim_text_clean_v1(value)
+  if not raw_value:
+    return 0.0
+
+  raw_value = raw_value.replace("$", "").replace(",", "").replace("(", "-").replace(")", "")
+  raw_value = re.sub(r"[^0-9.\-]+", "", raw_value)
+
+  try:
+    return float(raw_value or 0)
+  except Exception:
+    return 0.0
+
+
+def lossq_apply_attorney_flags_before_save_v1(normalized_claim, raw_claim=None):
+  normalized_claim = normalized_claim if isinstance(normalized_claim, dict) else {}
+  raw_claim = raw_claim if isinstance(raw_claim, dict) else {}
+
+  combined_values = []
+  for source in (raw_claim, normalized_claim):
+    if isinstance(source, dict):
+      for value in source.values():
+        clean = lossq_claim_text_clean_v1(value)
+        if clean:
+          combined_values.append(clean)
+
+  combined_text = " | ".join(combined_values)
+  combined_low = combined_text.lower()
+
+  attorney_value = lossq_claim_pick_v1(
+    raw_claim,
+    "Attorney Assigned",
+    "Attorney",
+    "Attorney Name",
+    "Attorney Involvement",
+    "Counsel",
+    "Claimant Counsel",
+    "Plaintiff Counsel",
+    "Plaintiff Attorney",
+    "Defense Counsel",
+    "Law Firm",
+    "Attorney Firm",
+    "Represented",
+    "Representation",
+    "Claimant Represented",
+  )
+
+  litigation_value = lossq_claim_pick_v1(
+    raw_claim,
+    "Litigation",
+    "Litigated",
+    "Litigation Status",
+    "Suit Filed",
+    "Lawsuit",
+    "Legal Status",
+    "Court",
+    "Docket",
+  )
+
+  suit_value = lossq_claim_pick_v1(
+    raw_claim,
+    "Suit Filed",
+    "Lawsuit Filed",
+    "Complaint Filed",
+    "Docket",
+  )
+
+  flag_value = lossq_claim_pick_v1(
+    raw_claim,
+    "Flag",
+    "Flags",
+    "Red Flag",
+    "Red Flags",
+    "Claim Flag",
+    "Alert",
+    "Concern",
+  )
+
+  venue_state = lossq_claim_pick_v1(
+    raw_claim,
+    "Venue State",
+    "Venue",
+    "Jurisdiction",
+    "Jurisdiction/State",
+    "Loss State",
+    "State",
+  )
+
+  attorney_signal = (
+    lossq_claim_truthy_v1(attorney_value)
+    or any(token in combined_low for token in [
+      "attorney",
+      "claimant counsel",
+      "plaintiff counsel",
+      "defense counsel",
+      "law firm",
+      "represented by",
+    ])
+  )
+
+  litigation_signal = (
+    lossq_claim_truthy_v1(litigation_value)
+    or lossq_claim_truthy_v1(suit_value)
+    or any(token in combined_low for token in [
+      "litigation",
+      "litigated",
+      "lawsuit",
+      "suit filed",
+      "complaint filed",
+      "docket",
+      "court filing",
+    ])
+  )
+
+  suit_signal = (
+    lossq_claim_truthy_v1(suit_value)
+    or any(token in combined_low for token in [
+      "suit filed",
+      "lawsuit filed",
+      "complaint filed",
+      "docket",
+    ])
+  )
+
+  reserve = lossq_claim_money_float_v1(
+    normalized_claim.get("reserve_amount")
+    or raw_claim.get("Reserve")
+    or raw_claim.get("Reserve Amount")
+    or raw_claim.get("Outstanding Reserve")
+  )
+
+  incurred = lossq_claim_money_float_v1(
+    normalized_claim.get("total_incurred")
+    or raw_claim.get("Total Incurred")
+    or raw_claim.get("Incurred")
+  )
+
+  status = lossq_claim_text_clean_v1(
+    normalized_claim.get("status")
+    or raw_claim.get("Status")
+    or raw_claim.get("Claim Status")
+  ).lower()
+
+  flags = []
+
+  existing_flag = lossq_claim_text_clean_v1(normalized_claim.get("flag") or flag_value)
+  if existing_flag and existing_flag.lower() not in {"none", "n/a", "na", "-", "no"}:
+    flags.append(existing_flag)
+
+  if attorney_signal:
+    flags.append("Attorney Involved")
+
+  if litigation_signal:
+    flags.append("Litigation")
+
+  if suit_signal:
+    flags.append("Suit Filed")
+
+  if reserve > 0:
+    flags.append("Outstanding Reserve")
+
+  if status in {"open", "reopened", "reopen", "pending", "active"}:
+    flags.append("Open Claim")
+
+  if "reopen" in combined_low:
+    flags.append("Reopened Claim")
+
+  if incurred >= 100000:
+    flags.append("Large Loss")
+
+  if any(token in combined_low for token in ["subrogation", "subro"]):
+    flags.append("Subrogation")
+
+  if any(token in combined_low for token in ["fraud", "siu", "special investigation"]):
+    flags.append("SIU / Fraud Review")
+
+  if any(token in combined_low for token in ["disputed", "coverage dispute", "denied", "denial", "reservation of rights"]):
+    flags.append("Coverage / Liability Dispute")
+
+  if any(token in combined_low for token in ["late reported", "late report", "late notice"]):
+    flags.append("Late Reported")
+
+  if any(token in combined_low for token in ["fatality", "death", "deceased"]):
+    flags.append("Fatality")
+
+  if any(token in combined_low for token in ["surgery", "amputation", "fracture", "hospitalized", "serious injury"]):
+    flags.append("Severe Injury")
+
+  unique_flags = []
+  seen = set()
+  for item in flags:
+    clean_item = lossq_claim_text_clean_v1(item)
+    key = clean_item.lower()
+    if clean_item and key not in seen:
+      unique_flags.append(clean_item)
+      seen.add(key)
+
+  if unique_flags:
+    normalized_claim["flag"] = "; ".join(unique_flags[:8])
+
+  if attorney_signal:
+    normalized_claim["attorney_assigned"] = True
+
+  if litigation_signal:
+    normalized_claim["litigation"] = True
+    normalized_claim["litigation_status"] = lossq_claim_text_clean_v1(litigation_value) or ("Suit Filed" if suit_signal else "Litigation indicated")
+
+  if suit_signal:
+    normalized_claim["suit_filed"] = True
+
+  if venue_state and not lossq_claim_text_clean_v1(normalized_claim.get("venue_state")):
+    normalized_claim["venue_state"] = venue_state
+
   return normalized_claim
 
 
@@ -17491,6 +17773,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
       # LOSSQ_FINAL_SAVE_CLAIM_DETAIL_REPAIR_V3
       normalized = lossq_final_fix_claim_detail_v3(normalized, claim_data)
+
+      # LOSSQ_ATTORNEY_FLAGS_BEFORE_SAVE_CALL_V1
+      normalized = lossq_apply_attorney_flags_before_save_v1(normalized, claim_data)
 
       claim_number = str(normalized.get("claim_number") or "").strip().upper()
       policy_value = str(normalized.get("policy_number") or file_policy_number or "").strip().upper()
