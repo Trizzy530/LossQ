@@ -8,6 +8,87 @@ import { useRouter } from "next/navigation";
 
 import { useEffect, useState, useRef, type ReactNode } from "react";
 
+
+async function lossqDashboardBackendProfileCompleteV1(API: string, token: string | null) {
+ if (typeof window === "undefined") return false;
+
+ try {
+  if (!token) return false;
+
+  const res = await fetch(`${API}/auth/agency-profile`, {
+   headers: {
+    Authorization: `Bearer ${token}`,
+   },
+  });
+
+  if (!res.ok) return false;
+
+  const data = await res.json();
+  const profile = data?.profile || data?.agency_profile || data?.agencyProfile || data || {};
+
+  const companyName = String(
+   profile.company_name ||
+   profile.companyName ||
+   profile.agency_name ||
+   profile.agencyName ||
+   profile.organization_name ||
+   profile.organizationName ||
+   ""
+  ).trim();
+
+  const producingAgency = String(
+   profile.producing_agency ||
+   profile.producingAgency ||
+   profile.agency_name ||
+   profile.agencyName ||
+   ""
+  ).trim();
+
+  const supportEmail = String(
+   profile.support_email ||
+   profile.supportEmail ||
+   profile.email ||
+   ""
+  ).trim();
+
+  if (!companyName && !producingAgency && !supportEmail) return false;
+
+  // LOSSQ_DASHBOARD_BACKEND_ONBOARDING_PROFILE_CHECK_V1
+  localStorage.setItem("lossq_onboarding_complete", "true");
+  localStorage.setItem("lossq_company_profile_onboarding_complete", "true");
+  localStorage.setItem("lossq_onboarding_completed_at", new Date().toISOString());
+
+  if (companyName) localStorage.setItem("lossq_company_name", companyName);
+  if (producingAgency) localStorage.setItem("lossq_producing_agency", producingAgency);
+  if (supportEmail) localStorage.setItem("lossq_support_email", supportEmail);
+
+  if (profile.market_country || profile.country) {
+   localStorage.setItem("lossq_market_country", String(profile.market_country || profile.country));
+  }
+
+  if (profile.market_region_code || profile.state || profile.province) {
+   localStorage.setItem("lossq_market_region_code", String(profile.market_region_code || profile.state || profile.province));
+  }
+
+  if (profile.market_currency || profile.currency) {
+   localStorage.setItem("lossq_market_currency", String(profile.market_currency || profile.currency));
+  }
+
+  if (profile.language_output_mode || profile.languageOutput || profile.market_language) {
+   localStorage.setItem("lossq_language_output_mode", String(profile.language_output_mode || profile.languageOutput || profile.market_language));
+  }
+
+  if (profile.agency_license_number || profile.license_number || profile.licenseNumber) {
+   localStorage.setItem("lossq_agency_license_number", String(profile.agency_license_number || profile.license_number || profile.licenseNumber));
+  }
+
+  return true;
+ } catch {
+  return false;
+ }
+}
+
+
 function lossqCompanyProfileSetupAlreadyCompleteInBrowser() {
  if (typeof window === "undefined") return false;
 
