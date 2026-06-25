@@ -23,7 +23,6 @@ type SelectOption = {
 };
 
 const LANGUAGE_OPTIONS: SelectOption[] = [
-  { value: "auto", label: "Auto - Follow Uploaded File" },
   { value: "en", label: "English" },
   { value: "fr", label: "French / Français" },
   { value: "es", label: "Spanish / Español" },
@@ -108,8 +107,48 @@ export default function LossQOnboardingPage() {
     country: "United States",
     stateProvince: "",
     currency: "USD",
-    languageOutput: "auto",
+    languageOutput: "english",
   });
+
+  // LOSSQ_ONBOARDING_COMPANY_PROFILE_ONLY_V1
+  useEffect(() => {
+    try {
+      const rawUser = localStorage.getItem("lossq_user");
+      const user = rawUser ? JSON.parse(rawUser) : {};
+      const roleText = [
+        user?.role,
+        user?.user_role,
+        user?.account_role,
+        user?.organization_role,
+        localStorage.getItem("lossq_signup_business_role"),
+      ]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase();
+
+      const canManageCompanyProfile =
+        localStorage.getItem("lossq_can_manage_company_profile") === "true" ||
+        roleText.includes("owner") ||
+        roleText.includes("admin") ||
+        roleText.includes("agency owner");
+
+      if (!canManageCompanyProfile) {
+        router.replace("/dashboard");
+        return;
+      }
+
+      const signupFirstName = String(localStorage.getItem("lossq_signup_first_name") || "").trim();
+      const signupEmail = String(localStorage.getItem("lossq_signup_email") || "").trim();
+
+      setForm((current) => ({
+        ...current,
+        firstName: current.firstName || signupFirstName,
+        supportEmail: current.supportEmail || signupEmail,
+      }));
+    } catch {
+      router.replace("/dashboard");
+    }
+  }, [router]);
 
   const welcomeName = useMemo(() => {
     return form.firstName.trim() || "there";
@@ -253,6 +292,7 @@ export default function LossQOnboardingPage() {
       localStorage.setItem("lossq_market_country", form.country);
       localStorage.setItem("lossq_market_region_code", form.stateProvince.trim());
       localStorage.setItem("lossq_market_currency", form.currency);
+      // LOSSQ_REMOVE_AUTO_LANGUAGE_OPTION_V1
       localStorage.setItem("lossq_language_output_mode", form.languageOutput);
 
       stopMusic();
@@ -293,7 +333,7 @@ export default function LossQOnboardingPage() {
             </div>
 
             <p className="max-w-xl text-base leading-7 text-slate-300">
-              Add your company profile, choose your market, and set the language LossQ should use for
+              Set up your company profile, choose your market, and set the language LossQ should use for
               dashboard output, underwriting narratives, and future report generation.
             </p>
 
@@ -377,7 +417,6 @@ export default function LossQOnboardingPage() {
             </div>
 
             <div className="grid gap-4 md:grid-cols-2">
-              <Field label="First Name" value={form.firstName} onChange={(value) => updateField("firstName", value)} placeholder="Jordan" />
               <Field label="Company / Agency Name" value={form.companyName} onChange={(value) => updateField("companyName", value)} placeholder="Northstar Risk Partners" required />
               <Field label="Producing Agency Name" value={form.producingAgency} onChange={(value) => updateField("producingAgency", value)} placeholder="Meridian Advisory Group" />
               <Field label="Support Email" value={form.supportEmail} onChange={(value) => updateField("supportEmail", value)} placeholder="support@northstarrisk.example" />
