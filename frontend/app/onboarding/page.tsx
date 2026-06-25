@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -426,7 +426,44 @@ export default function LossQOnboardingPage() {
               <SelectField label="Country / Market" value={form.country} onChange={(value) => updateField("country", value)} options={COUNTRY_OPTIONS} />
               <Field label="State / Province" value={form.stateProvince} onChange={(value) => updateField("stateProvince", value)} placeholder="NC, ON, QC, CA, TX" />
               <SelectField label="Default Currency" value={form.currency} onChange={(value) => updateField("currency", value)} options={CURRENCY_OPTIONS} />
-              <SelectField label="Language Output Mode" value={form.languageOutput} onChange={(value) => updateField("languageOutput", value)} options={LANGUAGE_OPTIONS} />
+              {/* LOSSQ_LANGUAGE_OUTPUT_CARD_SELECTOR_V2 */}
+              <div className="md:col-span-2 rounded-3xl border border-white/10 bg-white/[0.03] p-5">
+                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
+                  <div>
+                    <p className="text-sm font-black text-white">Language Output Mode</p>
+                    <p className="mt-1 text-xs text-slate-400">
+                      Company-wide setting for dashboard output, AI narratives, and future reports.
+                    </p>
+                  </div>
+                  <span className="rounded-full border border-cyan-300/30 bg-cyan-400/10 px-3 py-1 text-xs font-bold text-cyan-100">
+                    {LANGUAGE_OPTIONS.find((item) => item.value === form.languageOutput)?.label || "English"}
+                  </span>
+                </div>
+
+                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
+                  {LANGUAGE_OPTIONS.map((language) => {
+                    const selected = form.languageOutput === language.value;
+
+                    return (
+                      <button
+                        key={language.value}
+                        type="button"
+                        onClick={() => updateField("languageOutput", language.value)}
+                        className={`rounded-2xl border px-4 py-3 text-left transition ${
+                          selected
+                            ? "border-cyan-300 bg-cyan-400/15 text-white shadow-lg shadow-cyan-950/30"
+                            : "border-white/10 bg-slate-950/50 text-slate-300 hover:border-cyan-300/60 hover:bg-cyan-400/10"
+                        }`}
+                      >
+                        <div className="text-sm font-black">{language.label}</div>
+                        <div className="mt-1 text-xs text-slate-400">
+                          {selected ? "Selected" : "Use this language"}
+                        </div>
+                      </button>
+                    );
+                  })}
+                </div>
+              </div>
             </div>
 
             {message ? (
