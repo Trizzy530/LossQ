@@ -6546,6 +6546,78 @@ def lossq_pdf_account_market_context_priority_v1(file_path, profile_data=None, d
   return profile_data, direct_profile
 
 
+
+# LOSSQ_PROFILE_DATE_DD_MM_YYYY_GLOBAL_V1
+def lossq_profile_date_dd_mm_yyyy_global_v1(value):
+  """
+  Universal profile-date formatter.
+  Converts clear profile dates to DD/MM/YYYY for display and saved account snapshot.
+  """
+  import re
+
+  raw_value = re.sub(r"\s+", " ", str(value or "").strip())
+  if not raw_value:
+    return ""
+
+  month_map = {
+    "jan": 1, "january": 1,
+    "feb": 2, "february": 2,
+    "mar": 3, "march": 3,
+    "apr": 4, "april": 4,
+    "may": 5,
+    "jun": 6, "june": 6,
+    "jul": 7, "july": 7,
+    "aug": 8, "august": 8,
+    "sep": 9, "sept": 9, "september": 9,
+    "oct": 10, "october": 10,
+    "nov": 11, "november": 11,
+    "dec": 12, "december": 12,
+  }
+
+  def out(day, month, year):
+    try:
+      day = int(day)
+      month = int(month)
+      year = int(year)
+      if year < 100:
+        year += 2000 if year < 50 else 1900
+      if not (1 <= day <= 31 and 1 <= month <= 12):
+        return raw_value
+      return f"{day:02d}/{month:02d}/{year:04d}"
+    except Exception:
+      return raw_value
+
+  # YYYY-MM-DD or YYYY/MM/DD.
+  m = re.search(r"\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b", raw_value)
+  if m:
+    return out(m.group(3), m.group(2), m.group(1))
+
+  # November 15, 2024.
+  m = re.search(r"(?i)\b([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{2,4})\b", raw_value)
+  if m:
+    month = month_map.get(m.group(1).lower())
+    if month:
+      return out(m.group(2), month, m.group(3))
+
+  # 15 November 2024.
+  m = re.search(r"(?i)\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})[,]?\s+(\d{2,4})\b", raw_value)
+  if m:
+    month = month_map.get(m.group(2).lower())
+    if month:
+      return out(m.group(1), month, m.group(3))
+
+  # Slash dates. Keep DD/MM/YYYY unless it is clearly MM/DD/YYYY.
+  m = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", raw_value)
+  if m:
+    first = int(m.group(1))
+    second = int(m.group(2))
+    if first <= 12 and second > 12:
+      return out(second, first, m.group(3))
+    return out(first, second, m.group(3))
+
+  return raw_value
+
+
 # LOSSQ_PDF_ACCOUNT_PROFILE_GRID_REPAIR_V1
 def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, direct_profile=None):
   """
@@ -6871,13 +6943,18 @@ def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, dir
             row["carrier_name"] = row.get("carrier_name") or carrier
             row["writing_carrier"] = row.get("writing_carrier") or carrier
           if effective_date:
-            row["effective_date"] = row.get("effective_date") or effective_date
-            row["effective"] = row.get("effective") or effective_date
+            row["effective_date"] = effective_date
+            row["effective"] = effective_date
           if expiration_date:
-            row["expiration_date"] = row.get("expiration_date") or expiration_date
-            row["expiration"] = row.get("expiration") or expiration_date
+            row["expiration_date"] = expiration_date
+            row["expiration"] = expiration_date
       target["policies"] = current_schedule
       target["policy_schedule"] = current_schedule
+
+  # LOSSQ_PDF_ACCOUNT_PROFILE_GRID_DATES_DD_MM_YYYY_CALL_V1
+  effective_date = lossq_profile_date_dd_mm_yyyy_global_v1(effective_date)
+  expiration_date = lossq_profile_date_dd_mm_yyyy_global_v1(expiration_date)
+  report_date = lossq_profile_date_dd_mm_yyyy_global_v1(report_date)
 
   apply(parsed_profile)
   apply(direct_profile)
