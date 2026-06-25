@@ -3,6 +3,8 @@
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 
+const API = process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
+
 type OnboardingForm = {
   firstName: string;
   companyName: string;
@@ -11,6 +13,7 @@ type OnboardingForm = {
   phone: string;
   website: string;
   supportEmail: string;
+  licenseNumber: string;
   country: string;
   stateProvince: string;
   currency: string;
@@ -104,6 +107,7 @@ export default function LossQOnboardingPage() {
     phone: "",
     website: "",
     supportEmail: "",
+    licenseNumber: "",
     country: "United States",
     stateProvince: "",
     currency: "USD",
@@ -272,6 +276,39 @@ export default function LossQOnboardingPage() {
     void playRealAiWelcome();
   }
 
+
+  // LOSSQ_ONBOARDING_SAVE_AGENCY_PROFILE_TO_SETTINGS_V2
+  async function saveAgencyProfileFromOnboarding() {
+    try {
+      const token =
+        localStorage.getItem("lossq_token") ||
+        sessionStorage.getItem("lossq_tab_token") ||
+        "";
+
+      if (!token) return;
+
+      await fetch(`${API}/auth/agency-profile`, {
+        method: "PUT",
+        headers: {
+          "Content-Type": "application/json",
+          Authorization: `Bearer ${token}`,
+        },
+        body: JSON.stringify({
+          agency_name: form.producingAgency.trim() || form.companyName.trim(),
+          agency_contact_name: localStorage.getItem("lossq_signup_full_name") || "",
+          agency_email: form.supportEmail.trim(),
+          agency_phone: form.phone.trim(),
+          agency_address: form.address.trim(),
+          agency_state: form.stateProvince.trim(),
+          agency_website: form.website.trim(),
+          agency_license_number: form.licenseNumber.trim(),
+        }),
+      });
+    } catch {
+      // Non-blocking: local onboarding can still complete.
+    }
+  }
+
   async function completeSetup() {
     if (!form.companyName.trim()) {
       setMessage("Please add your company or agency name before continuing.");
@@ -289,11 +326,14 @@ export default function LossQOnboardingPage() {
       localStorage.setItem("lossq_company_phone", form.phone.trim());
       localStorage.setItem("lossq_company_website", form.website.trim());
       localStorage.setItem("lossq_support_email", form.supportEmail.trim());
+      localStorage.setItem("lossq_agency_license_number", form.licenseNumber.trim());
       localStorage.setItem("lossq_market_country", form.country);
       localStorage.setItem("lossq_market_region_code", form.stateProvince.trim());
       localStorage.setItem("lossq_market_currency", form.currency);
       // LOSSQ_REMOVE_AUTO_LANGUAGE_OPTION_V1
       localStorage.setItem("lossq_language_output_mode", form.languageOutput);
+
+      await saveAgencyProfileFromOnboarding();
 
       stopMusic();
 
@@ -419,45 +459,10 @@ export default function LossQOnboardingPage() {
             <div className="grid gap-4 md:grid-cols-2">
               <Field label="Company / Agency Name" value={form.companyName} onChange={(value) => updateField("companyName", value)} placeholder="Northstar Risk Partners" required />
               <Field label="Producing Agency Name" value={form.producingAgency} onChange={(value) => updateField("producingAgency", value)} placeholder="Meridian Advisory Group" />
+              <Field label="License Number" value={form.licenseNumber} onChange={(value) => updateField("licenseNumber", value)} placeholder="NC-LIC-123456 / CA-0A12345" />
               <Field label="Support Email" value={form.supportEmail} onChange={(value) => updateField("supportEmail", value)} placeholder="support@northstarrisk.example" />
-              {/* LOSSQ_LANGUAGE_OUTPUT_CARD_SELECTOR_FINAL_V2 */}
-              <div className="md:col-span-2 rounded-3xl border border-white/10 bg-white/[0.03] p-5">
-                <div className="mb-4 flex flex-wrap items-center justify-between gap-3">
-                  <div>
-                    <p className="text-sm font-black text-white">Language Output Mode</p>
-                    <p className="mt-1 text-xs text-slate-400">
-                      Company-wide setting for dashboard output, AI narratives, and future reports.
-                    </p>
-                  </div>
-                  <span className="rounded-full border border-cyan-300/30 bg-cyan-400/10 px-3 py-1 text-xs font-bold text-cyan-100">
-                    {LANGUAGE_OPTIONS.find((item) => item.value === form.languageOutput)?.label || "English"}
-                  </span>
-                </div>
-
-                <div className="grid gap-3 sm:grid-cols-2 lg:grid-cols-3">
-                  {LANGUAGE_OPTIONS.map((language) => {
-                    const selected = form.languageOutput === language.value;
-
-                    return (
-                      <button
-                        key={language.value}
-                        type="button"
-                        onClick={() => updateField("languageOutput", language.value)}
-                        className={`rounded-2xl border px-4 py-3 text-left transition ${
-                          selected
-                            ? "border-cyan-300 bg-cyan-400/15 text-white shadow-lg shadow-cyan-950/30"
-                            : "border-white/10 bg-slate-950/50 text-slate-300 hover:border-cyan-300/60 hover:bg-cyan-400/10"
-                        }`}
-                      >
-                        <div className="text-sm font-black">{language.label}</div>
-                        <div className="mt-1 text-xs text-slate-400">
-                          {selected ? "Selected" : "Use this language"}
-                        </div>
-                      </button>
-                    );
-                  })}
-                </div>
-              </div>
+              {/* LOSSQ_LANGUAGE_OUTPUT_DROPDOWN_FINAL_V2 */}
+              <SelectField label="Language Output Mode" value={form.languageOutput} onChange={(value) => updateField("languageOutput", value)} options={LANGUAGE_OPTIONS} />
               <Field label="Phone Number" value={form.phone} onChange={(value) => updateField("phone", value)} placeholder="(555) 218-4400" />
               <Field label="Website" value={form.website} onChange={(value) => updateField("website", value)} placeholder="https://www.northstarrisk.example" />
               <Field label="Address" value={form.address} onChange={(value) => updateField("address", value)} placeholder="123 Harbor Street, Suite 400" />
