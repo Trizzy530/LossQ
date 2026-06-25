@@ -6106,15 +6106,25 @@ def lossq_pdf_wide_claims_table_final_save_rescue_v2(file_path, parsed_claims=No
     if len(dates) < 2:
       continue
 
-    amount_matches = re.findall(r"\$\s*\d[\d,]*(?:\.\d{2})?", chunk)
-    if len(amount_matches) < 4:
-      continue
-
     status_match = re.search(r"(?i)\b(Open|Closed|Reopened|Pending|Ouvert|Ouverte|Fermé|Fermée|Clos|Clôturé)\b(?=\s+\$\s*\d)", chunk)
     if not status_match:
       status_match = re.search(r"(?i)\b(Open|Closed|Reopened|Pending|Ouvert|Ouverte|Fermé|Fermée|Clos|Clôturé)\b", chunk)
 
     if not status_match:
+      continue
+
+    # LOSSQ_PDF_WIDE_CLAIMS_TABLE_AMOUNT_COLUMNS_AFTER_STATUS_V3
+    # Use the first four money columns after the claim status. This prevents the
+    # final claim row from accidentally absorbing the table TOTAL row.
+    amount_region = chunk[status_match.end():]
+    amount_region = re.split(r"(?i)\bTOTAL\b|\bLOSS\s+SUMMARY\b|\bEarned\s+Premium\b", amount_region, maxsplit=1)[0]
+    amount_matches = re.findall(r"\$\s*\d[\d,]*(?:\.\d{2})?", amount_region)
+
+    if len(amount_matches) < 4:
+      print("LOSSQ_PDF_WIDE_CLAIMS_TABLE_AMOUNT_COLUMNS_AFTER_STATUS_V3_SKIPPED_ROW:", {
+        "claim_number": claim_number,
+        "amounts_found": len(amount_matches),
+      })
       continue
 
     seen.add(claim_number.upper())
@@ -6128,10 +6138,10 @@ def lossq_pdf_wide_claims_table_final_save_rescue_v2(file_path, parsed_claims=No
     elif status.lower() in {"fermé", "fermée", "clos", "clôturé"}:
       status = "Closed"
 
-    paid_indemnity = money_text(amount_matches[-4])
-    paid_expense = money_text(amount_matches[-3])
-    reserve = money_text(amount_matches[-2])
-    total_incurred = money_text(amount_matches[-1])
+    paid_indemnity = money_text(amount_matches[0])
+    paid_expense = money_text(amount_matches[1])
+    reserve = money_text(amount_matches[2])
+    total_incurred = money_text(amount_matches[3])
     paid_total = money_text(money_float(paid_indemnity) + money_float(paid_expense))
 
     body_start = chunk.find(reported_date) + len(reported_date)
