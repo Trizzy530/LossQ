@@ -7017,6 +7017,238 @@ def lossq_pdf_final_profile_display_alias_sync_v1(file_path, profile_data=None, 
   return profile_data, direct_profile
 
 
+
+# LOSSQ_UNIVERSAL_DOCUMENT_WRITING_CARRIER_SYNC_V1
+def lossq_universal_document_writing_carrier_sync_v1(file_path, profile_data=None, direct_profile=None):
+  """
+  Universal document writing-carrier sync.
+
+  Purpose:
+  - Preserve the writing carrier exactly as shown in the uploaded loss run.
+  - Works for U.S. and Canada.
+  - Keeps carrier family / market alias separate from displayed Writing Carrier.
+  - Does not touch claims, totals, dates, billing, auth, org isolation, CSV claim parsing, or Excel claim parsing.
+
+  This is not customer-specific and does not hardcode a demo carrier.
+  """
+  import re
+
+  profile_data = profile_data if isinstance(profile_data, dict) else {}
+  direct_profile = direct_profile if isinstance(direct_profile, dict) else {}
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
+
+  def clean_carrier(value):
+    value = clean(value)
+
+    # Remove common report/department suffixes while keeping the actual carrier name.
+    value = re.sub(r"(?i)\s+[–-]\s+(?:commercial|personal|claims|underwriting|loss\s+control|risk\s+services).*$", "", value).strip()
+    value = re.sub(r"(?i)\s+commercial\s+lines\s+underwriting.*$", "", value).strip()
+    value = re.sub(r"(?i)\s+claims\s+department.*$", "", value).strip()
+    value = re.sub(r"\s*\|\s*.*$", "", value).strip()
+
+    # Remove address fragments after carrier label.
+    value = re.sub(r"(?i),\s*[A-Za-z .'-]+,\s*(?:[A-Z]{2}|[A-Za-z]+)\b.*$", "", value).strip()
+
+    value = clean(value)
+
+    blocked_bits = (
+      "loss run report",
+      "claims detail",
+      "account snapshot",
+      "market context",
+      "policy schedule",
+      "this document",
+      "authorized broker",
+      "unauthorized reproduction",
+      "ibc codes referenced",
+      "report generated",
+      "prepared by",
+      "writing carrier",
+      "carrier:",
+      "insured name",
+      "policy number",
+      "effective date",
+      "expiration date",
+      "evaluation date",
+      "valuation date",
+    )
+
+    low = value.lower()
+
+    if not value or len(value) < 2 or len(value) > 120:
+      return ""
+
+    if any(bit in low for bit in blocked_bits):
+      return ""
+
+    if re.fullmatch(r"(?i)(unknown|n/a|na|none|null|-)", value):
+      return ""
+
+    return value
+
+  def read_text():
+    # This helper is intentionally light-touch. PDF gets direct text.
+    # CSV/XLSX carrier extraction should mostly come from parsed profile data,
+    # but this still preserves already-extracted uploaded carrier aliases.
+    if str(file_path or "").lower().endswith(".pdf"):
+      try:
+        from pypdf import PdfReader
+        reader = PdfReader(file_path)
+        return "\n".join((page.extract_text() or "") for page in reader.pages)
+      except Exception as exc:
+        print("LOSSQ_UNIVERSAL_DOCUMENT_WRITING_CARRIER_SYNC_READ_ERROR_V1:", str(exc)[:200])
+        return ""
+
+    return ""
+
+  def carrier_from_existing_profiles():
+    candidates = [
+      profile_data.get("document_writing_carrier"),
+      profile_data.get("documentWritingCarrier"),
+      profile_data.get("uploaded_writing_carrier"),
+      profile_data.get("uploadedWritingCarrier"),
+      profile_data.get("writing_carrier"),
+      profile_data.get("writingCarrier"),
+      profile_data.get("carrier_name"),
+      profile_data.get("carrierName"),
+      profile_data.get("carrier"),
+      direct_profile.get("document_writing_carrier"),
+      direct_profile.get("documentWritingCarrier"),
+      direct_profile.get("uploaded_writing_carrier"),
+      direct_profile.get("uploadedWritingCarrier"),
+      direct_profile.get("writing_carrier"),
+      direct_profile.get("writingCarrier"),
+      direct_profile.get("carrier_name"),
+      direct_profile.get("carrierName"),
+      direct_profile.get("carrier"),
+    ]
+
+    for candidate in candidates:
+      cleaned = clean_carrier(candidate)
+      if cleaned:
+        return cleaned
+
+    return ""
+
+  raw_text = read_text()
+  normalized = re.sub(r"\s+", " ", raw_text or "").strip()
+
+  document_carrier = ""
+
+  if normalized:
+    label_patterns = [
+      # Strong direct labels.
+      r"\bWriting\s+Carrier\s*[:#-]\s*([A-Z][A-Za-z0-9&.'’(),\- ]{1,120}?)(?=\s+Policy\s+Number\s*[:#-]|\s+Effective\s+Date\s*[:#-]|\s+Expiration\s+Date\s*[:#-]|\s+Policy\s+Period\s*[:#-]|\s+Named\s+Insured\s*[:#-]|\s+Insured\s+Name\s*[:#-]|\s+EXPOSURE\s+SUMMARY\b|\s+CLAIMS\s+DETAIL\b|$)",
+      r"\bInsurance\s+Company\s*[:#-]\s*([A-Z][A-Za-z0-9&.'’(),\- ]{1,120}?)(?=\s+Policy\s+Number\s*[:#-]|\s+Effective\s+Date\s*[:#-]|\s+Expiration\s+Date\s*[:#-]|\s+Policy\s+Period\s*[:#-]|\s+Named\s+Insured\s*[:#-]|\s+Insured\s+Name\s*[:#-]|\s+EXPOSURE\s+SUMMARY\b|\s+CLAIMS\s+DETAIL\b|$)",
+      r"\bInsurer\s*[:#-]\s*([A-Z][A-Za-z0-9&.'’(),\- ]{1,120}?)(?=\s+Policy\s+Number\s*[:#-]|\s+Effective\s+Date\s*[:#-]|\s+Expiration\s+Date\s*[:#-]|\s+Policy\s+Period\s*[:#-]|\s+Named\s+Insured\s*[:#-]|\s+Insured\s+Name\s*[:#-]|\s+EXPOSURE\s+SUMMARY\b|\s+CLAIMS\s+DETAIL\b|$)",
+      r"\bCarrier\s*[:#-]\s*([A-Z][A-Za-z0-9&.'’(),\- ]{1,120}?)(?=,\s*[A-Za-z .'-]+,\s*(?:[A-Z]{2}|[A-Za-z]+)\b|\s+\|\s+|\s+Policy\s+Number\s*[:#-]|\s+Effective\s+Date\s*[:#-]|\s+Expiration\s+Date\s*[:#-]|\s+Policy\s+Period\s*[:#-]|\s+EXPOSURE\s+SUMMARY\b|\s+CLAIMS\s+DETAIL\b|$)",
+
+      # Report-prepared-by is acceptable only when it looks like the entity preparing the carrier loss run.
+      r"\bPrepared\s+By\s*[:#-]\s*([A-Z][A-Za-z0-9&.'’(),\- ]{1,120}?)(?=\s+[–-]\s+(?:Commercial|Personal|Claims|Underwriting|Loss\s+Control|Risk\s+Services)\b|\s+EXPOSURE\s+SUMMARY\b|\s+CLAIMS\s+DETAIL\b|$)",
+    ]
+
+    for pattern in label_patterns:
+      match = re.search(pattern, normalized, flags=re.I | re.S)
+      if match:
+        candidate = clean_carrier(match.group(1))
+        if candidate:
+          document_carrier = candidate
+          break
+
+    if not document_carrier:
+      # Header fallback for common carrier-looking first-page lines.
+      for line in [clean(x) for x in raw_text.splitlines()[:25]]:
+        if not line:
+          continue
+
+        if re.search(r"(?i)\b(insurance|mutual|assurance|indemnity|underwriters|casualty|specialty|risk|group|company|corporation|inc\.?|lloyd|syndicate)\b", line):
+          if not re.search(r"(?i)loss\s+run|claims\s+detail|insured\s+name|policy\s+number|account\s+snapshot|market\s+context", line):
+            candidate = clean_carrier(line.title() if line.isupper() else line)
+            if candidate:
+              document_carrier = candidate
+              break
+
+  if not document_carrier:
+    document_carrier = carrier_from_existing_profiles()
+
+  if not document_carrier:
+    return profile_data, direct_profile
+
+  def looks_like_family_alias(value):
+    value = clean(value).lower()
+    if not value:
+      return True
+
+    alias_signals = (
+      "carrier family",
+      "market family",
+      "alias",
+      "appetite group",
+    )
+
+    if any(signal in value for signal in alias_signals):
+      return True
+
+    # Generic family separator like Definity / Economical should not replace
+    # the uploaded document writing carrier.
+    if " / " in value or " or " in value:
+      return True
+
+    return False
+
+  def apply(target):
+    if not isinstance(target, dict):
+      return
+
+    target["document_writing_carrier"] = document_carrier
+    target["documentWritingCarrier"] = document_carrier
+    target["uploaded_writing_carrier"] = document_carrier
+    target["uploadedWritingCarrier"] = document_carrier
+
+    # Visible writing carrier should always be document-specific when available.
+    target["writing_carrier"] = document_carrier
+    target["writingCarrier"] = document_carrier
+
+    current_carrier = clean(target.get("carrier_name") or target.get("carrierName") or target.get("carrier"))
+    if not current_carrier or looks_like_family_alias(current_carrier):
+      target["carrier_name"] = document_carrier
+      target["carrierName"] = document_carrier
+      target["carrier"] = document_carrier
+
+    for key in ("policies", "policy_schedule", "policySchedule"):
+      rows = target.get(key)
+      if not isinstance(rows, list):
+        continue
+
+      for row in rows:
+        if not isinstance(row, dict):
+          continue
+
+        row["document_writing_carrier"] = document_carrier
+        row["documentWritingCarrier"] = document_carrier
+        row["uploaded_writing_carrier"] = document_carrier
+        row["uploadedWritingCarrier"] = document_carrier
+        row["writing_carrier"] = document_carrier
+        row["writingCarrier"] = document_carrier
+
+        row_carrier = clean(row.get("carrier_name") or row.get("carrierName") or row.get("carrier"))
+        if not row_carrier or looks_like_family_alias(row_carrier):
+          row["carrier_name"] = document_carrier
+          row["carrierName"] = document_carrier
+          row["carrier"] = document_carrier
+
+  apply(profile_data)
+  apply(direct_profile)
+
+  print("LOSSQ_UNIVERSAL_DOCUMENT_WRITING_CARRIER_SYNC_V1:", {
+    "document_writing_carrier": document_carrier,
+  })
+
+  return profile_data, direct_profile
+
+
 # LOSSQ_PDF_ACCOUNT_PROFILE_GRID_REPAIR_V1
 def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, direct_profile=None):
   """
@@ -19579,6 +19811,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
   # LOSSQ_PDF_FINAL_PROFILE_DISPLAY_ALIAS_SYNC_CALL_V1
   profile_data, direct_profile = lossq_pdf_final_profile_display_alias_sync_v1(
+    file_path,
+    profile_data,
+    direct_profile,
+  )
+
+  # LOSSQ_UNIVERSAL_DOCUMENT_WRITING_CARRIER_SYNC_CALL_V1
+  profile_data, direct_profile = lossq_universal_document_writing_carrier_sync_v1(
     file_path,
     profile_data,
     direct_profile,
