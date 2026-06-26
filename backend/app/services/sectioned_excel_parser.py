@@ -461,6 +461,124 @@ def lossq_sectioned_excel_loss_run_repair_v1(
     if claims and len(claims) >= len(real_existing):
         parsed_claims = claims
 
+    # LOSSQ_SECTIONED_EXCEL_POLICY_NUMBER_AND_YEAR_SUMMARY_REPAIR_V2
+    # Final repair for Policy Summary workbooks:
+    # - Prevent policy period text from becoming the policy number.
+    # - Prefer true policy numbers like BC-GL-2022-88341.
+    # - Remove 5-year loss summary rows like 2019-2020 when they have no claim dollars.
+    def lossq_sectioned_excel_policy_period_text_v2(value: Any) -> bool:
+        raw = clean(value)
+
+        if not raw:
+            return False
+
+        return bool(re.search(
+            r"\d{4}[-/]\d{1,2}[-/]\d{1,2}\s*(?:to|au|through|thru|-|–)\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}",
+            raw,
+            flags=re.I,
+        ))
+
+    def lossq_sectioned_excel_true_policy_number_v2(value: Any) -> bool:
+        raw = clean(value)
+
+        if not raw:
+            return False
+
+        if lossq_sectioned_excel_policy_period_text_v2(raw):
+            return False
+
+        if re.fullmatch(r"\d{4}\s*[-–]\s*\d{4}", raw):
+            return False
+
+        return bool(re.search(r"[A-Z]", raw, flags=re.I) and re.search(r"\d", raw) and len(raw) >= 6)
+
+    true_policy_number_candidate = ""
+
+    for row in all_rows:
+        for index in range(0, len(row)):
+            label = key(row[index])
+
+            inline_match = re.search(
+                r"(?i)\b(policy\s*#|policy\s*number|policy\s*no|police\s*#|numéro\s*de\s*police|numero\s*de\s*police)\b\s*[:#-]\s*(.+)$",
+                clean(row[index]),
+            )
+
+            if inline_match:
+                inline_value = clean(inline_match.group(2))
+
+                if lossq_sectioned_excel_true_policy_number_v2(inline_value):
+                    true_policy_number_candidate = inline_value
+                    break
+
+            if not re.search(r"(?i)\b(policy\s*#|policy\s*number|policy\s*no|police\s*#|numéro\s*de\s*police|numero\s*de\s*police)\b", label):
+                continue
+
+            if re.search(r"(?i)\b(period|période|periode)\b", label):
+                continue
+
+            for offset in range(1, 5):
+                if index + offset >= len(row):
+                    continue
+
+                candidate = clean(row[index + offset])
+
+                if lossq_sectioned_excel_true_policy_number_v2(candidate):
+                    true_policy_number_candidate = candidate
+                    break
+
+            if true_policy_number_candidate:
+                break
+
+        if true_policy_number_candidate:
+            break
+
+    if true_policy_number_candidate:
+        policy_number = true_policy_number_candidate
+    elif lossq_sectioned_excel_policy_period_text_v2(policy_number):
+        policy_number = ""
+
+    def lossq_sectioned_excel_year_summary_claim_v2(claim: Any) -> bool:
+        if not isinstance(claim, dict):
+            return False
+
+        claim_number = clean(claim.get("claim_number") or claim.get("claim_no") or claim.get("claimNumber"))
+
+        if not re.fullmatch(r"\d{4}\s*[-–]\s*\d{4}", claim_number):
+            return False
+
+        amount = (
+            money_float(claim.get("paid"))
+            + money_float(claim.get("paid_amount"))
+            + money_float(claim.get("reserve"))
+            + money_float(claim.get("reserve_amount"))
+            + money_float(claim.get("total_incurred"))
+            + money_float(claim.get("incurred"))
+        )
+
+        return amount <= 0
+
+    if isinstance(claims, list) and claims:
+        parsed_claims = [
+            claim for claim in claims
+            if isinstance(claim, dict) and not lossq_sectioned_excel_year_summary_claim_v2(claim)
+        ]
+    else:
+        parsed_claims = [
+            claim for claim in parsed_claims
+            if isinstance(claim, dict) and not lossq_sectioned_excel_year_summary_claim_v2(claim)
+        ]
+
+    if policy_number:
+        for claim in parsed_claims:
+            if isinstance(claim, dict):
+                claim["policy_number"] = policy_number
+                claim["policyNumber"] = policy_number
+
+    print("LOSSQ_SECTIONED_EXCEL_POLICY_NUMBER_AND_YEAR_SUMMARY_REPAIR_V2:", {
+        "policy_number": policy_number,
+        "claims": len(parsed_claims) if isinstance(parsed_claims, list) else 0,
+    })
+
     coverage_claim_counts: dict[str, int] = {}
     coverage_totals: dict[str, float] = {}
 
