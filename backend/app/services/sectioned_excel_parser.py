@@ -1,4 +1,4 @@
-﻿from __future__ import annotations
+from __future__ import annotations
 
 import re
 from datetime import date, datetime
@@ -41,6 +41,73 @@ def lossq_sectioned_excel_loss_run_repair_v1(
 
     def key(value: Any) -> str:
         return re.sub(r"[^a-z0-9À-ÿ]+", " ", clean(value).lower()).strip()
+
+    # LOSSQ_SECTIONED_EXCEL_PERIOD_AU_TO_AND_DISPLAY_CASE_V1
+    def display_name_case(value: Any) -> str:
+        raw = clean(value)
+        if not raw:
+            return ""
+
+        letters = [char for char in raw if char.isalpha()]
+        uppercase_letters = [char for char in letters if char.isupper()]
+
+        if not letters:
+            return raw
+
+        # Only clean obvious all-caps document headers. Do not alter normal names.
+        if len(uppercase_letters) / max(len(letters), 1) < 0.70:
+            return raw
+
+        keep_upper = {
+            "AIG",
+            "CNA",
+            "USLI",
+            "BHSI",
+            "AXA",
+            "QBE",
+            "HDI",
+            "RLI",
+            "D&O",
+            "E&O",
+            "GL",
+            "WC",
+            "BOP",
+            "EPLI",
+            "IBC",
+            "BAC",
+            "CAD",
+            "USA",
+            "UK",
+        }
+
+        lower_words = {"and", "or", "of", "the", "de", "des", "du", "la", "le", "les", "et"}
+
+        def fix_piece(piece: str) -> str:
+            tokens = piece.split(" ")
+            fixed = []
+
+            for index, token in enumerate(tokens):
+                if not token:
+                    continue
+
+                clean_token = token.strip()
+                upper_token = clean_token.upper()
+
+                if upper_token in keep_upper or "&" in clean_token:
+                    fixed.append(upper_token)
+                    continue
+
+                next_value = clean_token[:1].upper() + clean_token[1:].lower()
+
+                if index > 0 and next_value.lower() in lower_words:
+                    next_value = next_value.lower()
+
+                fixed.append(next_value)
+
+            return " ".join(fixed)
+
+        return " / ".join(fix_piece(piece.strip()) for piece in raw.split("/"))
+
 
     def money_float(value: Any) -> float:
         raw = clean(value)
@@ -110,7 +177,7 @@ def lossq_sectioned_excel_loss_run_repair_v1(
     def parse_period(value: Any):
         raw = clean(value)
         match = re.search(
-            r"(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s*(?:au|to|through|thru|-|–)\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})",
+            r"(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})\s*(?:au\s*/\s*to|au\s+to|au|to|through|thru|-|–)\s*(\d{4}[-/]\d{1,2}[-/]\d{1,2}|\d{1,2}[-/]\d{1,2}[-/]\d{2,4})",
             raw,
             flags=re.I,
         )
@@ -431,6 +498,13 @@ def lossq_sectioned_excel_loss_run_repair_v1(
             "claim_count": len(parsed_claims),
             "total_incurred": total_incurred,
         }]
+
+    # LOSSQ_SECTIONED_EXCEL_DISPLAY_CASE_APPLY_V1
+    if carrier:
+        carrier = display_name_case(carrier)
+
+    if business_name:
+        business_name = display_name_case(business_name)
 
     is_canada = bool(province_code or currency == "CAD" or re.search(r"(?i)canada|cad|québec|quebec|ontario|manitoba|ibc|bac", first_text))
 
