@@ -4644,6 +4644,8 @@ function lossqBetaAccessLabel(status: any): string {
 }
 
 
+
+// LOSSQ_CLAIMS_COVERAGE_TRIGGER_DISPLAY_LABEL_V2
 export default function DashboardPage() {
 
  useEffect(() => {
@@ -12101,7 +12103,7 @@ const modelChartNarrative =
           <tr className="border-b border-white/10 text-left text-slate-300">
            {[
             ["claim_number", "Claim #"],
-            ["line", "Line"],
+            ["line", "Coverage Trigger"],
             ["status", "Status"],
             ["paid", "Paid"],
             ["reserve", "Reserve"],
@@ -12348,7 +12350,7 @@ const modelChartNarrative =
   <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
    {[
     ["Policy", selectedClaimDetail.policy_number || "-"],
-    ["Line", selectedClaimDetail.line_of_business || selectedClaimDetail.claim_type || "-"],
+    ["Coverage Trigger", selectedClaimDetail.line_of_business || selectedClaimDetail.claim_type || "-"],
     ["Status", selectedClaimDetail.status || "-"],
     ["Total", `$${Number(getClaimIncurred(selectedClaimDetail)).toLocaleString()}`],
    ].map(([label, value]) => (
