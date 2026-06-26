@@ -379,10 +379,29 @@ def lossq_sectioned_excel_loss_run_repair_v1(
         coverage_claim_counts[cov] = coverage_claim_counts.get(cov, 0) + 1
         coverage_totals[cov] = coverage_totals.get(cov, 0.0) + money_float(claim.get("total_incurred") or claim.get("incurred"))
 
+    # LOSSQ_SECTIONED_EXCEL_EXPOSURE_INPUTS_V1
+    exposure_inputs: dict[str, Any] = {}
+    exposure_rows: list[dict[str, Any]] = []
     policy_rows = []
 
     in_exposure = False
     exposure_header_seen = False
+    exposure_headers: list[str] = []
+    total_premium_from_total_row = ""
+
+    def exposure_header_col(*patterns: str) -> int:
+        for idx, header in enumerate(exposure_headers):
+            header_key = key(header)
+            for pattern in patterns:
+                if re.search(pattern, header_key, flags=re.I):
+                    return idx
+        return -1
+
+    def exposure_money_display(value: Any) -> str:
+        amount = money_float(value)
+        if not amount:
+            return ""
+        return str(int(amount)) if amount == int(amount) else str(amount)
 
     for row in all_rows:
         joined = " ".join(row)
@@ -399,6 +418,7 @@ def lossq_sectioned_excel_loss_run_repair_v1(
 
         if re.search(r"(?i)(category|catégorie|categorie)", joined):
             exposure_header_seen = True
+            exposure_headers = row
             continue
 
         if not exposure_header_seen:
@@ -406,11 +426,34 @@ def lossq_sectioned_excel_loss_run_repair_v1(
 
         coverage_name = clean(row[0] if row else "")
 
-        if not coverage_name or coverage_name.upper() == "TOTAL":
+        if not coverage_name:
             continue
 
-        if re.search(r"(?i)(included|inclus)", coverage_name):
+        if coverage_name.upper() == "TOTAL":
+            numeric_values = [clean(cell) for cell in row[1:] if clean(cell) and re.search(r"\d", clean(cell))]
+            if numeric_values:
+                total_premium_from_total_row = exposure_money_display(numeric_values[-1])
             continue
+
+        if re.search(r"(?i)(included|inclus|defense costs|frais de défense|frais de defense)", coverage_name):
+            continue
+
+        c_physicians = exposure_header_col(r"physician", r"médecin", r"medecin")
+        c_employees = exposure_header_col(r"employee", r"employ")
+        c_revenue = exposure_header_col(r"revenue", r"revenu")
+        c_limit = exposure_header_col(r"limit", r"limite")
+        c_premium = exposure_header_col(r"premium", r"prime")
+
+        physicians = clean(row[c_physicians]) if 0 <= c_physicians < len(row) else ""
+        employees = clean(row[c_employees]) if 0 <= c_employees < len(row) else ""
+        revenue = exposure_money_display(row[c_revenue]) if 0 <= c_revenue < len(row) else ""
+        limit = exposure_money_display(row[c_limit]) if 0 <= c_limit < len(row) else ""
+        premium = exposure_money_display(row[c_premium]) if 0 <= c_premium < len(row) else ""
+
+        numeric_values = [clean(cell) for cell in row[1:] if clean(cell) and re.search(r"\d", clean(cell))]
+
+        if not premium and numeric_values:
+            premium = exposure_money_display(numeric_values[-1])
 
         matching_claims = 0
         matching_total = 0.0
@@ -433,8 +476,14 @@ def lossq_sectioned_excel_loss_run_repair_v1(
                         matching_claims += count
                         matching_total += coverage_totals.get(cov, 0.0)
 
-        numeric_values = [clean(cell) for cell in row[1:] if clean(cell) and re.search(r"\d", clean(cell))]
-        premium = numeric_values[-1] if numeric_values else ""
+        exposure_rows.append({
+            "coverage": coverage_name,
+            "physicians": physicians,
+            "employees": employees,
+            "revenue": revenue,
+            "limit": limit,
+            "premium": premium,
+        })
 
         policy_rows.append({
             "policy_number": policy_number,
@@ -462,10 +511,76 @@ def lossq_sectioned_excel_loss_run_repair_v1(
             "province": province_name or province_code,
             "province_code": province_code,
             "currency": currency,
+            "physicians": physicians,
+            "employees": employees,
+            "revenue": revenue,
+            "limit": limit,
+            "policy_limit": limit,
             "premium": premium,
             "claims": matching_claims,
             "claim_count": matching_claims,
             "total_incurred": matching_total,
+        })
+
+    if exposure_rows:
+        lines = [row.get("coverage") for row in exposure_rows if row.get("coverage")]
+        premiums = [money_float(row.get("premium")) for row in exposure_rows if row.get("premium")]
+        revenues = [money_float(row.get("revenue")) for row in exposure_rows if row.get("revenue")]
+        employees_values = [money_float(row.get("employees")) for row in exposure_rows if row.get("employees")]
+        physician_values = [money_float(row.get("physicians")) for row in exposure_rows if row.get("physicians")]
+
+        total_premium = money_float(total_premium_from_total_row) or sum(premiums)
+        max_revenue = max(revenues) if revenues else 0.0
+        max_employees = max(employees_values) if employees_values else 0.0
+        max_physicians = max(physician_values) if physician_values else 0.0
+
+        limit_parts = []
+        for row in exposure_rows:
+            if row.get("coverage") and row.get("limit"):
+                limit_parts.append(f"{row.get('coverage')}: {row.get('limit')}")
+
+        primary_lob = " / ".join(lines) if lines else line_of_business
+
+        exposure_inputs.update({
+            "detected_lines": len(lines),
+            "lines_detected": len(lines),
+            "line_count": len(lines),
+            "primary_line_of_business": primary_lob,
+            "primaryLineOfBusiness": primary_lob,
+            "line_of_business": primary_lob,
+            "lineOfBusiness": primary_lob,
+            "state": province_code,
+            "State": province_code,
+            "state_province": province_code,
+            "stateProvince": province_code,
+            "State / Province": province_code,
+            "province": province_name or province_code,
+            "province_code": province_code,
+            "currency": currency,
+            "Currency": currency,
+            "policy_limits": "; ".join(limit_parts),
+            "policyLimits": "; ".join(limit_parts),
+            "Policy Limits": "; ".join(limit_parts),
+            "current_premium": str(int(total_premium)) if total_premium else "",
+            "currentPremium": str(int(total_premium)) if total_premium else "",
+            "Current Premium": str(int(total_premium)) if total_premium else "",
+            "expiring_premium": str(int(total_premium)) if total_premium else "",
+            "expiringPremium": str(int(total_premium)) if total_premium else "",
+            "Expiring Premium": str(int(total_premium)) if total_premium else "",
+            "revenue": str(int(max_revenue)) if max_revenue else "",
+            "annual_revenue": str(int(max_revenue)) if max_revenue else "",
+            "revenue_sales": str(int(max_revenue)) if max_revenue else "",
+            "revenueSales": str(int(max_revenue)) if max_revenue else "",
+            "Revenue / Sales": str(int(max_revenue)) if max_revenue else "",
+            "professional_revenue": str(int(max_revenue)) if max_revenue else "",
+            "professionalRevenue": str(int(max_revenue)) if max_revenue else "",
+            "employee_count": str(int(max_employees)) if max_employees else "",
+            "employeeCount": str(int(max_employees)) if max_employees else "",
+            "Employee Count": str(int(max_employees)) if max_employees else "",
+            "physician_count": str(int(max_physicians)) if max_physicians else "",
+            "physicianCount": str(int(max_physicians)) if max_physicians else "",
+            "exposure_rows": exposure_rows,
+            "exposureRows": exposure_rows,
         })
 
     if not policy_rows and policy_number:
@@ -628,6 +743,25 @@ def lossq_sectioned_excel_loss_run_repair_v1(
             target["policies"] = policy_rows
             target["policy_schedule"] = policy_rows
             target["policySchedule"] = policy_rows
+
+        # LOSSQ_SECTIONED_EXCEL_APPLY_EXPOSURE_INPUTS_V1
+        if exposure_inputs:
+            existing_exposure = target.get("exposure_inputs") or target.get("exposureInputs")
+            if not isinstance(existing_exposure, dict):
+                existing_exposure = {}
+
+            merged_exposure = dict(existing_exposure)
+            merged_exposure.update({k: v for k, v in exposure_inputs.items() if v not in ("", None, [], {})})
+
+            target["exposure_inputs"] = merged_exposure
+            target["exposureInputs"] = merged_exposure
+            target["exposures"] = merged_exposure
+            target["manual_exposure_inputs"] = merged_exposure
+            target["manualExposureInputs"] = merged_exposure
+
+            for key_name, key_value in merged_exposure.items():
+                if key_value not in ("", None, [], {}):
+                    target[key_name] = key_value
 
         if parsed_claims:
             target["claims"] = parsed_claims
