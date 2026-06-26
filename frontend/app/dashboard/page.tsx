@@ -4648,6 +4648,8 @@ function lossqBetaAccessLabel(status: any): string {
 // LOSSQ_CLAIMS_COVERAGE_TRIGGER_DISPLAY_LABEL_V2
 
 // LOSSQ_CLAIMS_COVERAGE_TRIGGER_DISPLAY_LABEL_V3
+
+// LOSSQ_CLAIMS_POLICY_LINE_LABEL_V2
 export default function DashboardPage() {
 
  useEffect(() => {
@@ -5465,11 +5467,305 @@ function normalizeProfileName(item: any) {
    }
 
    const data = await safeJson(profilesRes);
-   const serverProfiles = Array.isArray(data)
+
+
+   let serverProfiles = Array.isArray(data)
+
+
     ? data
+
+
     : Array.isArray(data?.profiles)
+
+
     ? data.profiles
+
+
     : [];
+
+
+
+   // LOSSQ_UPLOAD_HISTORY_FALLBACK_INSIDE_LOAD_PROFILE_LIST_V1
+
+
+   // Browser cache disappears after logout/login. If account-profile/all is empty,
+
+
+   // use persistent upload history so saved uploaded files still appear.
+
+
+   if (!Array.isArray(serverProfiles) || serverProfiles.length === 0) {
+
+
+    try {
+
+
+     const historyRes = await fetch(`${API}/upload-history/`, {
+
+
+      headers: authHeaders(),
+
+
+     });
+
+
+
+     if (historyRes.ok) {
+
+
+      const historyData = await safeJson(historyRes);
+
+
+
+      const historyRows = Array.isArray(historyData)
+
+
+       ? historyData
+
+
+       : Array.isArray(historyData?.uploads)
+
+
+       ? historyData.uploads
+
+
+       : Array.isArray(historyData?.history)
+
+
+       ? historyData.history
+
+
+       : Array.isArray(historyData?.items)
+
+
+       ? historyData.items
+
+
+       : [];
+
+
+
+      serverProfiles = historyRows
+
+
+       .map((item: AnyObject) => {
+
+
+        const fallbackProfile = item?.profile || item?.account_profile || item?.accountProfile || item?.metadata || {};
+
+
+
+        const businessName = String(
+
+
+         item?.business_name ||
+
+
+          item?.businessName ||
+
+
+          item?.insured_name ||
+
+
+          item?.insuredName ||
+
+
+          fallbackProfile?.business_name ||
+
+
+          fallbackProfile?.businessName ||
+
+
+          fallbackProfile?.insured_name ||
+
+
+          fallbackProfile?.insuredName ||
+
+
+          item?.filename ||
+
+
+          item?.file_name ||
+
+
+          item?.original_filename ||
+
+
+          "Uploaded loss run"
+
+
+        ).trim();
+
+
+
+        const policyNumber = lossqChooseActualPolicyNumber(
+
+
+         item?.policy_number,
+
+
+         item?.policyNumber,
+
+
+         fallbackProfile?.policy_number,
+
+
+         fallbackProfile?.policyNumber,
+
+
+         fallbackProfile?.main_policy,
+
+
+         fallbackProfile?.mainPolicy
+
+
+        );
+
+
+
+        const carrierName = String(
+
+
+         item?.carrier_name ||
+
+
+          item?.carrierName ||
+
+
+          item?.writing_carrier ||
+
+
+          item?.writingCarrier ||
+
+
+          item?.carrier ||
+
+
+          fallbackProfile?.carrier_name ||
+
+
+          fallbackProfile?.carrierName ||
+
+
+          fallbackProfile?.writing_carrier ||
+
+
+          fallbackProfile?.writingCarrier ||
+
+
+          fallbackProfile?.carrier ||
+
+
+          ""
+
+
+        ).trim();
+
+
+
+        const policies =
+
+
+         Array.isArray(item?.policies) ? item.policies :
+
+
+         Array.isArray(item?.policy_schedule) ? item.policy_schedule :
+
+
+         Array.isArray(item?.policySchedule) ? item.policySchedule :
+
+
+         Array.isArray(fallbackProfile?.policies) ? fallbackProfile.policies :
+
+
+         Array.isArray(fallbackProfile?.policy_schedule) ? fallbackProfile.policy_schedule :
+
+
+         Array.isArray(fallbackProfile?.policySchedule) ? fallbackProfile.policySchedule :
+
+
+         [];
+
+
+
+        return normalizeProfileName({
+
+
+         ...fallbackProfile,
+
+
+         ...item,
+
+
+         id: item?.profile_id || item?.account_profile_id || item?.accountProfileId || item?.id,
+
+
+         business_name: businessName,
+
+
+         insured_name: businessName,
+
+
+         display_name: businessName,
+
+
+         account_name: businessName,
+
+
+         policy_number: policyNumber || String(item?.policy_number || fallbackProfile?.policy_number || "").trim(),
+
+
+         policyNumber: policyNumber || String(item?.policyNumber || fallbackProfile?.policyNumber || "").trim(),
+
+
+         carrier_name: carrierName,
+
+
+         carrierName: carrierName,
+
+
+         writing_carrier: carrierName,
+
+
+         writingCarrier: carrierName,
+
+
+         policies,
+
+
+         policy_schedule: policies,
+
+
+         policySchedule: policies,
+
+
+         lossq_upload_history_fallback: true,
+
+
+        });
+
+
+       })
+
+
+       .filter(Boolean);
+
+
+     }
+
+
+    } catch (historyFallbackError) {
+
+
+     console.log("LOSSQ_UPLOAD_HISTORY_FALLBACK_INSIDE_LOAD_PROFILE_LIST_V1_ERROR", historyFallbackError);
+
+
+    }
+
+
+   }
+
+
 
    updateProfileList(serverProfiles);
   } catch {
@@ -12105,7 +12401,7 @@ const modelChartNarrative =
           <tr className="border-b border-white/10 text-left text-slate-300">
            {[
             ["claim_number", "Claim #"],
-            ["line", "Coverage Trigger"],
+            ["line", "Policy Line"],
             ["status", "Status"],
             ["paid", "Paid"],
             ["reserve", "Reserve"],
@@ -12278,12 +12574,30 @@ const modelChartNarrative =
    const originalClaimLine =
     claim?.line_of_business || claim?.claim_type || claim?.line || claim?.coverage || claim?.lob || "";
 
-   // LOSSQ_CLAIM_TABLE_ROW_FIRST_DISPLAY_V1
+   // LOSSQ_CLAIMS_POLICY_LINE_DISPLAY_FIRST_V2
+
+
+   // Claims table Line should show the policy line first, such as CGL.
+
+
+   // Claim-level values like Bodily Injury / Property Damage / Completed Ops are coverage triggers.
+
+
    const displayLine =
-    !isGenericLine(originalClaimLine)
-     ? originalClaimLine
-     : matchedPolicy?.line && !isGenericLine(matchedPolicy.line)
-      ? matchedPolicy.line
+
+
+    matchedPolicy?.line && !isGenericLine(matchedPolicy.line)
+
+
+     ? matchedPolicy.line
+
+
+     : !isGenericLine(originalClaimLine)
+
+
+      ? originalClaimLine
+
+
       : "-";
 
    const displayPolicyNumber =
@@ -12352,7 +12666,7 @@ const modelChartNarrative =
   <div className="mt-4 grid grid-cols-1 md:grid-cols-4 gap-3 text-sm">
    {[
     ["Policy", selectedClaimDetail.policy_number || "-"],
-    ["Coverage Trigger", selectedClaimDetail.line_of_business || selectedClaimDetail.claim_type || "-"],
+    ["Policy Line", selectedClaimDetail.line_of_business || selectedClaimDetail.claim_type || "-"],
     ["Status", selectedClaimDetail.status || "-"],
     ["Total", `$${Number(getClaimIncurred(selectedClaimDetail)).toLocaleString()}`],
    ].map(([label, value]) => (
