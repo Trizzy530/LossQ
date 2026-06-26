@@ -87,6 +87,43 @@ function getLossQApiBase() {
   return "http://localhost:8000";
 }
 
+
+// LOSSQ_ONBOARDING_POST_PAYMENT_REQUIRED_HELPERS_V1
+function lossqOnboardingPostPaymentRequiredV1() {
+ if (typeof window === "undefined") return false;
+
+ try {
+  const params = new URLSearchParams(window.location.search);
+  return (
+   params.get("from") === "billing" ||
+   localStorage.getItem("lossq_pending_paid_onboarding") === "true" ||
+   sessionStorage.getItem("lossq_pending_paid_onboarding") === "true"
+  );
+ } catch {
+  return false;
+ }
+}
+
+function lossqOnboardingClearPostPaymentFlagsV1() {
+ if (typeof window === "undefined") return;
+
+ try {
+  localStorage.removeItem("lossq_pending_paid_onboarding");
+  sessionStorage.removeItem("lossq_pending_paid_onboarding");
+ } catch {}
+}
+
+function lossqOnboardingNextPathV1() {
+ if (typeof window === "undefined") return "/dashboard";
+
+ try {
+  return sessionStorage.getItem("lossq_next_after_onboarding") || "/dashboard";
+ } catch {
+  return "/dashboard";
+ }
+}
+
+
 // LOSSQ_STATIC_MP3_ONLY_ONBOARDING_VOICE_V1
 export default function LossQOnboardingPage() {
   const router = useRouter();
@@ -383,7 +420,11 @@ export default function LossQOnboardingPage() {
         }
       } catch {}
 
-      router.push("/dashboard");
+      // LOSSQ_ONBOARDING_COMPLETE_POST_PAYMENT_CLEAR_V1
+      const nextPath = lossqOnboardingNextPathV1();
+      lossqOnboardingClearPostPaymentFlagsV1();
+
+      router.push(nextPath);
     } catch {
       setMessage("LossQ could not save your setup locally. Please try again.");
     } finally {
@@ -519,7 +560,15 @@ export default function LossQOnboardingPage() {
             <div className="mt-6 flex flex-wrap items-center justify-between gap-3">
               <button
                 type="button"
-                onClick={() => router.push("/dashboard")}
+                onClick={() => {
+                  // LOSSQ_ONBOARDING_BLOCK_SKIP_AFTER_PAYMENT_V1
+                  if (lossqOnboardingPostPaymentRequiredV1()) {
+                    setMessage("Complete your company setup before opening the dashboard.");
+                    return;
+                  }
+
+                  router.push("/dashboard");
+                }}
                 className="rounded-2xl border border-white/10 bg-white/[0.06] px-5 py-3 text-sm font-bold text-slate-200 transition hover:bg-white/10"
               >
                 Skip for Now

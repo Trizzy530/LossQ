@@ -152,6 +152,13 @@ export default function BillingSettingsPage() {
         throw new Error("Checkout link was not returned by billing.");
       }
 
+      // LOSSQ_SETTINGS_BILLING_POST_PAYMENT_ONBOARDING_FLAG_V1
+      try {
+        localStorage.setItem("lossq_pending_paid_onboarding", "true");
+        sessionStorage.setItem("lossq_pending_paid_onboarding", "true");
+        sessionStorage.setItem("lossq_next_after_onboarding", "/dashboard");
+      } catch {}
+
       window.location.href = checkoutUrl;
     } catch (err: any) {
       setError(err?.message || "Could not start checkout.");

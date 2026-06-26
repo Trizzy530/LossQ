@@ -128,6 +128,25 @@ export default function PricingPage() {
   const [isLoading, setIsLoading] = useState(true);
 
   useEffect(() => {
+    // LOSSQ_POST_PAYMENT_ONBOARDING_PRICING_SUCCESS_REDIRECT_V1
+    const billingResult = String(
+      searchParams.get("billing") ||
+        searchParams.get("checkout") ||
+        searchParams.get("payment") ||
+        ""
+    ).toLowerCase();
+
+    if (["success", "paid", "complete", "completed"].includes(billingResult)) {
+      try {
+        localStorage.setItem("lossq_pending_paid_onboarding", "true");
+        sessionStorage.setItem("lossq_pending_paid_onboarding", "true");
+        sessionStorage.setItem("lossq_next_after_onboarding", "/dashboard");
+      } catch {}
+
+      router.replace("/onboarding?from=billing");
+      return;
+    }
+
     if (searchParams.get("billing") === "cancelled") {
       setMessage("Checkout was cancelled. You can choose a plan when ready.");
     }
@@ -228,6 +247,13 @@ export default function PricingPage() {
       }
 
       if (data?.checkout_url) {
+        // LOSSQ_POST_PAYMENT_ONBOARDING_CHECKOUT_FLAG_V1
+        try {
+          localStorage.setItem("lossq_pending_paid_onboarding", "true");
+          sessionStorage.setItem("lossq_pending_paid_onboarding", "true");
+          sessionStorage.setItem("lossq_next_after_onboarding", "/dashboard");
+        } catch {}
+
         window.location.href = data.checkout_url;
         return;
       }

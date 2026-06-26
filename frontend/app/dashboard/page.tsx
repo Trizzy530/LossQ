@@ -89,6 +89,40 @@ async function lossqDashboardBackendProfileCompleteV1(API: string, token: string
 }
 
 
+
+// LOSSQ_DASHBOARD_POST_PAYMENT_ONBOARDING_GATE_V1
+function lossqDashboardPostPaymentOnboardingRequiredV1() {
+ if (typeof window === "undefined") return false;
+
+ try {
+  const params = new URLSearchParams(window.location.search);
+  const result = String(
+   params.get("billing") ||
+    params.get("checkout") ||
+    params.get("payment") ||
+    ""
+  ).toLowerCase();
+
+  return (
+   localStorage.getItem("lossq_pending_paid_onboarding") === "true" ||
+   sessionStorage.getItem("lossq_pending_paid_onboarding") === "true" ||
+   ["success", "paid", "complete", "completed"].includes(result)
+  );
+ } catch {
+  return false;
+ }
+}
+
+function lossqDashboardClearPostPaymentOnboardingFlagsV1() {
+ if (typeof window === "undefined") return;
+
+ try {
+  localStorage.removeItem("lossq_pending_paid_onboarding");
+  sessionStorage.removeItem("lossq_pending_paid_onboarding");
+ } catch {}
+}
+
+
 function lossqCompanyProfileSetupAlreadyCompleteInBrowser() {
  if (typeof window === "undefined") return false;
 
@@ -4810,6 +4844,25 @@ function normalizeProfileName(item: any) {
     }
    } catch {
     setMessage("Session validation skipped. Backend validation unavailable.");
+   }
+
+   // LOSSQ_DASHBOARD_POST_PAYMENT_ONBOARDING_GATE_CALL_V1
+   if (lossqDashboardPostPaymentOnboardingRequiredV1()) {
+    const localProfileComplete = lossqCompanyProfileSetupAlreadyCompleteInBrowser();
+    const backendProfileComplete = localProfileComplete
+     ? true
+     : await lossqDashboardBackendProfileCompleteV1(API, token);
+
+    if (!backendProfileComplete) {
+     try {
+      sessionStorage.setItem("lossq_next_after_onboarding", "/dashboard");
+     } catch {}
+
+     router.replace("/onboarding?from=billing");
+     return;
+    }
+
+    lossqDashboardClearPostPaymentOnboardingFlagsV1();
    }
 
    setAuthReady(true);
