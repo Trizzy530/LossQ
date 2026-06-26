@@ -777,6 +777,250 @@ function normalizeDateInput(value: any) {
  return raw;
 }
 
+
+// LOSSQ_FRONTEND_MARKET_SCOPED_DATE_DISPLAY_V1
+const lossqFrontendCanadianRegulatorsV1: Record<string, string> = {
+ AB: "Alberta Superintendent of Insurance",
+ BC: "BCFSA",
+ MB: "FIRB",
+ NB: "FCNB",
+ NL: "Digital Government and Service NL",
+ NS: "Nova Scotia Office of the Superintendent of Insurance",
+ NT: "Northwest Territories Superintendent of Insurance",
+ NU: "Nunavut Superintendent of Insurance",
+ ON: "FSRA",
+ PE: "PEI Superintendent of Insurance",
+ QC: "AMF",
+ SK: "Saskatchewan Superintendent of Insurance",
+ YT: "Yukon Superintendent of Insurance",
+};
+
+const lossqFrontendCanadianProvinceNamesV1: Record<string, string> = {
+ alberta: "AB",
+ britishcolumbia: "BC",
+ "british columbia": "BC",
+ manitoba: "MB",
+ newbrunswick: "NB",
+ "new brunswick": "NB",
+ newfoundlandandlabrador: "NL",
+ "newfoundland and labrador": "NL",
+ novascotia: "NS",
+ "nova scotia": "NS",
+ northwestterritories: "NT",
+ "northwest territories": "NT",
+ nunavut: "NU",
+ ontario: "ON",
+ princeedwardisland: "PE",
+ "prince edward island": "PE",
+ pei: "PE",
+ quebec: "QC",
+ "québec": "QC",
+ saskatchewan: "SK",
+ yukon: "YT",
+};
+
+function lossqFrontendCleanDisplayTextV1(value: any) {
+ return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function lossqFrontendProvinceCodeV1(value: any) {
+ const raw = lossqFrontendCleanDisplayTextV1(value);
+ if (!raw) return "";
+
+ const upper = raw.toUpperCase();
+ if (lossqFrontendCanadianRegulatorsV1[upper]) return upper;
+
+ const clean = raw.toLowerCase().replace(/[^a-zà-ÿ]+/g, " ").trim();
+ const compact = clean.replace(/\s+/g, "");
+
+ return lossqFrontendCanadianProvinceNamesV1[clean] || lossqFrontendCanadianProvinceNamesV1[compact] || "";
+}
+
+function lossqFrontendCollectStringsV1(source: any, values: string[] = []) {
+ if (!source) return values;
+
+ if (Array.isArray(source)) {
+  source.forEach((item) => lossqFrontendCollectStringsV1(item, values));
+  return values;
+ }
+
+ if (typeof source === "object") {
+  Object.values(source).forEach((item) => {
+   if (typeof item === "string" || typeof item === "number") {
+    values.push(String(item));
+   } else if (item && typeof item === "object") {
+    lossqFrontendCollectStringsV1(item, values);
+   }
+  });
+  return values;
+ }
+
+ values.push(String(source));
+ return values;
+}
+
+function lossqFrontendProvinceFromPolicyOrClaimV1(...sources: any[]) {
+ const values = sources.flatMap((source) => lossqFrontendCollectStringsV1(source, []));
+ const provinceCodes = new Set(Object.keys(lossqFrontendCanadianRegulatorsV1));
+
+ for (const value of values) {
+  const match = String(value || "").toUpperCase().match(/\b([A-Z]{2})[-_][A-Z0-9]{2,}/);
+  if (match && provinceCodes.has(match[1])) {
+   return match[1];
+  }
+ }
+
+ return "";
+}
+
+function lossqFrontendCanadaOrDDMMDateMarketV1(profileLike: any, policiesLike: any[] = [], claimsLike: any[] = []) {
+ const marketContext = profileLike?.market_context || profileLike?.marketContext || {};
+ const text = [
+  profileLike?.country,
+  profileLike?.market,
+  profileLike?.market_country,
+  profileLike?.marketCountry,
+  profileLike?.country_market,
+  profileLike?.countryMarket,
+  marketContext?.country,
+  marketContext?.market,
+  profileLike?.currency,
+  profileLike?.default_currency,
+  profileLike?.defaultCurrency,
+  marketContext?.currency,
+  profileLike?.date_format,
+  profileLike?.dateFormat,
+  profileLike?.market_date_format,
+  profileLike?.marketDateFormat,
+  marketContext?.date_format,
+  marketContext?.dateFormat,
+  profileLike?.carrier_name,
+  profileLike?.writing_carrier,
+  profileLike?.carrier,
+ ].map(lossqFrontendCleanDisplayTextV1).join(" ").toLowerCase();
+
+ if (text.includes("canada") || /\bcad\b/i.test(text)) return true;
+ if (text.includes("dd/mm/yyyy")) return true;
+ if (/intact|aviva canada|wawanesa|northbridge|definity|economical|lloyd|chubb canada|zurich canada|cna canada|co-operators|gore mutual|heartland/.test(text)) return true;
+
+ const province = lossqFrontendProvinceCodeV1(
+  profileLike?.province_code ||
+   profileLike?.provinceCode ||
+   profileLike?.state_province ||
+   profileLike?.stateProvince ||
+   profileLike?.province ||
+   marketContext?.province_code ||
+   marketContext?.provinceCode ||
+   marketContext?.state_province ||
+   marketContext?.stateProvince ||
+   marketContext?.province
+ );
+
+ if (province) return true;
+
+ return Boolean(lossqFrontendProvinceFromPolicyOrClaimV1(profileLike, policiesLike, claimsLike));
+}
+
+function lossqFrontendDDMMYYYYV1(value: any) {
+ const raw = lossqFrontendCleanDisplayTextV1(value);
+ if (!raw) return "";
+
+ const monthMap: Record<string, string> = {
+  jan: "01", january: "01",
+  feb: "02", february: "02",
+  mar: "03", march: "03",
+  apr: "04", april: "04",
+  may: "05",
+  jun: "06", june: "06",
+  jul: "07", july: "07",
+  aug: "08", august: "08",
+  sep: "09", sept: "09", september: "09",
+  oct: "10", october: "10",
+  nov: "11", november: "11",
+  dec: "12", december: "12",
+ };
+
+ const emit = (dayValue: any, monthValue: any, yearValue: any) => {
+  const day = Number(dayValue);
+  const month = Number(monthValue);
+  let year = Number(yearValue);
+
+  if (!Number.isFinite(day) || !Number.isFinite(month) || !Number.isFinite(year)) return raw;
+  if (year < 100) year += year < 50 ? 2000 : 1900;
+  if (day < 1 || day > 31 || month < 1 || month > 12) return raw;
+
+  return `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${String(year).padStart(4, "0")}`;
+ };
+
+ let match = raw.match(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/);
+ if (match) return emit(match[3], match[2], match[1]);
+
+ match = raw.match(/\b([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{2,4})\b/i);
+ if (match) {
+  const month = monthMap[match[1].toLowerCase()];
+  return month ? emit(match[2], month, match[3]) : raw;
+ }
+
+ match = raw.match(/\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})[,]?\s+(\d{2,4})\b/i);
+ if (match) {
+  const month = monthMap[match[2].toLowerCase()];
+  return month ? emit(match[1], month, match[3]) : raw;
+ }
+
+ match = raw.match(/\b(\d{1,2})\/(\d{1,2})\/(\d{2,4})\b/);
+ if (match) {
+  const first = Number(match[1]);
+  const second = Number(match[2]);
+  if (first <= 12 && second > 12) return emit(second, first, match[3]);
+  return emit(first, second, match[3]);
+ }
+
+ return raw;
+}
+
+function lossqFrontendDateForMarketV1(value: any, profileLike: any, policiesLike: any[] = [], claimsLike: any[] = []) {
+ const raw = lossqFrontendCleanDisplayTextV1(value);
+ if (!raw) return "";
+
+ if (!lossqFrontendCanadaOrDDMMDateMarketV1(profileLike, policiesLike, claimsLike)) {
+  return raw;
+ }
+
+ return lossqFrontendDDMMYYYYV1(raw);
+}
+
+function lossqFrontendCanadaRegionForMarketV1(currentRegion: any, profileLike: any, marketContextLike: any, policiesLike: any[] = [], claimsLike: any[] = []) {
+ const explicitProvince = lossqFrontendProvinceCodeV1(
+  profileLike?.province_code ||
+   profileLike?.provinceCode ||
+   profileLike?.state_province ||
+   profileLike?.stateProvince ||
+   profileLike?.province ||
+   marketContextLike?.province_code ||
+   marketContextLike?.provinceCode ||
+   marketContextLike?.state_province ||
+   marketContextLike?.stateProvince ||
+   marketContextLike?.province
+ );
+
+ if (explicitProvince) return explicitProvince;
+
+ const derivedProvince = lossqFrontendProvinceFromPolicyOrClaimV1(profileLike, policiesLike, claimsLike);
+ if (derivedProvince) return derivedProvince;
+
+ return lossqFrontendProvinceCodeV1(currentRegion) || lossqFrontendCleanDisplayTextV1(currentRegion);
+}
+
+function lossqFrontendCanadaRegulatorForMarketV1(currentRegulator: any, regionCode: any) {
+ const provinceCode = lossqFrontendProvinceCodeV1(regionCode);
+ if (provinceCode && lossqFrontendCanadianRegulatorsV1[provinceCode]) {
+  return lossqFrontendCanadianRegulatorsV1[provinceCode];
+ }
+
+ return lossqFrontendCleanDisplayTextV1(currentRegulator);
+}
+
+
 // LOSSQ_PREFER_UPLOAD_VALUATION_DATE_V1
 
 // LOSSQ_UNIVERSAL_UPLOAD_DATE_MERGE_V1
@@ -9744,6 +9988,21 @@ const modelChartNarrative =
          (isCanadaMarket ? canadianProvinceRegulators[marketRegion] : "") ||
          "";
 
+        // LOSSQ_FRONTEND_MARKET_SCOPED_CONTEXT_DISPLAY_CALL_V1
+        const marketRegionDisplay = isCanadaMarket
+         ? lossqFrontendCanadaRegionForMarketV1(
+          marketRegion,
+          displayProfile,
+          marketContext,
+          policySchedule,
+          claims
+         )
+         : marketRegion;
+
+        const marketRegulatorDisplay = isCanadaMarket
+         ? lossqFrontendCanadaRegulatorForMarketV1(marketRegulator, marketRegionDisplay)
+         : marketRegulator;
+
         const rawLanguage = cleanMarketText(
          displayProfile?.market_language ||
           displayProfile?.marketLanguage ||
@@ -9791,10 +10050,10 @@ const modelChartNarrative =
 
           <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-7">
            <ProfileDetail label="Country / Market" value={marketCountry || "-"} />
-           <ProfileDetail label={geographyLabel} value={marketRegion || "-"} />
+           <ProfileDetail label={geographyLabel} value={marketRegionDisplay || "-"} />
            <ProfileDetail label="Currency" value={marketCurrency || "-"} />
            <ProfileDetail label="Date Format" value={marketDateFormat || "-"} />
-           <ProfileDetail label="Regulator" value={marketRegulator || "-"} />
+           <ProfileDetail label="Regulator" value={marketRegulatorDisplay || "-"} />
            <ProfileDetail label="Language Output" value={marketLanguageOutput || "-"} />
            <ProfileDetail label="License Number" value={agencyLicenseNumber || "-"} />
           </div>
@@ -9864,9 +10123,9 @@ const modelChartNarrative =
           })}
          />
          <ProfileDetail label="Main Policy" value={mainPolicyNumber || "-"} />
-         <ProfileDetail label="Effective Date" value={lossqFirstPolicyEffectiveDate(policySchedule) || lossqEffectiveDateFromObject(displayProfile) || "Not set"} />
-         <ProfileDetail label="Expiration Date" value={lossqFirstPolicyExpirationDate(policySchedule) || lossqExpirationDateFromObject(displayProfile) || "Not set"} />
-         <ProfileDetail label="Evaluation Date" value={getBestEvaluationDate(displayProfile) || lossqAnyEvaluationDate(displayProfile) || lossqFirstPolicyEvaluationDate(policySchedule) || "Not set"} />
+         <ProfileDetail label="Effective Date" value={lossqFrontendDateForMarketV1(lossqFirstPolicyEffectiveDate(policySchedule) || lossqEffectiveDateFromObject(displayProfile), displayProfile, policySchedule, claims) || "Not set"} />
+         <ProfileDetail label="Expiration Date" value={lossqFrontendDateForMarketV1(lossqFirstPolicyExpirationDate(policySchedule) || lossqExpirationDateFromObject(displayProfile), displayProfile, policySchedule, claims) || "Not set"} />
+         <ProfileDetail label="Evaluation Date" value={lossqFrontendDateForMarketV1(getBestEvaluationDate(displayProfile) || lossqAnyEvaluationDate(displayProfile) || lossqFirstPolicyEvaluationDate(policySchedule), displayProfile, policySchedule, claims) || "Not set"} />
         </div>
 
         <EvaluationDateAlertBadge profileLike={displayProfile} policyRows={policySchedule} />
@@ -9912,18 +10171,26 @@ const modelChartNarrative =
               );
 
               const rowEffectiveDate =
-               lossqAnyEffectiveDate(policy) ||
-               lossqAnyEffectiveDate(displayProfile) ||
-               lossqAnyEffectiveDate(profile) ||
-               lossqFirstPolicyEffectiveDate(policySchedule) ||
-               "-";
+               lossqFrontendDateForMarketV1(
+                lossqAnyEffectiveDate(policy) ||
+                 lossqAnyEffectiveDate(displayProfile) ||
+                 lossqAnyEffectiveDate(profile) ||
+                 lossqFirstPolicyEffectiveDate(policySchedule),
+                displayProfile,
+                policySchedule,
+                claims
+               ) || "-";
 
               const rowExpirationDate =
-               lossqAnyExpirationDate(policy) ||
-               lossqAnyExpirationDate(displayProfile) ||
-               lossqAnyExpirationDate(profile) ||
-               lossqFirstPolicyExpirationDate(policySchedule) ||
-               "-";
+               lossqFrontendDateForMarketV1(
+                lossqAnyExpirationDate(policy) ||
+                 lossqAnyExpirationDate(displayProfile) ||
+                 lossqAnyExpirationDate(profile) ||
+                 lossqFirstPolicyExpirationDate(policySchedule),
+                displayProfile,
+                policySchedule,
+                claims
+               ) || "-";
 
               return (
                <tr
