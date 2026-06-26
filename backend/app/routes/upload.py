@@ -20363,6 +20363,50 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
     # LOSSQ_CANONICAL_INSERT_ONLY_SAVE_LOOP_V1
     for claim_data in parsed_claims:
+      # LOSSQ_SKIP_FAKE_YEAR_SUMMARY_CLAIM_IN_SAVE_LOOP_V2
+      # Final safety guard: never save zero-dollar year-summary rows as claims.
+      # Example fake rows: 2019-2020, 2020-2021, 2023-2024.
+      try:
+        import re as _lossq_save_loop_year_re
+
+        _lossq_save_claim_number = str(
+          claim_data.get("claim_number")
+          or claim_data.get("claimNumber")
+          or claim_data.get("claim_no")
+          or claim_data.get("Claim Number")
+          or claim_data.get("Claim #")
+          or ""
+        ).strip()
+
+        if _lossq_save_loop_year_re.fullmatch(r"\d{4}\s*[-–]\s*\d{4}", _lossq_save_claim_number):
+          def _lossq_save_loop_money(value):
+            raw = str(value or "").replace(",", "")
+            raw = _lossq_save_loop_year_re.sub(r"[^0-9.\-]", "", raw)
+            try:
+              return float(raw or 0)
+            except Exception:
+              return 0.0
+
+          _lossq_save_loop_total = sum([
+            _lossq_save_loop_money(claim_data.get("paid")),
+            _lossq_save_loop_money(claim_data.get("paid_amount")),
+            _lossq_save_loop_money(claim_data.get("loss_paid")),
+            _lossq_save_loop_money(claim_data.get("expense")),
+            _lossq_save_loop_money(claim_data.get("expense_amount")),
+            _lossq_save_loop_money(claim_data.get("reserve")),
+            _lossq_save_loop_money(claim_data.get("reserve_amount")),
+            _lossq_save_loop_money(claim_data.get("outstanding")),
+            _lossq_save_loop_money(claim_data.get("total")),
+            _lossq_save_loop_money(claim_data.get("incurred")),
+            _lossq_save_loop_money(claim_data.get("total_incurred")),
+          ])
+
+          if _lossq_save_loop_total <= 0:
+            print("LOSSQ_SKIP_FAKE_YEAR_SUMMARY_CLAIM_IN_SAVE_LOOP_V2:", _lossq_save_claim_number)
+            continue
+      except Exception as fake_year_save_loop_exc:
+        print("LOSSQ_SKIP_FAKE_YEAR_SUMMARY_CLAIM_IN_SAVE_LOOP_V2_ERROR:", str(fake_year_save_loop_exc)[:300])
+
       normalized = normalize_claim_data(
         raw=claim_data,
         fallback_policy_number=file_policy_number,
