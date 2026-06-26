@@ -13669,6 +13669,185 @@ def lossq_sanitize_profile_policies_before_upsert_v6(profile_data: dict):
       profile_data["main_policy"] = first_policy
       profile_data["main_policy_number"] = first_policy
 
+  # LOSSQ_UPSERT_COMPACT_EXPOSURE_LIMITS_FROM_ROWS_V1
+  # This runs inside the final AccountProfile policy sanitizer.
+  # It prevents same-policy multi-coverage Excel rows from collapsing to only D&O.
+  try:
+    import re as _lossq_upsert_exposure_re
+
+    def _lossq_upsert_clean_exposure_v1(value):
+      return _lossq_upsert_exposure_re.sub(r"\s+", " ", str(value or "").strip())
+
+    def _lossq_upsert_money_text_v1(value):
+      raw = _lossq_upsert_clean_exposure_v1(value)
+      if not raw:
+        return ""
+
+      amount_text = _lossq_upsert_exposure_re.sub(r"[^0-9.\-]", "", raw)
+      try:
+        amount = float(amount_text or 0)
+      except Exception:
+        amount = 0
+
+      if amount <= 0:
+        return ""
+
+      return str(int(amount)) if amount == int(amount) else str(amount)
+
+    def _lossq_upsert_compact_line_v1(value):
+      raw = _lossq_upsert_clean_exposure_v1(value)
+
+      if _lossq_upsert_exposure_re.search(r"(?i)\bD\s*&\s*O\b|administrateurs|directors", raw):
+        return "D&O"
+
+      if _lossq_upsert_exposure_re.search(r"(?i)\bE\s*&\s*O\b|professionnelle|professional|erreurs|omissions", raw):
+        return "E&O"
+
+      return raw
+
+    exposure_inputs = (
+      profile_data.get("exposure_inputs")
+      or profile_data.get("exposureInputs")
+      or profile_data.get("exposures")
+      or profile_data.get("manual_exposure_inputs")
+      or profile_data.get("manualExposureInputs")
+      or {}
+    )
+
+    if not isinstance(exposure_inputs, dict):
+      exposure_inputs = {}
+
+    exposure_rows = []
+
+    for source in [
+      exposure_inputs.get("exposure_rows"),
+      exposure_inputs.get("exposureRows"),
+      profile_data.get("exposure_rows"),
+      profile_data.get("exposureRows"),
+      profile_data.get("policies"),
+      profile_data.get("policy_schedule"),
+      cleaned_policies if "cleaned_policies" in locals() else [],
+    ]:
+      if isinstance(source, list):
+        for row in source:
+          if isinstance(row, dict):
+            exposure_rows.append(row)
+
+    compact_lines = []
+    limit_parts = []
+
+    for row in exposure_rows:
+      raw_line = (
+        row.get("coverage")
+        or row.get("coverage_full")
+        or row.get("coverageFull")
+        or row.get("line_of_business")
+        or row.get("lineOfBusiness")
+        or row.get("policy_type")
+        or row.get("policyType")
+      )
+
+      line = _lossq_upsert_compact_line_v1(raw_line)
+
+      limit = _lossq_upsert_money_text_v1(
+        row.get("limit")
+        or row.get("policy_limit")
+        or row.get("policyLimit")
+        or row.get("coverage_limit")
+        or row.get("coverageLimit")
+      )
+
+      if line in ("D&O", "E&O") and line not in compact_lines:
+        compact_lines.append(line)
+
+      if line in ("D&O", "E&O") and limit:
+        part = f"{line}: {limit}"
+        if part not in limit_parts:
+          limit_parts.append(part)
+
+    # Fallback: compact long labels already present in the saved field.
+    existing_limits = _lossq_upsert_clean_exposure_v1(
+      profile_data.get("policy_limits")
+      or profile_data.get("policyLimits")
+      or profile_data.get("coverage_limit")
+      or profile_data.get("coverageLimit")
+      or profile_data.get("limits")
+      or exposure_inputs.get("policy_limits")
+      or exposure_inputs.get("policyLimits")
+      or exposure_inputs.get("coverage_limit")
+      or ""
+    )
+
+    if existing_limits and not limit_parts:
+      existing_limits = _lossq_upsert_exposure_re.sub(
+        r"Responsabilité des administrateurs\s*/\s*D&O",
+        "D&O",
+        existing_limits,
+        flags=_lossq_upsert_exposure_re.I,
+      )
+      existing_limits = _lossq_upsert_exposure_re.sub(
+        r"Responsabilité professionnelle\s*/\s*E&O",
+        "E&O",
+        existing_limits,
+        flags=_lossq_upsert_exposure_re.I,
+      )
+
+    compact_lob = " / ".join(compact_lines)
+    compact_limits = "; ".join(limit_parts) if limit_parts else existing_limits
+
+    if compact_lob:
+      profile_data["line_of_business"] = compact_lob
+      profile_data["lineOfBusiness"] = compact_lob
+      profile_data["primary_line_of_business"] = compact_lob
+      profile_data["primaryLineOfBusiness"] = compact_lob
+      exposure_inputs["line_of_business"] = compact_lob
+      exposure_inputs["lineOfBusiness"] = compact_lob
+      exposure_inputs["primary_line_of_business"] = compact_lob
+      exposure_inputs["primaryLineOfBusiness"] = compact_lob
+
+    if compact_limits:
+      profile_data["limits"] = compact_limits
+      profile_data["coverage_limit"] = compact_limits
+      profile_data["coverageLimit"] = compact_limits
+      profile_data["policy_limits"] = compact_limits
+      profile_data["policyLimits"] = compact_limits
+      profile_data["Policy Limits"] = compact_limits
+      exposure_inputs["limits"] = compact_limits
+      exposure_inputs["coverage_limit"] = compact_limits
+      exposure_inputs["coverageLimit"] = compact_limits
+      exposure_inputs["policy_limits"] = compact_limits
+      exposure_inputs["policyLimits"] = compact_limits
+      exposure_inputs["Policy Limits"] = compact_limits
+
+    payroll_value = (
+      exposure_inputs.get("payroll")
+      or exposure_inputs.get("Payroll")
+      or exposure_inputs.get("annual_payroll")
+      or exposure_inputs.get("annualPayroll")
+      or profile_data.get("payroll")
+      or profile_data.get("Payroll")
+      or ""
+    )
+
+    payroll_value = _lossq_upsert_money_text_v1(payroll_value)
+
+    if payroll_value:
+      profile_data["payroll"] = payroll_value
+      exposure_inputs["payroll"] = payroll_value
+      exposure_inputs["Payroll"] = payroll_value
+
+    profile_data["exposure_inputs"] = exposure_inputs
+    profile_data["exposureInputs"] = exposure_inputs
+    profile_data["exposures"] = exposure_inputs
+
+    print("LOSSQ_UPSERT_COMPACT_EXPOSURE_LIMITS_FROM_ROWS_V1:", {
+      "line_of_business": profile_data.get("line_of_business"),
+      "coverage_limit": profile_data.get("coverage_limit"),
+      "payroll": profile_data.get("payroll"),
+    })
+  except Exception as compact_exposure_exc:
+    print("LOSSQ_UPSERT_COMPACT_EXPOSURE_LIMITS_FROM_ROWS_V1_ERROR:", str(compact_exposure_exc)[:300])
+
   print("LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_V6:", {
     "policy_numbers": profile_data.get("policy_numbers"),
     "policies": [
