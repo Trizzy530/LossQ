@@ -389,6 +389,7 @@ def lossq_sectioned_excel_loss_run_repair_v1(
     exposure_headers: list[str] = []
     total_premium_from_total_row = ""
 
+    # LOSSQ_SECTIONED_EXCEL_POLICY_LIMIT_NONZERO_AND_PHYSICIAN_ALIAS_V1
     def exposure_header_col(*patterns: str) -> int:
         for idx, header in enumerate(exposure_headers):
             header_key = key(header)
@@ -397,11 +398,33 @@ def lossq_sectioned_excel_loss_run_repair_v1(
                     return idx
         return -1
 
+    def exposure_header_cols(*patterns: str) -> list[int]:
+        indexes: list[int] = []
+
+        for idx, header in enumerate(exposure_headers):
+            header_key = key(header)
+            for pattern in patterns:
+                if re.search(pattern, header_key, flags=re.I):
+                    indexes.append(idx)
+                    break
+
+        return indexes
+
     def exposure_money_display(value: Any) -> str:
         amount = money_float(value)
         if not amount:
             return ""
         return str(int(amount)) if amount == int(amount) else str(amount)
+
+    def first_nonzero_exposure_money(row_values: list[str], indexes: list[int]) -> str:
+        for idx in indexes:
+            if 0 <= idx < len(row_values):
+                value = exposure_money_display(row_values[idx])
+                if value and money_float(value) > 0:
+                    return value
+
+        return ""
+
 
     for row in all_rows:
         joined = " ".join(row)
@@ -442,12 +465,17 @@ def lossq_sectioned_excel_loss_run_repair_v1(
         c_employees = exposure_header_col(r"employee", r"employ")
         c_revenue = exposure_header_col(r"revenue", r"revenu")
         c_limit = exposure_header_col(r"limit", r"limite")
+        c_limit_cols = exposure_header_cols(r"limit", r"limite")
         c_premium = exposure_header_col(r"premium", r"prime")
 
         physicians = clean(row[c_physicians]) if 0 <= c_physicians < len(row) else ""
         employees = clean(row[c_employees]) if 0 <= c_employees < len(row) else ""
         revenue = exposure_money_display(row[c_revenue]) if 0 <= c_revenue < len(row) else ""
-        limit = exposure_money_display(row[c_limit]) if 0 <= c_limit < len(row) else ""
+
+        # Use the first non-zero limit value across all limit columns.
+        # This prevents E&O rows from showing 0 when the workbook has separate D&O / E&O limit columns.
+        limit = first_nonzero_exposure_money(row, c_limit_cols) or (exposure_money_display(row[c_limit]) if 0 <= c_limit < len(row) else "")
+
         premium = exposure_money_display(row[c_premium]) if 0 <= c_premium < len(row) else ""
 
         numeric_values = [clean(cell) for cell in row[1:] if clean(cell) and re.search(r"\d", clean(cell))]
@@ -579,6 +607,12 @@ def lossq_sectioned_excel_loss_run_repair_v1(
             "Employee Count": str(int(max_employees)) if max_employees else "",
             "physician_count": str(int(max_physicians)) if max_physicians else "",
             "physicianCount": str(int(max_physicians)) if max_physicians else "",
+            "physicians": str(int(max_physicians)) if max_physicians else "",
+            "Physician Count": str(int(max_physicians)) if max_physicians else "",
+            "Physicians": str(int(max_physicians)) if max_physicians else "",
+            "physician_value": str(int(max_physicians)) if max_physicians else "",
+            "physicianValue": str(int(max_physicians)) if max_physicians else "",
+            "Physician Value": str(int(max_physicians)) if max_physicians else "",
             "exposure_rows": exposure_rows,
             "exposureRows": exposure_rows,
         })

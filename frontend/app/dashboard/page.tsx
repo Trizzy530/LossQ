@@ -6440,7 +6440,182 @@ function buildExposureInputsFromUploadedAccount(): AnyObject {
 }
 
 
- // LOSSQ_EDITABLE_PROFILE_VALUE_PRESERVE_EMPTY_V1
+
+// LOSSQ_FRONTEND_POLICY_LIMITS_AND_PHYSICIAN_DISPLAY_V1
+function lossqExposureCleanValueV1(value: any) {
+ return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function lossqExposureNonZeroTextV1(value: any) {
+ const raw = lossqExposureCleanValueV1(value);
+
+ if (!raw || raw === "-") return "";
+
+ const amountText = raw.replace(/[^0-9.\-]/g, "");
+ const amount = Number(amountText || 0);
+
+ if (Number.isFinite(amount) && amount === 0 && /0/.test(amountText)) {
+  return "";
+ }
+
+ return raw;
+}
+
+function lossqCleanPolicyLimitPartsV1(value: any) {
+ const raw = lossqExposureCleanValueV1(value);
+ if (!raw) return "";
+
+ const parts = raw
+  .split(";")
+  .map((item) => item.trim())
+  .filter(Boolean)
+  .filter((item) => {
+   const amountText = item.replace(/[^0-9.\-]/g, "");
+   const amount = Number(amountText || 0);
+
+   if (Number.isFinite(amount) && amount === 0 && /0/.test(amountText)) {
+    return false;
+   }
+
+   return true;
+  });
+
+ return parts.join("; ");
+}
+
+function lossqPolicyLimitFromRowV1(row: any) {
+ if (!row || typeof row !== "object") return "";
+
+ const candidates = [
+  row?.policy_limit,
+  row?.policyLimit,
+  row?.limit,
+  row?.limits,
+  row?.coverage_limit,
+  row?.coverageLimit,
+  row?.["Policy Limit"],
+  row?.["Policy Limits"],
+  row?.["Limit"],
+ ];
+
+ for (const candidate of candidates) {
+  const value = lossqExposureNonZeroTextV1(candidate);
+  if (value) return value;
+ }
+
+ return "";
+}
+
+function lossqPolicyLimitsDisplayValueV1(currentValue: any, displayProfile: any, profile: any, policySchedule: any[] = []) {
+ const scheduleParts: string[] = [];
+
+ if (Array.isArray(policySchedule)) {
+  for (const row of policySchedule) {
+   const limit = lossqPolicyLimitFromRowV1(row);
+   if (!limit) continue;
+
+   const coverage = lossqExposureCleanValueV1(
+    row?.coverage ||
+     row?.line_of_business ||
+     row?.lineOfBusiness ||
+     row?.policy_type ||
+     row?.policyType ||
+     "Policy"
+   );
+
+   scheduleParts.push(`${coverage}: ${limit}`);
+  }
+ }
+
+ if (scheduleParts.length) {
+  return scheduleParts.join("; ");
+ }
+
+ const candidates = [
+  displayProfile?.policy_limits,
+  displayProfile?.policyLimits,
+  displayProfile?.["Policy Limits"],
+  displayProfile?.limits,
+  displayProfile?.coverage_limit,
+  displayProfile?.coverageLimit,
+  displayProfile?.exposure_inputs?.policy_limits,
+  displayProfile?.exposureInputs?.policy_limits,
+  displayProfile?.exposure_inputs?.["Policy Limits"],
+  profile?.policy_limits,
+  profile?.policyLimits,
+  profile?.["Policy Limits"],
+  profile?.limits,
+  profile?.coverage_limit,
+  profile?.coverageLimit,
+  profile?.exposure_inputs?.policy_limits,
+  profile?.exposureInputs?.policy_limits,
+  profile?.exposure_inputs?.["Policy Limits"],
+  currentValue,
+ ];
+
+ for (const candidate of candidates) {
+  const value = lossqCleanPolicyLimitPartsV1(candidate);
+  if (value) return value;
+ }
+
+ return "";
+}
+
+function lossqPhysicianCountDisplayValueV1(displayProfile: any, profile: any, policySchedule: any[] = []) {
+ const candidates = [
+  displayProfile?.physician_count,
+  displayProfile?.physicianCount,
+  displayProfile?.physicians,
+  displayProfile?.physician_value,
+  displayProfile?.physicianValue,
+  displayProfile?.["Physician Count"],
+  displayProfile?.["Physician Value"],
+  displayProfile?.exposure_inputs?.physician_count,
+  displayProfile?.exposureInputs?.physician_count,
+  displayProfile?.exposure_inputs?.physicianCount,
+  displayProfile?.exposureInputs?.physicianCount,
+  displayProfile?.exposure_inputs?.physicians,
+  displayProfile?.exposureInputs?.physicians,
+  displayProfile?.exposure_inputs?.["Physician Count"],
+  profile?.physician_count,
+  profile?.physicianCount,
+  profile?.physicians,
+  profile?.physician_value,
+  profile?.physicianValue,
+  profile?.["Physician Count"],
+  profile?.["Physician Value"],
+  profile?.exposure_inputs?.physician_count,
+  profile?.exposureInputs?.physician_count,
+  profile?.exposure_inputs?.physicianCount,
+  profile?.exposureInputs?.physicianCount,
+  profile?.exposure_inputs?.physicians,
+  profile?.exposureInputs?.physicians,
+  profile?.exposure_inputs?.["Physician Count"],
+ ];
+
+ for (const candidate of candidates) {
+  const value = lossqExposureNonZeroTextV1(candidate);
+  if (value) return value;
+ }
+
+ if (Array.isArray(policySchedule)) {
+  for (const row of policySchedule) {
+   const value = lossqExposureNonZeroTextV1(
+    row?.physician_count ||
+     row?.physicianCount ||
+     row?.physicians ||
+     row?.["Physician Count"]
+   );
+
+   if (value) return value;
+  }
+ }
+
+ return "";
+}
+
+
+// LOSSQ_EDITABLE_PROFILE_VALUE_PRESERVE_EMPTY_V1
  // LOSSQ_FRONTEND_EXPOSURE_ALIAS_RESOLVER_V2
  const editableProfileValue = (field: string) => {
   const profileObject = (profile || {}) as AnyObject;
@@ -10533,7 +10708,7 @@ const modelChartNarrative =
         <Input label="State / Province" value={displayProfile?.state || profile?.state || deriveExposureInputsFromPolicyRows(profile)?.state || ""} onChange={(v) => setProfile({...profile, state: v })} />
         <Input label="Class Code(s)" value={profile?.class_code || editableProfileValue("class_codes")} onChange={(v) => setProfile({...profile, class_code: v, class_codes: v })} />
 
-        <Input label="Policy Limits" value={safePolicyLimitsValue()} onChange={(v) => setProfile({...profile, limits: v, coverage_limit: v })} />
+        <Input label="Policy Limits" value={lossqPolicyLimitsDisplayValueV1(safePolicyLimitsValue(), displayProfile, profile, policySchedule)} onChange={(v) => setProfile({ ...profile, limits: v, coverage_limit: v, policy_limits: v, policyLimits: v })} />
         <Input label="Deductible" value={displayProfile?.deductible || profile?.deductible || deriveExposureInputsFromPolicyRows(profile)?.deductible || ""} onChange={(v) => setProfile({...profile, deductible: v })} />
         <Input label="Retention / SIR" value={displayProfile?.retention || profile?.retention || deriveExposureInputsFromPolicyRows(profile)?.retention || ""} onChange={(v) => setProfile({...profile, retention: v })} />
 
@@ -10542,6 +10717,12 @@ const modelChartNarrative =
         <Input label="Receipts" value={displayProfile?.receipts || profile?.receipts || deriveExposureInputsFromPolicyRows(profile)?.receipts || ""} onChange={(v) => setProfile({...profile, receipts: v })} />
 
         <Input label="Employee Count" value={displayProfile?.employee_count || profile?.employee_count || deriveExposureInputsFromPolicyRows(profile)?.employee_count || ""} onChange={(v) => setProfile({...profile, employee_count: v })} />
+
+
+        {/* LOSSQ_FRONTEND_PHYSICIAN_EXPOSURE_INPUT_BOX_V1 */}
+
+
+        <Input label="Physician Count" value={lossqPhysicianCountDisplayValueV1(displayProfile, profile, policySchedule)} onChange={(v) => setProfile({ ...profile, physician_count: v, physicianCount: v, physicians: v, physician_value: v, physicianValue: v })} />
         {/* LOSSQ_AUTO_EXPOSURE_VEHICLE_DETAIL_FIELDS_V1 */}
         <Input label="Vehicle Count" value={displayProfile?.vehicle_count || profile?.vehicle_count || deriveExposureInputsFromPolicyRows(profile)?.vehicle_count || ""} onChange={(v) => setProfile({...profile, vehicle_count: v })} />
         <Input label="Vehicle Make" value={displayProfile?.vehicle_make || profile?.vehicle_make || deriveExposureInputsFromPolicyRows(profile)?.vehicle_make || ""} onChange={(v) => setProfile({...profile, vehicle_make: v })} />
