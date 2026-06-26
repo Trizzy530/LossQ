@@ -14288,6 +14288,295 @@ def lossq_profile_persistence_key_v1(profile_data):
 
   return ""
 
+
+# LOSSQ_US_PROFILE_MARKET_FORMAT_CLEANUP_V1
+def lossq_us_profile_market_format_cleanup_v1(file_path, profile_data=None, parsed_claims=None):
+  """
+  US-only final profile cleanup.
+
+  Purpose:
+  - Detect United States market/country without affecting Canada/French parser paths.
+  - Set USD currency for US files.
+  - Preserve US date format MM/DD/YYYY for US files only.
+  - Keep insured/business name clean, not a full profile/table block.
+  - Extract state only when a state is actually present; never invent one.
+  """
+  import re
+  from datetime import datetime
+
+  profile_data = profile_data if isinstance(profile_data, dict) else {}
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
+
+  def compact(value):
+    return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+  def read_text():
+    chunks = []
+
+    for key in ["raw_text", "raw_text_preview", "ocr_text", "document_text", "extracted_text"]:
+      value = profile_data.get(key)
+      if value:
+        chunks.append(str(value))
+
+    try:
+      path_text = str(file_path or "")
+      lower = path_text.lower()
+
+      if lower.endswith(".pdf"):
+        try:
+          from pypdf import PdfReader
+          reader = PdfReader(path_text)
+          for page in reader.pages[:3]:
+            try:
+              chunks.append(page.extract_text() or "")
+            except Exception:
+              pass
+        except Exception:
+          pass
+      elif lower.endswith((".csv", ".txt")):
+        try:
+          chunks.append(open(path_text, "r", encoding="utf-8-sig", errors="ignore").read(250000))
+        except Exception:
+          pass
+    except Exception:
+      pass
+
+    for claim in parsed_claims[:20]:
+      if isinstance(claim, dict):
+        chunks.append(" ".join(str(v or "") for v in claim.values()))
+
+    return "\n".join(chunks)
+
+  raw_text = read_text()
+  normalized = clean(raw_text)
+  upper_blob = normalized.upper()
+
+  existing_country = clean(
+    profile_data.get("market_country")
+    or profile_data.get("country")
+    or profile_data.get("market")
+    or ""
+  ).upper()
+
+  existing_currency = clean(
+    profile_data.get("market_currency")
+    or profile_data.get("currency")
+    or ""
+  ).upper()
+
+  canada_signal = bool(
+    existing_country in {"CA", "CAN", "CANADA"} or
+    existing_currency == "CAD" or
+    re.search(r"\b(CANADA|CANADIAN|CAD|IBC\s+\d+|ONTARIO|QUEBEC|QUÉBEC|ALBERTA|MANITOBA|SASKATCHEWAN|BRITISH COLUMBIA|NOVA SCOTIA|NEW BRUNSWICK|NEWFOUNDLAND|LABRADOR|PRINCE EDWARD ISLAND|YUKON|NUNAVUT|NORTHWEST TERRITORIES|WSIB)\b", upper_blob) or
+    re.search(r"\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b", upper_blob)
+  )
+
+  if canada_signal:
+    return profile_data
+
+  us_states = {
+    "ALABAMA": "AL", "ALASKA": "AK", "ARIZONA": "AZ", "ARKANSAS": "AR", "CALIFORNIA": "CA",
+    "COLORADO": "CO", "CONNECTICUT": "CT", "DELAWARE": "DE", "FLORIDA": "FL", "GEORGIA": "GA",
+    "HAWAII": "HI", "IDAHO": "ID", "ILLINOIS": "IL", "INDIANA": "IN", "IOWA": "IA",
+    "KANSAS": "KS", "KENTUCKY": "KY", "LOUISIANA": "LA", "MAINE": "ME", "MARYLAND": "MD",
+    "MASSACHUSETTS": "MA", "MICHIGAN": "MI", "MINNESOTA": "MN", "MISSISSIPPI": "MS", "MISSOURI": "MO",
+    "MONTANA": "MT", "NEBRASKA": "NE", "NEVADA": "NV", "NEW HAMPSHIRE": "NH", "NEW JERSEY": "NJ",
+    "NEW MEXICO": "NM", "NEW YORK": "NY", "NORTH CAROLINA": "NC", "NORTH DAKOTA": "ND", "OHIO": "OH",
+    "OKLAHOMA": "OK", "OREGON": "OR", "PENNSYLVANIA": "PA", "RHODE ISLAND": "RI", "SOUTH CAROLINA": "SC",
+    "SOUTH DAKOTA": "SD", "TENNESSEE": "TN", "TEXAS": "TX", "UTAH": "UT", "VERMONT": "VT",
+    "VIRGINIA": "VA", "WASHINGTON": "WA", "WEST VIRGINIA": "WV", "WISCONSIN": "WI", "WYOMING": "WY",
+    "DISTRICT OF COLUMBIA": "DC",
+  }
+
+  state_codes = set(us_states.values())
+
+  def extract_us_state():
+    for key in ["state", "insured_state", "jurisdiction", "jurisdiction_state", "loss_state", "venue_state", "market_region_code"]:
+      value = clean(profile_data.get(key)).upper()
+      if value in state_codes:
+        return value
+      if value in us_states:
+        return us_states[value]
+
+    label_match = re.search(
+      r"(?im)^\s*(?:State|Insured State|Jurisdiction|Jurisdiction/State|Loss State|Venue State|Market State)\s*[:#-]\s*([A-Za-z .]{2,40})\s*$",
+      raw_text,
+    )
+    if label_match:
+      value = clean(label_match.group(1)).upper()
+      if value in state_codes:
+        return value
+      if value in us_states:
+        return us_states[value]
+
+    address_match = re.search(r"\b([A-Z]{2})\s+\d{5}(?:-\d{4})?\b", upper_blob)
+    if address_match and address_match.group(1) in state_codes:
+      return address_match.group(1)
+
+    for state_name, code in us_states.items():
+      if re.search(rf"\b{re.escape(state_name)}\b", upper_blob):
+        return code
+
+    return ""
+
+  state_code = extract_us_state()
+
+  us_signal = bool(
+    existing_country in {"US", "USA", "UNITED STATES", "UNITED STATES OF AMERICA"} or
+    existing_currency == "USD" or
+    re.search(r"\b(UNITED STATES|USA|U\.S\.|US MARKET|NAIC|ZIP CODE)\b", upper_blob) or
+    re.search(r"\$\s*\d", normalized) or
+    re.search(r"\b\d{1,2}/\d{1,2}/\d{4}\b", normalized) or
+    state_code
+  )
+
+  if not us_signal:
+    return profile_data
+
+  def extract_insured_name():
+    labels = [
+      "Business Name",
+      "Named Insured",
+      "Insured Name",
+      "Account Name",
+      "Applicant Name",
+      "Company Name",
+    ]
+
+    stop_labels = [
+      "Named Insured", "Account Number", "Customer Number", "Writing Carrier",
+      "Carrier", "Policy Period", "Policy Number", "Evaluation Date", "Report Date",
+      "POLICY SCHEDULE", "EXPOSURE INPUTS", "CLAIM DETAIL", "LOSS SUMMARY",
+    ]
+
+    for label in labels:
+      pattern = rf"(?im)^\s*{re.escape(label)}\s*[:#-]\s*(.+?)\s*$"
+      match = re.search(pattern, raw_text)
+      if not match:
+        continue
+
+      value = clean(match.group(1))
+
+      for stop in stop_labels:
+        value = re.split(rf"\s+{re.escape(stop)}\s*[:#-]", value, maxsplit=1, flags=re.I)[0]
+
+      value = clean(value)
+
+      if value and len(value) <= 120 and not re.search(r"(?i)\b(policy schedule|claim detail|exposure inputs|loss summary|policy number|account number)\b", value):
+        return value
+
+    for key in ["business_name", "named_insured", "insured_name", "account_name", "company_name"]:
+      value = clean(profile_data.get(key))
+      if value and len(value) <= 120 and not re.search(r"(?i)\b(policy schedule|claim detail|exposure inputs|loss summary|policy number|account number)\b", value):
+        return value
+
+    return ""
+
+  insured_name = extract_insured_name()
+
+  def us_date(value):
+    value = clean(value)
+    if not value:
+      return ""
+
+    for fmt in ["%m/%d/%Y", "%m-%d-%Y", "%Y-%m-%d", "%Y/%m/%d"]:
+      try:
+        return datetime.strptime(value, fmt).strftime("%m/%d/%Y")
+      except Exception:
+        pass
+
+    match = re.search(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{4})\b", value)
+    if match:
+      try:
+        return datetime(int(match.group(3)), int(match.group(1)), int(match.group(2))).strftime("%m/%d/%Y")
+      except Exception:
+        return value
+
+    match = re.search(r"\b(\d{4})[/-](\d{1,2})[/-](\d{1,2})\b", value)
+    if match:
+      try:
+        return datetime(int(match.group(1)), int(match.group(2)), int(match.group(3))).strftime("%m/%d/%Y")
+      except Exception:
+        return value
+
+    return value
+
+  def extract_labeled_date(label):
+    match = re.search(rf"(?im)^\s*{re.escape(label)}\s*[:#-]\s*([0-9]{{1,4}}[/-][0-9]{{1,2}}[/-][0-9]{{1,4}})", raw_text)
+    return us_date(match.group(1)) if match else ""
+
+  effective = us_date(profile_data.get("effective_date") or profile_data.get("effective"))
+  expiration = us_date(profile_data.get("expiration_date") or profile_data.get("expiration"))
+  evaluation = us_date(profile_data.get("evaluation_date") or profile_data.get("valuation_date"))
+
+  period_value = clean(profile_data.get("policy_period"))
+  period_match = re.search(r"\b([0-9]{1,4}[/-][0-9]{1,2}[/-][0-9]{1,4})\s*(?:-|–|to|through)\s*([0-9]{1,4}[/-][0-9]{1,2}[/-][0-9]{1,4})\b", period_value or raw_text, flags=re.I)
+  if period_match:
+    effective = effective or us_date(period_match.group(1))
+    expiration = expiration or us_date(period_match.group(2))
+    profile_data["policy_period"] = f"{us_date(period_match.group(1))} - {us_date(period_match.group(2))}"
+
+  effective = effective or extract_labeled_date("Effective Date")
+  expiration = expiration or extract_labeled_date("Expiration Date")
+  evaluation = evaluation or extract_labeled_date("Evaluation Date")
+
+  profile_data["country"] = "United States"
+  profile_data["market_country"] = "United States"
+  profile_data["market_country_code"] = "US"
+  profile_data["market"] = "US"
+  profile_data["currency"] = "USD"
+  profile_data["market_currency"] = "USD"
+  profile_data["date_format"] = "MM/DD/YYYY"
+  profile_data["market_date_format"] = "MM/DD/YYYY"
+  profile_data["effective_date_format"] = "MM/DD/YYYY"
+
+  if state_code:
+    profile_data["state"] = state_code
+    profile_data["market_region_code"] = state_code
+    profile_data["market_region"] = state_code
+
+  if insured_name:
+    profile_data["business_name"] = insured_name
+    profile_data["named_insured"] = insured_name
+    profile_data["insured_name"] = insured_name
+    profile_data["account_name"] = insured_name
+    profile_data["insured"] = insured_name
+    profile_data["insured_box"] = insured_name
+
+  if effective:
+    profile_data["effective_date"] = effective
+    profile_data["effective"] = effective
+
+  if expiration:
+    profile_data["expiration_date"] = expiration
+    profile_data["expiration"] = expiration
+
+  if evaluation:
+    profile_data["evaluation_date"] = evaluation
+
+  for key in ["policies", "policy_schedule"]:
+    policies = profile_data.get(key)
+    if isinstance(policies, list):
+      for item in policies:
+        if isinstance(item, dict):
+          if item.get("effective_date"):
+            item["effective_date"] = us_date(item.get("effective_date"))
+          if item.get("expiration_date"):
+            item["expiration_date"] = us_date(item.get("expiration_date"))
+
+  print("LOSSQ_US_PROFILE_MARKET_FORMAT_CLEANUP_V1:", {
+    "market_country": profile_data.get("market_country"),
+    "state": profile_data.get("state", ""),
+    "currency": profile_data.get("market_currency"),
+    "effective_date": profile_data.get("effective_date"),
+    "insured_name": profile_data.get("business_name"),
+  })
+
+  return profile_data
+
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
   # LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_CALL_V6
   profile_data = lossq_sanitize_profile_policies_before_upsert_v6(profile_data)
@@ -21418,6 +21707,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
   # LOSSQ_FINAL_EXPOSURE_INPUT_SAVE_BRIDGE_CALL_V4
   profile_data = lossq_final_exposure_input_save_bridge_v4(profile_data)
+
+  # LOSSQ_US_PROFILE_MARKET_FORMAT_CLEANUP_CALL_V1
+  profile_data = lossq_us_profile_market_format_cleanup_v1(file_path, profile_data, all_parsed_claims)
 
   profile = upsert_account_profile(db, profile_data, current_user)
 
