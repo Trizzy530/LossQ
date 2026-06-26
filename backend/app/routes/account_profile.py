@@ -183,6 +183,77 @@ def serialize_json(value: Any, fallback: Any):
         return json.dumps(fallback)
 
 
+
+# LOSSQ_ACCOUNT_PROFILE_PERSISTENCE_FALLBACK_KEY_V1
+def lossq_account_profile_persistence_key_v1(data):
+    """
+    Allows /account-profile/ saves to persist account-level files even when a carrier file lacks a clean policy number.
+    """
+    data = data if isinstance(data, dict) else {}
+
+    def slug(value):
+        value = clean_value(value).upper()
+        value = re.sub(r"[^A-Z0-9]+", "-", value).strip("-")
+        value = re.sub(r"-+", "-", value)
+        return value[:80]
+
+    blocked = {
+        "",
+        "N-A",
+        "NA",
+        "NONE",
+        "UNKNOWN",
+        "POLICY",
+        "POLICY-NUMBER",
+        "CLAIM",
+        "CLAIM-NUMBER",
+        "LOSS-RUN",
+        "ACCOUNT",
+        "CUSTOMER",
+        "PROFILE",
+    }
+
+    for key in [
+        "policy_number",
+        "main_policy",
+        "main_policy_number",
+        "account_number",
+        "customer_number",
+        "producer_number",
+        "client_number",
+    ]:
+        candidate = slug(data.get(key))
+        if candidate and candidate not in blocked:
+            return candidate
+
+    for key in ["policy_numbers", "policies", "policy_schedule"]:
+        value = data.get(key)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, dict):
+                    candidate = slug(item.get("policy_number") or item.get("policy") or item.get("number"))
+                else:
+                    candidate = slug(item)
+                if candidate and candidate not in blocked:
+                    return candidate
+
+    business_name = slug(
+        data.get("business_name")
+        or data.get("named_insured")
+        or data.get("insured_name")
+        or data.get("account_name")
+        or data.get("company_name")
+    )
+
+    carrier = slug(data.get("carrier_name") or data.get("writing_carrier") or data.get("insurer"))
+
+    if business_name:
+        if carrier:
+            return slug(f"ACCOUNT-{business_name}-{carrier}")
+        return slug(f"ACCOUNT-{business_name}")
+
+    return ""
+
 def ensure_account_profile_columns(db: Session):
     required_columns = {
         "writing_carrier": "VARCHAR",

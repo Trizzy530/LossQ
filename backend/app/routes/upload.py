@@ -14188,6 +14188,106 @@ def lossq_apply_market_intelligence_to_profile_v1(profile_data, raw_text=None):
     print("LOSSQ_MARKET_INTELLIGENCE_PROFILE_APPLY_FAILED_V1", str(exc))
     return profile_data
 
+
+# LOSSQ_PROFILE_PERSISTENCE_FALLBACK_KEY_V1
+def lossq_profile_persistence_key_v1(profile_data):
+  """
+  Builds a stable AccountProfile save key when a file has account data but no clean policy number.
+  This prevents uploaded profiles from existing only in browser cache.
+  """
+  if not isinstance(profile_data, dict):
+    return ""
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
+
+  def safe_slug(value):
+    value = clean(value).upper()
+    value = re.sub(r"[^A-Z0-9]+", "-", value).strip("-")
+    value = re.sub(r"-+", "-", value)
+    return value[:80]
+
+  blocked = {
+    "",
+    "N/A",
+    "NA",
+    "NONE",
+    "UNKNOWN",
+    "POLICY",
+    "POLICY-NUMBER",
+    "CLAIM",
+    "CLAIM-NUMBER",
+    "LOSS-RUN",
+    "LOSS-RUN-REPORT",
+    "ACCOUNT",
+    "CUSTOMER",
+    "PROFILE",
+  }
+
+  candidates = []
+
+  for key in [
+    "policy_number",
+    "main_policy",
+    "main_policy_number",
+    "account_number",
+    "customer_number",
+    "producer_number",
+    "client_number",
+  ]:
+    value = safe_slug(profile_data.get(key))
+    if value and value not in blocked:
+      candidates.append(value)
+
+  for key in ["policy_numbers", "policies", "policy_schedule"]:
+    value = profile_data.get(key)
+
+    if isinstance(value, list):
+      for item in value:
+        if isinstance(item, dict):
+          candidate = safe_slug(item.get("policy_number") or item.get("policy") or item.get("number"))
+        else:
+          candidate = safe_slug(item)
+
+        if candidate and candidate not in blocked:
+          candidates.append(candidate)
+
+  for candidate in candidates:
+    if candidate and candidate not in blocked:
+      return candidate
+
+  business_name = safe_slug(
+    profile_data.get("business_name")
+    or profile_data.get("named_insured")
+    or profile_data.get("insured_name")
+    or profile_data.get("account_name")
+    or profile_data.get("company_name")
+  )
+
+  carrier = safe_slug(
+    profile_data.get("carrier_name")
+    or profile_data.get("writing_carrier")
+    or profile_data.get("insurer")
+  )
+
+  if business_name:
+    if carrier:
+      return safe_slug(f"ACCOUNT-{business_name}-{carrier}")
+    return safe_slug(f"ACCOUNT-{business_name}")
+
+  upload_files = profile_data.get("uploaded_files") or profile_data.get("files") or []
+  if isinstance(upload_files, list):
+    for item in upload_files:
+      if isinstance(item, dict):
+        candidate = safe_slug(item.get("filename") or item.get("file_name") or item.get("original_filename"))
+      else:
+        candidate = safe_slug(item)
+
+      if candidate and candidate not in blocked:
+        return safe_slug(f"UPLOAD-{candidate}")
+
+  return ""
+
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
   # LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_CALL_V6
   profile_data = lossq_sanitize_profile_policies_before_upsert_v6(profile_data)
@@ -14202,6 +14302,15 @@ def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
     or profile_data.get("main_policy_number")
     or profile_data.get("account_number")
   )
+
+  # LOSSQ_PROFILE_PERSISTENCE_FALLBACK_KEY_CALL_V1
+  if not policy_number:
+    policy_number = lossq_profile_persistence_key_v1(profile_data)
+
+  if policy_number:
+    profile_data["policy_number"] = profile_data.get("policy_number") or policy_number
+    profile_data["main_policy"] = profile_data.get("main_policy") or policy_number
+    profile_data["main_policy_number"] = profile_data.get("main_policy_number") or policy_number
 
   if not policy_number:
     return None
