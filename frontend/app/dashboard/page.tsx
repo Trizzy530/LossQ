@@ -10191,15 +10191,42 @@ const modelChartNarrative =
            </button>
           </div>
 
-          {/* LOSSQ_MARKET_CONTEXT_CARD_ALIGNMENT_V1 */}
-          <div className="mt-5 grid grid-cols-2 items-stretch gap-3 md:grid-cols-7 [&>div]:flex [&>div]:min-h-[6.25rem] [&>div]:flex-col [&>div>p:first-child]:min-h-[2.5rem] [&>div>p:first-child]:leading-4 [&>div>p:last-child]:mt-auto">
-           <ProfileDetail label="Country / Market" value={marketCountry || "-"} />
-           <ProfileDetail label={geographyLabel} value={marketRegionDisplay || "-"} />
-           <ProfileDetail label="Currency" value={marketCurrency || "-"} />
-           <ProfileDetail label="Date Format" value={marketDateFormat || "-"} />
-           <ProfileDetail label="Regulator" value={marketRegulatorDisplay || "-"} />
-           <ProfileDetail label="Language Output" value={marketLanguageOutput || "-"} />
-           <ProfileDetail label="License Number" value={agencyLicenseNumber || "-"} />
+          {/* LOSSQ_MARKET_CONTEXT_FIXED_VALUE_ALIGNMENT_V3 */}
+          <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-7">
+           <div className="grid min-h-[6.5rem] grid-rows-[2.75rem_1fr] rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
+            <p className="text-xs uppercase tracking-[0.25em] leading-4 text-blue-300">Country / Market</p>
+            <p className="self-start text-base font-bold leading-5 text-white">{marketCountry || "-"}</p>
+           </div>
+
+           <div className="grid min-h-[6.5rem] grid-rows-[2.75rem_1fr] rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
+            <p className="text-xs uppercase tracking-[0.25em] leading-4 text-blue-300">{geographyLabel}</p>
+            <p className="self-start text-base font-bold leading-5 text-white">{marketRegionDisplay || "-"}</p>
+           </div>
+
+           <div className="grid min-h-[6.5rem] grid-rows-[2.75rem_1fr] rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
+            <p className="text-xs uppercase tracking-[0.25em] leading-4 text-blue-300">Currency</p>
+            <p className="self-start text-base font-bold leading-5 text-white">{marketCurrency || "-"}</p>
+           </div>
+
+           <div className="grid min-h-[6.5rem] grid-rows-[2.75rem_1fr] rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
+            <p className="text-xs uppercase tracking-[0.25em] leading-4 text-blue-300">Date Format</p>
+            <p className="self-start text-base font-bold leading-5 text-white">{marketDateFormat || "-"}</p>
+           </div>
+
+           <div className="grid min-h-[6.5rem] grid-rows-[2.75rem_1fr] rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
+            <p className="text-xs uppercase tracking-[0.25em] leading-4 text-blue-300">Regulator</p>
+            <p className="self-start text-base font-bold leading-5 text-white">{marketRegulatorDisplay || "-"}</p>
+           </div>
+
+           <div className="grid min-h-[6.5rem] grid-rows-[2.75rem_1fr] rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
+            <p className="text-xs uppercase tracking-[0.25em] leading-4 text-blue-300">Language Output</p>
+            <p className="self-start text-base font-bold leading-5 text-white">{marketLanguageOutput || "-"}</p>
+           </div>
+
+           <div className="grid min-h-[6.5rem] grid-rows-[2.75rem_1fr] rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
+            <p className="text-xs uppercase tracking-[0.25em] leading-4 text-blue-300">License Number</p>
+            <p className="self-start text-base font-bold leading-5 text-white">{agencyLicenseNumber || "-"}</p>
+           </div>
           </div>
 
           <p className="mt-4 text-xs leading-5 text-slate-500">
