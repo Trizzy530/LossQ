@@ -517,7 +517,186 @@ def list_account_profiles(current_user: dict = Depends(get_current_user)):
             query = query.filter(AccountProfile.organization_id == organization_id)
 
         profiles = query.order_by(AccountProfile.id.desc()).all()
-        return [lossq_account_profile_to_dict(profile) for profile in profiles]
+        profile_rows = [lossq_account_profile_to_dict(profile) for profile in profiles]
+
+        if profile_rows:
+            return profile_rows
+
+        # LOSSQ_ACCOUNT_PROFILE_LIST_FALLBACK_FROM_CLAIMS_V2
+        # If account_profiles is empty after logout/login, rebuild saved profile cards
+        # from persisted organization claim rows. This does not create/delete data.
+        try:
+            import re as _lossq_profile_fallback_re
+
+            fallback_query = db.query(Claim)
+
+            if organization_id is not None and hasattr(Claim, "organization_id"):
+                fallback_query = fallback_query.filter(Claim.organization_id == organization_id)
+
+            claim_rows = fallback_query.order_by(Claim.id.desc()).limit(2000).all()
+
+            def _clean(value):
+                return str(value or "").strip()
+
+            def _money(value):
+                raw = _lossq_profile_fallback_re.sub(r"[^0-9.\-]", "", _clean(value).replace(",", ""))
+
+                try:
+                    return float(raw or 0)
+                except Exception:
+                    return 0.0
+
+            def _policy_line(policy_number, raw_line):
+                policy = _clean(policy_number).upper()
+                line = _clean(raw_line)
+
+                if _lossq_profile_fallback_re.search(r"(^|[-_\s])(CGL|GL)([-_\s]|$)", policy):
+                    return "CGL"
+
+                if line.lower() in {
+                    "bodily injury",
+                    "property damage",
+                    "completed ops",
+                    "completed operations",
+                    "bi",
+                    "pd",
+                }:
+                    return "CGL"
+
+                if line:
+                    return line
+
+                return ""
+
+            grouped = {}
+
+            for claim in claim_rows:
+                policy_number = _clean(getattr(claim, "policy_number", ""))
+
+                if not policy_number or policy_number.upper() in {"UNKNOWN", "N/A", "NONE", "-"}:
+                    continue
+
+                key = policy_number.upper()
+
+                profile = grouped.setdefault(key, {
+                    "id": f"claims-fallback-{key}",
+                    "profile_id": None,
+                    "business_name": "",
+                    "insured_name": "",
+                    "display_name": "",
+                    "account_name": "",
+                    "carrier_name": "",
+                    "writing_carrier": "",
+                    "carrier": "",
+                    "policy_number": key,
+                    "policyNumber": key,
+                    "main_policy": key,
+                    "mainPolicy": key,
+                    "line_of_business": "",
+                    "policy_type": "",
+                    "claim_count": 0,
+                    "total_claims": 0,
+                    "open_claims": 0,
+                    "closed_claims": 0,
+                    "total_incurred": 0.0,
+                    "lossq_claim_fallback_profile": True,
+                })
+
+                business_name = (
+                    _clean(getattr(claim, "business_name", ""))
+                    or _clean(getattr(claim, "insured_name", ""))
+                    or _clean(getattr(claim, "account_name", ""))
+                    or _clean(getattr(claim, "customer_name", ""))
+                )
+
+                if business_name and not profile["business_name"]:
+                    profile["business_name"] = business_name
+                    profile["insured_name"] = business_name
+                    profile["display_name"] = business_name
+                    profile["account_name"] = business_name
+
+                carrier_name = (
+                    _clean(getattr(claim, "carrier_name", ""))
+                    or _clean(getattr(claim, "writing_carrier", ""))
+                    or _clean(getattr(claim, "carrier", ""))
+                )
+
+                if carrier_name and not profile["carrier_name"]:
+                    profile["carrier_name"] = carrier_name
+                    profile["writing_carrier"] = carrier_name
+                    profile["carrier"] = carrier_name
+
+                line_value = _policy_line(
+                    key,
+                    _clean(getattr(claim, "line_of_business", ""))
+                    or _clean(getattr(claim, "claim_type", ""))
+                    or _clean(getattr(claim, "coverage", ""))
+                    or _clean(getattr(claim, "line", ""))
+                )
+
+                if line_value and not profile["line_of_business"]:
+                    profile["line_of_business"] = line_value
+                    profile["policy_type"] = line_value
+
+                status = _clean(getattr(claim, "status", "")).lower()
+
+                profile["claim_count"] += 1
+                profile["total_claims"] += 1
+
+                if status == "closed":
+                    profile["closed_claims"] += 1
+                else:
+                    profile["open_claims"] += 1
+
+                profile["total_incurred"] += _money(
+                    getattr(claim, "total_incurred", None)
+                    or getattr(claim, "incurred", None)
+                    or getattr(claim, "total", None)
+                    or 0
+                )
+
+            fallback_profiles = []
+
+            for policy_number, profile in grouped.items():
+                if not profile["business_name"]:
+                    profile["business_name"] = f"Saved profile {policy_number}"
+                    profile["insured_name"] = profile["business_name"]
+                    profile["display_name"] = profile["business_name"]
+                    profile["account_name"] = profile["business_name"]
+
+                policy_row = {
+                    "policy_number": policy_number,
+                    "policyNumber": policy_number,
+                    "line_of_business": profile.get("line_of_business") or "",
+                    "lineOfBusiness": profile.get("line_of_business") or "",
+                    "policy_type": profile.get("policy_type") or profile.get("line_of_business") or "",
+                    "policyType": profile.get("policy_type") or profile.get("line_of_business") or "",
+                    "coverage": profile.get("line_of_business") or "",
+                    "carrier": profile.get("carrier_name") or "",
+                    "carrier_name": profile.get("carrier_name") or "",
+                    "claim_count": profile.get("claim_count") or 0,
+                    "claims": profile.get("claim_count") or 0,
+                    "total_incurred": profile.get("total_incurred") or 0,
+                }
+
+                profile["policies"] = [policy_row]
+                profile["policy_schedule"] = [policy_row]
+                profile["policySchedule"] = [policy_row]
+
+                fallback_profiles.append(profile)
+
+            print("LOSSQ_ACCOUNT_PROFILE_LIST_FALLBACK_FROM_CLAIMS_V2:", {
+                "organization_id": organization_id,
+                "profiles": len(fallback_profiles),
+            })
+
+            if fallback_profiles:
+                return fallback_profiles
+
+        except Exception as fallback_exc:
+            print("LOSSQ_ACCOUNT_PROFILE_LIST_FALLBACK_FROM_CLAIMS_V2_ERROR:", str(fallback_exc)[:500])
+
+        return profile_rows
     finally:
         db.close()
 
