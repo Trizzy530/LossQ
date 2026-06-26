@@ -20110,60 +20110,6 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     # LOSSQ_CANONICAL_UPLOAD_CLAIM_PURGE_V1
     # Before saving this upload, remove stale rows tied to the same uploaded claim numbers
     # or policy numbers. This prevents old bad rows from surviving after parser repairs.
-    # LOSSQ_DROP_ZERO_YEAR_SUMMARY_CLAIMS_BEFORE_SAVE_V1
-    try:
-      import re as _lossq_year_summary_re
-
-      def _lossq_drop_zero_year_summary_claim_v1(row):
-        if not isinstance(row, dict):
-          return False
-
-        claim_number = str(
-          row.get("claim_number")
-          or row.get("claimNumber")
-          or row.get("claim_no")
-          or ""
-        ).strip()
-
-        if not _lossq_year_summary_re.fullmatch(r"\d{4}\s*[-–]\s*\d{4}", claim_number):
-          return False
-
-        def money(value):
-          raw = _lossq_year_summary_re.sub(r"[^0-9.\-]", "", str(value or ""))
-          try:
-            return float(raw or 0)
-          except Exception:
-            return 0.0
-
-        amount = (
-          money(row.get("paid"))
-          + money(row.get("paid_amount"))
-          + money(row.get("reserve"))
-          + money(row.get("reserve_amount"))
-          + money(row.get("total_incurred"))
-          + money(row.get("incurred"))
-        )
-
-        return amount <= 0
-
-      before_year_summary_filter = len(all_parsed_claims) if isinstance(all_parsed_claims, list) else 0
-
-      if isinstance(all_parsed_claims, list):
-        all_parsed_claims = [
-          row for row in all_parsed_claims
-          if not _lossq_drop_zero_year_summary_claim_v1(row)
-        ]
-
-      after_year_summary_filter = len(all_parsed_claims) if isinstance(all_parsed_claims, list) else 0
-
-      if before_year_summary_filter != after_year_summary_filter:
-        print("LOSSQ_DROP_ZERO_YEAR_SUMMARY_CLAIMS_BEFORE_SAVE_V1:", {
-          "before": before_year_summary_filter,
-          "after": after_year_summary_filter,
-        })
-    except Exception as year_summary_filter_exc:
-      print("LOSSQ_DROP_ZERO_YEAR_SUMMARY_CLAIMS_BEFORE_SAVE_V1_ERROR:", str(year_summary_filter_exc)[:300])
-
     upload_claim_numbers = []
     upload_policy_keys = []
 
