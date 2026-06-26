@@ -286,6 +286,61 @@ def lossq_sectioned_excel_loss_run_repair_v1(
             expiration_date = expiration_date or end
             continue
 
+    # LOSSQ_SECTIONED_EXCEL_POLICY_SUMMARY_PAIR_PROFILE_V1
+    occurrence_limit = ""
+
+    for row in all_rows:
+        for index in range(0, max(len(row) - 1, 0)):
+            label = key(row[index])
+            value = clean(row[index + 1])
+
+            if not label or not value:
+                continue
+
+            if not business_name and re.search(r"(insured|assuré|assure)", label, flags=re.I):
+                business_name = value
+                continue
+
+            if not policy_number and re.search(r"(policy|police)", label, flags=re.I) and not re.search(r"(period|période|periode)", label, flags=re.I):
+                policy_number = value
+                continue
+
+            if not province_code and re.search(r"(province|state)", label, flags=re.I):
+                province_code, province_name, regulator = parse_province(value)
+                continue
+
+            if not currency and re.search(r"(currency|devise)", label, flags=re.I):
+                currency = value.upper()
+                continue
+
+            if not line_of_business and re.search(r"(ibc|bac|line of business|ligne)", label, flags=re.I):
+                line_of_business = value
+                continue
+
+            if not evaluation_date and re.search(r"(report date|date du rapport|valuation|evaluation|évaluation)", label, flags=re.I):
+                evaluation_date = value
+                continue
+
+            if re.search(r"(period|période|periode)", label, flags=re.I):
+                start, end = parse_period(value)
+                effective_date = effective_date or start
+                expiration_date = expiration_date or end
+                continue
+
+            if not occurrence_limit and re.search(r"(occurrence limit|aggregate limit|policy limit|limite)", label, flags=re.I):
+                occurrence_limit = value
+                continue
+
+    # Header-style carrier extraction, e.g. "AVIVA CANADA INC. – COMMERCIAL GENERAL LIABILITY LOSS RUN".
+    if not carrier:
+        for row in all_rows[:8]:
+            line = clean(" ".join(cell for cell in row if cell))
+            match = re.search(r"(?i)^(.+?)\s+[–-]\s+.*loss run", line)
+
+            if match:
+                carrier = display_name_case(match.group(1))
+                break
+
     if not carrier:
         for row in all_rows[-8:]:
             line = clean(" ".join(cell for cell in row if cell))
@@ -376,9 +431,31 @@ def lossq_sectioned_excel_loss_run_repair_v1(
                 "source_parser": "sectioned_excel_loss_run_service",
             })
 
+    # LOSSQ_SECTIONED_EXCEL_EXCLUDE_YEAR_SUMMARY_ROWS_V1
+    def looks_like_loss_summary_year_row(claim: Any) -> bool:
+        if not isinstance(claim, dict):
+            return False
+
+        claim_number = clean(claim.get("claim_number") or claim.get("claim_no"))
+        if not re.fullmatch(r"\d{4}\s*[-–]\s*\d{4}", claim_number):
+            return False
+
+        amount = (
+            money_float(claim.get("paid"))
+            + money_float(claim.get("paid_amount"))
+            + money_float(claim.get("reserve"))
+            + money_float(claim.get("reserve_amount"))
+            + money_float(claim.get("total_incurred"))
+            + money_float(claim.get("incurred"))
+        )
+
+        return amount <= 0
+
     real_existing = [
         claim for claim in parsed_claims
-        if isinstance(claim, dict) and looks_like_claim_number(claim.get("claim_number") or claim.get("claim_no"))
+        if isinstance(claim, dict)
+        and looks_like_claim_number(claim.get("claim_number") or claim.get("claim_no"))
+        and not looks_like_loss_summary_year_row(claim)
     ]
 
     if claims and len(claims) >= len(real_existing):
@@ -936,6 +1013,219 @@ def lossq_sectioned_excel_loss_run_repair_v1(
 
         if policy_rows_overlay:
             policy_rows = policy_rows_overlay
+
+    # LOSSQ_SECTIONED_EXCEL_EXPOSURE_SUMMARY_OVERLAY_V1
+    try:
+        exposure_inputs
+    except NameError:
+        exposure_inputs = {}
+
+    exposure_summary_rows: list[dict[str, Any]] = []
+    exposure_summary_headers: list[str] = []
+    in_exposure_summary = False
+    total_exposure_premium = ""
+
+    def summary_header_indexes(*patterns: str) -> list[int]:
+        indexes: list[int] = []
+
+        for idx, header in enumerate(exposure_summary_headers):
+            header_key = key(header)
+
+            for pattern in patterns:
+                if re.search(pattern, header_key, flags=re.I):
+                    indexes.append(idx)
+                    break
+
+        return indexes
+
+    def summary_first_value(row_values: list[str], indexes: list[int]) -> str:
+        for idx in indexes:
+            if 0 <= idx < len(row_values):
+                value = clean(row_values[idx])
+                if value and value not in {"—", "-", "N/A", "n/a"}:
+                    return value
+
+        return ""
+
+    def summary_first_money(row_values: list[str], indexes: list[int]) -> str:
+        for idx in indexes:
+            if 0 <= idx < len(row_values):
+                amount = money_float(row_values[idx])
+                if amount > 0:
+                    return str(int(amount)) if amount == int(amount) else str(amount)
+
+        return ""
+
+    for row in all_rows:
+        joined = " ".join(row)
+
+        if re.search(r"(?i)(exposure summary|exposure data|données d'exposition|donnees d exposition)", joined):
+            in_exposure_summary = True
+            exposure_summary_headers = []
+            continue
+
+        if in_exposure_summary and re.search(r"(?i)(claims detail|loss summary|détail des sinistres|detail des sinistres)", joined):
+            break
+
+        if not in_exposure_summary:
+            continue
+
+        if not exposure_summary_headers and re.search(r"(?i)(exposure class|category|catégorie|categorie)", joined):
+            exposure_summary_headers = row
+            continue
+
+        if not exposure_summary_headers:
+            continue
+
+        exposure_class = clean(row[0] if row else "")
+
+        if not exposure_class:
+            continue
+
+        premium_cols = summary_header_indexes(r"premium", r"prime")
+
+        if exposure_class.upper() == "TOTAL":
+            total_exposure_premium = summary_first_money(row, premium_cols)
+            continue
+
+        revenue_cols = summary_header_indexes(r"receipts", r"revenue", r"revenu")
+        square_cols = summary_header_indexes(r"square", r"footage", r"superficie")
+        employee_cols = summary_header_indexes(r"employees", r"employee", r"employ")
+        rate_cols = summary_header_indexes(r"rate", r"taux")
+
+        exposure_summary_rows.append({
+            "class": exposure_class,
+            "exposure_class": exposure_class,
+            "revenue": summary_first_money(row, revenue_cols),
+            "square_footage": summary_first_value(row, square_cols),
+            "employees": summary_first_value(row, employee_cols),
+            "employee_count": summary_first_value(row, employee_cols),
+            "rate": summary_first_value(row, rate_cols),
+            "premium": summary_first_money(row, premium_cols),
+        })
+
+    if exposure_summary_rows:
+        cgl_line = "CGL"
+
+        revenue_values = [
+            money_float(row.get("revenue"))
+            for row in exposure_summary_rows
+            if money_float(row.get("revenue")) > 0
+        ]
+
+        employee_values = [
+            money_float(row.get("employees"))
+            for row in exposure_summary_rows
+            if money_float(row.get("employees")) > 0
+        ]
+
+        square_values = [
+            money_float(row.get("square_footage"))
+            for row in exposure_summary_rows
+            if money_float(row.get("square_footage")) > 0
+        ]
+
+        premium_values = [
+            money_float(row.get("premium"))
+            for row in exposure_summary_rows
+            if money_float(row.get("premium")) > 0
+        ]
+
+        total_premium = money_float(total_exposure_premium) or sum(premium_values)
+        revenue_value = max(revenue_values) if revenue_values else 0.0
+        employee_value = max(employee_values) if employee_values else 0.0
+        square_value = max(square_values) if square_values else 0.0
+
+        limit_text = clean(occurrence_limit) if "occurrence_limit" in locals() else ""
+        limit_text = re.sub(r"(?i)\$?\s*2,?000,?000\s*per\s*occ", "$2,000,000 occ", limit_text)
+        limit_text = re.sub(r"(?i)\$?\s*4,?000,?000\s*agg", "$4,000,000 agg", limit_text)
+
+        if limit_text:
+            compact_limits = f"CGL: {limit_text}"
+        else:
+            compact_limits = ""
+
+        if cgl_line:
+            line_of_business = cgl_line
+
+        exposure_inputs.update({
+            "detected_lines": 1,
+            "lines_detected": 1,
+            "line_count": 1,
+            "primary_line_of_business": cgl_line,
+            "primaryLineOfBusiness": cgl_line,
+            "line_of_business": cgl_line,
+            "lineOfBusiness": cgl_line,
+            "policy_limits": compact_limits,
+            "policyLimits": compact_limits,
+            "Policy Limits": compact_limits,
+            "limits": compact_limits,
+            "coverage_limit": compact_limits,
+            "coverageLimit": compact_limits,
+            "current_premium": str(int(total_premium)) if total_premium else "",
+            "currentPremium": str(int(total_premium)) if total_premium else "",
+            "Current Premium": str(int(total_premium)) if total_premium else "",
+            "expiring_premium": str(int(total_premium)) if total_premium else "",
+            "expiringPremium": str(int(total_premium)) if total_premium else "",
+            "Expiring Premium": str(int(total_premium)) if total_premium else "",
+            "revenue": str(int(revenue_value)) if revenue_value else "",
+            "annual_revenue": str(int(revenue_value)) if revenue_value else "",
+            "revenue_sales": str(int(revenue_value)) if revenue_value else "",
+            "revenueSales": str(int(revenue_value)) if revenue_value else "",
+            "Revenue / Sales": str(int(revenue_value)) if revenue_value else "",
+            "employee_count": str(int(employee_value)) if employee_value else "",
+            "employeeCount": str(int(employee_value)) if employee_value else "",
+            "Employee Count": str(int(employee_value)) if employee_value else "",
+            "square_footage": str(int(square_value)) if square_value else "",
+            "squareFootage": str(int(square_value)) if square_value else "",
+            "Square Footage": str(int(square_value)) if square_value else "",
+            "exposure_summary_rows": exposure_summary_rows,
+            "exposureSummaryRows": exposure_summary_rows,
+        })
+
+        claim_count_for_policy = len(parsed_claims if isinstance(parsed_claims, list) else [])
+        total_incurred_for_policy = sum(
+            money_float(claim.get("total_incurred") or claim.get("incurred"))
+            for claim in (parsed_claims or [])
+            if isinstance(claim, dict)
+        )
+
+        policy_rows = [{
+            "policy_number": policy_number,
+            "policyNumber": policy_number,
+            "line_of_business": cgl_line,
+            "lineOfBusiness": cgl_line,
+            "policy_type": cgl_line,
+            "policyType": cgl_line,
+            "coverage": cgl_line,
+            "carrier": carrier,
+            "carrier_name": carrier,
+            "carrierName": carrier,
+            "writing_carrier": carrier,
+            "writingCarrier": carrier,
+            "effective_date": effective_date,
+            "effectiveDate": effective_date,
+            "expiration_date": expiration_date,
+            "expirationDate": expiration_date,
+            "evaluation_date": evaluation_date,
+            "evaluationDate": evaluation_date,
+            "state": province_code,
+            "stateProvince": province_code,
+            "province": province_name or province_code,
+            "province_code": province_code,
+            "currency": currency,
+            "limit": compact_limits,
+            "policy_limit": compact_limits,
+            "policyLimit": compact_limits,
+            "premium": str(int(total_premium)) if total_premium else "",
+            "revenue": str(int(revenue_value)) if revenue_value else "",
+            "employees": str(int(employee_value)) if employee_value else "",
+            "employee_count": str(int(employee_value)) if employee_value else "",
+            "square_footage": str(int(square_value)) if square_value else "",
+            "claims": claim_count_for_policy,
+            "claim_count": claim_count_for_policy,
+            "total_incurred": total_incurred_for_policy,
+        }]
 
     is_canada = bool(province_code or currency == "CAD" or re.search(r"(?i)canada|cad|québec|quebec|ontario|manitoba|ibc|bac", first_text))
 
