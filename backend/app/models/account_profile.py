@@ -47,6 +47,8 @@ class AccountProfile(Base):
     sales = Column(String, nullable=True)
     receipts = Column(String, nullable=True)
     employee_count = Column(String, nullable=True)
+    # LOSSQ_ACCOUNT_PROFILE_PHYSICIAN_COUNT_COLUMN_V2
+    physician_count = Column(String, nullable=True)
     vehicle_count = Column(String, nullable=True)
     driver_count = Column(String, nullable=True)
     property_tiv = Column(String, nullable=True)

@@ -61,6 +61,8 @@ class AccountProfileUpdate(BaseModel):
     sales: Optional[str] = ""
     receipts: Optional[str] = ""
     employee_count: Optional[str] = ""
+    # LOSSQ_ACCOUNT_PROFILE_UPDATE_PHYSICIAN_COUNT_FIELD_V2
+    physician_count: Optional[str] = ""
     vehicle_count: Optional[str] = ""
     driver_count: Optional[str] = ""
     property_tiv: Optional[str] = ""
@@ -207,6 +209,8 @@ def ensure_account_profile_columns(db: Session):
         "sales": "VARCHAR",
         "receipts": "VARCHAR",
         "employee_count": "VARCHAR",
+        # LOSSQ_ACCOUNT_PROFILE_ENSURE_PHYSICIAN_COUNT_COLUMN_V2
+        "physician_count": "VARCHAR",
         "vehicle_count": "VARCHAR",
         "driver_count": "VARCHAR",
         "property_tiv": "VARCHAR",
@@ -292,6 +296,18 @@ def normalize_policy_list(raw_policies: Any):
                 "carrier": clean_value(item.get("carrier") or item.get("writing_carrier") or ""),
                 "effective_date": clean_value(item.get("effective_date") or item.get("effective") or ""),
                 "expiration_date": clean_value(item.get("expiration_date") or item.get("expiration") or ""),
+                # LOSSQ_POLICY_SCHEDULE_EXPOSURE_RETURN_FIELDS_V2
+                "limit": clean_value(item.get("limit") or item.get("policy_limit") or item.get("policyLimit") or ""),
+                "policy_limit": clean_value(item.get("policy_limit") or item.get("policyLimit") or item.get("limit") or ""),
+                "policyLimit": clean_value(item.get("policyLimit") or item.get("policy_limit") or item.get("limit") or ""),
+                "premium": clean_value(item.get("premium") or ""),
+                "revenue": clean_value(item.get("revenue") or ""),
+                "employees": clean_value(item.get("employees") or item.get("employee_count") or item.get("employeeCount") or ""),
+                "employee_count": clean_value(item.get("employee_count") or item.get("employeeCount") or item.get("employees") or ""),
+                "employeeCount": clean_value(item.get("employeeCount") or item.get("employee_count") or item.get("employees") or ""),
+                "physicians": clean_value(item.get("physicians") or item.get("physician_count") or item.get("physicianCount") or ""),
+                "physician_count": clean_value(item.get("physician_count") or item.get("physicianCount") or item.get("physicians") or ""),
+                "physicianCount": clean_value(item.get("physicianCount") or item.get("physician_count") or item.get("physicians") or ""),
                 "claim_count": int(float(item.get("claim_count") or item.get("claims") or 0)),
                 "total_incurred": safe_money(item.get("total_incurred") or item.get("incurred")),
             }
@@ -402,7 +418,25 @@ def lossq_account_profile_to_dict(profile):
         "payroll": clean_value(getattr(profile, "payroll", "")),
         "revenue": clean_value(getattr(profile, "revenue", "")),
         "sales": clean_value(getattr(profile, "sales", "")),
-        "employee_count": clean_value(getattr(profile, "employee_count", "")),
+        "employee_count": clean_value(getattr(profile, "employee_count",
+        # LOSSQ_ACCOUNT_PROFILE_UPDATE_FIELD_LIST_PHYSICIAN_V2
+        "physician_count", "")),
+        # LOSSQ_ACCOUNT_PROFILE_EXPOSURE_RESPONSE_ALIASES_V2
+        "employeeCount": clean_value(getattr(profile, "employee_count", "")),
+        "Employee Count": clean_value(getattr(profile, "employee_count", "")),
+        "physician_count": clean_value(getattr(profile, "physician_count", "")),
+        "physicianCount": clean_value(getattr(profile, "physician_count", "")),
+        "physicians": clean_value(getattr(profile, "physician_count", "")),
+        "Physician Count": clean_value(getattr(profile, "physician_count", "")),
+        "limits": clean_value(getattr(profile, "limits", "")),
+        "coverage_limit": clean_value(getattr(profile, "coverage_limit", "")),
+        "coverageLimit": clean_value(getattr(profile, "coverage_limit", "")),
+        "policy_limits": clean_value(getattr(profile, "coverage_limit", "") or getattr(profile, "limits", "")),
+        "policyLimits": clean_value(getattr(profile, "coverage_limit", "") or getattr(profile, "limits", "")),
+        "Policy Limits": clean_value(getattr(profile, "coverage_limit", "") or getattr(profile, "limits", "")),
+        "lineOfBusiness": clean_value(getattr(profile, "line_of_business", "")),
+        "primary_line_of_business": clean_value(getattr(profile, "line_of_business", "")),
+        "primaryLineOfBusiness": clean_value(getattr(profile, "line_of_business", "")),
         "vehicle_count": clean_value(getattr(profile, "vehicle_count", "")),
         "driver_count": clean_value(getattr(profile, "driver_count", "")),
         "property_tiv": clean_value(getattr(profile, "property_tiv", "")),
@@ -413,6 +447,42 @@ def lossq_account_profile_to_dict(profile):
         "location_count": location_count_value,
         "locations": location_count_value,
         "locationCount": location_count_value,
+        # LOSSQ_ACCOUNT_PROFILE_EXPOSURE_INPUTS_RESPONSE_OBJECT_V2
+        "exposure_inputs": {
+            "primary_line_of_business": clean_value(getattr(profile, "line_of_business", "")),
+            "primaryLineOfBusiness": clean_value(getattr(profile, "line_of_business", "")),
+            "line_of_business": clean_value(getattr(profile, "line_of_business", "")),
+            "lineOfBusiness": clean_value(getattr(profile, "line_of_business", "")),
+            "policy_limits": clean_value(getattr(profile, "coverage_limit", "") or getattr(profile, "limits", "")),
+            "policyLimits": clean_value(getattr(profile, "coverage_limit", "") or getattr(profile, "limits", "")),
+            "Policy Limits": clean_value(getattr(profile, "coverage_limit", "") or getattr(profile, "limits", "")),
+            "coverage_limit": clean_value(getattr(profile, "coverage_limit", "")),
+            "coverageLimit": clean_value(getattr(profile, "coverage_limit", "")),
+            "limits": clean_value(getattr(profile, "limits", "")),
+            "physician_count": clean_value(getattr(profile, "physician_count", "")),
+            "physicianCount": clean_value(getattr(profile, "physician_count", "")),
+            "physicians": clean_value(getattr(profile, "physician_count", "")),
+            "Physician Count": clean_value(getattr(profile, "physician_count", "")),
+            "employee_count": clean_value(getattr(profile, "employee_count", "")),
+            "employeeCount": clean_value(getattr(profile, "employee_count", "")),
+            "current_premium": clean_value(getattr(profile, "current_premium", "")),
+            "currentPremium": clean_value(getattr(profile, "current_premium", "")),
+            "expiring_premium": clean_value(getattr(profile, "expiring_premium", "")),
+            "expiringPremium": clean_value(getattr(profile, "expiring_premium", "")),
+            "revenue": clean_value(getattr(profile, "revenue", "")),
+            "professional_revenue": clean_value(getattr(profile, "revenue", "")),
+            "professionalRevenue": clean_value(getattr(profile, "revenue", "")),
+        },
+        "exposureInputs": {
+            "primary_line_of_business": clean_value(getattr(profile, "line_of_business", "")),
+            "policy_limits": clean_value(getattr(profile, "coverage_limit", "") or getattr(profile, "limits", "")),
+            "policyLimits": clean_value(getattr(profile, "coverage_limit", "") or getattr(profile, "limits", "")),
+            "coverage_limit": clean_value(getattr(profile, "coverage_limit", "")),
+            "coverageLimit": clean_value(getattr(profile, "coverage_limit", "")),
+            "physician_count": clean_value(getattr(profile, "physician_count", "")),
+            "physicianCount": clean_value(getattr(profile, "physician_count", "")),
+            "physicians": clean_value(getattr(profile, "physician_count", "")),
+        },
         "liquor_sales": liquor_sales_value,
         "liquorSales": liquor_sales_value,
         "alcohol_sales": liquor_sales_value,
