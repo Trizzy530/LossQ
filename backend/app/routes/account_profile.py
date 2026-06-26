@@ -489,9 +489,7 @@ def lossq_account_profile_to_dict(profile):
         "payroll": clean_value(getattr(profile, "payroll", "")),
         "revenue": clean_value(getattr(profile, "revenue", "")),
         "sales": clean_value(getattr(profile, "sales", "")),
-        "employee_count": clean_value(getattr(profile, "employee_count",
-        # LOSSQ_ACCOUNT_PROFILE_UPDATE_FIELD_LIST_PHYSICIAN_V2
-        "physician_count", "")),
+        "employee_count": clean_value(getattr(profile, "employee_count", "")),
         # LOSSQ_ACCOUNT_PROFILE_EXPOSURE_RESPONSE_ALIASES_V2
         "employeeCount": clean_value(getattr(profile, "employee_count", "")),
         "Employee Count": clean_value(getattr(profile, "employee_count", "")),
@@ -772,6 +770,37 @@ def save_account_profile_root(payload: AccountProfileUpdate, current_user: dict 
     except Exception as exc:
         db.rollback()
         raise HTTPException(status_code=500, detail=f"Account profile save failed: {str(exc)}")
+    finally:
+        db.close()
+
+
+# LOSSQ_ACCOUNT_PROFILE_ROOT_GET_ROUTE_V1
+@router.get("")
+@router.get("/")
+def get_account_profile_root(current_user: dict = Depends(get_current_user)):
+    """
+    Safe root profile read endpoint for dashboard calls to /account-profile/.
+    Prevents 405 while /account-profile/all remains the profile-list source.
+    """
+    db = SessionLocal()
+    try:
+        ensure_account_profile_columns(db)
+
+        organization_id = current_user.get("organization_id") if isinstance(current_user, dict) else None
+        query = db.query(AccountProfile)
+
+        if organization_id is not None:
+            query = query.filter(AccountProfile.organization_id == organization_id)
+
+        profile = query.order_by(AccountProfile.id.desc()).first()
+
+        if not profile:
+            return {}
+
+        return lossq_account_profile_to_dict(profile)
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Account profile read failed: {str(exc)}")
     finally:
         db.close()
 
