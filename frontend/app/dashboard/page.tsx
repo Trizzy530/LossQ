@@ -10191,7 +10191,8 @@ const modelChartNarrative =
            </button>
           </div>
 
-          <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-7">
+          {/* LOSSQ_MARKET_CONTEXT_CARD_ALIGNMENT_V1 */}
+          <div className="mt-5 grid grid-cols-2 items-stretch gap-3 md:grid-cols-7 [&>div]:flex [&>div]:min-h-[6.25rem] [&>div]:flex-col [&>div>p:first-child]:min-h-[2.5rem] [&>div>p:first-child]:leading-4 [&>div>p:last-child]:mt-auto">
            <ProfileDetail label="Country / Market" value={marketCountry || "-"} />
            <ProfileDetail label={geographyLabel} value={marketRegionDisplay || "-"} />
            <ProfileDetail label="Currency" value={marketCurrency || "-"} />
