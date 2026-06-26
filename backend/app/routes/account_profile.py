@@ -464,6 +464,101 @@ def lossq_account_profile_to_dict(profile):
         or lossq_extract_from_exposure_basis_v1("Alcohol Sales")
     )
 
+    # LOSSQ_ACCOUNT_PROFILE_US_MARKET_RESPONSE_NORMALIZE_V1
+    market_context = validation.get("market_context") if isinstance(validation, dict) else {}
+    region_context = market_context.get("region_context") if isinstance(market_context, dict) else {}
+
+    def _lossq_response_clean(value):
+        return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
+
+    def _lossq_response_upper(value):
+        return _lossq_response_clean(value).upper()
+
+    def _lossq_response_us_date(value):
+        value = _lossq_response_clean(value)
+        if not value:
+            return ""
+
+        match = re.match(r"^(\d{4})-(\d{2})-(\d{2})$", value)
+        if match:
+            return f"{match.group(2)}/{match.group(3)}/{match.group(1)}"
+
+        match = re.match(r"^(\d{4})/(\d{2})/(\d{2})$", value)
+        if match:
+            return f"{match.group(2)}/{match.group(3)}/{match.group(1)}"
+
+        match = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{4})$", value)
+        if match:
+            return f"{int(match.group(1)):02d}/{int(match.group(2)):02d}/{match.group(3)}"
+
+        return value
+
+    policy_text = " ".join([
+        _lossq_response_clean(getattr(profile, "policy_number", "")),
+        " ".join([_lossq_response_clean(item.get("policy_number", "")) for item in policies if isinstance(item, dict)]),
+    ])
+
+    raw_market_country = _lossq_response_clean(
+        getattr(profile, "market_country", "")
+        or getattr(profile, "country", "")
+        or market_context.get("country", "")
+    )
+    raw_market_currency = _lossq_response_upper(
+        getattr(profile, "market_currency", "")
+        or getattr(profile, "currency", "")
+        or market_context.get("currency", "")
+    )
+    raw_market_date_format = _lossq_response_clean(
+        getattr(profile, "market_date_format", "")
+        or getattr(profile, "date_format", "")
+        or market_context.get("date_format", "")
+        or region_context.get("date_format", "")
+    )
+
+    canada_signal = bool(
+        "CANADA" in raw_market_country.upper()
+        or raw_market_currency == "CAD"
+        or raw_market_date_format.upper() == "DD/MM/YYYY"
+        or any(_lossq_response_upper(item.get("market_currency", "")) == "CAD" for item in policies if isinstance(item, dict))
+    )
+
+    us_signal = bool(
+        not canada_signal
+        and (
+            raw_market_country.upper() in {"US", "USA", "UNITED STATES", "UNITED STATES OF AMERICA"}
+            or raw_market_currency == "USD"
+            or raw_market_date_format.upper() == "MM/DD/YYYY"
+            or bool(re.search(r"\b(GL|WC|BOP|UMB|CARGO|AUTO|PROP|IM)-\d{4}-", policy_text.upper()))
+        )
+    )
+
+    if us_signal:
+        response_market_country = "United States"
+        response_market_country_code = "US"
+        response_market_currency = "USD"
+        response_market_date_format = "MM/DD/YYYY"
+    else:
+        response_market_country = raw_market_country
+        response_market_country_code = _lossq_response_clean(getattr(profile, "market_country_code", "") or market_context.get("country_code", ""))
+        response_market_currency = raw_market_currency
+        response_market_date_format = raw_market_date_format
+
+    response_effective_date = _lossq_response_clean(getattr(profile, "effective_date", ""))
+    response_expiration_date = _lossq_response_clean(getattr(profile, "expiration_date", ""))
+    response_evaluation_date = _lossq_response_clean(getattr(profile, "evaluation_date", ""))
+
+    if us_signal:
+        response_effective_date = _lossq_response_us_date(response_effective_date)
+        response_expiration_date = _lossq_response_us_date(response_expiration_date)
+        response_evaluation_date = _lossq_response_us_date(response_evaluation_date)
+
+        for _policy in policies:
+            if isinstance(_policy, dict):
+                if _policy.get("effective_date"):
+                    _policy["effective_date"] = _lossq_response_us_date(_policy.get("effective_date"))
+                if _policy.get("expiration_date"):
+                    _policy["expiration_date"] = _lossq_response_us_date(_policy.get("expiration_date"))
+
     return {
         "id": getattr(profile, "id", None),
         "business_name": clean_value(getattr(profile, "business_name", "")),
@@ -476,10 +571,25 @@ def lossq_account_profile_to_dict(profile):
         "customer_number": lossq_account_profile_clean_account_number(getattr(profile, "customer_number", "")),
         "producer_number": clean_value(getattr(profile, "producer_number", "")),
         "policy_number": clean_value(getattr(profile, "policy_number", "")),
-        "effective_date": clean_value(getattr(profile, "effective_date", "")),
-        "expiration_date": clean_value(getattr(profile, "expiration_date", "")),
-        "evaluation_date": clean_value(getattr(profile, "evaluation_date", "")),
+        "effective_date": response_effective_date,
+        "expiration_date": response_expiration_date,
+        "evaluation_date": response_evaluation_date,
         "line_of_business": clean_value(getattr(profile, "line_of_business", "")),
+        # LOSSQ_ACCOUNT_PROFILE_US_MARKET_RESPONSE_FIELDS_V1
+        "country": response_market_country,
+        "market": response_market_country_code or response_market_country,
+        "market_country": response_market_country,
+        "marketCountry": response_market_country,
+        "market_country_code": response_market_country_code,
+        "marketCountryCode": response_market_country_code,
+        "currency": response_market_currency,
+        "market_currency": response_market_currency,
+        "marketCurrency": response_market_currency,
+        "date_format": response_market_date_format,
+        "market_date_format": response_market_date_format,
+        "marketDateFormat": response_market_date_format,
+        "effective_date_format": response_market_date_format,
+
         "current_premium": clean_value(getattr(profile, "current_premium", "")),
         "expiring_premium": clean_value(getattr(profile, "expiring_premium", "")),
         "target_renewal_premium": clean_value(getattr(profile, "target_renewal_premium", "")),

@@ -4650,6 +4650,80 @@ function lossqBetaAccessLabel(status: any): string {
 // LOSSQ_CLAIMS_COVERAGE_TRIGGER_DISPLAY_LABEL_V3
 
 // LOSSQ_CLAIMS_POLICY_LINE_LABEL_V2
+
+// LOSSQ_US_DASHBOARD_DISPLAY_DATE_V1
+function lossqUsDashboardDisplayDateV1(value: any, source?: any) {
+ try {
+  const raw = String(value ?? "").trim();
+  if (!raw) return "";
+
+  const country = String(
+   source?.market_country ||
+   source?.marketCountry ||
+   source?.country ||
+   source?.market ||
+   ""
+  ).toUpperCase();
+
+  const currency = String(
+   source?.market_currency ||
+   source?.marketCurrency ||
+   source?.currency ||
+   ""
+  ).toUpperCase();
+
+  const dateFormat = String(
+   source?.market_date_format ||
+   source?.marketDateFormat ||
+   source?.date_format ||
+   source?.effective_date_format ||
+   ""
+  ).toUpperCase();
+
+  const region = String(
+   source?.province ||
+   source?.province_code ||
+   source?.market_region_code ||
+   source?.marketRegionCode ||
+   ""
+  ).toUpperCase();
+
+  const isCanada =
+   country.includes("CANADA") ||
+   currency === "CAD" ||
+   dateFormat === "DD/MM/YYYY" ||
+   ["ON", "BC", "AB", "QC", "MB", "SK", "NS", "NB", "PE", "NL", "YT", "NU", "NT"].includes(region);
+
+  const policyText = JSON.stringify(source?.policies || source?.policy_schedule || source?.policySchedule || source?.policy_number || "");
+
+  const isUS =
+   !isCanada &&
+   (
+    country === "US" ||
+    country === "USA" ||
+    country.includes("UNITED STATES") ||
+    currency === "USD" ||
+    dateFormat === "MM/DD/YYYY" ||
+    /\b(GL|WC|BOP|UMB|CARGO|AUTO|PROP|IM)-\d{4}-/i.test(policyText)
+   );
+
+  if (!isUS) return raw;
+
+  let match = raw.match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  if (match) return `${match[2]}/${match[3]}/${match[1]}`;
+
+  match = raw.match(/^(\d{4})\/(\d{2})\/(\d{2})$/);
+  if (match) return `${match[2]}/${match[3]}/${match[1]}`;
+
+  match = raw.match(/^(\d{1,2})\/(\d{1,2})\/(\d{4})$/);
+  if (match) return `${String(Number(match[1])).padStart(2, "0")}/${String(Number(match[2])).padStart(2, "0")}/${match[3]}`;
+
+  return raw;
+ } catch {
+  return String(value ?? "");
+ }
+}
+
 export default function DashboardPage() {
 
  useEffect(() => {
@@ -10748,15 +10822,31 @@ const modelChartNarrative =
          hasCanadianPostalCode ||
          hasCanadianCarrier;
 
+        // LOSSQ_DASHBOARD_US_MARKET_INFERENCE_V1
+        const usPolicySignal = /\b(GL|WC|BOP|UMB|CARGO|AUTO|PROP|IM)-\d{4}-/i.test(
+         JSON.stringify(displayProfile?.policies || displayProfile?.policy_schedule || displayProfile?.policySchedule || displayProfile?.policy_number || "")
+        );
+        const isUnitedStatesMarket =
+         !isCanadaMarket &&
+         (
+          rawCountry.toLowerCase().includes("united states") ||
+          ["us", "usa"].includes(rawCountry.toLowerCase()) ||
+          rawCurrency === "USD" ||
+          upperMarketText(displayProfile?.market_date_format || displayProfile?.marketDateFormat || displayProfile?.date_format || displayProfile?.effective_date_format) === "MM/DD/YYYY" ||
+          usPolicySignal
+         );
+
         const marketCountry = rawCountry && rawCountry.toLowerCase() !== "auto-detect"
          ? rawCountry
          : isCanadaMarket
           ? "Canada"
-          : "Auto-detect";
+          : isUnitedStatesMarket
+           ? "United States"
+           : "Auto-detect";
 
         const marketCurrency =
          rawCurrency ||
-         (isCanadaMarket ? "CAD" : "");
+         (isCanadaMarket ? "CAD" : isUnitedStatesMarket ? "USD" : "");
 
         const marketDateFormat =
          displayProfile?.market_date_format ||

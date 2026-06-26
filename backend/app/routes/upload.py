@@ -14532,6 +14532,16 @@ def lossq_us_profile_market_format_cleanup_v1(file_path, profile_data=None, pars
   profile_data["date_format"] = "MM/DD/YYYY"
   profile_data["market_date_format"] = "MM/DD/YYYY"
   profile_data["effective_date_format"] = "MM/DD/YYYY"
+  # LOSSQ_US_MARKET_CONTEXT_VALIDATION_STASH_V1
+  _lossq_us_validation = profile_data.get("validation") if isinstance(profile_data.get("validation"), dict) else {}
+  _lossq_us_validation["market_context"] = {
+    "country": "United States",
+    "country_code": "US",
+    "currency": "USD",
+    "date_format": "MM/DD/YYYY",
+    "language": "en",
+  }
+  profile_data["validation"] = _lossq_us_validation
 
   if state_code:
     profile_data["state"] = state_code
@@ -14880,6 +14890,16 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
   parsed_profile["date_format"] = "MM/DD/YYYY"
   parsed_profile["market_date_format"] = "MM/DD/YYYY"
   parsed_profile["effective_date_format"] = "MM/DD/YYYY"
+  # LOSSQ_US_MARKET_CONTEXT_VALIDATION_STASH_V1
+  _lossq_us_validation = parsed_profile.get("validation") if isinstance(parsed_profile.get("validation"), dict) else {}
+  _lossq_us_validation["market_context"] = {
+    "country": "United States",
+    "country_code": "US",
+    "currency": "USD",
+    "date_format": "MM/DD/YYYY",
+    "language": "en",
+  }
+  parsed_profile["validation"] = _lossq_us_validation
 
   # Only replace claims when the PDF table gives a stronger complete claim set.
   if claims and len(claims) >= len(parsed_claims):
