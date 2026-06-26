@@ -6507,6 +6507,53 @@ function lossqPolicyLimitFromRowV1(row: any) {
 }
 
 function lossqPolicyLimitsDisplayValueV1(currentValue: any, displayProfile: any, profile: any, policySchedule: any[] = []) {
+ // LOSSQ_FRONTEND_POLICY_LIMITS_PROFILE_FIRST_V2
+ // Prefer the full extracted profile/exposure value first.
+ // The policy schedule can be sanitized to one row, which was causing only D&O to show.
+ const candidates = [
+  displayProfile?.policy_limits,
+  displayProfile?.policyLimits,
+  displayProfile?.["Policy Limits"],
+  displayProfile?.coverage_limit,
+  displayProfile?.coverageLimit,
+  displayProfile?.limits,
+  displayProfile?.exposure_inputs?.policy_limits,
+  displayProfile?.exposureInputs?.policy_limits,
+  displayProfile?.exposure_inputs?.policyLimits,
+  displayProfile?.exposureInputs?.policyLimits,
+  displayProfile?.exposure_inputs?.coverage_limit,
+  displayProfile?.exposureInputs?.coverage_limit,
+  displayProfile?.exposure_inputs?.coverageLimit,
+  displayProfile?.exposureInputs?.coverageLimit,
+  displayProfile?.exposure_inputs?.["Policy Limits"],
+  profile?.policy_limits,
+  profile?.policyLimits,
+  profile?.["Policy Limits"],
+  profile?.coverage_limit,
+  profile?.coverageLimit,
+  profile?.limits,
+  profile?.exposure_inputs?.policy_limits,
+  profile?.exposureInputs?.policy_limits,
+  profile?.exposure_inputs?.policyLimits,
+  profile?.exposureInputs?.policyLimits,
+  profile?.exposure_inputs?.coverage_limit,
+  profile?.exposureInputs?.coverage_limit,
+  profile?.exposure_inputs?.coverageLimit,
+  profile?.exposureInputs?.coverageLimit,
+  profile?.exposure_inputs?.["Policy Limits"],
+  currentValue,
+ ];
+
+ for (const candidate of candidates) {
+  const value = lossqCleanPolicyLimitPartsV1(candidate);
+  if (value && value.includes("D&O") && value.includes("E&O")) return value;
+ }
+
+ for (const candidate of candidates) {
+  const value = lossqCleanPolicyLimitPartsV1(candidate);
+  if (value) return value;
+ }
+
  const scheduleParts: string[] = [];
 
  if (Array.isArray(policySchedule)) {
@@ -6514,7 +6561,7 @@ function lossqPolicyLimitsDisplayValueV1(currentValue: any, displayProfile: any,
    const limit = lossqPolicyLimitFromRowV1(row);
    if (!limit) continue;
 
-   const coverage = lossqExposureCleanValueV1(
+   const rawCoverage = lossqExposureCleanValueV1(
     row?.coverage ||
      row?.line_of_business ||
      row?.lineOfBusiness ||
@@ -6523,39 +6570,18 @@ function lossqPolicyLimitsDisplayValueV1(currentValue: any, displayProfile: any,
      "Policy"
    );
 
-   scheduleParts.push(`${coverage}: ${limit}`);
+   const compactCoverage = /d\s*&\s*o|directors|administrateurs/i.test(rawCoverage)
+    ? "D&O"
+    : /e\s*&\s*o|professional|professionnelle|erreurs|omissions/i.test(rawCoverage)
+     ? "E&O"
+     : rawCoverage;
+
+   scheduleParts.push(`${compactCoverage}: ${limit}`);
   }
  }
 
  if (scheduleParts.length) {
-  return scheduleParts.join("; ");
- }
-
- const candidates = [
-  displayProfile?.policy_limits,
-  displayProfile?.policyLimits,
-  displayProfile?.["Policy Limits"],
-  displayProfile?.limits,
-  displayProfile?.coverage_limit,
-  displayProfile?.coverageLimit,
-  displayProfile?.exposure_inputs?.policy_limits,
-  displayProfile?.exposureInputs?.policy_limits,
-  displayProfile?.exposure_inputs?.["Policy Limits"],
-  profile?.policy_limits,
-  profile?.policyLimits,
-  profile?.["Policy Limits"],
-  profile?.limits,
-  profile?.coverage_limit,
-  profile?.coverageLimit,
-  profile?.exposure_inputs?.policy_limits,
-  profile?.exposureInputs?.policy_limits,
-  profile?.exposure_inputs?.["Policy Limits"],
-  currentValue,
- ];
-
- for (const candidate of candidates) {
-  const value = lossqCleanPolicyLimitPartsV1(candidate);
-  if (value) return value;
+  return Array.from(new Set(scheduleParts)).join("; ");
  }
 
  return "";
