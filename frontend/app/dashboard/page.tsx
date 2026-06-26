@@ -778,6 +778,96 @@ function normalizeDateInput(value: any) {
 }
 
 
+
+// LOSSQ_FRONTEND_UNIVERSAL_WRITING_CARRIER_DISPLAY_V2
+function lossqFrontendCarrierDisplayCleanV2(value: any) {
+ return String(value ?? "").replace(/\s+/g, " ").trim();
+}
+
+function lossqFrontendLooksLikeCarrierFamilyAliasV2(value: any) {
+ const clean = lossqFrontendCarrierDisplayCleanV2(value).toLowerCase();
+
+ if (!clean) return true;
+
+ if (
+  clean.includes("carrier family") ||
+  clean.includes("market family") ||
+  clean.includes("appetite group") ||
+  clean.includes("alias")
+ ) {
+  return true;
+ }
+
+ if (clean.includes(" / ")) {
+  return true;
+ }
+
+ return false;
+}
+
+function lossqFrontendUploadedWritingCarrierV2(...sources: any[]) {
+ const exactKeys = [
+  "document_writing_carrier",
+  "documentWritingCarrier",
+  "uploaded_writing_carrier",
+  "uploadedWritingCarrier",
+  "source_writing_carrier",
+  "sourceWritingCarrier",
+  "loss_run_writing_carrier",
+  "lossRunWritingCarrier",
+ ];
+
+ const regularKeys = [
+  "writing_carrier",
+  "writingCarrier",
+  "carrier_name",
+  "carrierName",
+  "carrier",
+ ];
+
+ const readValue = (source: any, keys: string[]) => {
+  if (!source || typeof source !== "object") return "";
+
+  for (const key of keys) {
+   const value = lossqFrontendCarrierDisplayCleanV2(source?.[key]);
+   if (value && value !== "-") return value;
+  }
+
+  return "";
+ };
+
+ for (const source of sources) {
+  const exact = readValue(source, exactKeys);
+  if (exact) return exact;
+ }
+
+ for (const source of sources) {
+  const regular = readValue(source, regularKeys);
+  if (regular && !lossqFrontendLooksLikeCarrierFamilyAliasV2(regular)) {
+   return regular;
+  }
+ }
+
+ for (const source of sources) {
+  const fallback = readValue(source, regularKeys);
+  if (fallback) return fallback;
+ }
+
+ return "";
+}
+
+function lossqFrontendCarrierFromPoliciesV2(rows: any[] = []) {
+ if (!Array.isArray(rows)) return "";
+
+ for (const row of rows) {
+  const carrier = lossqFrontendUploadedWritingCarrierV2(row);
+  if (carrier) return carrier;
+ }
+
+ return "";
+}
+
+
 // LOSSQ_FRONTEND_MARKET_SCOPED_DATE_DISPLAY_V1
 const lossqFrontendCanadianRegulatorsV1: Record<string, string> = {
  AB: "Alberta Superintendent of Insurance",
@@ -10070,11 +10160,16 @@ const modelChartNarrative =
 
         <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
          <ProfileDetail label="Insured" value={displayProfile?.business_name || "-"} />
-         <ProfileDetail
-          label="Writing Carrier"
-          value={displayProfile?.writing_carrier || displayProfile?.carrier_name || "-"}
-         />
-         <ProfileDetail label="Carrier" value={lossqSafeCarrierDisplay(displayProfile)} />
+         <ProfileDetail label="Writing Carrier" value={lossqFrontendUploadedWritingCarrierV2(
+          displayProfile,
+          profile,
+          { document_writing_carrier: lossqFrontendCarrierFromPoliciesV2(policySchedule) }
+         ) || "-"} />
+         <ProfileDetail label="Carrier" value={lossqFrontendUploadedWritingCarrierV2(
+          displayProfile,
+          profile,
+          { document_writing_carrier: lossqFrontendCarrierFromPoliciesV2(policySchedule) }
+         ) || "-"} />
          <ProfileDetail
           label="Account Number"
           value={lossqResolvedAccountNumberForDisplay(
