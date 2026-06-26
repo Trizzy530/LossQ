@@ -511,6 +511,7 @@ def list_account_profiles(current_user: dict = Depends(get_current_user)):
         ensure_account_profile_columns(db)
 
         organization_id = current_user.get("organization_id") if isinstance(current_user, dict) else None
+
         query = db.query(AccountProfile)
 
         if organization_id is not None:
@@ -522,61 +523,111 @@ def list_account_profiles(current_user: dict = Depends(get_current_user)):
         if profile_rows:
             return profile_rows
 
-        # LOSSQ_ACCOUNT_PROFILE_LIST_FALLBACK_FROM_CLAIMS_V2
-        # If account_profiles is empty after logout/login, rebuild saved profile cards
-        # from persisted organization claim rows. This does not create/delete data.
-        try:
-            import re as _lossq_profile_fallback_re
+        # LOSSQ_ACCOUNT_PROFILE_ALL_FALLBACK_CLAIMS_UPLOAD_HISTORY_V3
+        # If account_profiles is empty, rebuild visible saved profiles from
+        # persisted claims first, then upload history. This keeps saved uploads
+        # visible after logout/login without relying on browser cache.
+        import json as _lossq_json
+        import re as _lossq_re
 
-            fallback_query = db.query(Claim)
+        def _clean(value):
+            return str(value or "").strip()
+
+        def _norm(value):
+            return _clean(value).upper()
+
+        def _money(value):
+            raw = _lossq_re.sub(r"[^0-9.\-]", "", _clean(value).replace(",", ""))
+
+            try:
+                return float(raw or 0)
+            except Exception:
+                return 0.0
+
+        def _looks_blank(value):
+            return _norm(value) in {"", "UNKNOWN", "N/A", "NA", "NONE", "NULL", "-"}
+
+        def _as_dict(value):
+            if isinstance(value, dict):
+                return value
+
+            if isinstance(value, str) and value.strip():
+                try:
+                    parsed = _lossq_json.loads(value)
+                    return parsed if isinstance(parsed, dict) else {}
+                except Exception:
+                    return {}
+
+            return {}
+
+        def _first_from_object(obj, *names):
+            for name in names:
+                try:
+                    value = getattr(obj, name, "")
+                except Exception:
+                    value = ""
+
+                if value not in ("", None, [], {}):
+                    return value
+
+            return ""
+
+        def _first_from_dict(data, *names):
+            data = data if isinstance(data, dict) else {}
+
+            for name in names:
+                value = data.get(name)
+
+                if value not in ("", None, [], {}):
+                    return value
+
+            return ""
+
+        def _policy_line(policy_number, raw_line):
+            policy = _norm(policy_number)
+            line = _clean(raw_line)
+
+            if _lossq_re.search(r"(^|[-_\s])(CGL|GL)([-_\s]|$)", policy):
+                return "CGL"
+
+            if line.lower() in {
+                "bodily injury",
+                "property damage",
+                "completed ops",
+                "completed operations",
+                "bi",
+                "pd",
+            }:
+                return "CGL"
+
+            return line
+
+        fallback_profiles = []
+
+        # 1) Claim fallback: best fallback because claims carry real policy numbers.
+        try:
+            claim_query = db.query(Claim)
 
             if organization_id is not None and hasattr(Claim, "organization_id"):
-                fallback_query = fallback_query.filter(Claim.organization_id == organization_id)
+                claim_query = claim_query.filter(Claim.organization_id == organization_id)
 
-            claim_rows = fallback_query.order_by(Claim.id.desc()).limit(2000).all()
-
-            def _clean(value):
-                return str(value or "").strip()
-
-            def _money(value):
-                raw = _lossq_profile_fallback_re.sub(r"[^0-9.\-]", "", _clean(value).replace(",", ""))
-
-                try:
-                    return float(raw or 0)
-                except Exception:
-                    return 0.0
-
-            def _policy_line(policy_number, raw_line):
-                policy = _clean(policy_number).upper()
-                line = _clean(raw_line)
-
-                if _lossq_profile_fallback_re.search(r"(^|[-_\s])(CGL|GL)([-_\s]|$)", policy):
-                    return "CGL"
-
-                if line.lower() in {
-                    "bodily injury",
-                    "property damage",
-                    "completed ops",
-                    "completed operations",
-                    "bi",
-                    "pd",
-                }:
-                    return "CGL"
-
-                if line:
-                    return line
-
-                return ""
+            claim_rows = claim_query.order_by(Claim.id.desc()).limit(3000).all()
 
             grouped = {}
 
             for claim in claim_rows:
-                policy_number = _clean(getattr(claim, "policy_number", ""))
+                policy_number = _clean(_first_from_object(
+                    claim,
+                    "policy_number",
+                    "policyNumber",
+                    "policy_no",
+                    "policy",
+                ))
 
-                if not policy_number or policy_number.upper() in {"UNKNOWN", "N/A", "NONE", "-"}:
+                if _looks_blank(policy_number):
                     continue
 
-                key = policy_number.upper()
+                key = _norm(policy_number)
 
                 profile = grouped.setdefault(key, {
                     "id": f"claims-fallback-{key}",
@@ -602,12 +653,14 @@ def list_account_profiles(current_user: dict = Depends(get_current_user)):
                     "lossq_claim_fallback_profile": True,
                 })
 
-                business_name = (
-                    _clean(getattr(claim, "business_name", ""))
-                    or _clean(getattr(claim, "insured_name", ""))
-                    or _clean(getattr(claim, "account_name", ""))
-                    or _clean(getattr(claim, "customer_name", ""))
-                )
+                business_name = _clean(_first_from_object(
+                    claim,
+                    "business_name",
+                    "insured_name",
+                    "named_insured",
+                    "account_name",
+                    "customer_name",
+                ))
 
                 if business_name and not profile["business_name"]:
                     profile["business_name"] = business_name
@@ -615,11 +668,12 @@ def list_account_profiles(current_user: dict = Depends(get_current_user)):
                     profile["display_name"] = business_name
                     profile["account_name"] = business_name
 
-                carrier_name = (
-                    _clean(getattr(claim, "carrier_name", ""))
-                    or _clean(getattr(claim, "writing_carrier", ""))
-                    or _clean(getattr(claim, "carrier", ""))
-                )
+                carrier_name = _clean(_first_from_object(
+                    claim,
+                    "carrier_name",
+                    "writing_carrier",
+                    "carrier",
+                ))
 
                 if carrier_name and not profile["carrier_name"]:
                     profile["carrier_name"] = carrier_name
@@ -628,17 +682,21 @@ def list_account_profiles(current_user: dict = Depends(get_current_user)):
 
                 line_value = _policy_line(
                     key,
-                    _clean(getattr(claim, "line_of_business", ""))
-                    or _clean(getattr(claim, "claim_type", ""))
-                    or _clean(getattr(claim, "coverage", ""))
-                    or _clean(getattr(claim, "line", ""))
+                    _first_from_object(
+                        claim,
+                        "line_of_business",
+                        "policy_type",
+                        "coverage",
+                        "line",
+                        "claim_type",
+                    )
                 )
 
                 if line_value and not profile["line_of_business"]:
                     profile["line_of_business"] = line_value
                     profile["policy_type"] = line_value
 
-                status = _clean(getattr(claim, "status", "")).lower()
+                status = _clean(_first_from_object(claim, "status", "claim_status")).lower()
 
                 profile["claim_count"] += 1
                 profile["total_claims"] += 1
@@ -649,13 +707,15 @@ def list_account_profiles(current_user: dict = Depends(get_current_user)):
                     profile["open_claims"] += 1
 
                 profile["total_incurred"] += _money(
-                    getattr(claim, "total_incurred", None)
-                    or getattr(claim, "incurred", None)
-                    or getattr(claim, "total", None)
-                    or 0
+                    _first_from_object(
+                        claim,
+                        "total_incurred",
+                        "incurred",
+                        "incurred_amount",
+                        "total",
+                        "loss_amount",
+                    )
                 )
-
-            fallback_profiles = []
 
             for policy_number, profile in grouped.items():
                 if not profile["business_name"]:
@@ -685,18 +745,191 @@ def list_account_profiles(current_user: dict = Depends(get_current_user)):
 
                 fallback_profiles.append(profile)
 
-            print("LOSSQ_ACCOUNT_PROFILE_LIST_FALLBACK_FROM_CLAIMS_V2:", {
-                "organization_id": organization_id,
-                "profiles": len(fallback_profiles),
-            })
-
             if fallback_profiles:
+                print("LOSSQ_ACCOUNT_PROFILE_ALL_FALLBACK_CLAIMS_UPLOAD_HISTORY_V3_CLAIMS", {
+                    "organization_id": organization_id,
+                    "profiles": len(fallback_profiles),
+                })
                 return fallback_profiles
 
-        except Exception as fallback_exc:
-            print("LOSSQ_ACCOUNT_PROFILE_LIST_FALLBACK_FROM_CLAIMS_V2_ERROR:", str(fallback_exc)[:500])
+        except Exception as claim_fallback_exc:
+            print("LOSSQ_ACCOUNT_PROFILE_ALL_FALLBACK_CLAIMS_UPLOAD_HISTORY_V3_CLAIMS_ERROR", str(claim_fallback_exc)[:500])
 
-        return profile_rows
+        # 2) Upload history fallback: keeps uploaded files visible even if profile rows were not created.
+        try:
+            history_query = db.query(UploadHistory)
+
+            if organization_id is not None and hasattr(UploadHistory, "organization_id"):
+                history_query = history_query.filter(UploadHistory.organization_id == organization_id)
+
+            history_rows = history_query.order_by(UploadHistory.id.desc()).limit(300).all()
+
+            history_profiles = []
+
+            for item in history_rows:
+                metadata = {}
+
+                for meta_name in [
+                    "metadata",
+                    "profile",
+                    "profile_data",
+                    "parsed_profile",
+                    "account_profile",
+                    "result",
+                    "response",
+                    "validation",
+                ]:
+                    metadata = _as_dict(_first_from_object(item, meta_name))
+
+                    if metadata:
+                        break
+
+                policy_number = _clean(
+                    _first_from_object(
+                        item,
+                        "policy_number",
+                        "policyNumber",
+                        "main_policy",
+                        "mainPolicy",
+                    )
+                    or _first_from_dict(
+                        metadata,
+                        "policy_number",
+                        "policyNumber",
+                        "main_policy",
+                        "mainPolicy",
+                    )
+                )
+
+                filename = _clean(_first_from_object(
+                    item,
+                    "filename",
+                    "file_name",
+                    "fileName",
+                    "original_filename",
+                    "originalFilename",
+                    "name",
+                ))
+
+                row_id = _clean(_first_from_object(item, "id")) or str(len(history_profiles) + 1)
+
+                if _looks_blank(policy_number):
+                    policy_number = f"UPLOAD-{row_id}"
+
+                business_name = _clean(
+                    _first_from_object(
+                        item,
+                        "business_name",
+                        "businessName",
+                        "insured_name",
+                        "insuredName",
+                        "account_name",
+                        "accountName",
+                    )
+                    or _first_from_dict(
+                        metadata,
+                        "business_name",
+                        "businessName",
+                        "insured_name",
+                        "insuredName",
+                        "account_name",
+                        "accountName",
+                    )
+                    or filename
+                    or f"Saved upload {row_id}"
+                )
+
+                carrier_name = _clean(
+                    _first_from_object(
+                        item,
+                        "carrier_name",
+                        "carrierName",
+                        "writing_carrier",
+                        "writingCarrier",
+                        "carrier",
+                    )
+                    or _first_from_dict(
+                        metadata,
+                        "carrier_name",
+                        "carrierName",
+                        "writing_carrier",
+                        "writingCarrier",
+                        "carrier",
+                    )
+                )
+
+                line_value = _policy_line(
+                    policy_number,
+                    _first_from_object(
+                        item,
+                        "line_of_business",
+                        "lineOfBusiness",
+                        "policy_type",
+                        "policyType",
+                        "coverage",
+                        "line",
+                    )
+                    or _first_from_dict(
+                        metadata,
+                        "line_of_business",
+                        "lineOfBusiness",
+                        "policy_type",
+                        "policyType",
+                        "coverage",
+                        "line",
+                    )
+                )
+
+                policy_row = {
+                    "policy_number": policy_number,
+                    "policyNumber": policy_number,
+                    "line_of_business": line_value,
+                    "lineOfBusiness": line_value,
+                    "policy_type": line_value,
+                    "policyType": line_value,
+                    "coverage": line_value,
+                    "carrier": carrier_name,
+                    "carrier_name": carrier_name,
+                    "claim_count": _first_from_object(item, "saved_claims", "saved_claim_count", "claim_count") or 0,
+                    "claims": _first_from_object(item, "saved_claims", "saved_claim_count", "claim_count") or 0,
+                    "total_incurred": _first_from_object(item, "total_incurred", "incurred") or 0,
+                }
+
+                history_profiles.append({
+                    **metadata,
+                    "id": f"upload-history-{row_id}",
+                    "business_name": business_name,
+                    "insured_name": business_name,
+                    "display_name": business_name,
+                    "account_name": business_name,
+                    "carrier_name": carrier_name,
+                    "writing_carrier": carrier_name,
+                    "carrier": carrier_name,
+                    "policy_number": policy_number,
+                    "policyNumber": policy_number,
+                    "main_policy": policy_number,
+                    "mainPolicy": policy_number,
+                    "line_of_business": line_value,
+                    "policy_type": line_value,
+                    "policies": [policy_row],
+                    "policy_schedule": [policy_row],
+                    "policySchedule": [policy_row],
+                    "filename": filename,
+                    "uploaded_filename": filename,
+                    "lossq_upload_history_fallback_profile": True,
+                })
+
+            if history_profiles:
+                print("LOSSQ_ACCOUNT_PROFILE_ALL_FALLBACK_CLAIMS_UPLOAD_HISTORY_V3_HISTORY", {
+                    "organization_id": organization_id,
+                    "profiles": len(history_profiles),
+                })
+                return history_profiles
+
+        except Exception as history_fallback_exc:
+            print("LOSSQ_ACCOUNT_PROFILE_ALL_FALLBACK_CLAIMS_UPLOAD_HISTORY_V3_HISTORY_ERROR", str(history_fallback_exc)[:500])
+
+        return []
     finally:
         db.close()
 
