@@ -260,9 +260,20 @@ def lossq_sectioned_excel_loss_run_repair_v1(
             business_name = value
             continue
 
-        if not policy_number and re.search(r"(policy|police)", label):
-            policy_number = value
-            continue
+        # LOSSQ_SECTIONED_EXCEL_BARE_POLICY_LABEL_REPAIR_V1
+        # Accept bare Policy / Policy # labels, but never Policy Period date ranges.
+        if (
+            not policy_number
+            and re.search(r"(policy|police)", label, flags=re.I)
+            and not re.search(r"(period|période|periode)", label, flags=re.I)
+        ):
+            if not re.search(
+                r"\d{4}[-/]\d{1,2}[-/]\d{1,2}\s*(?:to|au|through|thru|until|-|–)\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}",
+                value,
+                flags=re.I,
+            ):
+                policy_number = value
+                continue
 
         if not province_code and re.search(r"(province|state)", label):
             province_code, province_name, regulator = parse_province(value)
@@ -490,6 +501,7 @@ def lossq_sectioned_excel_loss_run_repair_v1(
 
         return bool(re.search(r"[A-Z]", raw, flags=re.I) and re.search(r"\d", raw) and len(raw) >= 6)
 
+    # LOSSQ_SECTIONED_EXCEL_BARE_POLICY_REGEX_REPAIR_V1
     true_policy_number_safe_v2 = ""
 
     for row in all_rows:
@@ -498,7 +510,7 @@ def lossq_sectioned_excel_loss_run_repair_v1(
             cell_key = key(cell)
 
             inline_match = re.search(
-                r"(?i)\b(policy\s*#|policy\s*number|policy\s*no\.?|police\s*#|numéro\s*de\s*police|numero\s*de\s*police)\b\s*[:#-]\s*(.+)$",
+                r"(?i)\b(policy\s*#|policy\s*number|policy\s*no\.?|policy|police\s*#|numéro\s*de\s*police|numero\s*de\s*police)\b\s*[:#-]\s*(.+)$",
                 cell_text,
             )
 
@@ -510,7 +522,7 @@ def lossq_sectioned_excel_loss_run_repair_v1(
                     break
 
             if not re.search(
-                r"(?i)\b(policy\s*#|policy\s*number|policy\s*no\.?|police\s*#|numéro\s*de\s*police|numero\s*de\s*police)\b",
+                r"(?i)\b(policy\s*#|policy\s*number|policy\s*no\.?|policy|police\s*#|numéro\s*de\s*police|numero\s*de\s*police)\b",
                 cell_key,
             ):
                 continue
