@@ -6618,6 +6618,405 @@ def lossq_profile_date_dd_mm_yyyy_global_v1(value):
   return raw_value
 
 
+
+# LOSSQ_PDF_FINAL_PROFILE_DISPLAY_ALIAS_SYNC_V1
+def lossq_pdf_final_profile_display_alias_sync_v1(file_path, profile_data=None, direct_profile=None):
+  """
+  Final PDF profile-display alias sync.
+
+  Purpose:
+  - Make Account Snapshot, Market Context, Exposure Inputs, and Policy Schedule
+    see the same corrected values.
+  - Format effective, expiration, and evaluation/report dates as DD/MM/YYYY.
+  - Prioritize insured account province over carrier address/footer province.
+  - Does not touch claims, claim totals, auth, billing, dashboard layout, CSV, or Excel.
+  """
+  import re
+
+  profile_data = profile_data if isinstance(profile_data, dict) else {}
+  direct_profile = direct_profile if isinstance(direct_profile, dict) else {}
+
+  if not str(file_path or "").lower().endswith(".pdf"):
+    return profile_data, direct_profile
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
+
+  def compact(value):
+    return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
+
+  def ddmmyyyy(value):
+    raw_value = clean(value)
+    if not raw_value:
+      return ""
+
+    month_map = {
+      "jan": 1, "january": 1,
+      "feb": 2, "february": 2,
+      "mar": 3, "march": 3,
+      "apr": 4, "april": 4,
+      "may": 5,
+      "jun": 6, "june": 6,
+      "jul": 7, "july": 7,
+      "aug": 8, "august": 8,
+      "sep": 9, "sept": 9, "september": 9,
+      "oct": 10, "october": 10,
+      "nov": 11, "november": 11,
+      "dec": 12, "december": 12,
+    }
+
+    def out(day, month, year):
+      try:
+        day = int(day)
+        month = int(month)
+        year = int(year)
+        if year < 100:
+          year += 2000 if year < 50 else 1900
+        if not (1 <= day <= 31 and 1 <= month <= 12):
+          return raw_value
+        return f"{day:02d}/{month:02d}/{year:04d}"
+      except Exception:
+        return raw_value
+
+    m = re.search(r"\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b", raw_value)
+    if m:
+      return out(m.group(3), m.group(2), m.group(1))
+
+    m = re.search(r"(?i)\b([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{2,4})\b", raw_value)
+    if m:
+      month = month_map.get(m.group(1).lower())
+      if month:
+        return out(m.group(2), month, m.group(3))
+
+    m = re.search(r"(?i)\b(\d{1,2})(?:st|nd|rd|th)?\s+([A-Za-z]{3,9})[,]?\s+(\d{2,4})\b", raw_value)
+    if m:
+      month = month_map.get(m.group(2).lower())
+      if month:
+        return out(m.group(1), month, m.group(3))
+
+    m = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", raw_value)
+    if m:
+      first = int(m.group(1))
+      second = int(m.group(2))
+      if first <= 12 and second > 12:
+        return out(second, first, m.group(3))
+      return out(first, second, m.group(3))
+
+    return raw_value
+
+  def read_pdf_text():
+    try:
+      from pypdf import PdfReader
+      reader = PdfReader(file_path)
+      return "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception as exc:
+      print("LOSSQ_PDF_FINAL_PROFILE_DISPLAY_ALIAS_SYNC_READ_ERROR_V1:", str(exc)[:200])
+      return ""
+
+  raw_text = read_pdf_text()
+  if not raw_text:
+    return profile_data, direct_profile
+
+  normalized = re.sub(r"\s+", " ", raw_text).strip()
+
+  province_map = {
+    "alberta": ("AB", "Alberta", "Alberta Superintendent of Insurance"),
+    "britishcolumbia": ("BC", "British Columbia", "BCFSA"),
+    "manitoba": ("MB", "Manitoba", "FIRB"),
+    "newbrunswick": ("NB", "New Brunswick", "FCNB"),
+    "newfoundlandandlabrador": ("NL", "Newfoundland and Labrador", "Digital Government and Service NL"),
+    "novascotia": ("NS", "Nova Scotia", "Nova Scotia Office of the Superintendent of Insurance"),
+    "northwestterritories": ("NT", "Northwest Territories", "Northwest Territories Superintendent of Insurance"),
+    "nunavut": ("NU", "Nunavut", "Nunavut Superintendent of Insurance"),
+    "ontario": ("ON", "Ontario", "FSRA"),
+    "princeedwardisland": ("PE", "Prince Edward Island", "PEI Superintendent of Insurance"),
+    "quebec": ("QC", "Québec", "AMF"),
+    "québec": ("QC", "Québec", "AMF"),
+    "saskatchewan": ("SK", "Saskatchewan", "Saskatchewan Superintendent of Insurance"),
+    "yukon": ("YT", "Yukon", "Yukon Superintendent of Insurance"),
+  }
+
+  province_value = ""
+  province_match = re.search(
+    r"\bProvince\s*[:#-]\s*([A-Za-zÀ-ÿ][A-Za-zÀ-ÿ .'-]{1,45}?)(?=\s+Policy\s+Number\s*[:#-]|\s+IBC\s+Line\s+of\s+Business\s*[:#-]|\s+Policy\s+Period\s*[:#-]|\s+Retroactive\s+Date\s*[:#-]|\s+Occurrence\s+Limit\s*[:#-]|\s+Aggregate\s+Limit\s*[:#-]|\s+Deductible\s*[:#-]|\s+Report\s+Date\s*[:#-]|\s+Currency\s*[:#-]|\s+Prepared\s+By\s*[:#-]|\s+EXPOSURE\s+SUMMARY\b|\s+CLAIMS\s+DETAIL\b|$)",
+    normalized,
+    flags=re.I | re.S,
+  )
+  if province_match:
+    province_value = clean(province_match.group(1))
+
+  province_code = ""
+  province_name = ""
+  regulator = ""
+
+  if province_value:
+    mapped = province_map.get(compact(province_value))
+    if mapped:
+      province_code, province_name, regulator = mapped
+    else:
+      province_code = province_value
+      province_name = province_value
+
+  currency = ""
+  currency_match = re.search(
+    r"\bCurrency\s*[:#-]\s*([A-Z]{3})(?=\s+Prepared\s+By\s*[:#-]|\s+EXPOSURE\s+SUMMARY\b|\s+CLAIMS\s+DETAIL\b|$)",
+    normalized,
+    flags=re.I | re.S,
+  )
+  if currency_match:
+    currency = clean(currency_match.group(1)).upper()
+
+  policy_number = clean(profile_data.get("policy_number") or profile_data.get("main_policy_number") or direct_profile.get("policy_number") or direct_profile.get("main_policy_number"))
+
+  policy_match = re.search(
+    r"\bPolicy\s+Number\s*[:#-]\s*([A-Z0-9][A-Z0-9 ./_-]{3,80}?)(?=\s+IBC\s+Line\s+of\s+Business\s*[:#-]|\s+Policy\s+Period\s*[:#-]|\s+Retroactive\s+Date\s*[:#-]|\s+Occurrence\s+Limit\s*[:#-]|\s+Aggregate\s+Limit\s*[:#-]|\s+Deductible\s*[:#-]|\s+Report\s+Date\s*[:#-]|\s+Currency\s*[:#-]|\s+Prepared\s+By\s*[:#-]|\s+EXPOSURE\s+SUMMARY\b|$)",
+    normalized,
+    flags=re.I | re.S,
+  )
+  if policy_match:
+    policy_number = clean(policy_match.group(1))
+
+  lob = clean(profile_data.get("line_of_business") or profile_data.get("policy_type") or profile_data.get("coverage") or direct_profile.get("line_of_business") or direct_profile.get("policy_type") or direct_profile.get("coverage"))
+
+  lob_match = re.search(
+    r"\bIBC\s+Line\s+of\s+Business\s*[:#-]\s*(.{3,160}?)(?=\s+Policy\s+Period\s*[:#-]|\s+Retroactive\s+Date\s*[:#-]|\s+Occurrence\s+Limit\s*[:#-]|\s+Aggregate\s+Limit\s*[:#-]|\s+Deductible\s*[:#-]|\s+Report\s+Date\s*[:#-]|\s+Currency\s*[:#-]|\s+Prepared\s+By\s*[:#-]|\s+EXPOSURE\s+SUMMARY\b|$)",
+    normalized,
+    flags=re.I | re.S,
+  )
+  if lob_match:
+    lob = clean(lob_match.group(1))
+
+  policy_period = clean(profile_data.get("policy_period") or direct_profile.get("policy_period"))
+
+  period_match = re.search(
+    r"\bPolicy\s+Period\s*[:#-]\s*([0-9]{4}[-/][0-9]{2}[-/][0-9]{2}\s+(?:to|through|-|–)\s+[0-9]{4}[-/][0-9]{2}[-/][0-9]{2})",
+    normalized,
+    flags=re.I | re.S,
+  )
+  if period_match:
+    policy_period = clean(period_match.group(1))
+
+  effective_date = clean(profile_data.get("effective_date") or profile_data.get("effectiveDate") or profile_data.get("effective") or direct_profile.get("effective_date") or direct_profile.get("effectiveDate") or direct_profile.get("effective"))
+  expiration_date = clean(profile_data.get("expiration_date") or profile_data.get("expirationDate") or profile_data.get("expiration") or direct_profile.get("expiration_date") or direct_profile.get("expirationDate") or direct_profile.get("expiration"))
+
+  dates_match = re.search(
+    r"([0-9]{4}[-/][0-9]{2}[-/][0-9]{2}|[0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})\s+(?:to|through|-|–)\s+([0-9]{4}[-/][0-9]{2}[-/][0-9]{2}|[0-9]{1,2}/[0-9]{1,2}/[0-9]{2,4})",
+    policy_period,
+    flags=re.I,
+  )
+  if dates_match:
+    effective_date = clean(dates_match.group(1))
+    expiration_date = clean(dates_match.group(2))
+
+  report_date = clean(profile_data.get("evaluation_date") or profile_data.get("evaluationDate") or profile_data.get("valuation_date") or profile_data.get("valuationDate") or profile_data.get("report_date") or profile_data.get("reportDate"))
+
+  report_match = re.search(
+    r"\bReport\s+Date\s*[:#-]\s*([A-Za-z]+\s+\d{1,2},\s+\d{4}|\d{4}[-/]\d{2}[-/]\d{2}|\d{1,2}/\d{1,2}/\d{2,4})(?=\s+Currency\s*[:#-]|\s+Prepared\s+By\s*[:#-]|\s+EXPOSURE\s+SUMMARY\b|$)",
+    normalized,
+    flags=re.I | re.S,
+  )
+  if report_match:
+    report_date = clean(report_match.group(1))
+
+  effective_date = ddmmyyyy(effective_date)
+  expiration_date = ddmmyyyy(expiration_date)
+  report_date = ddmmyyyy(report_date)
+
+  carrier = clean(profile_data.get("carrier_name") or profile_data.get("writing_carrier") or profile_data.get("carrier") or direct_profile.get("carrier_name") or direct_profile.get("writing_carrier") or direct_profile.get("carrier"))
+
+  is_canada = bool(province_code or currency == "CAD" or re.search(r"(?i)\bCanada\b|\bCAD\b|\bIBC\s+\d+\b|\bWSIB\b", normalized))
+
+  def apply(target):
+    if not isinstance(target, dict):
+      return
+
+    if effective_date:
+      target["effective_date"] = effective_date
+      target["effectiveDate"] = effective_date
+      target["effective"] = effective_date
+
+    if expiration_date:
+      target["expiration_date"] = expiration_date
+      target["expirationDate"] = expiration_date
+      target["expiration"] = expiration_date
+
+    if report_date:
+      target["evaluation_date"] = report_date
+      target["evaluationDate"] = report_date
+      target["valuation_date"] = report_date
+      target["valuationDate"] = report_date
+      target["report_date"] = report_date
+      target["reportDate"] = report_date
+
+    if is_canada:
+      target["country"] = "Canada"
+      target["market"] = "Canada"
+      target["country_market"] = "Canada"
+      target["market_country"] = "Canada"
+      target["date_format"] = "DD/MM/YYYY"
+      target["dateFormat"] = "DD/MM/YYYY"
+
+    if province_code:
+      target["state"] = province_code
+      target["primary_state"] = province_code
+      target["primaryState"] = province_code
+      target["state_province"] = province_code
+      target["stateProvince"] = province_code
+      target["province_code"] = province_code
+      target["provinceCode"] = province_code
+      target["province"] = province_name or province_code
+      target["province_name"] = province_name or province_code
+      target["provinceName"] = province_name or province_code
+      target["state_name"] = province_name or province_code
+      target["stateName"] = province_name or province_code
+
+    if currency:
+      target["currency"] = currency
+      target["default_currency"] = currency
+      target["defaultCurrency"] = currency
+
+    if regulator:
+      target["regulator"] = regulator
+      target["insurance_regulator"] = regulator
+      target["insuranceRegulator"] = regulator
+
+    market_context = target.get("market_context") or target.get("marketContext")
+    if not isinstance(market_context, dict):
+      market_context = {}
+
+    if is_canada:
+      market_context["country"] = "Canada"
+      market_context["market"] = "Canada"
+      market_context["country_market"] = "Canada"
+      market_context["countryMarket"] = "Canada"
+      market_context["date_format"] = "DD/MM/YYYY"
+      market_context["dateFormat"] = "DD/MM/YYYY"
+
+    if province_code:
+      market_context["state"] = province_code
+      market_context["primary_state"] = province_code
+      market_context["primaryState"] = province_code
+      market_context["state_province"] = province_code
+      market_context["stateProvince"] = province_code
+      market_context["province"] = province_code
+      market_context["province_code"] = province_code
+      market_context["provinceCode"] = province_code
+      market_context["province_name"] = province_name or province_code
+      market_context["provinceName"] = province_name or province_code
+
+    if currency:
+      market_context["currency"] = currency
+
+    if regulator:
+      market_context["regulator"] = regulator
+
+    target["market_context"] = market_context
+    target["marketContext"] = market_context
+
+    for exposure_key in ("exposure_inputs", "exposureInputs", "manual_exposure_inputs", "manualExposureInputs"):
+      exposure = target.get(exposure_key)
+      if isinstance(exposure, dict):
+        if province_code:
+          exposure["state"] = province_code
+          exposure["State"] = province_code
+          exposure["primary_state"] = province_code
+          exposure["primaryState"] = province_code
+          exposure["State / Province"] = province_code
+          exposure["state_province"] = province_code
+          exposure["stateProvince"] = province_code
+          exposure["province"] = province_name or province_code
+          exposure["province_code"] = province_code
+          exposure["provinceCode"] = province_code
+        if currency:
+          exposure["currency"] = currency
+          exposure["Currency"] = currency
+
+    policies = target.get("policy_schedule") or target.get("policySchedule") or target.get("policies")
+    if not isinstance(policies, list):
+      policies = []
+
+    has_policy = any(isinstance(row, dict) and clean(row.get("policy_number") or row.get("policyNumber")) for row in policies)
+
+    if policy_number and not has_policy:
+      row = {
+        "policy_number": policy_number,
+        "policyNumber": policy_number,
+        "line_of_business": lob,
+        "lineOfBusiness": lob,
+        "policy_type": lob,
+        "policyType": lob,
+        "coverage": lob,
+        "carrier": carrier,
+        "carrier_name": carrier,
+        "carrierName": carrier,
+        "writing_carrier": carrier,
+        "writingCarrier": carrier,
+        "policy_period": policy_period,
+        "policyPeriod": policy_period,
+        "effective_date": effective_date,
+        "effectiveDate": effective_date,
+        "effective": effective_date,
+        "expiration_date": expiration_date,
+        "expirationDate": expiration_date,
+        "expiration": expiration_date,
+        "state": province_code,
+        "stateProvince": province_code,
+        "province": province_name or province_code,
+        "currency": currency,
+      }
+      policies = [row]
+    else:
+      for row in policies:
+        if not isinstance(row, dict):
+          continue
+
+        if clean(row.get("policy_number") or row.get("policyNumber")) == policy_number:
+          if effective_date:
+            row["effective_date"] = effective_date
+            row["effectiveDate"] = effective_date
+            row["effective"] = effective_date
+          if expiration_date:
+            row["expiration_date"] = expiration_date
+            row["expirationDate"] = expiration_date
+            row["expiration"] = expiration_date
+          if province_code:
+            row["state"] = province_code
+            row["stateProvince"] = province_code
+            row["province"] = province_name or province_code
+          if currency:
+            row["currency"] = currency
+          if lob:
+            row["line_of_business"] = row.get("line_of_business") or lob
+            row["lineOfBusiness"] = row.get("lineOfBusiness") or lob
+            row["policy_type"] = row.get("policy_type") or lob
+            row["policyType"] = row.get("policyType") or lob
+            row["coverage"] = row.get("coverage") or lob
+          if carrier:
+            row["carrier"] = row.get("carrier") or carrier
+            row["carrier_name"] = row.get("carrier_name") or carrier
+            row["carrierName"] = row.get("carrierName") or carrier
+            row["writing_carrier"] = row.get("writing_carrier") or carrier
+            row["writingCarrier"] = row.get("writingCarrier") or carrier
+
+    target["policies"] = policies
+    target["policy_schedule"] = policies
+    target["policySchedule"] = policies
+
+  apply(profile_data)
+  apply(direct_profile)
+
+  print("LOSSQ_PDF_FINAL_PROFILE_DISPLAY_ALIAS_SYNC_V1:", {
+    "province_code": province_code,
+    "regulator": regulator,
+    "effective_date": effective_date,
+    "expiration_date": expiration_date,
+    "evaluation_date": report_date,
+    "policy_schedule_count": len(profile_data.get("policy_schedule") or []),
+  })
+
+  return profile_data, direct_profile
+
+
 # LOSSQ_PDF_ACCOUNT_PROFILE_GRID_REPAIR_V1
 def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, direct_profile=None):
   """
@@ -19173,6 +19572,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
   # LOSSQ_PDF_ACCOUNT_MARKET_CONTEXT_PRIORITY_CALL_V1
   profile_data, direct_profile = lossq_pdf_account_market_context_priority_v1(
+    file_path,
+    profile_data,
+    direct_profile,
+  )
+
+  # LOSSQ_PDF_FINAL_PROFILE_DISPLAY_ALIAS_SYNC_CALL_V1
+  profile_data, direct_profile = lossq_pdf_final_profile_display_alias_sync_v1(
     file_path,
     profile_data,
     direct_profile,
