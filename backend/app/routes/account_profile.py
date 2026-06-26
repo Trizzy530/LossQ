@@ -575,6 +575,206 @@ def lossq_account_profile_to_dict(profile):
     }
 
 
+
+# LOSSQ_ACCOUNT_PROFILE_ROOT_PUT_SAVE_ROUTE_V1
+@router.put("")
+@router.put("/")
+def save_account_profile_root(payload: AccountProfileUpdate, current_user: dict = Depends(get_current_user)):
+    """
+    Persistent save endpoint used by the dashboard.
+    Fixes frontend PUT /account-profile/ returning 404 and causing uploaded profiles
+    to disappear after refresh/logout.
+    """
+    db = SessionLocal()
+    try:
+        ensure_account_profile_columns(db)
+
+        organization_id = current_user.get("organization_id") if isinstance(current_user, dict) else None
+        if organization_id is None:
+            raise HTTPException(status_code=400, detail="Organization is required to save account profile.")
+
+        data = payload.dict() if hasattr(payload, "dict") else {}
+        data = data if isinstance(data, dict) else {}
+
+        def clean_local(value):
+            return re.sub(r"\\s+", " ", str(value or "").replace("\\ufeff", "").strip()).strip(" :-|/")
+
+        def slug_local(value):
+            value = clean_local(value).upper()
+            value = re.sub(r"[^A-Z0-9]+", "-", value).strip("-")
+            value = re.sub(r"-+", "-", value)
+            return value[:90]
+
+        profile_id = data.get("id")
+
+        policy_number = clean_local(
+            data.get("policy_number")
+            or data.get("main_policy")
+            or data.get("main_policy_number")
+        )
+
+        if not policy_number:
+            policy_numbers = data.get("policy_numbers")
+            if isinstance(policy_numbers, list):
+                for item in policy_numbers:
+                    candidate = clean_local(item)
+                    if candidate:
+                        policy_number = candidate
+                        break
+
+        if not policy_number:
+            policies = data.get("policies") or data.get("policy_schedule") or []
+            if isinstance(policies, list):
+                for item in policies:
+                    if isinstance(item, dict):
+                        candidate = clean_local(item.get("policy_number") or item.get("policy") or item.get("number"))
+                    else:
+                        candidate = clean_local(item)
+
+                    if candidate:
+                        policy_number = candidate
+                        break
+
+        if not policy_number:
+            account_key = clean_local(
+                data.get("account_number")
+                or data.get("customer_number")
+                or data.get("client_number")
+                or data.get("producer_number")
+            )
+            if account_key:
+                policy_number = account_key
+
+        if not policy_number:
+            business_key = slug_local(
+                data.get("business_name")
+                or data.get("named_insured")
+                or data.get("insured_name")
+                or data.get("account_name")
+                or data.get("company_name")
+            )
+            carrier_key = slug_local(data.get("carrier_name") or data.get("writing_carrier") or data.get("insurer"))
+
+            if business_key and carrier_key:
+                policy_number = f"ACCOUNT-{business_key}-{carrier_key}"
+            elif business_key:
+                policy_number = f"ACCOUNT-{business_key}"
+
+        if not policy_number:
+            raise HTTPException(status_code=400, detail="A policy number, account number, or business name is required to save this profile.")
+
+        query = db.query(AccountProfile)
+
+        if profile_id:
+            profile = (
+                query
+                .filter(AccountProfile.id == profile_id)
+                .filter(AccountProfile.organization_id == organization_id)
+                .first()
+            )
+        else:
+            profile = (
+                query
+                .filter(AccountProfile.organization_id == organization_id)
+                .filter(AccountProfile.policy_number == policy_number)
+                .first()
+            )
+
+        if profile is None:
+            profile = AccountProfile(
+                organization_id=organization_id,
+                policy_number=policy_number,
+            )
+            db.add(profile)
+
+        data["policy_number"] = data.get("policy_number") or policy_number
+        data["main_policy"] = data.get("main_policy") or policy_number
+        data["main_policy_number"] = data.get("main_policy_number") or policy_number
+
+        save_fields = [
+            "business_name",
+            "carrier_name",
+            "writing_carrier",
+            "agency_name",
+            "account_number",
+            "customer_number",
+            "producer_number",
+            "policy_number",
+            "effective_date",
+            "expiration_date",
+            "evaluation_date",
+            "line_of_business",
+            "state",
+            "class_code",
+            "class_codes",
+            "limits",
+            "coverage_limit",
+            "deductible",
+            "exposure_basis",
+            "current_premium",
+            "expiring_premium",
+            "target_renewal_premium",
+            "payroll",
+            "revenue",
+            "sales",
+            "receipts",
+            "employee_count",
+            "physician_count",
+            "vehicle_count",
+            "driver_count",
+            "property_tiv",
+            "tiv",
+            "building_value",
+            "contents_value",
+            "square_footage",
+            "location_count",
+            "underwriter_notes",
+            "raw_text_preview",
+            "policies",
+            "validation",
+        ]
+
+        for field in save_fields:
+            if not hasattr(profile, field):
+                continue
+
+            value = data.get(field)
+
+            if field == "policies":
+                value = serialize_json(value, [])
+
+            if field == "validation":
+                value = serialize_json(value, {})
+
+            if value not in (None, ""):
+                setattr(profile, field, value)
+
+        db.commit()
+        db.refresh(profile)
+
+        record_audit_event(
+            db,
+            current_user=current_user,
+            action="account_profile_saved",
+            resource_type="account_profile",
+            resource_id=str(getattr(profile, "id", "")),
+            details={
+                "profile_id": getattr(profile, "id", None),
+                "policy_number": getattr(profile, "policy_number", ""),
+                "business_name": getattr(profile, "business_name", ""),
+            },
+        )
+
+        return lossq_account_profile_to_dict(profile)
+    except HTTPException:
+        db.rollback()
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(status_code=500, detail=f"Account profile save failed: {str(exc)}")
+    finally:
+        db.close()
+
 @router.get("/all")
 def list_account_profiles(current_user: dict = Depends(get_current_user)):
     db = SessionLocal()
