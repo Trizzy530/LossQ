@@ -109,6 +109,21 @@ def lossq_sectioned_excel_loss_run_repair_v1(
         return " / ".join(fix_piece(piece.strip()) for piece in raw.split("/"))
 
 
+    # LOSSQ_SECTIONED_EXCEL_COMPACT_DO_EO_LIMIT_LABELS_V1
+    def compact_coverage_label(value: Any) -> str:
+        raw = clean(value)
+
+        if not raw:
+            return ""
+
+        if re.search(r"(?i)\bD\s*&\s*O\b|administrateurs|directors", raw):
+            return "D&O"
+
+        if re.search(r"(?i)\bE\s*&\s*O\b|professionnelle|professional|erreurs|omissions", raw):
+            return "E&O"
+
+        return raw
+
     def money_float(value: Any) -> float:
         raw = clean(value)
         if not raw or raw in {"—", "-", "N/A", "n/a"}:
@@ -516,11 +531,14 @@ def lossq_sectioned_excel_loss_run_repair_v1(
         policy_rows.append({
             "policy_number": policy_number,
             "policyNumber": policy_number,
-            "line_of_business": coverage_name,
-            "lineOfBusiness": coverage_name,
-            "policy_type": coverage_name,
-            "policyType": coverage_name,
-            "coverage": coverage_name,
+            # LOSSQ_SECTIONED_EXCEL_COMPACT_POLICY_ROW_LABELS_V1
+            "line_of_business": compact_coverage_label(coverage_name),
+            "lineOfBusiness": compact_coverage_label(coverage_name),
+            "policy_type": compact_coverage_label(coverage_name),
+            "policyType": compact_coverage_label(coverage_name),
+            "coverage": compact_coverage_label(coverage_name),
+            "coverage_full": coverage_name,
+            "coverageFull": coverage_name,
             "carrier": carrier,
             "carrier_name": carrier,
             "carrierName": carrier,
@@ -565,9 +583,9 @@ def lossq_sectioned_excel_loss_run_repair_v1(
         limit_parts = []
         for row in exposure_rows:
             if row.get("coverage") and row.get("limit"):
-                limit_parts.append(f"{row.get('coverage')}: {row.get('limit')}")
+                limit_parts.append(f"{compact_coverage_label(row.get('coverage'))}: {row.get('limit')}")
 
-        primary_lob = " / ".join(lines) if lines else line_of_business
+        primary_lob = " / ".join(compact_coverage_label(line) for line in lines if compact_coverage_label(line)) if lines else line_of_business
 
         exposure_inputs.update({
             "detected_lines": len(lines),
@@ -761,10 +779,10 @@ def lossq_sectioned_excel_loss_run_repair_v1(
 
     if exposure_rows_overlay:
         exposure_lines = [row.get("coverage") for row in exposure_rows_overlay if row.get("coverage")]
-        primary_lob_overlay = " / ".join(exposure_lines)
+        primary_lob_overlay = " / ".join(compact_coverage_label(line) for line in exposure_lines if compact_coverage_label(line))
 
         limit_parts = [
-            f"{row.get('coverage')}: {row.get('limit')}"
+            f"{compact_coverage_label(row.get('coverage'))}: {row.get('limit')}"
             for row in exposure_rows_overlay
             if row.get("coverage") and row.get("limit") and money_float(row.get("limit")) > 0
         ]
@@ -877,11 +895,14 @@ def lossq_sectioned_excel_loss_run_repair_v1(
             policy_rows_overlay.append({
                 "policy_number": policy_number,
                 "policyNumber": policy_number,
-                "line_of_business": coverage_name,
-                "lineOfBusiness": coverage_name,
-                "policy_type": coverage_name,
-                "policyType": coverage_name,
-                "coverage": coverage_name,
+                # LOSSQ_SECTIONED_EXCEL_COMPACT_OVERLAY_POLICY_ROW_LABELS_V1
+                "line_of_business": compact_coverage_label(coverage_name),
+                "lineOfBusiness": compact_coverage_label(coverage_name),
+                "policy_type": compact_coverage_label(coverage_name),
+                "policyType": compact_coverage_label(coverage_name),
+                "coverage": compact_coverage_label(coverage_name),
+                "coverage_full": coverage_name,
+                "coverageFull": coverage_name,
                 "carrier": carrier,
                 "carrier_name": carrier,
                 "carrierName": carrier,
