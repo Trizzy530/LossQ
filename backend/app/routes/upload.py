@@ -7381,6 +7381,208 @@ def lossq_final_exposure_input_save_bridge_v3(profile_data):
   return profile_data
 
 
+
+# LOSSQ_FINAL_EXPOSURE_INPUT_SAVE_BRIDGE_V4
+def lossq_final_exposure_input_save_bridge_v4(profile_data):
+  """
+  Final final exposure bridge.
+
+  Runs immediately before account profile upsert. It prefers the full Excel
+  exposure_inputs/exposure_rows over any root value that was reduced to only the
+  first policy schedule row.
+  """
+  if not isinstance(profile_data, dict):
+    return profile_data
+
+  import re
+
+  exposure_inputs = (
+    profile_data.get("exposure_inputs")
+    or profile_data.get("exposureInputs")
+    or profile_data.get("exposures")
+    or profile_data.get("manual_exposure_inputs")
+    or profile_data.get("manualExposureInputs")
+  )
+
+  if not isinstance(exposure_inputs, dict):
+    exposure_inputs = {}
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+  def compact_line(value):
+    raw = clean(value)
+
+    if re.search(r"(?i)\bD\s*&\s*O\b|administrateurs|directors", raw):
+      return "D&O"
+
+    if re.search(r"(?i)\bE\s*&\s*O\b|professionnelle|professional|erreurs|omissions", raw):
+      return "E&O"
+
+    return raw
+
+  def money_text(value):
+    raw = clean(value)
+    if not raw:
+      return ""
+
+    amount_text = re.sub(r"[^0-9.\-]", "", raw)
+    try:
+      amount = float(amount_text or 0)
+    except Exception:
+      amount = 0
+
+    if amount <= 0:
+      return ""
+
+    if amount == int(amount):
+      return str(int(amount))
+
+    return str(amount)
+
+  def first_value(*values):
+    for value in values:
+      cleaned = clean(value)
+      if cleaned:
+        return cleaned
+    return ""
+
+  exposure_rows = (
+    exposure_inputs.get("exposure_rows")
+    or exposure_inputs.get("exposureRows")
+    or profile_data.get("exposure_rows")
+    or profile_data.get("exposureRows")
+  )
+
+  compact_lines = []
+  limit_parts = []
+
+  if isinstance(exposure_rows, list):
+    for row in exposure_rows:
+      if not isinstance(row, dict):
+        continue
+
+      line = compact_line(
+        row.get("coverage")
+        or row.get("line_of_business")
+        or row.get("lineOfBusiness")
+        or row.get("policy_type")
+        or row.get("policyType")
+      )
+
+      limit = money_text(
+        row.get("limit")
+        or row.get("policy_limit")
+        or row.get("policyLimit")
+        or row.get("coverage_limit")
+        or row.get("coverageLimit")
+      )
+
+      if line and line not in compact_lines:
+        compact_lines.append(line)
+
+      if line and limit:
+        part = f"{line}: {limit}"
+        if part not in limit_parts:
+          limit_parts.append(part)
+
+  primary_lob = " / ".join(compact_lines) if compact_lines else first_value(
+    exposure_inputs.get("primary_line_of_business"),
+    exposure_inputs.get("primaryLineOfBusiness"),
+    exposure_inputs.get("line_of_business"),
+    exposure_inputs.get("lineOfBusiness"),
+    profile_data.get("primary_line_of_business"),
+    profile_data.get("line_of_business"),
+  )
+
+  policy_limits = "; ".join(limit_parts) if limit_parts else first_value(
+    exposure_inputs.get("policy_limits"),
+    exposure_inputs.get("policyLimits"),
+    exposure_inputs.get("Policy Limits"),
+    exposure_inputs.get("coverage_limit"),
+    exposure_inputs.get("coverageLimit"),
+    exposure_inputs.get("limits"),
+    profile_data.get("policy_limits"),
+    profile_data.get("policyLimits"),
+    profile_data.get("Policy Limits"),
+    profile_data.get("coverage_limit"),
+    profile_data.get("coverageLimit"),
+    profile_data.get("limits"),
+  )
+
+  # Compact long saved labels if they still exist.
+  policy_limits = re.sub(
+    r"Responsabilité des administrateurs\s*/\s*D&O",
+    "D&O",
+    policy_limits,
+    flags=re.I,
+  )
+  policy_limits = re.sub(
+    r"Responsabilité professionnelle\s*/\s*E&O",
+    "E&O",
+    policy_limits,
+    flags=re.I,
+  )
+
+  physician_count = first_value(
+    exposure_inputs.get("physician_count"),
+    exposure_inputs.get("physicianCount"),
+    exposure_inputs.get("physicians"),
+    exposure_inputs.get("Physician Count"),
+    profile_data.get("physician_count"),
+    profile_data.get("physicianCount"),
+    profile_data.get("physicians"),
+  )
+
+  if primary_lob:
+    profile_data["primary_line_of_business"] = primary_lob
+    profile_data["primaryLineOfBusiness"] = primary_lob
+    profile_data["line_of_business"] = primary_lob
+    profile_data["lineOfBusiness"] = primary_lob
+
+    exposure_inputs["primary_line_of_business"] = primary_lob
+    exposure_inputs["primaryLineOfBusiness"] = primary_lob
+    exposure_inputs["line_of_business"] = primary_lob
+    exposure_inputs["lineOfBusiness"] = primary_lob
+
+  if policy_limits:
+    profile_data["policy_limits"] = policy_limits
+    profile_data["policyLimits"] = policy_limits
+    profile_data["Policy Limits"] = policy_limits
+    profile_data["limits"] = policy_limits
+    profile_data["coverage_limit"] = policy_limits
+    profile_data["coverageLimit"] = policy_limits
+
+    exposure_inputs["policy_limits"] = policy_limits
+    exposure_inputs["policyLimits"] = policy_limits
+    exposure_inputs["Policy Limits"] = policy_limits
+    exposure_inputs["limits"] = policy_limits
+    exposure_inputs["coverage_limit"] = policy_limits
+    exposure_inputs["coverageLimit"] = policy_limits
+
+  if physician_count:
+    profile_data["physician_count"] = physician_count
+    profile_data["physicianCount"] = physician_count
+    profile_data["physicians"] = physician_count
+
+    exposure_inputs["physician_count"] = physician_count
+    exposure_inputs["physicianCount"] = physician_count
+    exposure_inputs["physicians"] = physician_count
+
+  profile_data["exposure_inputs"] = exposure_inputs
+  profile_data["exposureInputs"] = exposure_inputs
+  profile_data["exposures"] = exposure_inputs
+
+  print("LOSSQ_FINAL_EXPOSURE_INPUT_SAVE_BRIDGE_V4", {
+    "primary_line_of_business": profile_data.get("primary_line_of_business"),
+    "policy_limits": profile_data.get("policy_limits"),
+    "coverage_limit": profile_data.get("coverage_limit"),
+    "physician_count": profile_data.get("physician_count"),
+  })
+
+  return profile_data
+
+
 # LOSSQ_PDF_ACCOUNT_PROFILE_GRID_REPAIR_V1
 def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, direct_profile=None):
   """
@@ -20697,6 +20899,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
   profile_data = lossq_canada_profile_hook_v3(profile_data, all_parsed_claims)
   # LOSSQ_CANADA_UPLOAD_CLEANUP_CALL_V1_1
   profile_data = lossq_canada_upload_cleanup_v11(profile_data, all_parsed_claims, file_path)
+
+  # LOSSQ_FINAL_EXPOSURE_INPUT_SAVE_BRIDGE_CALL_V4
+  profile_data = lossq_final_exposure_input_save_bridge_v4(profile_data)
 
   profile = upsert_account_profile(db, profile_data, current_user)
 
