@@ -3026,6 +3026,19 @@ function clearLossQDashboardTenantCache() {
  const shouldClear = (key: string) => {
   const clean = String(key || "").toLowerCase();
 
+  // LOSSQ_KEEP_SAVED_PROFILE_CACHE_KEYS_V1
+  // Never delete saved profile/account/upload keys from this generic cache helper.
+  // These keys power saved files, selected profile, and active account persistence.
+  if (
+   clean.includes("profile") ||
+   clean.includes("account") ||
+   clean.includes("upload") ||
+   clean.includes("selected_policy") ||
+   clean.includes("onboarding")
+  ) {
+   return false;
+  }
+
   return (
    clean.includes("claim") ||
    clean.includes("claims") ||
@@ -4634,7 +4647,17 @@ function lossqBetaAccessLabel(status: any): string {
 export default function DashboardPage() {
 
  useEffect(() => {
-  clearLossQDashboardTenantCache();
+
+
+  // LOSSQ_DO_NOT_CLEAR_SAVED_PROFILES_ON_REFRESH_V1
+
+
+  // Do not clear saved profiles/accounts/uploads on every dashboard refresh.
+
+
+  // Saved files and active account selection must survive browser reloads.
+
+
  }, []);
 
  const router = useRouter();
