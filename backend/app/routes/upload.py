@@ -7249,6 +7249,138 @@ def lossq_universal_document_writing_carrier_sync_v1(file_path, profile_data=Non
   return profile_data, direct_profile
 
 
+
+# LOSSQ_FINAL_EXPOSURE_INPUT_SAVE_BRIDGE_V3
+def lossq_final_exposure_input_save_bridge_v3(profile_data):
+  """
+  Final bridge for extracted exposure inputs.
+
+  Keeps nested exposure_inputs and root profile aliases in sync so account
+  profile save and dashboard display both receive policy limits, physician count,
+  and full primary line of business.
+  """
+  if not isinstance(profile_data, dict):
+    return profile_data
+
+  exposure_inputs = (
+    profile_data.get("exposure_inputs")
+    or profile_data.get("exposureInputs")
+    or profile_data.get("exposures")
+    or profile_data.get("manual_exposure_inputs")
+    or profile_data.get("manualExposureInputs")
+  )
+
+  if not isinstance(exposure_inputs, dict):
+    exposure_inputs = {}
+
+  import re
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").strip())
+
+  def first_value(*values):
+    for value in values:
+      if value not in ("", None, [], {}):
+        cleaned = clean(value)
+        if cleaned:
+          return cleaned
+    return ""
+
+  primary_lob = first_value(
+    profile_data.get("primary_line_of_business"),
+    profile_data.get("primaryLineOfBusiness"),
+    exposure_inputs.get("primary_line_of_business"),
+    exposure_inputs.get("primaryLineOfBusiness"),
+    exposure_inputs.get("line_of_business"),
+    exposure_inputs.get("lineOfBusiness"),
+  )
+
+  policy_limits = first_value(
+    profile_data.get("policy_limits"),
+    profile_data.get("policyLimits"),
+    profile_data.get("Policy Limits"),
+    profile_data.get("limits"),
+    profile_data.get("coverage_limit"),
+    profile_data.get("coverageLimit"),
+    exposure_inputs.get("policy_limits"),
+    exposure_inputs.get("policyLimits"),
+    exposure_inputs.get("Policy Limits"),
+    exposure_inputs.get("limits"),
+    exposure_inputs.get("coverage_limit"),
+    exposure_inputs.get("coverageLimit"),
+  )
+
+  physician_count = first_value(
+    profile_data.get("physician_count"),
+    profile_data.get("physicianCount"),
+    profile_data.get("physicians"),
+    profile_data.get("Physician Count"),
+    profile_data.get("physician_value"),
+    profile_data.get("physicianValue"),
+    exposure_inputs.get("physician_count"),
+    exposure_inputs.get("physicianCount"),
+    exposure_inputs.get("physicians"),
+    exposure_inputs.get("Physician Count"),
+    exposure_inputs.get("physician_value"),
+    exposure_inputs.get("physicianValue"),
+  )
+
+  if primary_lob:
+    profile_data["primary_line_of_business"] = primary_lob
+    profile_data["primaryLineOfBusiness"] = primary_lob
+    profile_data["line_of_business"] = primary_lob
+    profile_data["lineOfBusiness"] = primary_lob
+    profile_data["policy_type"] = primary_lob
+    profile_data["policyType"] = primary_lob
+    exposure_inputs["primary_line_of_business"] = primary_lob
+    exposure_inputs["primaryLineOfBusiness"] = primary_lob
+    exposure_inputs["line_of_business"] = primary_lob
+    exposure_inputs["lineOfBusiness"] = primary_lob
+
+  if policy_limits:
+    profile_data["policy_limits"] = policy_limits
+    profile_data["policyLimits"] = policy_limits
+    profile_data["Policy Limits"] = policy_limits
+    profile_data["limits"] = policy_limits
+    profile_data["coverage_limit"] = policy_limits
+    profile_data["coverageLimit"] = policy_limits
+    exposure_inputs["policy_limits"] = policy_limits
+    exposure_inputs["policyLimits"] = policy_limits
+    exposure_inputs["Policy Limits"] = policy_limits
+    exposure_inputs["limits"] = policy_limits
+    exposure_inputs["coverage_limit"] = policy_limits
+    exposure_inputs["coverageLimit"] = policy_limits
+
+  if physician_count:
+    profile_data["physician_count"] = physician_count
+    profile_data["physicianCount"] = physician_count
+    profile_data["physicians"] = physician_count
+    profile_data["Physician Count"] = physician_count
+    profile_data["physician_value"] = physician_count
+    profile_data["physicianValue"] = physician_count
+    exposure_inputs["physician_count"] = physician_count
+    exposure_inputs["physicianCount"] = physician_count
+    exposure_inputs["physicians"] = physician_count
+    exposure_inputs["Physician Count"] = physician_count
+    exposure_inputs["physician_value"] = physician_count
+    exposure_inputs["physicianValue"] = physician_count
+
+  profile_data["exposure_inputs"] = exposure_inputs
+  profile_data["exposureInputs"] = exposure_inputs
+  profile_data["exposures"] = exposure_inputs
+  profile_data["manual_exposure_inputs"] = exposure_inputs
+  profile_data["manualExposureInputs"] = exposure_inputs
+
+  print("LOSSQ_FINAL_EXPOSURE_INPUT_SAVE_BRIDGE_V3", {
+    "primary_line_of_business": profile_data.get("primary_line_of_business"),
+    "policy_limits": profile_data.get("policy_limits"),
+    "coverage_limit": profile_data.get("coverage_limit"),
+    "physician_count": profile_data.get("physician_count"),
+  })
+
+  return profile_data
+
+
 # LOSSQ_PDF_ACCOUNT_PROFILE_GRID_REPAIR_V1
 def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, direct_profile=None):
   """
@@ -20433,6 +20565,8 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     if profile_data.get(key) not in ("", None, [], {})
   }
   if debug_exposure_payload:
+    # LOSSQ_FINAL_EXPOSURE_INPUT_SAVE_BRIDGE_CALL_V3
+    profile_data = lossq_final_exposure_input_save_bridge_v3(profile_data)
     print("LOSSQ_PROFILE_DATA_EXPOSURE_BEFORE_SAVE:", debug_exposure_payload)
 
   # LOSSQ_FORCE_LOCATION_LIQUOR_PROFILE_DATA_SAVE_V1
