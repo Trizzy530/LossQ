@@ -20107,6 +20107,190 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
     all_parsed_claims.extend(parsed_claims)
 
+    # LOSSQ_DROP_FAKE_YEAR_SUMMARY_CLAIMS_SAVE_ONLY_V1
+
+    # Safe guard only: remove zero-dollar year-summary rows before claim save.
+
+    # Example fake rows: 2019-2020, 2020-2021, 2021-2022.
+
+    # This does not touch profiles, saved files, upload history, or dashboard cache.
+
+    try:
+
+      import re as _lossq_fake_year_re
+
+
+      def _lossq_money_float_v1(value):
+
+        raw = str(value or "").strip()
+
+
+        if not raw:
+
+          return 0.0
+
+
+        raw = raw.replace(",", "")
+
+        raw = _lossq_fake_year_re.sub(r"[^0-9.\-]", "", raw)
+
+
+        try:
+
+          return float(raw or 0)
+
+        except Exception:
+
+          return 0.0
+
+
+      def _lossq_is_fake_year_summary_claim_v1(row):
+
+        if not isinstance(row, dict):
+
+          return False
+
+
+        claim_number = str(
+
+          row.get("claim_number")
+
+          or row.get("claimNumber")
+
+          or row.get("claim_no")
+
+          or row.get("claim")
+
+          or ""
+
+        ).strip()
+
+
+        if not _lossq_fake_year_re.fullmatch(r"\d{4}\s*[-–]\s*\d{4}", claim_number):
+
+          return False
+
+
+        amount_total = sum([
+
+          _lossq_money_float_v1(row.get("paid")),
+
+          _lossq_money_float_v1(row.get("paid_amount")),
+
+          _lossq_money_float_v1(row.get("loss_paid")),
+
+          _lossq_money_float_v1(row.get("expense")),
+
+          _lossq_money_float_v1(row.get("expense_amount")),
+
+          _lossq_money_float_v1(row.get("reserve")),
+
+          _lossq_money_float_v1(row.get("reserve_amount")),
+
+          _lossq_money_float_v1(row.get("outstanding")),
+
+          _lossq_money_float_v1(row.get("total")),
+
+          _lossq_money_float_v1(row.get("incurred")),
+
+          _lossq_money_float_v1(row.get("total_incurred")),
+
+        ])
+
+
+        if amount_total > 0:
+
+          return False
+
+
+        real_detail_fields = [
+
+          "claimant",
+
+          "claimant_name",
+
+          "name_of_claimant",
+
+          "loss_date",
+
+          "date_of_loss",
+
+          "reported_date",
+
+          "date_reported",
+
+          "closed_date",
+
+          "description",
+
+          "loss_description",
+
+          "cause",
+
+          "adjuster",
+
+          "examiner",
+
+        ]
+
+
+        has_real_detail = any(str(row.get(field) or "").strip() for field in real_detail_fields)
+
+
+        return not has_real_detail
+
+
+      before_fake_year_filter = len(all_parsed_claims) if isinstance(all_parsed_claims, list) else 0
+
+      before_current_file_filter = len(parsed_claims) if isinstance(parsed_claims, list) else 0
+
+
+      if isinstance(parsed_claims, list):
+
+        parsed_claims = [
+
+          row for row in parsed_claims
+
+          if not _lossq_is_fake_year_summary_claim_v1(row)
+
+        ]
+
+
+      if isinstance(all_parsed_claims, list):
+
+        all_parsed_claims = [
+
+          row for row in all_parsed_claims
+
+          if not _lossq_is_fake_year_summary_claim_v1(row)
+
+        ]
+
+
+      after_fake_year_filter = len(all_parsed_claims) if isinstance(all_parsed_claims, list) else 0
+
+      after_current_file_filter = len(parsed_claims) if isinstance(parsed_claims, list) else 0
+
+
+      if before_fake_year_filter != after_fake_year_filter or before_current_file_filter != after_current_file_filter:
+
+        print("LOSSQ_DROP_FAKE_YEAR_SUMMARY_CLAIMS_SAVE_ONLY_V1:", {
+
+          "current_file_before": before_current_file_filter,
+
+          "current_file_after": after_current_file_filter,
+
+          "all_before": before_fake_year_filter,
+
+          "all_after": after_fake_year_filter,
+
+        })
+
+    except Exception as fake_year_summary_exc:
+
+      print("LOSSQ_DROP_FAKE_YEAR_SUMMARY_CLAIMS_SAVE_ONLY_V1_ERROR:", str(fake_year_summary_exc)[:300])
+
+
     # LOSSQ_CANONICAL_UPLOAD_CLAIM_PURGE_V1
     # Before saving this upload, remove stale rows tied to the same uploaded claim numbers
     # or policy numbers. This prevents old bad rows from surviving after parser repairs.
