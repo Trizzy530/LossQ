@@ -4646,6 +4646,8 @@ function lossqBetaAccessLabel(status: any): string {
 
 
 // LOSSQ_CLAIMS_COVERAGE_TRIGGER_DISPLAY_LABEL_V2
+
+// LOSSQ_CLAIMS_COVERAGE_TRIGGER_DISPLAY_LABEL_V3
 export default function DashboardPage() {
 
  useEffect(() => {
