@@ -655,6 +655,267 @@ def lossq_sectioned_excel_loss_run_repair_v1(
     if business_name:
         business_name = display_name_case(business_name)
 
+    # LOSSQ_SECTIONED_EXCEL_FINAL_EXPOSURE_OVERLAY_V2
+    # Final overlay from the workbook exposure table. This forces the account
+    # exposure fields to use the exposure rows, not only the IBC/BAC header line.
+    try:
+        exposure_inputs
+    except NameError:
+        exposure_inputs = {}
+
+    exposure_rows_overlay: list[dict[str, Any]] = []
+    policy_rows_overlay: list[dict[str, Any]] = []
+    exposure_headers_overlay: list[str] = []
+    total_premium_overlay = ""
+
+    in_exposure_overlay = False
+
+    def exposure_overlay_header_indexes(*patterns: str) -> list[int]:
+        indexes: list[int] = []
+
+        for idx, header in enumerate(exposure_headers_overlay):
+            header_key = key(header)
+
+            for pattern in patterns:
+                if re.search(pattern, header_key, flags=re.I):
+                    indexes.append(idx)
+                    break
+
+        return indexes
+
+    def exposure_overlay_first_value(row_values: list[str], indexes: list[int]) -> str:
+        for idx in indexes:
+            if 0 <= idx < len(row_values):
+                value = clean(row_values[idx])
+                if value and value not in {"—", "-", "N/A", "n/a"}:
+                    return value
+
+        return ""
+
+    def exposure_overlay_first_money(row_values: list[str], indexes: list[int]) -> str:
+        for idx in indexes:
+            if 0 <= idx < len(row_values):
+                amount = money_float(row_values[idx])
+                if amount > 0:
+                    return str(int(amount)) if amount == int(amount) else str(amount)
+
+        return ""
+
+    for row in all_rows:
+        joined = " ".join(row)
+
+        if re.search(r"(?i)(exposure data|données d'exposition|donnees d exposition)", joined):
+            in_exposure_overlay = True
+            exposure_headers_overlay = []
+            continue
+
+        if in_exposure_overlay and re.search(r"(?i)(claims detail|détail des sinistres|detail des sinistres)", joined):
+            break
+
+        if not in_exposure_overlay:
+            continue
+
+        if not exposure_headers_overlay and re.search(r"(?i)(category|catégorie|categorie)", joined):
+            exposure_headers_overlay = row
+            continue
+
+        if not exposure_headers_overlay:
+            continue
+
+        coverage_name = clean(row[0] if row else "")
+
+        if not coverage_name:
+            continue
+
+        c_premium_cols = exposure_overlay_header_indexes(r"premium", r"prime")
+
+        if coverage_name.upper() == "TOTAL":
+            total_premium_overlay = exposure_overlay_first_money(row, c_premium_cols)
+            continue
+
+        if re.search(r"(?i)(included|inclus|defense costs|frais de défense|frais de defense)", coverage_name):
+            continue
+
+        c_physician_cols = exposure_overlay_header_indexes(r"physician", r"médecin", r"medecin")
+        c_employee_cols = exposure_overlay_header_indexes(r"employee", r"employ")
+        c_revenue_cols = exposure_overlay_header_indexes(r"revenue", r"revenu")
+        c_limit_cols = exposure_overlay_header_indexes(r"limit", r"limite")
+
+        physicians = exposure_overlay_first_value(row, c_physician_cols)
+        employees = exposure_overlay_first_value(row, c_employee_cols)
+        revenue = exposure_overlay_first_money(row, c_revenue_cols)
+        limit = exposure_overlay_first_money(row, c_limit_cols)
+        premium = exposure_overlay_first_money(row, c_premium_cols)
+
+        exposure_rows_overlay.append({
+            "coverage": coverage_name,
+            "physicians": physicians,
+            "physician_count": physicians,
+            "employees": employees,
+            "employee_count": employees,
+            "revenue": revenue,
+            "limit": limit,
+            "policy_limit": limit,
+            "premium": premium,
+        })
+
+    if exposure_rows_overlay:
+        exposure_lines = [row.get("coverage") for row in exposure_rows_overlay if row.get("coverage")]
+        primary_lob_overlay = " / ".join(exposure_lines)
+
+        limit_parts = [
+            f"{row.get('coverage')}: {row.get('limit')}"
+            for row in exposure_rows_overlay
+            if row.get("coverage") and row.get("limit") and money_float(row.get("limit")) > 0
+        ]
+
+        physician_values = [
+            money_float(row.get("physicians"))
+            for row in exposure_rows_overlay
+            if row.get("physicians") and money_float(row.get("physicians")) > 0
+        ]
+
+        employee_values = [
+            money_float(row.get("employees"))
+            for row in exposure_rows_overlay
+            if row.get("employees") and money_float(row.get("employees")) > 0
+        ]
+
+        revenue_values = [
+            money_float(row.get("revenue"))
+            for row in exposure_rows_overlay
+            if row.get("revenue") and money_float(row.get("revenue")) > 0
+        ]
+
+        premium_values = [
+            money_float(row.get("premium"))
+            for row in exposure_rows_overlay
+            if row.get("premium") and money_float(row.get("premium")) > 0
+        ]
+
+        physician_count_overlay = max(physician_values) if physician_values else 0.0
+        employee_count_overlay = max(employee_values) if employee_values else 0.0
+        revenue_overlay = max(revenue_values) if revenue_values else 0.0
+        total_premium_value_overlay = money_float(total_premium_overlay) or sum(premium_values)
+        policy_limits_overlay = "; ".join(limit_parts)
+
+        if primary_lob_overlay:
+            line_of_business = primary_lob_overlay
+
+        exposure_inputs.update({
+            "detected_lines": len(exposure_lines),
+            "lines_detected": len(exposure_lines),
+            "line_count": len(exposure_lines),
+            "primary_line_of_business": primary_lob_overlay,
+            "primaryLineOfBusiness": primary_lob_overlay,
+            "line_of_business": primary_lob_overlay,
+            "lineOfBusiness": primary_lob_overlay,
+            "policy_limits": policy_limits_overlay,
+            "policyLimits": policy_limits_overlay,
+            "Policy Limits": policy_limits_overlay,
+            "limits": policy_limits_overlay,
+            "coverage_limit": policy_limits_overlay,
+            "coverageLimit": policy_limits_overlay,
+            "current_premium": str(int(total_premium_value_overlay)) if total_premium_value_overlay else "",
+            "currentPremium": str(int(total_premium_value_overlay)) if total_premium_value_overlay else "",
+            "Current Premium": str(int(total_premium_value_overlay)) if total_premium_value_overlay else "",
+            "expiring_premium": str(int(total_premium_value_overlay)) if total_premium_value_overlay else "",
+            "expiringPremium": str(int(total_premium_value_overlay)) if total_premium_value_overlay else "",
+            "Expiring Premium": str(int(total_premium_value_overlay)) if total_premium_value_overlay else "",
+            "revenue": str(int(revenue_overlay)) if revenue_overlay else "",
+            "annual_revenue": str(int(revenue_overlay)) if revenue_overlay else "",
+            "revenue_sales": str(int(revenue_overlay)) if revenue_overlay else "",
+            "revenueSales": str(int(revenue_overlay)) if revenue_overlay else "",
+            "Revenue / Sales": str(int(revenue_overlay)) if revenue_overlay else "",
+            "professional_revenue": str(int(revenue_overlay)) if revenue_overlay else "",
+            "professionalRevenue": str(int(revenue_overlay)) if revenue_overlay else "",
+            "employee_count": str(int(employee_count_overlay)) if employee_count_overlay else "",
+            "employeeCount": str(int(employee_count_overlay)) if employee_count_overlay else "",
+            "Employee Count": str(int(employee_count_overlay)) if employee_count_overlay else "",
+            "physician_count": str(int(physician_count_overlay)) if physician_count_overlay else "",
+            "physicianCount": str(int(physician_count_overlay)) if physician_count_overlay else "",
+            "physicians": str(int(physician_count_overlay)) if physician_count_overlay else "",
+            "Physician Count": str(int(physician_count_overlay)) if physician_count_overlay else "",
+            "physician_value": str(int(physician_count_overlay)) if physician_count_overlay else "",
+            "physicianValue": str(int(physician_count_overlay)) if physician_count_overlay else "",
+            "Physician Value": str(int(physician_count_overlay)) if physician_count_overlay else "",
+            "exposure_rows": exposure_rows_overlay,
+            "exposureRows": exposure_rows_overlay,
+        })
+
+        policy_rows_overlay = []
+
+        for row in exposure_rows_overlay:
+            coverage_name = clean(row.get("coverage"))
+            limit = clean(row.get("limit"))
+            premium = clean(row.get("premium"))
+
+            matching_claims = 0
+            matching_total = 0.0
+
+            for claim in parsed_claims:
+                if not isinstance(claim, dict):
+                    continue
+
+                claim_coverage = clean(claim.get("coverage") or claim.get("line_of_business"))
+
+                is_match = False
+
+                if coverage_name and claim_coverage:
+                    is_match = coverage_name.lower().find(claim_coverage.lower()) >= 0 or claim_coverage.lower().find(coverage_name.lower()) >= 0
+
+                if not is_match and re.search(r"(?i)d&o|directors|administrateurs", coverage_name) and re.search(r"(?i)d&o|directors|administrateurs", claim_coverage):
+                    is_match = True
+
+                if not is_match and re.search(r"(?i)e&o|professional|professionnelle|erreurs|omissions", coverage_name) and re.search(r"(?i)e&o|professional|professionnelle|erreurs|omissions", claim_coverage):
+                    is_match = True
+
+                if is_match:
+                    matching_claims += 1
+                    matching_total += money_float(claim.get("total_incurred") or claim.get("incurred"))
+
+            policy_rows_overlay.append({
+                "policy_number": policy_number,
+                "policyNumber": policy_number,
+                "line_of_business": coverage_name,
+                "lineOfBusiness": coverage_name,
+                "policy_type": coverage_name,
+                "policyType": coverage_name,
+                "coverage": coverage_name,
+                "carrier": carrier,
+                "carrier_name": carrier,
+                "carrierName": carrier,
+                "writing_carrier": carrier,
+                "writingCarrier": carrier,
+                "effective_date": effective_date,
+                "effectiveDate": effective_date,
+                "expiration_date": expiration_date,
+                "expirationDate": expiration_date,
+                "evaluation_date": evaluation_date,
+                "evaluationDate": evaluation_date,
+                "state": province_code,
+                "stateProvince": province_code,
+                "province": province_name or province_code,
+                "province_code": province_code,
+                "currency": currency,
+                "physicians": row.get("physicians"),
+                "physician_count": row.get("physicians"),
+                "physicianCount": row.get("physicians"),
+                "employees": row.get("employees"),
+                "employee_count": row.get("employees"),
+                "revenue": row.get("revenue"),
+                "limit": limit,
+                "policy_limit": limit,
+                "policyLimit": limit,
+                "premium": premium,
+                "claims": matching_claims,
+                "claim_count": matching_claims,
+                "total_incurred": matching_total,
+            })
+
+        if policy_rows_overlay:
+            policy_rows = policy_rows_overlay
+
     is_canada = bool(province_code or currency == "CAD" or re.search(r"(?i)canada|cad|québec|quebec|ontario|manitoba|ibc|bac", first_text))
 
     def apply_profile(target: dict[str, Any]):
@@ -777,6 +1038,29 @@ def lossq_sectioned_excel_loss_run_repair_v1(
             target["policies"] = policy_rows
             target["policy_schedule"] = policy_rows
             target["policySchedule"] = policy_rows
+
+        # LOSSQ_SECTIONED_EXCEL_PROFILE_EXPOSURE_ROOT_APPLY_V2
+        if isinstance(exposure_inputs, dict) and exposure_inputs:
+            existing_exposure = target.get("exposure_inputs") or target.get("exposureInputs")
+            if not isinstance(existing_exposure, dict):
+                existing_exposure = {}
+
+            merged_exposure = dict(existing_exposure)
+            merged_exposure.update({
+                k: v
+                for k, v in exposure_inputs.items()
+                if v not in ("", None, [], {})
+            })
+
+            target["exposure_inputs"] = merged_exposure
+            target["exposureInputs"] = merged_exposure
+            target["exposures"] = merged_exposure
+            target["manual_exposure_inputs"] = merged_exposure
+            target["manualExposureInputs"] = merged_exposure
+
+            for exposure_key, exposure_value in merged_exposure.items():
+                if exposure_value not in ("", None, [], {}):
+                    target[exposure_key] = exposure_value
 
         # LOSSQ_SECTIONED_EXCEL_APPLY_EXPOSURE_INPUTS_V1
         if exposure_inputs:
