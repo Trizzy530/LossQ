@@ -19579,6 +19579,19 @@ async def save_uploaded_files(files, policy_number, db, current_user):
       direct_profile,
     )
 
+    # LOSSQ_SECTIONED_EXCEL_SERVICE_REPAIR_CALL_V1
+    try:
+      from app.services.sectioned_excel_parser import lossq_sectioned_excel_loss_run_repair_v1
+
+      parsed_claims, parsed_profile, direct_profile = lossq_sectioned_excel_loss_run_repair_v1(
+        file_path=file_path,
+        parsed_claims=parsed_claims,
+        parsed_profile=parsed_profile,
+        direct_profile=direct_profile,
+      )
+    except Exception as exc:
+      print("LOSSQ_SECTIONED_EXCEL_SERVICE_REPAIR_ERROR_V1:", str(exc)[:300])
+
     all_parsed_claims.extend(parsed_claims)
 
     # LOSSQ_CANONICAL_UPLOAD_CLAIM_PURGE_V1
