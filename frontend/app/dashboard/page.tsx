@@ -7904,6 +7904,126 @@ setLazyLoadedTools,
 
    updateProfileList([uploadedProfile]);
 
+   // LOSSQ_PERSIST_UPLOADED_PROFILE_TO_BACKEND_V1
+
+   // Upload-created profiles must be persisted to AccountProfile, not only
+
+   // local browser cache. Browser cache is cleared on logout/login.
+
+   try {
+
+    if (mergedUploadProfile && typeof mergedUploadProfile === "object") {
+
+     const profileSavePayload = {
+
+      ...mergedUploadProfile,
+
+      business_name:
+
+       mergedUploadProfile.business_name ||
+
+       mergedUploadProfile.insured_name ||
+
+       mergedUploadProfile.account_name ||
+
+       "Uploaded loss run",
+
+      insured_name:
+
+       mergedUploadProfile.insured_name ||
+
+       mergedUploadProfile.business_name ||
+
+       mergedUploadProfile.account_name ||
+
+       "Uploaded loss run",
+
+      policy_number:
+
+       mergedUploadProfile.policy_number ||
+
+       mergedUploadProfile.main_policy ||
+
+       mergedUploadProfile.mainPolicy ||
+
+       "",
+
+      policies:
+
+       Array.isArray(mergedUploadProfile.policies)
+
+        ? mergedUploadProfile.policies
+
+        : Array.isArray(mergedUploadProfile.policy_schedule)
+
+        ? mergedUploadProfile.policy_schedule
+
+        : Array.isArray(mergedUploadProfile.policySchedule)
+
+        ? mergedUploadProfile.policySchedule
+
+        : [],
+
+     };
+
+
+     const profileSaveRes = await fetch(`${API}/account-profile/`, {
+
+      method: "PUT",
+
+      headers: {
+
+       ...authHeaders(),
+
+       "Content-Type": "application/json",
+
+      },
+
+      body: JSON.stringify(profileSavePayload),
+
+     });
+
+
+     if (profileSaveRes.ok) {
+
+      const profileSaveData = await safeJson(profileSaveRes);
+
+
+      const persistedUploadProfile =
+
+       profileSaveData && typeof profileSaveData === "object"
+
+        ? {
+
+         ...mergedUploadProfile,
+
+         ...profileSaveData,
+
+        }
+
+        : mergedUploadProfile;
+
+
+      setProfile(persistedUploadProfile);
+
+      updateProfileList([persistedUploadProfile]);
+
+
+     } else {
+
+      console.log("LOSSQ_PERSIST_UPLOADED_PROFILE_TO_BACKEND_V1_FAILED", profileSaveRes.status);
+
+     }
+
+    }
+
+   } catch (persistUploadedProfileError) {
+
+    console.log("LOSSQ_PERSIST_UPLOADED_PROFILE_TO_BACKEND_V1_ERROR", persistUploadedProfileError);
+
+   }
+
+
    // LOSSQ_REFRESH_PROFILE_LIST_AFTER_UPLOAD_SAVE_V1
    // Backend upload/upsert is the source of truth. Refresh the saved profile list
    // immediately after upload so newly saved profiles stay visible after refresh/delete.
