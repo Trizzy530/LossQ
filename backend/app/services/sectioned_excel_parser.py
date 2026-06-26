@@ -461,6 +461,158 @@ def lossq_sectioned_excel_loss_run_repair_v1(
     if claims and len(claims) >= len(real_existing):
         parsed_claims = claims
 
+    # LOSSQ_SECTIONED_EXCEL_AVIVA_POLICY_AND_CLAIMS_SAFE_V2
+    # Safe service-only repair for Policy Summary Excel workbooks.
+    # This does not touch saved files, profile deletion, upload history, or frontend cache.
+    def _lossq_sectioned_excel_policy_period_text_safe_v2(value):
+        raw = clean(value)
+
+        if not raw:
+            return False
+
+        return bool(re.search(
+            r"\d{4}[-/]\d{1,2}[-/]\d{1,2}\s*(?:to|au|through|thru|until|-|–)\s*\d{4}[-/]\d{1,2}[-/]\d{1,2}",
+            raw,
+            flags=re.I,
+        ))
+
+    def _lossq_sectioned_excel_real_policy_number_safe_v2(value):
+        raw = clean(value)
+
+        if not raw:
+            return False
+
+        if _lossq_sectioned_excel_policy_period_text_safe_v2(raw):
+            return False
+
+        if re.fullmatch(r"\d{4}\s*[-–]\s*\d{4}", raw):
+            return False
+
+        return bool(re.search(r"[A-Z]", raw, flags=re.I) and re.search(r"\d", raw) and len(raw) >= 6)
+
+    true_policy_number_safe_v2 = ""
+
+    for row in all_rows:
+        for index, cell in enumerate(row):
+            cell_text = clean(cell)
+            cell_key = key(cell)
+
+            inline_match = re.search(
+                r"(?i)\b(policy\s*#|policy\s*number|policy\s*no\.?|police\s*#|numéro\s*de\s*police|numero\s*de\s*police)\b\s*[:#-]\s*(.+)$",
+                cell_text,
+            )
+
+            if inline_match:
+                inline_value = clean(inline_match.group(2))
+
+                if _lossq_sectioned_excel_real_policy_number_safe_v2(inline_value):
+                    true_policy_number_safe_v2 = inline_value
+                    break
+
+            if not re.search(
+                r"(?i)\b(policy\s*#|policy\s*number|policy\s*no\.?|police\s*#|numéro\s*de\s*police|numero\s*de\s*police)\b",
+                cell_key,
+            ):
+                continue
+
+            if re.search(r"(?i)\b(period|période|periode)\b", cell_key):
+                continue
+
+            for offset in range(1, 6):
+                if index + offset >= len(row):
+                    continue
+
+                candidate = clean(row[index + offset])
+
+                if _lossq_sectioned_excel_real_policy_number_safe_v2(candidate):
+                    true_policy_number_safe_v2 = candidate
+                    break
+
+            if true_policy_number_safe_v2:
+                break
+
+        if true_policy_number_safe_v2:
+            break
+
+    if true_policy_number_safe_v2:
+        policy_number = true_policy_number_safe_v2
+    elif _lossq_sectioned_excel_policy_period_text_safe_v2(policy_number):
+        policy_number = ""
+
+    def _lossq_sectioned_excel_fake_year_summary_claim_safe_v2(claim):
+        if not isinstance(claim, dict):
+            return False
+
+        claim_number = clean(
+            claim.get("claim_number")
+            or claim.get("claimNumber")
+            or claim.get("claim_no")
+            or claim.get("claim")
+        )
+
+        if not re.fullmatch(r"\d{4}\s*[-–]\s*\d{4}", claim_number):
+            return False
+
+        amount_total = (
+            money_float(claim.get("paid"))
+            + money_float(claim.get("paid_amount"))
+            + money_float(claim.get("loss_paid"))
+            + money_float(claim.get("expense"))
+            + money_float(claim.get("expense_amount"))
+            + money_float(claim.get("reserve"))
+            + money_float(claim.get("reserve_amount"))
+            + money_float(claim.get("outstanding"))
+            + money_float(claim.get("total"))
+            + money_float(claim.get("incurred"))
+            + money_float(claim.get("total_incurred"))
+        )
+
+        if amount_total > 0:
+            return False
+
+        real_detail_fields = [
+            "claimant",
+            "claimant_name",
+            "name_of_claimant",
+            "loss_date",
+            "date_of_loss",
+            "reported_date",
+            "date_reported",
+            "closed_date",
+            "description",
+            "loss_description",
+            "cause",
+            "adjuster",
+            "examiner",
+        ]
+
+        has_real_detail = any(clean(claim.get(field)) for field in real_detail_fields)
+
+        return not has_real_detail
+
+    source_claims_safe_v2 = parsed_claims
+
+    if "claims" in locals() and isinstance(claims, list) and claims:
+        source_claims_safe_v2 = claims
+
+    if isinstance(source_claims_safe_v2, list):
+        parsed_claims = [
+            claim for claim in source_claims_safe_v2
+            if isinstance(claim, dict)
+            and not _lossq_sectioned_excel_fake_year_summary_claim_safe_v2(claim)
+        ]
+
+    if policy_number:
+        for claim in parsed_claims or []:
+            if isinstance(claim, dict):
+                claim["policy_number"] = policy_number
+                claim["policyNumber"] = policy_number
+
+    print("LOSSQ_SECTIONED_EXCEL_AVIVA_POLICY_AND_CLAIMS_SAFE_V2:", {
+        "policy_number": policy_number,
+        "claims": len(parsed_claims or []),
+    })
+
     coverage_claim_counts: dict[str, int] = {}
     coverage_totals: dict[str, float] = {}
 
