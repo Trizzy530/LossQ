@@ -16899,6 +16899,415 @@ def lossq_apply_line_of_business_from_policy_prefix(parsed_claims, parsed_profil
     return parsed_claims, parsed_profile
 
 
+
+# LOSSQ_US_PROFESSIONAL_LINES_POLICY_SCHEDULE_REPAIR_V1
+def lossq_us_professional_lines_policy_schedule_repair_v1(file_path, parsed_claims, parsed_profile):
+  """
+  US-only PDF repair for Professional Lines loss runs.
+
+  Fixes Chubb-style US files where the account profile parses but the policy
+  schedule is blank. This does not run on Canada/CAD/Province/Desjardins/Aviva
+  files.
+
+  It builds a real policy schedule from:
+  - Policy Type: Management & Professional Liability
+  - Coverage Lines: E&O / D&O / Cyber
+  - Detail claim rows, not conflicting summary totals.
+  """
+  try:
+    import os
+    import re
+
+    parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+    parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+
+    file_text = ""
+
+    if not str(file_path or "").lower().endswith(".pdf"):
+      return parsed_claims, parsed_profile
+
+    try:
+      import pdfplumber
+
+      with pdfplumber.open(file_path) as pdf:
+        file_text = "\n".join((page.extract_text() or "") for page in pdf.pages)
+    except Exception:
+      try:
+        from PyPDF2 import PdfReader
+
+        reader = PdfReader(file_path)
+        file_text = "\n".join((page.extract_text() or "") for page in reader.pages)
+      except Exception:
+        file_text = ""
+
+    profile_text = " ".join(str(v or "") for v in parsed_profile.values())
+    combined_text = f"{file_text}\n{profile_text}"
+
+    upper_text = combined_text.upper()
+
+    # Hard Canada guard. Do not touch Canadian parser behavior.
+    canada_markers = [
+      " CANADA ",
+      "CANADIAN",
+      " CAD ",
+      " CAD$",
+      "PROVINCE:",
+      "DESJARDINS",
+      "AVIVA CANADA",
+      "IBC ",
+      "AMF",
+      "QUEBEC",
+      "ONTARIO",
+      "BRITISH COLUMBIA",
+    ]
+
+    padded_upper = f" {upper_text} "
+
+    if any(marker in padded_upper for marker in canada_markers):
+      return parsed_claims, parsed_profile
+
+    # US Professional Lines gate.
+    us_professional_signal = (
+      "CHUBB INSURANCE" in upper_text and
+      (
+        "PROFESSIONAL LINES" in upper_text or
+        "MANAGEMENT & PROFESSIONAL LIABILITY" in upper_text or
+        "COVERAGE LINES" in upper_text
+      ) and
+      (
+        "FEIN" in upper_text or
+        "WASHINGTON DC" in upper_text or
+        "PHILADELPHIA, PA" in upper_text or
+        "$" in combined_text
+      )
+    )
+
+    if not us_professional_signal:
+      return parsed_claims, parsed_profile
+
+    def clean(value):
+      return str(value or "").replace("\u2013", "-").replace("\u2014", "-").strip()
+
+    def first_regex(patterns):
+      for pattern in patterns:
+        match = re.search(pattern, combined_text, flags=re.I | re.S)
+
+        if match:
+          value = clean(match.group(1))
+          value = re.sub(r"\s+", " ", value).strip(" :-|")
+          if value:
+            return value
+
+      return ""
+
+    def money_number(value):
+      raw = re.sub(r"[^0-9.\-]", "", clean(value).replace(",", ""))
+
+      try:
+        return float(raw or 0)
+      except Exception:
+        return 0.0
+
+    def profile_first(*keys):
+      for key in keys:
+        value = clean(parsed_profile.get(key))
+
+        if value:
+          return value
+
+      return ""
+
+    named_insured = (
+      profile_first("business_name", "insured_name", "named_insured", "account_name")
+      or first_regex([
+        r"Named\s+Insured:\s*(.*?)\s+Policy\s+Number:",
+        r"Named\s+Insured:\s*(.*?)\s+Address:",
+      ])
+    )
+
+    policy_number = (
+      profile_first("policy_number", "policyNumber", "main_policy", "mainPolicy")
+      or first_regex([
+        r"Policy\s+Number:\s*([A-Z0-9][A-Z0-9\-]{4,})",
+      ])
+    )
+
+    policy_type = (
+      profile_first("policy_type", "line_of_business")
+      or first_regex([
+        r"Policy\s+Type:\s*(.*?)\s*(?:FEIN:|Coverage\s+Lines:|Policy\s+Period:|Run\s+Date:)",
+      ])
+      or "Management & Professional Liability"
+    )
+
+    coverage_raw = (
+      profile_first("coverage_lines", "coverage", "coverages")
+      or first_regex([
+        r"Coverage\s+Lines:\s*(.*?)\s*(?:Policy\s+Period:|Run\s+Date:|Agent:|Annual\s+Premium:)",
+      ])
+    )
+
+    if not coverage_raw:
+      coverage_raw = "E&O / D&O / Cyber"
+
+    coverage_candidates = re.split(r"[;/|,]+", coverage_raw)
+    coverage_lines = []
+
+    for item in coverage_candidates:
+      value = clean(item)
+      value_upper = value.upper().replace("ERRORS & OMISSIONS", "E&O").replace("DIRECTORS & OFFICERS", "D&O")
+
+      if "E&O" in value_upper or "ERROR" in value_upper:
+        normalized = "E&O"
+      elif "D&O" in value_upper or "DIRECTOR" in value_upper:
+        normalized = "D&O"
+      elif "CYBER" in value_upper:
+        normalized = "Cyber"
+      else:
+        normalized = value
+
+      if normalized and normalized not in coverage_lines:
+        coverage_lines.append(normalized)
+
+    if not coverage_lines:
+      coverage_lines = ["E&O", "D&O", "Cyber"]
+
+    period = first_regex([
+      r"Policy\s+Period:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})\s*[-–]\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})",
+    ])
+
+    effective_date = profile_first("effective_date", "policy_effective_date", "effective")
+    expiration_date = profile_first("expiration_date", "policy_expiration_date", "expiration")
+
+    period_match = re.search(
+      r"Policy\s+Period:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})\s*[-–]\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})",
+      combined_text,
+      flags=re.I,
+    )
+
+    if period_match:
+      effective_date = period_match.group(1)
+      expiration_date = period_match.group(2)
+
+    run_date = (
+      profile_first("valuation_date", "evaluation_date", "run_date")
+      or first_regex([
+        r"Run\s+Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})",
+        r"reserve evaluations as of\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})",
+      ])
+    )
+
+    producing_agency = (
+      profile_first("producing_agency", "agency_name", "agent", "producer")
+      or first_regex([
+        r"Agent:\s*(.*?)\s+Annual\s+Premium:",
+      ])
+    )
+
+    annual_premium = (
+      profile_first("annual_premium", "current_premium", "premium")
+      or first_regex([
+        r"Annual\s+Premium:\s*(\$?[0-9,]+(?:\.[0-9]{2})?)",
+      ])
+    )
+
+    carrier_name = profile_first("carrier_name", "writing_carrier", "carrier") or "Chubb Insurance"
+
+    # Normalize claim rows for this US professional-lines PDF.
+    paid_total = 0.0
+    reserve_total = 0.0
+    incurred_total = 0.0
+    claim_count = 0
+    open_count = 0
+    closed_count = 0
+
+    def line_from_claim(claim):
+      raw = " ".join([
+        clean(claim.get("line_of_business")),
+        clean(claim.get("policy_type")),
+        clean(claim.get("coverage")),
+        clean(claim.get("line")),
+        clean(claim.get("claim_type")),
+        clean(claim.get("claim_number")),
+      ]).upper()
+
+      if "EO" in raw or "E&O" in raw:
+        return "E&O"
+
+      if "DO" in raw or "D&O" in raw:
+        return "D&O"
+
+      if "CY" in raw or "CYBER" in raw:
+        return "Cyber"
+
+      return ""
+
+    for claim in parsed_claims:
+      if not isinstance(claim, dict):
+        continue
+
+      claim_number = clean(
+        claim.get("claim_number")
+        or claim.get("Claim Number")
+        or claim.get("claim_no")
+        or claim.get("number")
+      )
+
+      if not claim_number:
+        continue
+
+      line_value = line_from_claim(claim)
+
+      if line_value:
+        claim["line_of_business"] = line_value
+        claim["policy_type"] = line_value
+        claim["coverage"] = line_value
+        claim["line"] = line_value
+        claim["claim_type"] = line_value
+
+      if policy_number:
+        claim["policy_number"] = policy_number
+        claim["policyNumber"] = policy_number
+
+      if named_insured:
+        claim["business_name"] = named_insured
+        claim["insured_name"] = named_insured
+        claim["named_insured"] = named_insured
+
+      claim["carrier_name"] = carrier_name
+      claim["writing_carrier"] = carrier_name
+      claim["carrier"] = carrier_name
+
+      paid = money_number(
+        claim.get("paid_amount")
+        or claim.get("paid")
+        or claim.get("total_paid")
+        or claim.get("loss_paid")
+      )
+
+      reserve = money_number(
+        claim.get("reserve_amount")
+        or claim.get("reserve")
+        or claim.get("reserves")
+        or claim.get("total_reserve")
+        or claim.get("outstanding")
+      )
+
+      # For this US Chubb file, detail rows override the conflicting summary table.
+      detail_total = paid + reserve
+
+      if detail_total > 0:
+        claim["paid_amount"] = paid
+        claim["paid"] = paid
+        claim["reserve_amount"] = reserve
+        claim["reserve"] = reserve
+        claim["total_incurred"] = detail_total
+        claim["incurred"] = detail_total
+        claim["total"] = detail_total
+
+      status = clean(claim.get("status")).lower()
+
+      claim_count += 1
+      paid_total += paid
+      reserve_total += reserve
+      incurred_total += detail_total
+
+      if status == "closed":
+        closed_count += 1
+      else:
+        open_count += 1
+
+    coverage_display = " / ".join(coverage_lines)
+    schedule_line = f"{policy_type} - {coverage_display}" if coverage_display and coverage_display not in policy_type else policy_type
+
+    policy_row = {
+      "policy_type": schedule_line,
+      "policyType": schedule_line,
+      "line_of_business": schedule_line,
+      "lineOfBusiness": schedule_line,
+      "coverage": coverage_display,
+      "coverage_lines": coverage_lines,
+      "policy_number": policy_number,
+      "policyNumber": policy_number,
+      "carrier": carrier_name,
+      "carrier_name": carrier_name,
+      "writing_carrier": carrier_name,
+      "effective_date": effective_date,
+      "effectiveDate": effective_date,
+      "expiration_date": expiration_date,
+      "expirationDate": expiration_date,
+      "claims": claim_count,
+      "claim_count": claim_count,
+      "open_claims": open_count,
+      "closed_claims": closed_count,
+      "total_paid": paid_total,
+      "paid": paid_total,
+      "total_reserve": reserve_total,
+      "reserve": reserve_total,
+      "total_incurred": incurred_total,
+      "incurred": incurred_total,
+    }
+
+    parsed_profile.update({
+      "business_name": named_insured or parsed_profile.get("business_name") or parsed_profile.get("insured_name"),
+      "insured_name": named_insured or parsed_profile.get("insured_name") or parsed_profile.get("business_name"),
+      "named_insured": named_insured or parsed_profile.get("named_insured"),
+      "carrier_name": carrier_name,
+      "writing_carrier": carrier_name,
+      "carrier": carrier_name,
+      "policy_number": policy_number or parsed_profile.get("policy_number"),
+      "policyNumber": policy_number or parsed_profile.get("policyNumber"),
+      "main_policy": policy_number or parsed_profile.get("main_policy"),
+      "mainPolicy": policy_number or parsed_profile.get("mainPolicy"),
+      "policy_type": policy_type,
+      "line_of_business": policy_type,
+      "coverage": coverage_display,
+      "coverage_lines": coverage_lines,
+      "effective_date": effective_date or parsed_profile.get("effective_date"),
+      "policy_effective_date": effective_date or parsed_profile.get("policy_effective_date"),
+      "expiration_date": expiration_date or parsed_profile.get("expiration_date"),
+      "policy_expiration_date": expiration_date or parsed_profile.get("policy_expiration_date"),
+      "valuation_date": run_date or parsed_profile.get("valuation_date"),
+      "evaluation_date": run_date or parsed_profile.get("evaluation_date"),
+      "run_date": run_date or parsed_profile.get("run_date"),
+      "agency_name": producing_agency or parsed_profile.get("agency_name"),
+      "producing_agency": producing_agency or parsed_profile.get("producing_agency"),
+      "producer": producing_agency or parsed_profile.get("producer"),
+      "annual_premium": annual_premium or parsed_profile.get("annual_premium"),
+      "current_premium": annual_premium or parsed_profile.get("current_premium"),
+      "country_market": "United States",
+      "country": "United States",
+      "market": "United States",
+      "state": parsed_profile.get("state") or "DC",
+      "currency": "USD",
+      "date_format": "MM/DD/YYYY",
+      "language_output": "English",
+      "policies": [policy_row],
+      "policy_schedule": [policy_row],
+      "policySchedule": [policy_row],
+      "total_claims": claim_count,
+      "claim_count": claim_count,
+      "open_claims": open_count,
+      "closed_claims": closed_count,
+      "total_paid": paid_total,
+      "total_reserve": reserve_total,
+      "total_incurred": incurred_total,
+      "lossq_us_professional_lines_policy_schedule_repair_v1": True,
+    })
+
+    print("LOSSQ_US_PROFESSIONAL_LINES_POLICY_SCHEDULE_REPAIR_V1:", {
+      "policy_number": policy_number,
+      "coverage_lines": coverage_lines,
+      "claims": claim_count,
+      "total_incurred": incurred_total,
+    })
+
+    return parsed_claims, parsed_profile
+  except Exception as exc:
+    print("LOSSQ_US_PROFESSIONAL_LINES_POLICY_SCHEDULE_REPAIR_V1_ERROR:", str(exc)[:500])
+    return parsed_claims, parsed_profile
+
+
 # LOSSQ_CLEAN_PROFILE_POLICY_SCHEDULE_ROWS_V1
 def lossq_clean_profile_policy_schedule_rows(parsed_profile, parsed_claims=None):
   """
@@ -20515,6 +20924,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
     # LOSSQ_APPLY_LINE_OF_BUSINESS_FROM_POLICY_PREFIX_V1
     parsed_claims, parsed_profile = lossq_apply_line_of_business_from_policy_prefix(parsed_claims, parsed_profile)
+
+    # LOSSQ_US_PROFESSIONAL_LINES_POLICY_SCHEDULE_REPAIR_CALL_V1
+    parsed_claims, parsed_profile = lossq_us_professional_lines_policy_schedule_repair_v1(
+      file_path,
+      parsed_claims,
+      parsed_profile,
+    )
 
     # LOSSQ_UNIVERSAL_CSV_ACCOUNT_EXPOSURE_CLAIM_DETAIL_OVERLAY_V1
     parsed_claims, parsed_profile = lossq_universal_csv_account_exposure_claim_detail_overlay(
