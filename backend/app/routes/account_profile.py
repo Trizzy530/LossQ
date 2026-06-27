@@ -433,7 +433,7 @@ def lossq_account_profile_clean_account_number(value):
 
 
 # LOSSQ_ACCOUNT_PROFILE_ALL_ROUTE_V1
-def lossq_account_profile_to_dict(profile):
+def lossq_account_profile_to_dict_raw(profile):
     policies = parse_json_value(getattr(profile, "policies", None), [])
     validation = parse_json_value(getattr(profile, "validation", None), {})
 
@@ -685,6 +685,177 @@ def lossq_account_profile_to_dict(profile):
 
 
 # LOSSQ_ACCOUNT_PROFILE_ROOT_PUT_SAVE_ROUTE_V1
+
+
+# LOSSQ_ACCOUNT_PROFILE_TO_DICT_SAFE_WRAPPER_V1
+def lossq_account_profile_to_dict(profile):
+    """
+    Safe wrapper around the existing AccountProfile serializer.
+
+    Some legacy/saved rows can have NULL JSON/profile fields. The old serializer
+    can throw: AttributeError: 'NoneType' object has no attribute 'get'.
+    This wrapper preserves the original serializer when it works and falls back
+    to a minimal safe profile card when it does not.
+    """
+    try:
+        row = lossq_account_profile_to_dict_raw(profile)
+
+        if isinstance(row, dict):
+            return row
+
+    except AttributeError as exc:
+        print("LOSSQ_ACCOUNT_PROFILE_TO_DICT_SAFE_WRAPPER_V1_ATTRIBUTE_ERROR:", str(exc)[:500])
+    except Exception as exc:
+        print("LOSSQ_ACCOUNT_PROFILE_TO_DICT_SAFE_WRAPPER_V1_ERROR:", str(exc)[:500])
+
+    import json as _lossq_profile_json
+
+    def _clean(value):
+        return str(value or "").strip()
+
+    def _safe_dict(value):
+        if isinstance(value, dict):
+            return value
+
+        if isinstance(value, str) and value.strip():
+            try:
+                parsed = _lossq_profile_json.loads(value)
+                return parsed if isinstance(parsed, dict) else {}
+            except Exception:
+                return {}
+
+        return {}
+
+    def _first(*values):
+        for value in values:
+            if value not in ("", None, [], {}):
+                cleaned = _clean(value)
+
+                if cleaned:
+                    return cleaned
+
+        return ""
+
+    merged = {}
+
+    for attr in [
+        "profile_data",
+        "data",
+        "metadata",
+        "raw_data",
+        "profile",
+        "account_profile",
+        "accountProfile",
+        "validation",
+    ]:
+        try:
+            merged.update(_safe_dict(getattr(profile, attr, None)))
+        except Exception:
+            pass
+
+    profile_id = _first(
+        getattr(profile, "id", ""),
+        merged.get("id"),
+        merged.get("profile_id"),
+    )
+
+    policy_number = _first(
+        getattr(profile, "policy_number", ""),
+        getattr(profile, "policyNumber", ""),
+        merged.get("policy_number"),
+        merged.get("policyNumber"),
+        merged.get("main_policy"),
+        merged.get("mainPolicy"),
+    )
+
+    business_name = _first(
+        getattr(profile, "business_name", ""),
+        getattr(profile, "insured_name", ""),
+        getattr(profile, "account_name", ""),
+        merged.get("business_name"),
+        merged.get("businessName"),
+        merged.get("insured_name"),
+        merged.get("insuredName"),
+        merged.get("account_name"),
+        merged.get("accountName"),
+        f"Saved profile {policy_number or profile_id or ''}",
+    )
+
+    carrier_name = _first(
+        getattr(profile, "carrier_name", ""),
+        getattr(profile, "writing_carrier", ""),
+        getattr(profile, "carrier", ""),
+        merged.get("carrier_name"),
+        merged.get("carrierName"),
+        merged.get("writing_carrier"),
+        merged.get("writingCarrier"),
+        merged.get("carrier"),
+    )
+
+    line_of_business = _first(
+        getattr(profile, "line_of_business", ""),
+        getattr(profile, "policy_type", ""),
+        merged.get("line_of_business"),
+        merged.get("lineOfBusiness"),
+        merged.get("policy_type"),
+        merged.get("policyType"),
+        merged.get("coverage"),
+        merged.get("line"),
+    )
+
+    policies = (
+        merged.get("policies")
+        if isinstance(merged.get("policies"), list)
+        else merged.get("policy_schedule")
+        if isinstance(merged.get("policy_schedule"), list)
+        else merged.get("policySchedule")
+        if isinstance(merged.get("policySchedule"), list)
+        else []
+    )
+
+    if not policies and policy_number:
+        policies = [{
+            "policy_number": policy_number,
+            "policyNumber": policy_number,
+            "line_of_business": line_of_business,
+            "lineOfBusiness": line_of_business,
+            "policy_type": line_of_business,
+            "policyType": line_of_business,
+            "coverage": line_of_business,
+            "carrier": carrier_name,
+            "carrier_name": carrier_name,
+        }]
+
+    return {
+        **merged,
+        "id": profile_id,
+        "profile_id": profile_id,
+        "business_name": business_name,
+        "businessName": business_name,
+        "insured_name": business_name,
+        "insuredName": business_name,
+        "display_name": business_name,
+        "account_name": business_name,
+        "accountName": business_name,
+        "carrier_name": carrier_name,
+        "carrierName": carrier_name,
+        "writing_carrier": carrier_name,
+        "writingCarrier": carrier_name,
+        "carrier": carrier_name,
+        "policy_number": policy_number,
+        "policyNumber": policy_number,
+        "main_policy": policy_number,
+        "mainPolicy": policy_number,
+        "line_of_business": line_of_business,
+        "lineOfBusiness": line_of_business,
+        "policy_type": line_of_business,
+        "policyType": line_of_business,
+        "policies": policies,
+        "policy_schedule": policies,
+        "policySchedule": policies,
+        "lossq_safe_profile_serializer": True,
+    }
+
 @router.put("")
 @router.put("/")
 def save_account_profile_root(payload: AccountProfileUpdate, current_user: dict = Depends(get_current_user)):
