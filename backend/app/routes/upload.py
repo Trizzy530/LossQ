@@ -21647,6 +21647,35 @@ async def save_uploaded_files(files, policy_number, db, current_user):
       parsed_profile,
     )
 
+    # LOSSQ_US_CHUBB_PROFESSIONAL_LINES_LATE_SAVE_REPAIR_CALL_V4
+    # Run the US-only Chubb Professional Lines repair immediately before claim save.
+    # This prevents later parser cleanup from leaving the profile as MPL-9934-2022
+    # with zero policy-schedule claims.
+    try:
+      parsed_claims, parsed_profile = lossq_us_chubb_professional_lines_detail_row_repair_v2(
+        file_path,
+        parsed_claims,
+        parsed_profile,
+      )
+      print("LOSSQ_US_CHUBB_LATE_REPAIR_DEBUG_V2", {
+        "claims": len(parsed_claims) if isinstance(parsed_claims, list) else "not-list",
+        "profile_policy": parsed_profile.get("policy_number") if isinstance(parsed_profile, dict) else None,
+        "main_policy": parsed_profile.get("main_policy") if isinstance(parsed_profile, dict) else None,
+        "profile_total_incurred": parsed_profile.get("total_incurred") if isinstance(parsed_profile, dict) else None,
+        "claim_policies": sorted(list(set([
+          str(c.get("policy_number") or c.get("policyNumber") or "").strip()
+          for c in parsed_claims
+          if isinstance(c, dict)
+        ]))) if isinstance(parsed_claims, list) else [],
+        "claim_numbers": [
+          str(c.get("claim_number") or c.get("claimNumber") or "").strip()
+          for c in parsed_claims[:10]
+          if isinstance(c, dict)
+        ] if isinstance(parsed_claims, list) else [],
+      })
+    except Exception as chubb_late_repair_exc:
+      print("LOSSQ_US_CHUBB_LATE_REPAIR_DEBUG_V2_ERROR", str(chubb_late_repair_exc)[:500])
+
     all_parsed_claims.extend(parsed_claims)
 
     # LOSSQ_DROP_FAKE_YEAR_SUMMARY_CLAIMS_SAVE_ONLY_V1
