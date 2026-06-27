@@ -4704,8 +4704,9 @@ function lossqUsDashboardDisplayDateV1(value: any, source?: any) {
     country.includes("UNITED STATES") ||
     currency === "USD" ||
     dateFormat === "MM/DD/YYYY" ||
-    /\b(GL|WC|BOP|UMB|CARGO|AUTO|PROP|IM)-\d{4}-/i.test(policyText)
-   );
+     /\b(GL|WC|BOP|UMB|CARGO|AUTO|PROP|IM)-\d{4}-/i.test(policyText) ||
+     /\bCBB-MPL-[A-Z0-9-]+\b/i.test(policyText)
+    );
 
   if (!isUS) return raw;
 

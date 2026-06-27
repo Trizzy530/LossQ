@@ -1833,6 +1833,20 @@ def lossq_canada_market_is_account_v1(profile_data=None, claims=None):
       if isinstance(claim, dict):
         parts.extend([lossq_canada_market_text_v1(v) for v in claim.values()])
   text = ' '.join(parts).lower()
+  explicit_us = (
+    "united states" in text
+    or " usd " in f" {text} "
+    or "mm/dd/yyyy" in text
+    or "cbb-mpl-" in text
+  )
+  explicit_canada = (
+    "canada" in text
+    or " cad " in f" {text} "
+    or "ca$" in text
+    or "c$" in text
+  )
+  if explicit_us and not explicit_canada:
+    return False
   tokens = ['canada', 'cad', 'ca$', 'c$', 'ontario', 'alberta', 'british columbia', 'quebec', 'québec', 'wsib', 'wcb', 'worksafebc', 'cnesst']
   return any(token in text for token in tokens)
 
@@ -3535,6 +3549,22 @@ def lossq_apply_canada_market_carrier_match_final_v1(result, profile_data, claim
       for name in ["line_of_business", "claim_type", "coverage", "status", "jurisdiction_state", "venue_state", "description"]:
         claim_blob_parts.append(str(getattr(claim, name, "") or ""))
   claim_blob = " ".join(claim_blob_parts).lower()
+  explicit_us = bool(
+    country.lower() in {"united states", "us", "usa"}
+    or currency == "USD"
+    or clean(profile_data.get("market_date_format") or profile_data.get("date_format")).upper() == "MM/DD/YYYY"
+    or "cbb-mpl-" in profile_blob
+    or "cbb-mpl-" in claim_blob
+  )
+  explicit_canada = bool(
+    country.lower() == "canada"
+    or currency == "CAD"
+    or _lossq_ca_re.search(r"\b(?:canada|cad|ca\$|c\$|fsra|bcfsa|aic|amf|wsib|wcb|cnesst)\b", profile_blob, _lossq_ca_re.I)
+    or _lossq_ca_re.search(r"\b(?:canada|cad|ca\$|c\$|fsra|bcfsa|aic|amf|wsib|wcb|cnesst)\b", claim_blob, _lossq_ca_re.I)
+  )
+
+  if explicit_us and not explicit_canada:
+    return result
 
   is_canada = bool(
     country.lower() == "canada"
@@ -3542,8 +3572,8 @@ def lossq_apply_canada_market_carrier_match_final_v1(result, profile_data, claim
     or language == "fr"
     or region in canadian_regions
     or _lossq_ca_re.search(r"\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b", postal, _lossq_ca_re.I)
-    or any(term in profile_blob for term in ["canada", "cad", "fsra", "bcfsa", "aic", "amf", "wsib", "wcb", "code postal", "province", "quebec", "québec"])
-    or any(term in claim_blob for term in ["qc", "on", "bc", "ab", "ouvert", "fermé", "responsabilité", "biens commerciaux", "litige"])
+    or _lossq_ca_re.search(r"\b(?:canada|cad|fsra|bcfsa|aic|amf|wsib|wcb|code postal|province|quebec|québec)\b", profile_blob, _lossq_ca_re.I)
+    or _lossq_ca_re.search(r"\b(?:qc|on|bc|ab|ouvert|fermé|responsabilité|biens commerciaux|litige)\b", claim_blob, _lossq_ca_re.I)
   )
 
   if not is_canada:
@@ -3658,6 +3688,189 @@ def lossq_apply_canada_market_carrier_match_final_v1(result, profile_data, claim
   result["lossq_canada_market_carrier_match_version"] = "LOSSQ_CANADA_MARKET_CARRIER_MATCH_FINAL_V1"
   return result
 
+
+# LOSSQ_US_CHUBB_PROF_LINES_CARRIER_MATCH_V1
+def lossq_apply_us_chubb_prof_lines_carrier_match_v1(result, profile_data, claims):
+  result = dict(result or {})
+  profile_data = profile_data if isinstance(profile_data, dict) else {}
+  claims = claims or []
+
+  import re as _lossq_us_re
+
+  def clean(value):
+    return _lossq_us_re.sub(r"\s+", " ", str(value or "").strip())
+
+  def get_value(obj, *keys):
+    for key in keys:
+      if isinstance(obj, dict):
+        value = obj.get(key)
+      else:
+        value = getattr(obj, key, None)
+      if value not in (None, ""):
+        return value
+    return ""
+
+  def money_value(value):
+    text = clean(value)
+    text = _lossq_us_re.sub(r"(?i)\b(?:usd|cad|cdn|cnd)\b", "", text)
+    text = text.replace("US$", "").replace("$", "").replace(",", "")
+    match = _lossq_us_re.search(r"-?\d+(?:\.\d+)?", text)
+    try:
+      return float(match.group(0)) if match else 0.0
+    except Exception:
+      return 0.0
+
+  market_context = profile_data.get("market_context") or {}
+  if not isinstance(market_context, dict):
+    market_context = {}
+
+  country = clean(
+    profile_data.get("market_country")
+    or profile_data.get("country")
+    or profile_data.get("market")
+    or market_context.get("country")
+  ).lower()
+  currency = clean(profile_data.get("market_currency") or profile_data.get("currency") or market_context.get("currency")).upper()
+  date_format = clean(profile_data.get("market_date_format") or profile_data.get("date_format") or market_context.get("date_format")).upper()
+
+  profile_parts = []
+  for value in profile_data.values():
+    if not isinstance(value, (dict, list)):
+      profile_parts.append(clean(value))
+  for row in profile_data.get("policies") or profile_data.get("policy_schedule") or []:
+    if isinstance(row, dict):
+      profile_parts.extend(clean(value) for value in row.values() if not isinstance(value, (dict, list)))
+
+  claim_parts = []
+  for claim in claims:
+    if isinstance(claim, dict):
+      claim_parts.extend(clean(value) for value in claim.values() if not isinstance(value, (dict, list)))
+    else:
+      for name in ["policy_number", "line_of_business", "claim_type", "coverage", "carrier", "carrier_name", "writing_carrier"]:
+        claim_parts.append(clean(getattr(claim, name, "")))
+
+  profile_blob = " ".join(profile_parts).lower()
+  claim_blob = " ".join(claim_parts).lower()
+  combined_blob = f"{profile_blob} {claim_blob}"
+
+  explicit_canada = bool(
+    "canada" in combined_blob
+    or currency == "CAD"
+    or _lossq_us_re.search(r"\b(?:cad|ca\$|c\$|province|ontario|quebec|québec|alberta|british columbia|wsib|wcb|amf|fsra|bcfsa)\b", combined_blob, _lossq_us_re.I)
+  )
+  explicit_us = bool(
+    country in {"united states", "us", "usa"}
+    or currency == "USD"
+    or date_format == "MM/DD/YYYY"
+    or "cbb-mpl-" in combined_blob
+  )
+  chubb_prof_lines = bool(
+    ("chubb insurance" in combined_blob or "chubb" in combined_blob)
+    and ("cbb-mpl-" in combined_blob or "professional" in combined_blob)
+    and ("cyber" in combined_blob or "e&o" in combined_blob or "d&o" in combined_blob)
+  )
+
+  if explicit_canada or not explicit_us or not chubb_prof_lines:
+    return result
+
+  total_claims = len(claims)
+  open_claims = 0
+  reserve_total = 0.0
+  incurred_total = 0.0
+  lines = []
+
+  for claim in claims:
+    status = clean(get_value(claim, "status", "claim_status")).lower()
+    if status in {"open", "pending"}:
+      open_claims += 1
+
+    paid = money_value(get_value(claim, "paid_amount", "paid", "total_paid"))
+    reserve = money_value(get_value(claim, "reserve_amount", "reserve", "total_reserve"))
+    incurred = money_value(get_value(claim, "total_incurred", "incurred", "total")) or paid + reserve
+    reserve_total += reserve
+    incurred_total += incurred
+
+    line = clean(get_value(claim, "line_of_business", "claim_type", "coverage", "policy_type"))
+    if line and line not in lines:
+      lines.append(line)
+
+  for policy in profile_data.get("policies") or profile_data.get("policy_schedule") or []:
+    if isinstance(policy, dict):
+      line = clean(policy.get("line_of_business") or policy.get("policy_type") or policy.get("coverage") or policy.get("line"))
+      if line and line not in lines:
+        lines.append(line)
+
+  line_blob = " ".join(lines).lower()
+  has_cyber = "cyber" in line_blob
+  has_do = "d&o" in line_blob or "directors" in line_blob
+  has_eo = "e&o" in line_blob or "errors" in line_blob or "omissions" in line_blob or "professional" in line_blob
+
+  base_carriers = [
+    ("Chubb Insurance", 88, "US executive risk and professional lines market with strong E&O, D&O, and cyber capability."),
+    ("Travelers", 81, "US admitted commercial market with professional liability, management liability, and cyber appetite."),
+    ("CNA", 79, "US commercial specialty carrier with professional liability, management liability, and cyber capability."),
+    ("AIG", 77, "US specialty market for management liability, cyber, and complex professional lines accounts."),
+    ("The Hartford", 74, "US commercial market with professional liability and cyber underwriting capability."),
+  ]
+
+  adjusted = []
+  for carrier, base_score, reason in base_carriers:
+    score = base_score
+    if carrier == "Chubb Insurance":
+      score += 4
+    if has_cyber and carrier in {"Chubb Insurance", "AIG", "Travelers", "CNA"}:
+      score += 3
+    if has_do and carrier in {"Chubb Insurance", "AIG", "Travelers", "CNA"}:
+      score += 3
+    if has_eo and carrier in {"Chubb Insurance", "Travelers", "CNA", "The Hartford"}:
+      score += 3
+
+    score -= min(12, open_claims * 3)
+    if incurred_total >= 500000:
+      score -= 5
+    elif incurred_total >= 250000:
+      score -= 3
+
+    score = max(35, min(95, int(score)))
+    fit = "Strong US professional lines fit" if score >= 80 else "Conditional US professional lines fit"
+
+    adjusted.append({
+      "carrier": carrier,
+      "carrier_name": carrier,
+      "match_score": score,
+      "score": score,
+      "fit": fit,
+      "market_category": "US Professional Lines",
+      "reason": (
+        f"{carrier}: {reason} US-market review used USD/MM-DD context, "
+        f"{total_claims} claim(s), {open_claims} open claim(s), ${incurred_total:,.0f} incurred, "
+        f"${reserve_total:,.0f} reserves, and detected lines: {', '.join(lines) if lines else 'Professional Lines'}."
+      ),
+      "country": "United States",
+      "currency": "USD",
+    })
+
+  adjusted = sorted(adjusted, key=lambda item: int(item.get("match_score") or 0), reverse=True)
+  recommended = adjusted[0] if adjusted else {}
+
+  result["top_carriers"] = adjusted[:5]
+  result["recommended_carrier"] = recommended.get("carrier") or "Chubb Insurance"
+  result["recommended_score"] = recommended.get("match_score") or recommended.get("score") or 0
+  result["carriers_ranked"] = len(adjusted)
+  result["recommended_market_category"] = "US Professional Lines"
+  result["market_country"] = "United States"
+  result["market_currency"] = "USD"
+  result["carrier_country"] = "United States"
+  result["carrier_match_reasons"] = [row.get("reason") for row in adjusted[:5]]
+  result["carrier_match_summary"] = (
+    f"LossQ used US Chubb Professional Lines context for this account. Recommended carrier: {result['recommended_carrier']} "
+    f"with a {result['recommended_score']}/100 match. The review considered {total_claims} claim(s), "
+    f"{open_claims} open claim(s), ${incurred_total:,.0f} incurred, ${reserve_total:,.0f} reserves, "
+    f"and detected lines: {', '.join(lines) if lines else 'Professional Lines'}."
+  )
+  result["lossq_us_chubb_prof_lines_carrier_match_version"] = "LOSSQ_US_CHUBB_PROF_LINES_CARRIER_MATCH_V1"
+  return result
+
 @router.get("/carrier-match")
 def carrier_match(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(require_package_access)):
   result = engine_response(build_carrier_match_engine, db, current_user, policy_number)
@@ -3680,6 +3893,8 @@ def carrier_match(policy_number: str | None = Query(default=None), db: Session =
   result = lossq_apply_canada_carrier_match_real_stats_v2(result, profile_data, claims)
   # LOSSQ_CANADA_MARKET_CARRIER_MATCH_FINAL_CALL_V1
   result = lossq_apply_canada_market_carrier_match_final_v1(result, profile_data, claims)
+  # LOSSQ_US_CHUBB_PROF_LINES_CARRIER_MATCH_CALL_V1
+  result = lossq_apply_us_chubb_prof_lines_carrier_match_v1(result, profile_data, claims)
   return result
 
 
