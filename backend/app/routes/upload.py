@@ -9989,17 +9989,26 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
 
           data = row_map(exposure_headers, row)
           policy_number = first(data, "Policy Number", "Policy No", "Policy")
-          line = first(data, "Line of Business", "Coverage", "Policy Type", "LOB")
+          line = first(data, "Coverage / Line", "Line of Business", "Coverage", "Policy Type", "LOB")
           if not policy_number and not line:
             continue
+
+          effective_date = first(data, "Effective Date", "Effective", "Policy Effective Date")
+          expiration_date = first(data, "Expiration Date", "Expiration", "Policy Expiration Date")
+          policy_period = first(data, "Policy Period", "Policy Term", "Coverage Period")
+          if policy_period and (not effective_date or not expiration_date):
+            policy_dates = re.findall(r"\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b", policy_period)
+            if len(policy_dates) >= 2:
+              effective_date = effective_date or policy_dates[0]
+              expiration_date = expiration_date or policy_dates[1]
 
           strong_exposure_rows.append({
             "policy_number": policy_number,
             "policy_type": line,
             "line_of_business": line,
             "carrier": first(data, "Carrier", "Writing Carrier") or parsed_profile.get("carrier_name", ""),
-            "effective_date": first(data, "Effective Date", "Policy Effective Date"),
-            "expiration_date": first(data, "Expiration Date", "Policy Expiration Date"),
+            "effective_date": effective_date,
+            "expiration_date": expiration_date,
             "exposure_basis": first(data, "Exposure Basis", "Basis"),
             "exposure_value": first(data, "Exposure Value", "Exposure"),
             "payroll": first_money(data, "Payroll"),
@@ -10008,7 +10017,7 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
             "vehicle_count": first_money(data, "Vehicle Count", "Vehicles", "Autos"),
             "driver_count": first_money(data, "Driver Count", "Drivers"),
             "property_tiv": first_money(data, "Property TIV", "TIV", "Total Insured Value"),
-            "current_premium": first_money(data, "Current Premium"),
+            "current_premium": first_money(data, "Current Premium", "Annual Premium", "Premium", "Written Premium"),
             "expiring_premium": first_money(data, "Expiring Premium"),
             "target_renewal_premium": first_money(data, "Target Renewal Premium"),
           })
@@ -10017,6 +10026,236 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
         context["exposure_rows"] = strong_exposure_rows
     except Exception as exc:
       print("LOSSQ_UNIVERSAL_TABULAR_UPLOAD_CANONICAL_SAVE_OVERLAY_V1_EXPOSURE_ERROR:", str(exc)[:300])
+
+    if not context.get("claims") and not context.get("exposure_rows"):
+      try:
+        flat_claims, flat_profile = lossq_clean_standard_csv_override(
+          file_path,
+          parsed_claims,
+          parsed_profile,
+        )
+        flat_claims = flat_claims if isinstance(flat_claims, list) else []
+        flat_profile = flat_profile if isinstance(flat_profile, dict) else {}
+        flat_policies = flat_profile.get("policies") if isinstance(flat_profile.get("policies"), list) else []
+
+        real_flat_claims = [
+          claim for claim in flat_claims
+          if isinstance(claim, dict)
+          and clean(claim.get("claim_number"))
+          and clean(claim.get("policy_number"))
+        ]
+        real_flat_policies = [
+          policy for policy in flat_policies
+          if isinstance(policy, dict)
+          and (clean(policy.get("policy_number")) or clean(policy.get("line_of_business") or policy.get("policy_type")))
+        ]
+
+        if real_flat_claims or real_flat_policies:
+          parsed_profile.update({k: v for k, v in flat_profile.items() if v not in ("", None, [], {})})
+          context["claims"] = real_flat_claims
+          context["exposure_rows"] = real_flat_policies
+      except Exception as exc:
+        print("LOSSQ_UNIVERSAL_TABULAR_UPLOAD_CANONICAL_SAVE_OVERLAY_V1_FLAT_CSV_ERROR:", str(exc)[:300])
+
+  elif str(file_path or "").lower().endswith((".xlsx", ".xlsm", ".xls")):
+    try:
+      import datetime as _lossq_dt
+      from openpyxl import load_workbook
+
+      workbook = load_workbook(file_path, data_only=True, read_only=True)
+
+      def cell_clean(value):
+        if value is None:
+          return ""
+        if isinstance(value, (_lossq_dt.datetime, _lossq_dt.date)):
+          return value.strftime("%m/%d/%Y")
+        return clean(value)
+
+      def cell_key(value):
+        return re.sub(r"[^a-z0-9]+", "", cell_clean(value).lower())
+
+      def good(value):
+        value = cell_clean(value)
+        return bool(value and value.lower() not in {"-", "na", "n/a", "none", "null", "unknown"})
+
+      def money_value(value):
+        value = cell_clean(value)
+        if not value:
+          return ""
+        raw = value.replace("$", "").replace(",", "").replace("(", "-").replace(")", "")
+        try:
+          return float(raw)
+        except Exception:
+          return value
+
+      def table_row_map(headers, row):
+        mapped = {}
+        for idx, header in enumerate(headers):
+          header_key = cell_key(header)
+          if header_key:
+            mapped[header_key] = cell_clean(row[idx]) if idx < len(row) else ""
+        return mapped
+
+      def first_cell(row_data, *labels):
+        for label in labels:
+          value = row_data.get(cell_key(label), "")
+          if good(value):
+            return cell_clean(value)
+        return ""
+
+      workbook_text = []
+      for worksheet in workbook.worksheets:
+        workbook_text.append(worksheet.title)
+        for row in worksheet.iter_rows(values_only=True):
+          workbook_text.extend(cell_clean(cell) for cell in row if good(cell))
+
+      if is_canada_context(" ".join(workbook_text)):
+        return parsed_claims, parsed_profile, profile_data, direct_profile
+
+      profile_label_map = {
+        "businessname": "business_name",
+        "accountname": "business_name",
+        "namedinsured": "business_name",
+        "insured": "business_name",
+        "insuredname": "business_name",
+        "companyname": "business_name",
+        "accountnumber": "account_number",
+        "accountno": "account_number",
+        "customernumber": "customer_number",
+        "clientnumber": "customer_number",
+        "producingagency": "agency_name",
+        "agency": "agency_name",
+        "agencyname": "agency_name",
+        "producer": "producer",
+        "broker": "agency_name",
+        "carrier": "carrier_name",
+        "writingcarrier": "writing_carrier",
+        "evaluationdate": "evaluation_date",
+        "valuationdate": "evaluation_date",
+        "asofdate": "evaluation_date",
+        "state": "state",
+      }
+
+      for worksheet in workbook.worksheets:
+        sheet_key = cell_key(worksheet.title)
+        if not any(token in sheet_key for token in ["account", "profile", "info"]):
+          continue
+        for row in worksheet.iter_rows(values_only=True):
+          values = [cell_clean(cell) for cell in row]
+          if len(values) < 2:
+            continue
+          label_key = cell_key(values[0])
+          field = profile_label_map.get(label_key)
+          if field and good(values[1]):
+            parsed_profile[field] = values[1]
+
+      if parsed_profile.get("business_name"):
+        parsed_profile["insured_name"] = parsed_profile.get("business_name")
+        parsed_profile["named_insured"] = parsed_profile.get("business_name")
+        parsed_profile["account_name"] = parsed_profile.get("business_name")
+      if parsed_profile.get("carrier_name") and not parsed_profile.get("writing_carrier"):
+        parsed_profile["writing_carrier"] = parsed_profile.get("carrier_name")
+      if parsed_profile.get("writing_carrier") and not parsed_profile.get("carrier_name"):
+        parsed_profile["carrier_name"] = parsed_profile.get("writing_carrier")
+      if parsed_profile.get("agency_name"):
+        parsed_profile["producing_agency"] = parsed_profile.get("producing_agency") or parsed_profile.get("agency_name")
+      if parsed_profile.get("account_number"):
+        parsed_profile["customer_number"] = parsed_profile.get("customer_number") or parsed_profile.get("account_number")
+
+      workbook_policies = []
+      workbook_claims = []
+
+      for worksheet in workbook.worksheets:
+        rows = [list(row) for row in worksheet.iter_rows(values_only=True)]
+        for idx, row in enumerate(rows):
+          row_keys = {cell_key(cell) for cell in row if good(cell)}
+
+          policy_header = (
+            any(option in row_keys for option in {"policynumber", "policyno", "policy"})
+            and any(option in row_keys for option in {"coverageline", "lineofbusiness", "coverage", "policytype", "lob", "annualpremium", "currentpremium", "effective"})
+          )
+          claim_header = (
+            any(option in row_keys for option in {"claimnumber", "claimno", "claimid", "claim"})
+            and any(option in row_keys for option in {"policynumber", "policyno", "policy"})
+            and any(option in row_keys for option in {"totalincurred", "paid", "reserve", "status"})
+          )
+
+          if policy_header:
+            headers = row
+            for data_row in rows[idx + 1:]:
+              if not any(good(cell) for cell in data_row):
+                break
+              data = table_row_map(headers, data_row)
+              policy_number = first_cell(data, "Policy Number", "Policy No", "Policy")
+              line = first_cell(data, "Coverage / Line", "Line of Business", "Coverage", "Policy Type", "LOB")
+              if not policy_number and not line:
+                continue
+              workbook_policies.append({
+                "policy_number": policy_number,
+                "policy_type": line,
+                "line_of_business": line,
+                "coverage": line,
+                "carrier": first_cell(data, "Carrier", "Writing Carrier") or parsed_profile.get("carrier_name", ""),
+                "carrier_name": first_cell(data, "Carrier", "Writing Carrier") or parsed_profile.get("carrier_name", ""),
+                "writing_carrier": first_cell(data, "Writing Carrier", "Carrier") or parsed_profile.get("writing_carrier") or parsed_profile.get("carrier_name", ""),
+                "effective_date": first_cell(data, "Effective Date", "Effective", "Policy Effective Date"),
+                "expiration_date": first_cell(data, "Expiration Date", "Expiration", "Policy Expiration Date"),
+                "exposure_basis": first_cell(data, "Exposure Basis", "Basis"),
+                "exposure_value": first_cell(data, "Exposure Value", "Exposure"),
+                "current_premium": money_value(first_cell(data, "Current Premium", "Annual Premium", "Premium", "Written Premium")),
+                "expiring_premium": money_value(first_cell(data, "Expiring Premium")),
+                "target_renewal_premium": money_value(first_cell(data, "Target Renewal Premium")),
+              })
+
+          if claim_header:
+            headers = row
+            for data_row in rows[idx + 1:]:
+              if not any(good(cell) for cell in data_row):
+                break
+              data = table_row_map(headers, data_row)
+              claim_number = first_cell(data, "Claim Number", "Claim #", "Claim No", "Claim ID", "Claim")
+              policy_number = first_cell(data, "Policy Number", "Policy No", "Policy")
+              if not claim_number:
+                continue
+              paid = money_value(first_cell(data, "Paid", "Paid Amount", "Total Paid"))
+              reserve = money_value(first_cell(data, "Reserve", "Reserve Amount", "Outstanding Reserve"))
+              incurred = money_value(first_cell(data, "Total Incurred", "Incurred", "Gross Incurred", "Net Incurred"))
+              if money_float(incurred) <= 0 and (money_float(paid) > 0 or money_float(reserve) > 0):
+                incurred = money_float(paid) + money_float(reserve)
+              workbook_claims.append({
+                "claim_number": claim_number,
+                "policy_number": policy_number,
+                "line_of_business": first_cell(data, "Line of Business", "Coverage / Line", "Coverage", "Policy Type", "LOB"),
+                "claim_type": first_cell(data, "Line of Business", "Coverage / Line", "Coverage", "Policy Type", "LOB"),
+                "status": first_cell(data, "Status", "Claim Status"),
+                "claim_status": first_cell(data, "Status", "Claim Status"),
+                "date_of_loss": first_cell(data, "Date of Loss", "Loss Date"),
+                "loss_date": first_cell(data, "Date of Loss", "Loss Date"),
+                "date_reported": first_cell(data, "Date Reported", "Reported Date"),
+                "date_closed": first_cell(data, "Date Closed", "Closed Date"),
+                "paid_amount": paid,
+                "paid": paid,
+                "reserve_amount": reserve,
+                "reserve": reserve,
+                "total_incurred": incurred,
+                "incurred": incurred,
+                "description": first_cell(data, "Description", "Loss Description", "Claim Description", "Narrative"),
+                "litigation": first_cell(data, "Litigation", "Litigated"),
+                "flag": first_cell(data, "Flag", "Flags", "Claim Flag"),
+                "business_name": parsed_profile.get("business_name"),
+                "carrier_name": parsed_profile.get("carrier_name"),
+                "writing_carrier": parsed_profile.get("writing_carrier") or parsed_profile.get("carrier_name"),
+                "account_number": parsed_profile.get("account_number"),
+                "customer_number": parsed_profile.get("customer_number") or parsed_profile.get("account_number"),
+              })
+
+      if workbook_policies:
+        context["exposure_rows"] = workbook_policies
+      if workbook_claims:
+        context["claims"] = workbook_claims
+
+    except Exception as exc:
+      print("LOSSQ_UNIVERSAL_TABULAR_UPLOAD_CANONICAL_SAVE_OVERLAY_V1_XLSX_ERROR:", str(exc)[:300])
 
   section_claims = context.get("claims") if isinstance(context.get("claims"), list) else []
   exposure_rows = context.get("exposure_rows") if isinstance(context.get("exposure_rows"), list) else []
@@ -10123,6 +10362,11 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
       parsed_profile["main_policy"] = first_policy
       parsed_profile["main_policy_number"] = first_policy
 
+    if not parsed_profile.get("effective_date") and policies[0].get("effective_date"):
+      parsed_profile["effective_date"] = policies[0].get("effective_date")
+    if not parsed_profile.get("expiration_date") and policies[0].get("expiration_date"):
+      parsed_profile["expiration_date"] = policies[0].get("expiration_date")
+
     exposure_inputs = parsed_profile.get("exposure_inputs") if isinstance(parsed_profile.get("exposure_inputs"), dict) else {}
     exposure_inputs["exposure_rows"] = policies
 
@@ -10163,6 +10407,20 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
     parsed_profile["total_incurred"] = total_incurred
     parsed_profile["claims"] = parsed_claims
     parsed_profile["parsed_claims"] = parsed_claims
+
+    if not parsed_profile.get("state"):
+      for claim in parsed_claims:
+        if not isinstance(claim, dict):
+          continue
+        claim_state = clean(
+          claim.get("state")
+          or claim.get("jurisdiction_state")
+          or claim.get("venue_state")
+          or claim.get("loss_state")
+        ).upper()
+        if re.fullmatch(r"[A-Z]{2}", claim_state or ""):
+          parsed_profile["state"] = claim_state
+          break
 
   for key, value in (context or {}).items():
     if key in {"claims", "exposure_rows"}:
