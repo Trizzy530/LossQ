@@ -21637,6 +21637,16 @@ async def save_uploaded_files(files, policy_number, db, current_user):
       parsed_profile,
     )
 
+    # LOSSQ_US_CHUBB_PROFESSIONAL_LINES_LATE_SAVE_REPAIR_CALL_V3
+    # Run this US-only Chubb repair late, after universal cleanup/overlay steps,
+    # so later parser stages cannot revert CBB-MPL-9934-2022 to MPL-9934-2022
+    # or reset the policy schedule to 0 claims / $0.
+    parsed_claims, parsed_profile = lossq_us_chubb_professional_lines_detail_row_repair_v2(
+      file_path,
+      parsed_claims,
+      parsed_profile,
+    )
+
     all_parsed_claims.extend(parsed_claims)
 
     # LOSSQ_DROP_FAKE_YEAR_SUMMARY_CLAIMS_SAVE_ONLY_V1
