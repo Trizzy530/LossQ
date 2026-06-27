@@ -3871,6 +3871,352 @@ def lossq_apply_us_chubb_prof_lines_carrier_match_v1(result, profile_data, claim
   result["lossq_us_chubb_prof_lines_carrier_match_version"] = "LOSSQ_US_CHUBB_PROF_LINES_CARRIER_MATCH_V1"
   return result
 
+
+# LOSSQ_MARKET_PROFILE_CARRIER_MATCH_FINAL_V1
+def lossq_apply_market_profile_carrier_match_final_v1(result, profile_data, claims):
+  """
+  Final market-aware carrier match pass.
+
+  Keeps Canada and US carrier directories separate, then scores carriers against
+  the uploaded profile type / policy schedule / claim lines. This is intentionally
+  rules-based and profile-driven, not file-name or account-name specific.
+  """
+  result = dict(result or {})
+  profile_data = profile_data if isinstance(profile_data, dict) else {}
+  claims = claims or []
+
+  import re as _lossq_market_re
+
+  def clean(value):
+    return _lossq_market_re.sub(r"\s+", " ", str(value or "").strip())
+
+  def get_value(obj, *keys):
+    for key in keys:
+      if isinstance(obj, dict):
+        value = obj.get(key)
+      else:
+        value = getattr(obj, key, None)
+      if value not in (None, "", [], {}):
+        return value
+    return ""
+
+  def money_value(value):
+    text = clean(value)
+    text = _lossq_market_re.sub(r"(?i)\b(?:usd|cad|cdn|cnd)\b", "", text)
+    text = text.replace("CA$", "").replace("C$", "").replace("US$", "").replace("$", "").replace(",", "")
+    match = _lossq_market_re.search(r"-?\d+(?:\.\d+)?", text)
+    try:
+      return float(match.group(0)) if match else 0.0
+    except Exception:
+      return 0.0
+
+  def add_blob(parts, value):
+    if value in (None, "", [], {}):
+      return
+    if isinstance(value, dict):
+      for item in value.values():
+        add_blob(parts, item)
+      return
+    if isinstance(value, (list, tuple, set)):
+      for item in value:
+        add_blob(parts, item)
+      return
+    parts.append(clean(value))
+
+  market_context = profile_data.get("market_context") or {}
+  if not isinstance(market_context, dict):
+    market_context = {}
+
+  parts = []
+  add_blob(parts, profile_data)
+  for claim in claims:
+    if isinstance(claim, dict):
+      add_blob(parts, claim)
+    else:
+      for key in [
+        "policy_number",
+        "line_of_business",
+        "claim_type",
+        "coverage",
+        "state",
+        "jurisdiction_state",
+        "venue_state",
+        "currency",
+        "carrier_name",
+      ]:
+        add_blob(parts, getattr(claim, key, ""))
+
+  combined_blob = " ".join(parts).lower()
+  country = clean(profile_data.get("market_country") or profile_data.get("country") or market_context.get("country")).lower()
+  currency = clean(profile_data.get("market_currency") or profile_data.get("currency") or market_context.get("currency")).upper()
+  date_format = clean(profile_data.get("market_date_format") or profile_data.get("date_format") or market_context.get("date_format")).upper()
+  region = clean(
+    profile_data.get("market_region_code")
+    or profile_data.get("state")
+    or profile_data.get("province")
+    or market_context.get("state")
+    or market_context.get("province")
+    or market_context.get("region_code")
+  ).upper()
+
+  us_states = {
+    "AL", "AK", "AZ", "AR", "CA", "CO", "CT", "DE", "DC", "FL", "GA", "HI", "ID", "IL", "IN", "IA",
+    "KS", "KY", "LA", "ME", "MD", "MA", "MI", "MN", "MS", "MO", "MT", "NE", "NV", "NH", "NJ", "NM",
+    "NY", "NC", "ND", "OH", "OK", "OR", "PA", "RI", "SC", "SD", "TN", "TX", "UT", "VT", "VA", "WA",
+    "WV", "WI", "WY",
+  }
+  canada_regions = {"ON", "BC", "AB", "QC", "MB", "SK", "NS", "NB", "PE", "NL", "YT", "NT", "NU"}
+
+  explicit_canada = bool(
+    country == "canada"
+    or currency == "CAD"
+    or region in canada_regions
+    or _lossq_market_re.search(r"\b(?:canada|canadian|cad|ca\$|c\$|province|postal code|ontario|quebec|québec|alberta|british columbia|wsib|wcb|cnesst|amf|fsra|bcfsa)\b", combined_blob, _lossq_market_re.I)
+    or _lossq_market_re.search(r"\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b", " ".join(parts), _lossq_market_re.I)
+  )
+  explicit_us = bool(
+    country in {"united states", "us", "usa", "united states of america"}
+    or currency == "USD"
+    or region in us_states
+    or date_format == "MM/DD/YYYY"
+    or _lossq_market_re.search(r"\b(?:united states|usa|u\.s\.|usd|zip code|naic)\b", combined_blob, _lossq_market_re.I)
+  )
+
+  if explicit_canada and not explicit_us:
+    market = "Canada"
+    market_currency = "CAD"
+  elif explicit_us and not explicit_canada:
+    market = "United States"
+    market_currency = "USD"
+  elif country == "canada" or currency == "CAD":
+    market = "Canada"
+    market_currency = "CAD"
+  elif country in {"united states", "us", "usa"} or currency == "USD" or region in us_states:
+    market = "United States"
+    market_currency = "USD"
+  else:
+    return result
+
+  line_texts = []
+  for key in [
+    "profile_type",
+    "account_type",
+    "industry",
+    "line_of_business",
+    "primary_line_of_business",
+    "policy_type",
+    "coverage",
+  ]:
+    value = clean(profile_data.get(key))
+    if value:
+      line_texts.append(value)
+
+  for policy in profile_data.get("policies") or profile_data.get("policy_schedule") or []:
+    if isinstance(policy, dict):
+      line_texts.append(clean(policy.get("line_of_business") or policy.get("policy_type") or policy.get("coverage") or policy.get("line")))
+      line_texts.append(clean(policy.get("policy_number")))
+
+  for claim in claims:
+    line_texts.append(clean(get_value(claim, "line_of_business", "claim_type", "coverage", "policy_type")))
+    line_texts.append(clean(get_value(claim, "policy_number")))
+    line_texts.append(clean(get_value(claim, "cause_of_loss", "description", "flag")))
+
+  def detect_line_keys():
+    text = " ".join(line_texts).lower()
+    keys = set()
+    if _lossq_market_re.search(r"\b(?:garage|dealer open lot|\bdol\b|auto dealer)\b", text):
+      keys.update({"garage", "auto", "property", "gl"})
+    if _lossq_market_re.search(r"\b(?:auto|fleet|vehicle|driver|garage liability|commercial auto|transport|trucking)\b|(?:^|-)AUTO(?:-|$)", text, _lossq_market_re.I):
+      keys.add("auto")
+    if _lossq_market_re.search(r"\b(?:general liability|commercial general liability|premises liability|\bgl\b|\bcgl\b)\b|(?:^|-)GL(?:-|$)", text, _lossq_market_re.I):
+      keys.add("gl")
+    if _lossq_market_re.search(r"\b(?:workers|worker|compensation|wc|payroll|employee injury)\b|(?:^|-)WC(?:-|$)", text, _lossq_market_re.I):
+      keys.add("wc")
+    if _lossq_market_re.search(r"\b(?:property|bop|businessowners|business owners|tiv|building|contents|equipment damage)\b|(?:^|-)(BOP|PROP|CP)(?:-|$)", text, _lossq_market_re.I):
+      keys.add("property")
+    if _lossq_market_re.search(r"\b(?:professional|medical|dental|malpractice|errors|omissions|e&o|pl)\b|(?:^-)PL(?:-|$)", text, _lossq_market_re.I):
+      keys.add("professional")
+    if _lossq_market_re.search(r"\b(?:cyber|ransomware|phishing|records|privacy)\b|(?:^|-)(CY|CYBER)(?:-|$)", text, _lossq_market_re.I):
+      keys.add("cyber")
+    if _lossq_market_re.search(r"\b(?:employment practices|epli|wrongful termination)\b|(?:^-)EPLI(?:-|$)", text, _lossq_market_re.I):
+      keys.add("epli")
+    if _lossq_market_re.search(r"\b(?:umbrella|excess)\b|(?:^|-)(UMB|XS)(?:-|$)", text, _lossq_market_re.I):
+      keys.add("umbrella")
+    if _lossq_market_re.search(r"\b(?:inland marine|tools|equipment floater|scheduled tools)\b|(?:^-)IM(?:-|$)", text, _lossq_market_re.I):
+      keys.add("inland_marine")
+    if _lossq_market_re.search(r"\b(?:cargo|motor truck cargo|transit)\b", text):
+      keys.add("cargo")
+    return keys or {"gl"}
+
+  line_keys = detect_line_keys()
+
+  profile_type_labels = {
+    "auto": "Commercial Auto / Fleet",
+    "gl": "General Liability",
+    "wc": "Workers Compensation",
+    "property": "Property / BOP",
+    "professional": "Professional Liability",
+    "cyber": "Cyber Liability",
+    "epli": "Employment Practices Liability",
+    "umbrella": "Umbrella / Excess",
+    "inland_marine": "Inland Marine / Tools",
+    "garage": "Auto Dealer / Garage",
+    "cargo": "Cargo / Transportation",
+  }
+  profile_type = " / ".join(profile_type_labels.get(key, key.title()) for key in sorted(line_keys))
+
+  total_claims = len(claims)
+  open_claims = 0
+  reserve_total = 0.0
+  incurred_total = 0.0
+  litigation_claims = 0
+  for claim in claims:
+    status = clean(get_value(claim, "status", "claim_status")).lower()
+    if "open" in status or "pending" in status or "reopen" in status:
+      open_claims += 1
+    paid = money_value(get_value(claim, "paid_amount", "paid", "total_paid"))
+    reserve = money_value(get_value(claim, "reserve_amount", "reserve", "total_reserve"))
+    incurred = money_value(get_value(claim, "total_incurred", "incurred", "total")) or paid + reserve
+    reserve_total += reserve
+    incurred_total += incurred
+    legal = clean(get_value(claim, "attorney_assigned", "attorney", "litigation", "suit_filed", "flag")).lower()
+    if legal in {"yes", "true", "1", "attorney", "litigation", "litigated"} or "attorney" in legal or "litigat" in legal:
+      litigation_claims += 1
+
+  if market == "Canada":
+    directory = [
+      {"carrier": "Intact Insurance", "lines": {"gl", "property", "auto", "umbrella", "garage"}, "base": 84, "category": "Canadian commercial multi-line"},
+      {"carrier": "Aviva Canada", "lines": {"gl", "property", "auto", "umbrella", "garage"}, "base": 81, "category": "Canadian commercial package"},
+      {"carrier": "Northbridge Financial", "lines": {"gl", "auto", "cargo", "property", "garage"}, "base": 78, "category": "Canadian commercial specialty"},
+      {"carrier": "Zurich Canada", "lines": {"property", "professional", "cyber", "umbrella", "epli"}, "base": 77, "category": "Canadian specialty / middle market"},
+      {"carrier": "CNA Canada", "lines": {"gl", "professional", "cyber", "property", "epli"}, "base": 75, "category": "Canadian casualty / professional"},
+      {"carrier": "Chubb Canada", "lines": {"professional", "cyber", "property", "umbrella", "epli"}, "base": 74, "category": "Canadian specialty / executive risk"},
+      {"carrier": "Lloyd's Canada", "lines": {"professional", "cyber", "umbrella", "inland_marine"}, "base": 72, "category": "Canadian specialty market"},
+      {"carrier": "Wawanesa Commercial", "lines": {"gl", "property", "auto"}, "base": 70, "category": "Canadian regional commercial"},
+    ]
+  else:
+    directory = [
+      {"carrier": "Travelers", "lines": {"gl", "property", "auto", "wc", "umbrella", "cyber", "professional", "garage"}, "base": 83, "category": "US standard commercial / middle market"},
+      {"carrier": "The Hartford", "lines": {"gl", "property", "auto", "wc", "bop", "professional", "cyber"}, "base": 80, "category": "US small commercial / middle market"},
+      {"carrier": "CNA", "lines": {"gl", "property", "wc", "professional", "cyber", "epli"}, "base": 79, "category": "US casualty / professional specialty"},
+      {"carrier": "Chubb Insurance", "lines": {"professional", "cyber", "epli", "property", "umbrella"}, "base": 78, "category": "US specialty / executive risk"},
+      {"carrier": "Nationwide", "lines": {"auto", "gl", "property", "wc", "garage"}, "base": 76, "category": "US commercial package / auto"},
+      {"carrier": "Liberty Mutual", "lines": {"gl", "property", "auto", "wc", "umbrella"}, "base": 75, "category": "US standard commercial"},
+      {"carrier": "Zurich", "lines": {"gl", "property", "auto", "wc", "professional", "cyber", "cargo"}, "base": 74, "category": "US large account / specialty"},
+      {"carrier": "Berkley", "lines": {"gl", "property", "auto", "cargo", "professional", "inland_marine"}, "base": 73, "category": "US specialty commercial"},
+      {"carrier": "AIG", "lines": {"professional", "cyber", "epli", "umbrella", "property"}, "base": 72, "category": "US specialty / management liability"},
+      {"carrier": "Progressive Commercial", "lines": {"auto", "garage"}, "base": 70, "category": "US commercial auto"},
+    ]
+
+  readable_lines = [profile_type_labels.get(key, key.title()) for key in sorted(line_keys)]
+  matches = []
+  for carrier in directory:
+    overlap = set(carrier["lines"]).intersection(line_keys)
+    if not overlap:
+      continue
+    score = carrier["base"] + min(14, len(overlap) * 4)
+
+    carrier_name = carrier["carrier"]
+    if market == "United States":
+      if {"professional", "cyber", "epli"}.intersection(line_keys):
+        if carrier_name in {"Chubb Insurance", "CNA", "AIG"}:
+          score += 14
+        if carrier_name == "Travelers":
+          score += 4
+        if carrier_name in {"Nationwide", "Progressive Commercial"} and "garage" not in line_keys:
+          score -= 10
+      if {"garage", "auto"}.intersection(line_keys):
+        if carrier_name in {"Nationwide", "Travelers", "Progressive Commercial", "Liberty Mutual"}:
+          score += 6
+      if {"property", "gl"}.intersection(line_keys) and not {"professional", "cyber", "epli"}.intersection(line_keys):
+        if carrier_name in {"Travelers", "The Hartford", "CNA", "Liberty Mutual"}:
+          score += 6
+    else:
+      if {"professional", "cyber", "epli"}.intersection(line_keys):
+        if carrier_name in {"Zurich Canada", "CNA Canada", "Chubb Canada", "Lloyd's Canada"}:
+          score += 7
+        if carrier_name in {"Wawanesa Commercial"}:
+          score -= 6
+      if {"property", "gl", "auto", "garage"}.intersection(line_keys):
+        if carrier_name in {"Intact Insurance", "Aviva Canada", "Northbridge Financial"}:
+          score += 5
+
+    score -= min(12, open_claims * 3)
+    score -= min(10, litigation_claims * 3)
+    if incurred_total >= 500000:
+      score -= 8
+    elif incurred_total >= 250000:
+      score -= 5
+    elif incurred_total >= 100000:
+      score -= 3
+    if reserve_total >= 100000:
+      score -= 5
+
+    score = max(35, min(95, int(score)))
+    fit = f"Strong {market} profile fit" if score >= 80 else f"Conditional {market} profile fit" if score >= 65 else f"{market} backup market"
+    currency_symbol = "CAD $" if market == "Canada" else "$"
+    reason = (
+      f"{carrier['carrier']}: {market} carrier profile matched {', '.join(profile_type_labels.get(key, key.title()) for key in sorted(overlap))}. "
+      f"Profile type reviewed: {profile_type}. "
+      f"Claim review used {total_claims} claim(s), {open_claims} open claim(s), "
+      f"{currency_symbol}{incurred_total:,.0f} incurred, {currency_symbol}{reserve_total:,.0f} reserves, "
+      f"and {litigation_claims} attorney/litigation indicator(s)."
+    )
+    matches.append({
+      "carrier": carrier["carrier"],
+      "carrier_name": carrier["carrier"],
+      "match_score": score,
+      "score": score,
+      "fit": fit,
+      "market_category": carrier["category"],
+      "reason": reason,
+      "match_reason": reason,
+      "country": market,
+      "currency": market_currency,
+      "matched_profile_lines": [profile_type_labels.get(key, key.title()) for key in sorted(overlap)],
+      "profile_type": profile_type,
+    })
+
+  matches = sorted(matches, key=lambda item: int(item.get("match_score") or 0), reverse=True)
+  if not matches:
+    return result
+
+  recommended = matches[0]
+  result["top_carriers"] = matches[:5]
+  result["recommended_carrier"] = recommended.get("carrier")
+  result["recommended_score"] = recommended.get("match_score")
+  result["carriers_ranked"] = len(matches[:5])
+  result["recommended_market_category"] = recommended.get("market_category")
+  result["carrier_country"] = market
+  result["market_country"] = market
+  result["market_currency"] = market_currency
+  result["profile_type_used"] = profile_type
+  result["carrier_match_reasons"] = [row.get("reason") for row in matches[:5]]
+  currency_symbol = "CAD $" if market == "Canada" else "$"
+  result["carrier_match_summary"] = (
+    f"LossQ used {market} market context and profile type {profile_type} for this carrier match. "
+    f"Recommended carrier: {result['recommended_carrier']} with a {result['recommended_score']}/100 match. "
+    f"The ranking considered detected lines {', '.join(readable_lines)}, {total_claims} claim(s), "
+    f"{open_claims} open claim(s), {currency_symbol}{incurred_total:,.0f} incurred, "
+    f"and {currency_symbol}{reserve_total:,.0f} reserves."
+  )
+  result["carrier_match_metrics"] = {
+    **(result.get("carrier_match_metrics") or {}),
+    "coverage_lines_detected": readable_lines,
+    "coverage_line_keys_detected": sorted(line_keys),
+    "country": market,
+    "currency": market_currency,
+    "profile_type_used": profile_type,
+    "total_claims": total_claims,
+    "open_claims": open_claims,
+    "total_incurred": incurred_total,
+    "total_reserve": reserve_total,
+    "litigation_claims": litigation_claims,
+  }
+  result["lossq_market_profile_carrier_match_version"] = "LOSSQ_MARKET_PROFILE_CARRIER_MATCH_FINAL_V1"
+  return result
+
+
 @router.get("/carrier-match")
 def carrier_match(policy_number: str | None = Query(default=None), db: Session = Depends(get_db), current_user: dict = Depends(require_package_access)):
   result = engine_response(build_carrier_match_engine, db, current_user, policy_number)
@@ -3895,6 +4241,8 @@ def carrier_match(policy_number: str | None = Query(default=None), db: Session =
   result = lossq_apply_canada_market_carrier_match_final_v1(result, profile_data, claims)
   # LOSSQ_US_CHUBB_PROF_LINES_CARRIER_MATCH_CALL_V1
   result = lossq_apply_us_chubb_prof_lines_carrier_match_v1(result, profile_data, claims)
+  # LOSSQ_MARKET_PROFILE_CARRIER_MATCH_FINAL_CALL_V1
+  result = lossq_apply_market_profile_carrier_match_final_v1(result, profile_data, claims)
   return result
 
 
