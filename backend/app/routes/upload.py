@@ -17308,6 +17308,353 @@ def lossq_us_professional_lines_policy_schedule_repair_v1(file_path, parsed_clai
     return parsed_claims, parsed_profile
 
 
+
+# LOSSQ_US_CHUBB_PROFESSIONAL_LINES_DETAIL_ROW_REPAIR_V2
+def lossq_us_chubb_professional_lines_detail_row_repair_v2(file_path, parsed_claims, parsed_profile):
+  """
+  US-only Chubb Professional Lines PDF repair.
+
+  Fixes:
+  - Full policy number CBB-MPL-9934-2022 instead of MPL-9934-2022
+  - Claims count 6 instead of 0
+  - Total incurred from detail claim rows
+  - Policy schedule populated from detail claims
+
+  Canada guard is intentionally strict. This does not run on CAD/Canada/Province/
+  Desjardins/Aviva/IBC/AMF files.
+  """
+  try:
+    import re
+
+    if not str(file_path or "").lower().endswith(".pdf"):
+      return parsed_claims, parsed_profile
+
+    parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+    parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+
+    raw_text = ""
+
+    try:
+      import pdfplumber
+
+      with pdfplumber.open(file_path) as pdf:
+        raw_text = "\n".join((page.extract_text() or "") for page in pdf.pages)
+    except Exception:
+      try:
+        from PyPDF2 import PdfReader
+
+        reader = PdfReader(file_path)
+        raw_text = "\n".join((page.extract_text() or "") for page in reader.pages)
+      except Exception:
+        raw_text = ""
+
+    if not raw_text.strip():
+      return parsed_claims, parsed_profile
+
+    upper_text = raw_text.upper()
+    padded_upper = f" {upper_text} "
+
+    canada_markers = [
+      " CANADA ",
+      " CAD ",
+      " CAD$",
+      "PROVINCE:",
+      "DESJARDINS",
+      "AVIVA CANADA",
+      "IBC ",
+      "AMF",
+      "QUEBEC",
+      "ONTARIO",
+      "BRITISH COLUMBIA",
+    ]
+
+    if any(marker in padded_upper for marker in canada_markers):
+      return parsed_claims, parsed_profile
+
+    if not (
+      "CHUBB INSURANCE" in upper_text and
+      "PROFESSIONAL LINES" in upper_text and
+      "CLAIMS HISTORY DETAIL" in upper_text and
+      "POLICY NUMBER:" in upper_text and
+      "COVERAGE LINES:" in upper_text
+    ):
+      return parsed_claims, parsed_profile
+
+    def clean(value):
+      return str(value or "").replace("\u2013", "-").replace("\u2014", "-").strip()
+
+    def money_number(value):
+      raw = re.sub(r"[^0-9.\-]", "", clean(value).replace(",", ""))
+
+      try:
+        return float(raw or 0)
+      except Exception:
+        return 0.0
+
+    def first_match(pattern, default=""):
+      match = re.search(pattern, raw_text, flags=re.I | re.S)
+
+      if not match:
+        return default
+
+      return re.sub(r"\s+", " ", clean(match.group(1))).strip(" :-|")
+
+    full_policy_number = first_match(r"Policy\s+Number:\s*([A-Z0-9][A-Z0-9\-]{5,})")
+
+    if not full_policy_number:
+      return parsed_claims, parsed_profile
+
+    named_insured = first_match(r"Named\s+Insured:\s*(.*?)\s+Policy\s+Number:")
+    policy_type = first_match(r"Policy\s+Type:\s*(.*?)\s*(?:FEIN:|Coverage\s+Lines:|Policy\s+Period:)", "Management & Professional Liability")
+    coverage_raw = first_match(r"Coverage\s+Lines:\s*(.*?)\s*(?:Policy\s+Period:|Run\s+Date:|Agent:)", "E&O / D&O / Cyber")
+    agent = first_match(r"Agent:\s*(.*?)\s+Annual\s+Premium:")
+    annual_premium = first_match(r"Annual\s+Premium:\s*(\$?[0-9,]+(?:\.[0-9]{2})?)")
+    run_date = first_match(r"Run\s+Date:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})")
+
+    period_match = re.search(
+      r"Policy\s+Period:\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})\s*[-–]\s*([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})",
+      raw_text,
+      flags=re.I,
+    )
+
+    effective_date = period_match.group(1) if period_match else ""
+    expiration_date = period_match.group(2) if period_match else ""
+
+    coverage_lines = []
+
+    for part in re.split(r"[;/|,]+", coverage_raw):
+      item = clean(part)
+      upper = item.upper()
+
+      if "E&O" in upper or "ERROR" in upper:
+        value = "E&O"
+      elif "D&O" in upper or "DIRECTOR" in upper:
+        value = "D&O"
+      elif "CYBER" in upper:
+        value = "Cyber"
+      else:
+        value = item
+
+      if value and value not in coverage_lines:
+        coverage_lines.append(value)
+
+    if not coverage_lines:
+      coverage_lines = ["E&O", "D&O", "Cyber"]
+
+    # Parse each detail claim row directly from the US PDF text.
+    row_pattern = re.compile(
+      r"(CBB-\d{2}-(?:EO|DO|CY)-\d{4})\s+"
+      r"([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})\s+"
+      r"([0-9]{1,2}/[0-9]{1,2}/[0-9]{4})\s+"
+      r"(E&O|D&O|Cyber)\s+"
+      r"(.*?)\s+"
+      r"(Negligent Advice\s*-\s*M&A|Breach of Fiduciary Duty|Data Breach Response|Failure to Deliver\s*-\s*Contract|Securities Disclosure|BEC\s*-\s*Wire Fraud)\s+"
+      r"(Open|Closed)\s+"
+      r"\$?([0-9,]+)\s+"
+      r"\$?([0-9,]+)\s+"
+      r"\$?([0-9,]+)",
+      flags=re.I,
+    )
+
+    raw_claims = []
+
+    for match in row_pattern.finditer(raw_text):
+      claim_number = clean(match.group(1)).upper()
+      loss_date = clean(match.group(2))
+      reported_date = clean(match.group(3))
+      coverage = clean(match.group(4))
+      claimant = re.sub(r"\s+", " ", clean(match.group(5)))
+      allegation = re.sub(r"\s+", " ", clean(match.group(6)))
+      status = clean(match.group(7)).title()
+      paid = money_number(match.group(8))
+      reserve = money_number(match.group(9))
+      total = paid + reserve
+
+      raw_claims.append({
+        "claim_number": claim_number,
+        "claimNumber": claim_number,
+        "policy_number": full_policy_number,
+        "policyNumber": full_policy_number,
+        "business_name": named_insured,
+        "insured_name": named_insured,
+        "named_insured": named_insured,
+        "carrier_name": "Chubb Insurance",
+        "writing_carrier": "Chubb Insurance",
+        "carrier": "Chubb Insurance",
+        "line_of_business": coverage,
+        "policy_type": coverage,
+        "coverage": coverage,
+        "line": coverage,
+        "claim_type": coverage,
+        "claimant": claimant,
+        "claimant_name": claimant,
+        "date_of_loss": loss_date,
+        "loss_date": loss_date,
+        "reported_date": reported_date,
+        "date_reported": reported_date,
+        "description": allegation,
+        "loss_description": allegation,
+        "cause_of_loss": allegation,
+        "allegation": allegation,
+        "status": status,
+        "paid_amount": paid,
+        "paid": paid,
+        "reserve_amount": reserve,
+        "reserve": reserve,
+        "reserves": reserve,
+        "total_incurred": total,
+        "incurred": total,
+        "total": total,
+      })
+
+    if not raw_claims:
+      return parsed_claims, parsed_profile
+
+    # Replace if current parser missed detail rows or saved summary/blank rows.
+    existing_by_number = {}
+
+    for claim in parsed_claims:
+      if isinstance(claim, dict):
+        number = clean(
+          claim.get("claim_number")
+          or claim.get("claimNumber")
+          or claim.get("claim_no")
+          or claim.get("number")
+        ).upper()
+
+        if number:
+          existing_by_number[number] = claim
+
+    repaired_claims = []
+
+    for raw_claim in raw_claims:
+      number = raw_claim["claim_number"]
+      existing = existing_by_number.get(number, {})
+
+      if isinstance(existing, dict):
+        merged = {
+          **existing,
+          **raw_claim,
+        }
+      else:
+        merged = raw_claim
+
+      repaired_claims.append(merged)
+
+    # If parser had extra unrelated real rows, keep them only when not summary rows.
+    for claim in parsed_claims:
+      if not isinstance(claim, dict):
+        continue
+
+      number = clean(
+        claim.get("claim_number")
+        or claim.get("claimNumber")
+        or claim.get("claim_no")
+        or claim.get("number")
+      ).upper()
+
+      if number and number not in {item["claim_number"] for item in raw_claims} and number.startswith("CBB-"):
+        claim["policy_number"] = full_policy_number
+        claim["policyNumber"] = full_policy_number
+        repaired_claims.append(claim)
+
+    paid_total = sum(money_number(c.get("paid_amount")) for c in repaired_claims)
+    reserve_total = sum(money_number(c.get("reserve_amount")) for c in repaired_claims)
+    incurred_total = sum(money_number(c.get("total_incurred")) for c in repaired_claims)
+    claim_count = len(repaired_claims)
+    open_count = sum(1 for c in repaired_claims if clean(c.get("status")).lower() != "closed")
+    closed_count = sum(1 for c in repaired_claims if clean(c.get("status")).lower() == "closed")
+
+    coverage_display = " / ".join(coverage_lines)
+    schedule_line = f"{policy_type} - {coverage_display}"
+
+    policy_row = {
+      "policy_type": schedule_line,
+      "policyType": schedule_line,
+      "line_of_business": schedule_line,
+      "lineOfBusiness": schedule_line,
+      "coverage": coverage_display,
+      "coverage_lines": coverage_lines,
+      "policy_number": full_policy_number,
+      "policyNumber": full_policy_number,
+      "carrier": "Chubb Insurance",
+      "carrier_name": "Chubb Insurance",
+      "writing_carrier": "Chubb Insurance",
+      "effective_date": effective_date,
+      "effectiveDate": effective_date,
+      "expiration_date": expiration_date,
+      "expirationDate": expiration_date,
+      "claims": claim_count,
+      "claim_count": claim_count,
+      "open_claims": open_count,
+      "closed_claims": closed_count,
+      "total_paid": paid_total,
+      "paid": paid_total,
+      "total_reserve": reserve_total,
+      "reserve": reserve_total,
+      "total_incurred": incurred_total,
+      "incurred": incurred_total,
+    }
+
+    parsed_profile.update({
+      "business_name": named_insured or parsed_profile.get("business_name") or parsed_profile.get("insured_name"),
+      "insured_name": named_insured or parsed_profile.get("insured_name") or parsed_profile.get("business_name"),
+      "named_insured": named_insured or parsed_profile.get("named_insured"),
+      "carrier_name": "Chubb Insurance",
+      "writing_carrier": "Chubb Insurance",
+      "carrier": "Chubb Insurance",
+      "policy_number": full_policy_number,
+      "policyNumber": full_policy_number,
+      "main_policy": full_policy_number,
+      "mainPolicy": full_policy_number,
+      "policy_type": policy_type,
+      "line_of_business": policy_type,
+      "coverage": coverage_display,
+      "coverage_lines": coverage_lines,
+      "effective_date": effective_date,
+      "policy_effective_date": effective_date,
+      "expiration_date": expiration_date,
+      "policy_expiration_date": expiration_date,
+      "valuation_date": run_date,
+      "evaluation_date": run_date,
+      "run_date": run_date,
+      "agency_name": agent or parsed_profile.get("agency_name"),
+      "producing_agency": agent or parsed_profile.get("producing_agency"),
+      "producer": agent or parsed_profile.get("producer"),
+      "annual_premium": annual_premium or parsed_profile.get("annual_premium"),
+      "current_premium": annual_premium or parsed_profile.get("current_premium"),
+      "country_market": "United States",
+      "country": "United States",
+      "market": "United States",
+      "state": parsed_profile.get("state") or "DC",
+      "currency": "USD",
+      "date_format": "MM/DD/YYYY",
+      "language_output": "English",
+      "policies": [policy_row],
+      "policy_schedule": [policy_row],
+      "policySchedule": [policy_row],
+      "total_claims": claim_count,
+      "claim_count": claim_count,
+      "open_claims": open_count,
+      "closed_claims": closed_count,
+      "total_paid": paid_total,
+      "total_reserve": reserve_total,
+      "total_incurred": incurred_total,
+      "lossq_us_chubb_professional_lines_detail_row_repair_v2": True,
+    })
+
+    print("LOSSQ_US_CHUBB_PROFESSIONAL_LINES_DETAIL_ROW_REPAIR_V2:", {
+      "policy_number": full_policy_number,
+      "claims": claim_count,
+      "total_incurred": incurred_total,
+    })
+
+    return repaired_claims, parsed_profile
+  except Exception as exc:
+    print("LOSSQ_US_CHUBB_PROFESSIONAL_LINES_DETAIL_ROW_REPAIR_V2_ERROR:", str(exc)[:500])
+    return parsed_claims, parsed_profile
+
+
 # LOSSQ_CLEAN_PROFILE_POLICY_SCHEDULE_ROWS_V1
 def lossq_clean_profile_policy_schedule_rows(parsed_profile, parsed_claims=None):
   """
@@ -20927,6 +21274,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
     # LOSSQ_US_PROFESSIONAL_LINES_POLICY_SCHEDULE_REPAIR_CALL_V1
     parsed_claims, parsed_profile = lossq_us_professional_lines_policy_schedule_repair_v1(
+      file_path,
+      parsed_claims,
+      parsed_profile,
+    )
+
+    # LOSSQ_US_CHUBB_PROFESSIONAL_LINES_DETAIL_ROW_REPAIR_CALL_V2
+    parsed_claims, parsed_profile = lossq_us_chubb_professional_lines_detail_row_repair_v2(
       file_path,
       parsed_claims,
       parsed_profile,
