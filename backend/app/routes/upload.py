@@ -16933,12 +16933,18 @@ def lossq_us_professional_lines_policy_schedule_repair_v1(file_path, parsed_clai
         file_text = "\n".join((page.extract_text() or "") for page in pdf.pages)
     except Exception:
       try:
-        from PyPDF2 import PdfReader
+        from pypdf import PdfReader
 
         reader = PdfReader(file_path)
         file_text = "\n".join((page.extract_text() or "") for page in reader.pages)
       except Exception:
-        file_text = ""
+        try:
+          from PyPDF2 import PdfReader
+
+          reader = PdfReader(file_path)
+          file_text = "\n".join((page.extract_text() or "") for page in reader.pages)
+        except Exception:
+          file_text = ""
 
     profile_text = " ".join(str(v or "") for v in parsed_profile.values())
     combined_text = f"{file_text}\n{profile_text}"
@@ -17341,12 +17347,18 @@ def lossq_us_chubb_professional_lines_detail_row_repair_v2(file_path, parsed_cla
         raw_text = "\n".join((page.extract_text() or "") for page in pdf.pages)
     except Exception:
       try:
-        from PyPDF2 import PdfReader
+        from pypdf import PdfReader
 
         reader = PdfReader(file_path)
         raw_text = "\n".join((page.extract_text() or "") for page in reader.pages)
       except Exception:
-        raw_text = ""
+        try:
+          from PyPDF2 import PdfReader
+
+          reader = PdfReader(file_path)
+          raw_text = "\n".join((page.extract_text() or "") for page in reader.pages)
+        except Exception:
+          raw_text = ""
 
     if not raw_text.strip():
       return parsed_claims, parsed_profile
@@ -17663,7 +17675,7 @@ def lossq_us_chubb_prof_lines_row_parser_repair_v6(file_path, parsed_claims, par
 
     Fixes:
     - Full policy number CBB-MPL-9934-2022
-    - 6 detail claim rows
+    - Detail claim rows from the PDF token stream
     - US date format MM/DD/YYYY
     - Policy schedule claim count and incurred totals
 
@@ -17684,11 +17696,16 @@ def lossq_us_chubb_prof_lines_row_parser_repair_v6(file_path, parsed_claims, par
                 raw_text = "\n".join((page.extract_text() or "") for page in pdf.pages)
         except Exception:
             try:
-                from PyPDF2 import PdfReader
+                from pypdf import PdfReader
                 reader = PdfReader(file_path)
                 raw_text = "\n".join((page.extract_text() or "") for page in reader.pages)
             except Exception:
-                raw_text = ""
+                try:
+                    from PyPDF2 import PdfReader
+                    reader = PdfReader(file_path)
+                    raw_text = "\n".join((page.extract_text() or "") for page in reader.pages)
+                except Exception:
+                    raw_text = ""
 
         if not raw_text.strip():
             return parsed_claims, parsed_profile
@@ -17861,7 +17878,99 @@ def lossq_us_chubb_prof_lines_row_parser_repair_v6(file_path, parsed_claims, par
                 "date_format": "MM/DD/YYYY",
             })
 
-        if len(repaired_claims) != 6:
+        if not repaired_claims:
+            lines = [squish(line) for line in raw_text.splitlines()]
+            lines = [line for line in lines if line]
+            claim_start_re = re.compile(r"^CBB-\d{2}-(?:EO|DO|CY)-\d{4}$", re.I)
+            date_re = re.compile(r"^[0-9]{1,2}/[0-9]{1,2}/[0-9]{4}$")
+            money_re = re.compile(r"^\$?[0-9,]+(?:\.[0-9]{2})?$")
+
+            start_indexes = [idx for idx, line in enumerate(lines) if claim_start_re.match(line)]
+
+            for pos, start_idx in enumerate(start_indexes):
+                end_idx = start_indexes[pos + 1] if pos + 1 < len(start_indexes) else len(lines)
+                block = lines[start_idx:end_idx]
+
+                if len(block) < 9:
+                    continue
+
+                claim_number = clean(block[0]).upper()
+                loss_date = clean(block[1]) if len(block) > 1 and date_re.match(block[1]) else ""
+                reported_date = clean(block[2]) if len(block) > 2 and date_re.match(block[2]) else ""
+                coverage = clean(block[3]) if len(block) > 3 else ""
+
+                status_idx = next(
+                    (
+                        idx
+                        for idx, value in enumerate(block[4:], start=4)
+                        if clean(value).lower() in {"open", "closed"}
+                    ),
+                    -1,
+                )
+
+                if not loss_date or not reported_date or status_idx < 0:
+                    continue
+
+                money_values = [value for value in block[status_idx + 1:] if money_re.match(value)]
+
+                if len(money_values) < 3:
+                    continue
+
+                narrative_parts = block[4:status_idx]
+                claimant = narrative_parts[0] if narrative_parts else ""
+                allegation = " ".join(narrative_parts[1:]) if len(narrative_parts) > 1 else ""
+                status = clean(block[status_idx]).title()
+                paid = money_number(money_values[0])
+                reserve = money_number(money_values[1])
+                printed_total = money_number(money_values[2])
+                total = paid + reserve if (paid + reserve) > 0 else printed_total
+                narrative = squish(" ".join(part for part in [claimant, allegation] if part))
+
+                repaired_claims.append({
+                    "claim_number": claim_number,
+                    "claimNumber": claim_number,
+                    "policy_number": full_policy_number,
+                    "policyNumber": full_policy_number,
+                    "business_name": named_insured,
+                    "insured_name": named_insured,
+                    "named_insured": named_insured,
+                    "carrier_name": "Chubb Insurance",
+                    "writing_carrier": "Chubb Insurance",
+                    "carrier": "Chubb Insurance",
+                    "line_of_business": coverage,
+                    "policy_type": coverage,
+                    "coverage": coverage,
+                    "line": coverage,
+                    "claim_type": coverage,
+                    "claimant": claimant,
+                    "claimant_name": claimant,
+                    "description": narrative,
+                    "loss_description": narrative,
+                    "cause_of_loss": allegation or narrative,
+                    "allegation": allegation,
+                    "date_of_loss": loss_date,
+                    "loss_date": loss_date,
+                    "dateOfLoss": loss_date,
+                    "date_of_loss_display": loss_date,
+                    "loss_date_display": loss_date,
+                    "reported_date": reported_date,
+                    "date_reported": reported_date,
+                    "dateReported": reported_date,
+                    "reported_date_display": reported_date,
+                    "status": status,
+                    "paid_amount": paid,
+                    "paid": paid,
+                    "reserve_amount": reserve,
+                    "reserve": reserve,
+                    "reserves": reserve,
+                    "total_incurred": total,
+                    "incurred": total,
+                    "total": total,
+                    "currency": "USD",
+                    "date_format": "MM/DD/YYYY",
+                })
+
+        if not repaired_claims:
             print("LOSSQ_US_CHUBB_PROF_LINES_ROW_PARSER_REPAIR_V6_ROW_COUNT", {
                 "rows": len(repaired_claims),
                 "policy_number": full_policy_number,
@@ -17900,8 +18009,8 @@ def lossq_us_chubb_prof_lines_row_parser_repair_v6(file_path, parsed_claims, par
             "run_date": run_date,
             "valuation_date_display": run_date,
             "evaluation_date_display": run_date,
-            "claims": 6,
-            "claim_count": 6,
+            "claims": len(repaired_claims),
+            "claim_count": len(repaired_claims),
             "open_claims": open_count,
             "closed_claims": closed_count,
             "total_paid": paid_total,
@@ -17956,7 +18065,7 @@ def lossq_us_chubb_prof_lines_row_parser_repair_v6(file_path, parsed_claims, par
             "country_market": "United States",
             "country": "United States",
             "market": "United States",
-            "state": "DC",
+            "state": parsed_profile.get("state") or parsed_profile.get("state_code") or "",
             "currency": "USD",
             "date_format": "MM/DD/YYYY",
             "language_output": "English",
@@ -17965,8 +18074,8 @@ def lossq_us_chubb_prof_lines_row_parser_repair_v6(file_path, parsed_claims, par
             "policySchedule": [policy_row],
             "claims": repaired_claims,
             "parsed_claims": repaired_claims,
-            "total_claims": 6,
-            "claim_count": 6,
+            "total_claims": len(repaired_claims),
+            "claim_count": len(repaired_claims),
             "open_claims": open_count,
             "closed_claims": closed_count,
             "total_paid": paid_total,
