@@ -803,6 +803,32 @@ def lossq_account_profile_to_dict(profile):
         merged.get("line"),
     )
 
+    effective_date = _first(
+        getattr(profile, "effective_date", ""),
+        merged.get("effective_date"),
+        merged.get("effectiveDate"),
+        merged.get("policy_effective_date"),
+        merged.get("policyEffectiveDate"),
+    )
+
+    expiration_date = _first(
+        getattr(profile, "expiration_date", ""),
+        merged.get("expiration_date"),
+        merged.get("expirationDate"),
+        merged.get("policy_expiration_date"),
+        merged.get("policyExpirationDate"),
+    )
+
+    evaluation_date = _first(
+        getattr(profile, "evaluation_date", ""),
+        merged.get("evaluation_date"),
+        merged.get("evaluationDate"),
+        merged.get("valuation_date"),
+        merged.get("valuationDate"),
+        merged.get("run_date"),
+        merged.get("runDate"),
+    )
+
     policies = (
         merged.get("policies")
         if isinstance(merged.get("policies"), list)
@@ -846,6 +872,20 @@ def lossq_account_profile_to_dict(profile):
         "policyNumber": policy_number,
         "main_policy": policy_number,
         "mainPolicy": policy_number,
+        "effective_date": effective_date,
+        "effectiveDate": effective_date,
+        "policy_effective_date": effective_date,
+        "policyEffectiveDate": effective_date,
+        "expiration_date": expiration_date,
+        "expirationDate": expiration_date,
+        "policy_expiration_date": expiration_date,
+        "policyExpirationDate": expiration_date,
+        "evaluation_date": evaluation_date,
+        "evaluationDate": evaluation_date,
+        "valuation_date": evaluation_date,
+        "valuationDate": evaluation_date,
+        "run_date": evaluation_date,
+        "runDate": evaluation_date,
         "line_of_business": line_of_business,
         "lineOfBusiness": line_of_business,
         "policy_type": line_of_business,

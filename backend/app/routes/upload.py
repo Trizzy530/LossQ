@@ -11462,8 +11462,12 @@ def lossq_canada_canonical_upload_overlay_v1(
               claim["source_policy_number"] = main_policy
               claim["main_policy_number"] = main_policy
               claim["base_policy_number"] = main_policy
-              claim["policy_number"] = row.get("policy_number")
-              claim["policy"] = row.get("policy_number")
+              claim["coverage_policy_number"] = row.get("policy_number")
+              claim["coveragePolicyNumber"] = row.get("policy_number")
+              claim["policy_schedule_number"] = row.get("policy_number")
+              claim["policyScheduleNumber"] = row.get("policy_number")
+              claim["policy_number"] = main_policy
+              claim["policy"] = main_policy
               break
         policies.extend(coverage_summary_rows)
       elif main_policy:
