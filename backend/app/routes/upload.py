@@ -10833,6 +10833,849 @@ def lossq_canada_claim_hook_v3(normalized_claim, raw_claim=None):
 
   return normalized_claim
 
+# LOSSQ_CANADA_CANONICAL_UPLOAD_OVERLAY_V1
+def lossq_canada_canonical_upload_overlay_v1(
+  file_path,
+  parsed_claims=None,
+  parsed_profile=None,
+  profile_data=None,
+  direct_profile=None,
+):
+  """
+  Late Canada-only structured upload bridge.
+
+  This promotes Canadian account, policy schedule, and claim detail rows from
+  readable CSV, Excel, and PDF uploads just before save. It is intentionally
+  gated to Canadian/CAD/province signals and exits for US/USD uploads.
+  """
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+  parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
+  profile_data = profile_data if isinstance(profile_data, dict) else {}
+  direct_profile = direct_profile if isinstance(direct_profile, dict) else {}
+
+  import datetime as _lossq_ca_dt
+  import unicodedata as _lossq_ca_unicodedata
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip())
+
+  def fold(value):
+    text = _lossq_ca_unicodedata.normalize("NFKD", clean(value).lower())
+    return "".join(ch for ch in text if not _lossq_ca_unicodedata.combining(ch))
+
+  def key(value):
+    return re.sub(r"[^a-z0-9]+", "", fold(value))
+
+  def good(value):
+    value = clean(value)
+    return bool(value and value.lower() not in {"-", "--", "n/a", "na", "none", "null", "unknown"})
+
+  province_names = {
+    "alberta": "AB", "britishcolumbia": "BC", "colombiebritannique": "BC",
+    "manitoba": "MB", "newbrunswick": "NB", "nouveaubrunswick": "NB",
+    "newfoundlandandlabrador": "NL", "terreneuveetlabrador": "NL",
+    "novascotia": "NS", "nouvelleecosse": "NS", "ontario": "ON",
+    "princeedwardisland": "PE", "ileduprinceedouard": "PE", "quebec": "QC",
+    "saskatchewan": "SK", "northwestterritories": "NT",
+    "territoiresdunordouest": "NT", "nunavut": "NU", "yukon": "YT",
+  }
+  province_codes = {"AB", "BC", "MB", "NB", "NL", "NS", "NT", "NU", "ON", "PE", "QC", "SK", "YT"}
+
+  def province_code(value):
+    raw = clean(value).upper()
+    if raw in province_codes:
+      return raw
+    return province_names.get(key(value), "")
+
+  def province_display(value):
+    code = province_code(value)
+    displays = {
+      "AB": "Alberta", "BC": "British Columbia", "MB": "Manitoba", "NB": "New Brunswick",
+      "NL": "Newfoundland and Labrador", "NS": "Nova Scotia", "NT": "Northwest Territories",
+      "NU": "Nunavut", "ON": "Ontario", "PE": "Prince Edward Island", "QC": "Quebec",
+      "SK": "Saskatchewan", "YT": "Yukon",
+    }
+    return displays.get(code, clean(value))
+
+  def regulator_for(value):
+    code = province_code(value)
+    return {
+      "AB": "AIC", "BC": "BCFSA", "MB": "Insurance Council of Manitoba",
+      "NB": "FCNB", "NL": "Digital Government and Service NL", "NS": "Nova Scotia Finance and Treasury Board",
+      "ON": "FSRA", "PE": "Office of the Superintendent of Insurance", "QC": "AMF",
+      "SK": "Financial and Consumer Affairs Authority", "NT": "Superintendent of Insurance",
+      "NU": "Superintendent of Insurance", "YT": "Superintendent of Insurance",
+    }.get(code, "")
+
+  def money(value):
+    if isinstance(value, (int, float)):
+      return float(value)
+    text = clean(value)
+    if not text:
+      return 0.0
+    negative = text.startswith("-") or ("(" in text and ")" in text)
+    text = re.sub(r"(?i)\b(?:cad|cdn|cnd|usd)\b", "", text)
+    text = text.replace("CA$", "").replace("C$", "").replace("US$", "").replace("$", "")
+    text = text.replace("(", "").replace(")", "")
+    text = re.sub(r"[^0-9,\.\-]+", "", text)
+    if "," in text and "." not in text and re.search(r",\d{1,2}$", text):
+      text = text.replace(",", ".")
+    else:
+      text = text.replace(",", "")
+    match = re.search(r"-?\d+(?:\.\d+)?", text)
+    if not match:
+      return 0.0
+    try:
+      value = float(match.group(0))
+      return -abs(value) if negative else value
+    except Exception:
+      return 0.0
+
+  def amount(value):
+    parsed = money(value)
+    return parsed if parsed != 0.0 else (0.0 if clean(value) in {"0", "0.00", "$0", "CAD 0", "CA$ 0"} else "")
+
+  month_map = {
+    "jan": 1, "january": 1, "janvier": 1, "feb": 2, "february": 2, "fev": 2, "fevrier": 2,
+    "mar": 3, "march": 3, "mars": 3, "apr": 4, "april": 4, "avr": 4, "avril": 4,
+    "may": 5, "mai": 5, "jun": 6, "june": 6, "juin": 6, "jul": 7, "july": 7, "juillet": 7,
+    "aug": 8, "august": 8, "aout": 8, "sep": 9, "sept": 9, "september": 9, "septembre": 9,
+    "oct": 10, "october": 10, "octobre": 10, "nov": 11, "november": 11, "novembre": 11,
+    "dec": 12, "december": 12, "decembre": 12,
+  }
+
+  def ca_date(value):
+    if isinstance(value, (_lossq_ca_dt.datetime, _lossq_ca_dt.date)):
+      return value.strftime("%d/%m/%Y")
+    text = clean(value)
+    if not text:
+      return ""
+    text = text.replace("–", "-").replace("—", "-")
+    match = re.match(r"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$", text)
+    if match:
+      year, month, day = [int(part) for part in match.groups()]
+      return f"{day:02d}/{month:02d}/{year:04d}"
+    match = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$", text)
+    if match:
+      day, month, year = [int(part) for part in match.groups()]
+      if year < 100:
+        year += 2000
+      return f"{day:02d}/{month:02d}/{year:04d}"
+    match = re.match(r"^(\d{1,2})[-\s]([A-Za-zéûÉÛ\.]+)[-\s](\d{2,4})$", text)
+    if match:
+      day = int(match.group(1))
+      mon = month_map.get(fold(match.group(2)).strip("."))
+      year = int(match.group(3))
+      if year < 100:
+        year += 2000
+      if mon:
+        return f"{day:02d}/{mon:02d}/{year:04d}"
+    return text
+
+  def date_pair(value):
+    text = clean(value).replace("–", "-").replace("—", "-")
+    pieces = re.findall(r"\b\d{4}[/-]\d{1,2}[/-]\d{1,2}\b|\b\d{1,2}[/-]\d{1,2}[/-]\d{2,4}\b|\b\d{1,2}[-\s][A-Za-zéûÉÛ\.]+[-\s]\d{2,4}\b", text)
+    return [ca_date(piece) for piece in pieces[:2]]
+
+  def line(value):
+    raw = clean(value)
+    lookup = {
+      "cgl": "General Liability", "commercialgeneralliability": "General Liability",
+      "responsabilitecivilecommerciale": "General Liability", "responsabilitecivile": "General Liability",
+      "contractorcgl": "Contractor CGL", "respcivileentrepreneurscontractorcgl": "Contractor CGL",
+      "fleetautomobile": "Commercial Auto", "automobilecommerciale": "Commercial Auto", "auto": "Commercial Auto",
+      "wcbwsib": "Workers Compensation", "wsib": "Workers Compensation", "wcb": "Workers Compensation",
+      "workerscompensation": "Workers Compensation", "indemnisationdestravailleurs": "Workers Compensation",
+      "errorsandomissions": "Professional Liability", "eo": "Professional Liability", "professionalliability": "Professional Liability",
+      "erreursetomissions": "Professional Liability", "responsabiliteprofessionnelle": "Professional Liability",
+      "directorsandofficers": "D&O", "do": "D&O", "dando": "D&O", "doliability": "D&O",
+      "cyberliability": "Cyber", "cyber": "Cyber", "cyberresponsabilite": "Cyber",
+      "excessliability": "Umbrella / Excess", "umbrella": "Umbrella / Excess", "assuranceexcedentaire": "Umbrella / Excess",
+      "commercialproperty": "Commercial Property", "property": "Commercial Property", "bienscommerciaux": "Commercial Property",
+      "liquorliability": "Liquor Liability", "responsabilitelieealalcool": "Liquor Liability",
+      "businessinterruption": "Business Interruption", "interruptiondesaffaires": "Business Interruption",
+      "equipment": "Equipment", "equip": "Equipment", "equipement": "Equipment",
+    }
+    return lookup.get(key(raw), raw)
+
+  def status(value):
+    value_key = key(value)
+    if value_key in {"closed", "ferme", "fermee", "clos", "cloture", "cloturee"} or any(token in value_key for token in {"closed", "ferme", "fermee"}):
+      return "Closed"
+    if value_key in {"open", "ouvert", "ouverte"} or any(token in value_key for token in {"open", "ouvert", "ouverte"}):
+      return "Open"
+    return clean(value) or "Open"
+
+  def yes_no(value):
+    value_key = key(value)
+    if value_key in {"yes", "y", "true", "1", "oui", "o"}:
+      return "Yes"
+    if value_key in {"no", "n", "false", "0", "non"}:
+      return "No"
+    return clean(value)
+
+  def row_map(headers, row):
+    result = {}
+    for idx, header in enumerate(headers):
+      header_key = key(header)
+      if header_key:
+        result[header_key] = clean(row[idx]) if idx < len(row) else ""
+    return result
+
+  def first(data, *labels):
+    for label in labels:
+      value = data.get(key(label), "")
+      if good(value):
+        return clean(value)
+    return ""
+
+  def first_like(data, *labels):
+    label_keys = [key(label) for label in labels]
+    for data_key, value in data.items():
+      if not good(value):
+        continue
+      if any(label_key and (label_key in data_key or data_key in label_key) for label_key in label_keys):
+        return clean(value)
+    return ""
+
+  def has_canada_signal(*values):
+    text = fold(" ".join(lossq_canada_context_text_v3(value) for value in values if value not in (None, "", [], {})))
+    return bool(
+      re.search(r"\b(canada|canadian|cad|cdn|quebec|ontario|alberta|british columbia|colombie britannique|saskatchewan|manitoba|nova scotia|nouvelle ecosse|new brunswick|nouveau brunswick|prince edward island|ile du prince edouard|newfoundland|labrador|yukon|nunavut|northwest territories|territoires du nord ouest|desjardins|rsa canada|intact|wawanesa|northbridge|aviva canada|lloyd's canada|amf|osfi|fsra|ibc|wsib|wcb|worksafebc|cnesst)\b", text)
+      or "ca$" in text
+      or "c$" in text
+      or re.search(r"\b[a-z]\d[a-z][ -]?\d[a-z]\d\b", text)
+    )
+
+  def explicit_us_only(*values):
+    text = fold(" ".join(lossq_canada_context_text_v3(value) for value in values if value not in (None, "", [], {})))
+    if has_canada_signal(text):
+      return False
+    return bool(re.search(r"\b(united states|usa|usd|us\$)\b", text))
+
+  file_text = ""
+  ext = str(file_path or "").lower()
+  if ext.endswith((".csv", ".txt")):
+    try:
+      with open(file_path, "r", encoding="utf-8-sig", errors="replace", newline="") as handle:
+        file_text = handle.read(500000)
+    except Exception:
+      file_text = ""
+  elif ext.endswith(".pdf"):
+    try:
+      from pypdf import PdfReader
+      reader = PdfReader(file_path)
+      file_text = "\n".join((page.extract_text() or "") for page in reader.pages)
+    except Exception as exc:
+      print("LOSSQ_CANADA_CANONICAL_UPLOAD_OVERLAY_V1_PDF_TEXT_ERROR:", str(exc)[:200])
+      file_text = ""
+  elif ext.endswith((".xlsx", ".xlsm", ".xls")):
+    try:
+      from openpyxl import load_workbook
+      workbook = load_workbook(file_path, data_only=True, read_only=True)
+      workbook_parts = []
+      for worksheet in workbook.worksheets:
+        workbook_parts.append(worksheet.title)
+        for row in worksheet.iter_rows(values_only=True):
+          workbook_parts.extend(clean(cell) for cell in row if good(cell))
+      file_text = "\n".join(workbook_parts)
+      workbook.close()
+    except Exception as exc:
+      print("LOSSQ_CANADA_CANONICAL_UPLOAD_OVERLAY_V1_XLSX_TEXT_ERROR:", str(exc)[:200])
+      file_text = ""
+
+  if explicit_us_only(file_text, parsed_profile, profile_data, direct_profile, parsed_claims):
+    return parsed_claims, parsed_profile, profile_data, direct_profile
+  if not has_canada_signal(file_text, parsed_profile, profile_data, direct_profile, parsed_claims):
+    return parsed_claims, parsed_profile, profile_data, direct_profile
+
+  context = {}
+  policies = []
+  claims = []
+
+  def merge_profile(source):
+    if not isinstance(source, dict):
+      return
+    for field, value in source.items():
+      if value not in (None, "", [], {}):
+        context[field] = value
+
+  def parse_policy_period(value):
+    pieces = date_pair(value)
+    if len(pieces) >= 2:
+      context["effective_date"] = context.get("effective_date") or pieces[0]
+      context["expiration_date"] = context.get("expiration_date") or pieces[1]
+
+  if ext.endswith((".csv", ".txt")):
+    try:
+      import csv as _lossq_ca_csv
+      with open(file_path, "r", encoding="utf-8-sig", errors="replace", newline="") as handle:
+        rows = list(_lossq_ca_csv.reader(handle))
+
+      try:
+        french_claims, french_profile = lossq_parse_french_section_csv_v1(file_path)
+      except Exception:
+        french_claims, french_profile = [], {}
+      if french_profile:
+        merge_profile(french_profile)
+      if isinstance(french_profile, dict):
+        policies.extend([dict(row) for row in french_profile.get("policies") or [] if isinstance(row, dict)])
+      if french_claims:
+        claims.extend([dict(row) for row in french_claims if isinstance(row, dict)])
+
+      account_labels = {
+        "businessname": "business_name", "accountname": "business_name", "namedinsured": "business_name", "insured": "business_name",
+        "nomdelassure": "business_name", "accountnumber": "account_number", "customernumber": "customer_number", "clientnumber": "customer_number",
+        "brokerage": "producing_agency", "producingagency": "producing_agency", "agency": "producing_agency", "broker": "producer",
+        "courtierproducteur": "producing_agency", "courtierresponsable": "producer", "insurer": "carrier_name", "carrier": "carrier_name",
+        "writingcarrier": "writing_carrier", "insurancecompany": "carrier_name", "compagniedassurance": "carrier_name", "underwriter": "underwriter",
+        "souscripteur": "underwriter", "country": "country", "pays": "country", "province": "province", "provincecode": "province_code",
+        "postalcode": "postal_code", "codepostal": "postal_code", "currency": "currency", "devise": "currency", "losscurrency": "loss_currency",
+        "evaluationdate": "evaluation_date", "dateevaluation": "evaluation_date", "industry": "industry", "secteur": "industry",
+        "currentpremium": "current_premium", "annualpremium": "current_premium", "primeactuelle": "current_premium",
+        "revenue": "revenue", "sales": "revenue", "chiffredaffaires": "revenue", "payroll": "payroll", "paieassurable": "payroll",
+        "employeecount": "employee_count", "nombredemployes": "employee_count", "propertytiv": "property_tiv", "sovvaleurtotaleassuree": "property_tiv",
+      }
+
+      for row in rows[:250]:
+        cells = [clean(cell) for cell in row]
+        if len(cells) >= 2:
+          label_key = key(cells[0] or (cells[1] if len(cells) > 2 else ""))
+          value = cells[1] if key(cells[0]) in account_labels else (cells[2] if len(cells) > 2 and key(cells[1]) in account_labels else "")
+          mapped = account_labels.get(label_key)
+          if mapped and good(value):
+            context[mapped] = amount(value) if mapped in {"current_premium", "revenue", "payroll", "property_tiv"} else clean(value)
+          if label_key in {"policyperiod", "periodedepolice", "periodedassurance"}:
+            parse_policy_period(value)
+
+      for row_index, row in enumerate(rows):
+        row_keys = {key(cell) for cell in row if good(cell)}
+        is_policy_header = (
+          any(item in row_keys for item in {"policynumber", "policyno", "policy", "numerodepolice"})
+          and any(item in row_keys for item in {"lineofbusiness", "coverage", "coverageline", "lignedaffaires", "garantie", "currentpremium", "annualpremium"})
+        )
+        is_claim_header = (
+          any(item in row_keys for item in {"claimnumber", "claimno", "claim", "numerodesinistre"})
+          and any(item in row_keys for item in {"paid", "reserve", "totalincurred", "montantpaye", "provision", "totalencouru"})
+        )
+
+        if is_policy_header:
+          headers = row
+          for data_row in rows[row_index + 1:]:
+            row_text_key = key(" ".join(clean(cell) for cell in data_row if good(cell)))
+            if not any(good(cell) for cell in data_row) or "claimsdetail" in row_text_key or "detailsdessinistres" in row_text_key:
+              break
+            data = row_map(headers, data_row)
+            policy_number = first(data, "Policy Number", "Policy No", "Policy", "Numéro de police", "No de police")
+            policy_line = line(first(data, "Line of Business", "Coverage / Line", "Coverage", "Coverage Line", "Ligne d'affaires", "Garantie"))
+            if not policy_number and not policy_line:
+              continue
+            effective = first(data, "Effective Date", "Date d'effet", "Date Effective")
+            expiration = first(data, "Expiration Date", "Date d'expiration", "Expiration")
+            period = first(data, "Policy Period", "Coverage Period", "Période de police")
+            pieces = date_pair(period)
+            if pieces:
+              effective = effective or pieces[0]
+              expiration = expiration or (pieces[1] if len(pieces) > 1 else "")
+            policies.append({
+              "policy_number": policy_number,
+              "policy": policy_number,
+              "line_of_business": policy_line,
+              "policy_type": policy_line,
+              "coverage": policy_line,
+              "carrier": first(data, "Carrier", "Insurer", "Writing Carrier") or context.get("carrier_name") or context.get("writing_carrier"),
+              "carrier_name": first(data, "Carrier", "Insurer", "Writing Carrier") or context.get("carrier_name") or context.get("writing_carrier"),
+              "writing_carrier": first(data, "Writing Carrier", "Carrier", "Insurer") or context.get("writing_carrier") or context.get("carrier_name"),
+              "effective_date": ca_date(effective),
+              "expiration_date": ca_date(expiration),
+              "province": first(data, "Province", "Jurisdiction", "Province Code") or context.get("province"),
+              "province_code": province_code(first(data, "Province", "Jurisdiction", "Province Code") or context.get("province") or context.get("province_code")),
+              "limit": amount(first(data, "Limit", "Policy Limits", "Limite")),
+              "deductible": amount(first(data, "Deductible", "Retention", "Franchise", "Déductible")),
+              "exposure_basis": first(data, "Exposure Basis", "Basis"),
+              "exposure_value": amount(first(data, "Exposure Value", "Exposure")),
+              "payroll": amount(first(data, "Payroll", "Paie")),
+              "revenue": amount(first(data, "Revenue", "Sales", "Gross Sales", "Chiffre d'affaires")),
+              "employee_count": amount(first(data, "Employee Count", "Employees", "Nombre d'employés")),
+              "vehicle_count": amount(first(data, "Vehicle Count", "Vehicles")),
+              "driver_count": amount(first(data, "Driver Count", "Drivers")),
+              "property_tiv": amount(first(data, "Property TIV", "TIV", "Total Insured Value")),
+              "current_premium": amount(first(data, "Current Premium", "Annual Premium", "Premium", "Written Premium", "Prime actuelle")),
+              "expiring_premium": amount(first(data, "Expiring Premium")),
+              "target_renewal_premium": amount(first(data, "Target Renewal Premium")),
+            })
+
+        if is_claim_header:
+          headers = row
+          for data_row in rows[row_index + 1:]:
+            row_text_key = key(" ".join(clean(cell) for cell in data_row if good(cell)))
+            if not any(good(cell) for cell in data_row) or "underwritingnotes" in row_text_key:
+              break
+            data = row_map(headers, data_row)
+            claim_number = first(data, "Claim Number", "Claim #", "Claim No", "Claim ID", "Numéro de sinistre", "No de sinistre")
+            if not claim_number:
+              continue
+            paid = amount(first(data, "Paid", "Paid Amount", "Total Paid", "Montant payé", "Payé"))
+            reserve = amount(first(data, "Reserve", "Reserve Amount", "Outstanding Reserve", "Provision", "Réserve"))
+            incurred = amount(first(data, "Total Incurred", "Incurred", "Gross Incurred", "Net Incurred", "Total encouru"))
+            if (incurred == "" or money(incurred) <= 0) and (money(paid) > 0 or money(reserve) > 0):
+              incurred = money(paid) + money(reserve)
+            claim_line = line(first(data, "Line of Business", "Coverage / Line", "Coverage", "Policy Type", "Ligne d'affaires", "Garantie"))
+            claim_status = status(first(data, "Status", "Claim Status", "Statut", "État"))
+            attorney = yes_no(first(data, "Attorney Assigned", "Attorney", "Avocat assigné", "Avocat"))
+            litigation = yes_no(first(data, "Litigation", "Litigated", "Litige"))
+            claims.append({
+              "claim_number": claim_number,
+              "claim_no": claim_number,
+              "policy_number": first(data, "Policy Number", "Policy No", "Policy", "Numéro de police", "No de police"),
+              "policy": first(data, "Policy Number", "Policy No", "Policy", "Numéro de police", "No de police"),
+              "line_of_business": claim_line,
+              "claim_type": claim_line,
+              "coverage": claim_line,
+              "status": claim_status,
+              "claim_status": claim_status,
+              "date_of_loss": ca_date(first(data, "Date of Loss", "Loss Date", "Date de survenance", "Date du sinistre")),
+              "loss_date": ca_date(first(data, "Date of Loss", "Loss Date", "Date de survenance", "Date du sinistre")),
+              "date_reported": ca_date(first(data, "Date Reported", "Reported Date", "Date de déclaration", "Date rapportée")),
+              "reported_date": ca_date(first(data, "Date Reported", "Reported Date", "Date de déclaration", "Date rapportée")),
+              "date_closed": ca_date(first(data, "Date Closed", "Closed Date", "Date de fermeture", "Date fermée")),
+              "closed_date": ca_date(first(data, "Date Closed", "Closed Date", "Date de fermeture", "Date fermée")),
+              "claimant": first(data, "Claimant", "Réclamant", "Reclamant"),
+              "jurisdiction_state": first(data, "Jurisdiction/State", "Jurisdiction", "Province", "Venue", "Juridiction") or context.get("province") or context.get("province_code"),
+              "venue_state": first(data, "Jurisdiction/State", "Jurisdiction", "Province", "Venue", "Juridiction") or context.get("province") or context.get("province_code"),
+              "adjuster": first(data, "Adjuster", "Examiner", "Adjuster/Examiner", "Expert en sinistres", "Ajusteur"),
+              "examiner": first(data, "Adjuster", "Examiner", "Adjuster/Examiner", "Expert en sinistres", "Ajusteur"),
+              "paid_amount": paid,
+              "paid": paid,
+              "reserve_amount": reserve,
+              "reserve": reserve,
+              "total_incurred": incurred,
+              "incurred": incurred,
+              "attorney_assigned": attorney,
+              "attorney_involved": attorney,
+              "litigation": litigation,
+              "suit_filed": litigation,
+              "flag": "Attorney" if key(attorney) in {"yes", "oui"} else "Litigation" if key(litigation) in {"yes", "oui"} else first(data, "Flag", "Flags"),
+              "description": first(data, "Description", "Loss Description", "Claim Description", "Narrative", "Cause"),
+              "loss_description": first(data, "Description", "Loss Description", "Claim Description", "Narrative", "Cause"),
+            })
+    except Exception as exc:
+      print("LOSSQ_CANADA_CANONICAL_UPLOAD_OVERLAY_V1_CSV_ERROR:", str(exc)[:300])
+
+  elif ext.endswith(".pdf") and file_text:
+    try:
+      text = file_text
+      label_patterns = [
+        ("business_name", r"(?:Named Insured|Assur[ée])\s*:\s*(.+)"),
+        ("policy_type", r"(?:Type de police|Policy Type)\s*:\s*(.+)"),
+        ("evaluation_date", r"(?:Run Date|Report Date|Date d[’']?évaluation)\s*:\s*([^\n]+)"),
+        ("producing_agency", r"(?:Broker|Courtier)\s*:\s*([^\n]+)"),
+        ("current_premium", r"(?:Annual Premium|Prime annuelle)\s*:\s*([^\n]+)"),
+        ("license_number", r"(?:Licence RBQ|License)\s*:\s*([^\n]+)"),
+        ("regulator", r"(?:Regulated|Régulateur)\s*:\s*([^\n]+)"),
+      ]
+      for field, pattern in label_patterns:
+        match = re.search(pattern, text, re.I)
+        if match:
+          value = clean(match.group(1))
+          context[field] = amount(value) if field == "current_premium" else value
+      carrier_match = re.search(r"\b(RSA CANADA|INTACT FINANCIAL CORPORATION|Intact Insurance|Aviva Canada|Wawanesa|Desjardins)\b", text, re.I)
+      if carrier_match:
+        context["carrier_name"] = clean(carrier_match.group(1)).title().replace("Rsa", "RSA")
+        context["writing_carrier"] = context["carrier_name"]
+      period_match = re.search(r"(?:Period|Période)\s*:\s*([^\n]+)", text, re.I)
+      if period_match:
+        parse_policy_period(period_match.group(1))
+      province_match = re.search(r"\b(AB|BC|MB|NB|NL|NS|NT|NU|ON|PE|QC|SK|YT)\b\s+[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b", text)
+      if province_match:
+        context["province_code"] = province_match.group(1)
+        context["province"] = province_display(province_match.group(1))
+      if re.search(r"\bAMF\b", text, re.I):
+        context["regulator"] = "AMF"
+      if re.search(r"\bOSFI\b", text, re.I):
+        context["federal_regulator"] = "OSFI"
+
+      lines = [clean(row) for row in text.splitlines() if clean(row)]
+      for idx, row in enumerate(lines):
+        row_key = key(row)
+        if ("policy" in row_key or "police" in row_key) and "type" not in row_key:
+          for candidate in lines[idx + 1:idx + 4]:
+            if re.fullmatch(r"[A-Z]{2,6}-[A-Z]{1,6}-[A-Z]{2}-\d{5,}", candidate) or re.fullmatch(r"[A-Z0-9]{2,}(?:-[A-Z0-9]{2,}){2,}", candidate):
+              context["policy_number"] = candidate
+              break
+        if context.get("policy_number"):
+          break
+
+      main_policy = clean(context.get("policy_number"))
+      pdf_line = line(context.get("policy_type") or "")
+      for idx, row in enumerate(lines):
+        if not re.match(r"^[A-Z]{2,5}-\d{4}-[A-Z]{1,5}-\d+", row):
+          continue
+        block = lines[idx:idx + 10]
+        if len(block) < 10:
+          continue
+        paid = amount(block[7])
+        reserve = amount(block[8])
+        incurred = amount(block[9])
+        if (incurred == "" or money(incurred) <= 0) and (money(paid) > 0 or money(reserve) > 0):
+          incurred = money(paid) + money(reserve)
+        claim_line = line(block[3] or pdf_line)
+        claims.append({
+          "claim_number": block[0],
+          "claim_no": block[0],
+          "policy_number": main_policy,
+          "policy": main_policy,
+          "line_of_business": claim_line,
+          "claim_type": claim_line,
+          "coverage": claim_line,
+          "date_of_loss": ca_date(block[1]),
+          "loss_date": ca_date(block[1]),
+          "date_reported": ca_date(block[2]),
+          "reported_date": ca_date(block[2]),
+          "claimant": block[4],
+          "description": block[5],
+          "loss_description": block[5],
+          "status": status(block[6]),
+          "claim_status": status(block[6]),
+          "paid_amount": paid,
+          "paid": paid,
+          "reserve_amount": reserve,
+          "reserve": reserve,
+          "total_incurred": incurred,
+          "incurred": incurred,
+          "jurisdiction_state": context.get("province_code") or context.get("province"),
+          "venue_state": context.get("province_code") or context.get("province"),
+        })
+
+      if main_policy:
+        distinct_lines = list(dict.fromkeys([claim.get("line_of_business") for claim in claims if claim.get("line_of_business")]))
+        policy_line = " / ".join(distinct_lines) or pdf_line
+        policies.append({
+          "policy_number": main_policy,
+          "policy": main_policy,
+          "line_of_business": policy_line,
+          "policy_type": policy_line,
+          "coverage": policy_line,
+          "carrier": context.get("carrier_name") or "RSA Canada",
+          "carrier_name": context.get("carrier_name") or "RSA Canada",
+          "writing_carrier": context.get("writing_carrier") or context.get("carrier_name") or "RSA Canada",
+          "effective_date": context.get("effective_date"),
+          "expiration_date": context.get("expiration_date"),
+          "current_premium": context.get("current_premium"),
+          "province": context.get("province"),
+          "province_code": context.get("province_code"),
+        })
+    except Exception as exc:
+      print("LOSSQ_CANADA_CANONICAL_UPLOAD_OVERLAY_V1_PDF_ERROR:", str(exc)[:300])
+
+  elif ext.endswith((".xlsx", ".xlsm", ".xls")):
+    try:
+      from openpyxl import load_workbook
+      workbook = load_workbook(file_path, data_only=True, read_only=True)
+      if re.search(r"(?i)\bdesjardins\b", file_text):
+        context["carrier_name"] = "Desjardins Assurances Générales"
+        context["writing_carrier"] = "Desjardins Assurances Générales"
+      all_rows = []
+      for worksheet in workbook.worksheets:
+        rows = [list(row) for row in worksheet.iter_rows(values_only=True)]
+        all_rows.extend(rows)
+        for row in rows:
+          cells = [clean(cell) for cell in row]
+          for idx, cell in enumerate(cells[:-1]):
+            label_key = key(cell)
+            value = cells[idx + 1]
+            if not good(value):
+              continue
+            if any(token in label_key for token in {"assure", "insured"}):
+              context["business_name"] = value
+            elif "policy" in label_key or "police" in label_key:
+              context["policy_number"] = value
+            elif "province" in label_key:
+              context["province"] = value
+              context["province_code"] = province_code(value)
+            elif "currency" in label_key or "devise" in label_key:
+              context["currency"] = value
+            elif "reportdate" in label_key or "evaluationdate" in label_key or "datedurapport" in label_key:
+              context["evaluation_date"] = ca_date(value)
+            elif "period" in label_key or "periode" in label_key:
+              parse_policy_period(value)
+            elif "ibccode" in label_key or "codebac" in label_key:
+              context["ibc_code"] = value
+            elif "limit" in label_key or "limite" in label_key:
+              context["policy_limits"] = value
+        for row_index, row in enumerate(rows):
+          row_keys = {key(cell) for cell in row if good(cell)}
+          claim_header = (
+            any("claim" in item or "sinistre" in item for item in row_keys)
+            and any("paid" in item or "paye" in item or "reserve" in item or "incurred" in item or "engage" in item for item in row_keys)
+          )
+          if not claim_header:
+            continue
+          headers = row
+          for data_row in rows[row_index + 1:]:
+            if not any(good(cell) for cell in data_row):
+              break
+            data = row_map(headers, data_row)
+            claim_number = first_like(data, "N° Sinistre / Claim #", "Claim #", "Claim Number", "Sinistre")
+            if not claim_number or key(claim_number) in {"total", "totals", "subtotal", "sou total", "soustotal"}:
+              continue
+            paid = amount(first_like(data, "Paid", "Montant payé", "Payé"))
+            reserve = amount(first_like(data, "Reserve", "Réserve", "Provision"))
+            incurred = amount(first_like(data, "Incurred", "Total Incurred", "Total engagé", "Total encouru"))
+            if (incurred == "" or money(incurred) <= 0) and (money(paid) > 0 or money(reserve) > 0):
+              incurred = money(paid) + money(reserve)
+            claim_line = line(first_like(data, "Coverage", "Couverture", "Line of Business", "Ligne"))
+            claim_status = status(first_like(data, "Status", "Statut"))
+            claims.append({
+              "claim_number": claim_number,
+              "claim_no": claim_number,
+              "policy_number": context.get("policy_number", ""),
+              "policy": context.get("policy_number", ""),
+              "line_of_business": claim_line,
+              "claim_type": claim_line,
+              "coverage": claim_line,
+              "status": claim_status,
+              "claim_status": claim_status,
+              "date_of_loss": ca_date(first_like(data, "Loss Date", "Date of Loss", "Date Sinistre", "Date du sinistre")),
+              "loss_date": ca_date(first_like(data, "Loss Date", "Date of Loss", "Date Sinistre", "Date du sinistre")),
+              "date_reported": ca_date(first_like(data, "Reported", "Date Reported", "Date Déclaration", "Date rapportée")),
+              "reported_date": ca_date(first_like(data, "Reported", "Date Reported", "Date Déclaration", "Date rapportée")),
+              "claimant": first_like(data, "Claimant", "Réclamant"),
+              "description": first_like(data, "Description", "Cause"),
+              "loss_description": first_like(data, "Description", "Cause"),
+              "paid_amount": paid,
+              "paid": paid,
+              "reserve_amount": reserve,
+              "reserve": reserve,
+              "total_incurred": incurred,
+              "incurred": incurred,
+              "jurisdiction_state": context.get("province_code") or context.get("province"),
+              "venue_state": context.get("province_code") or context.get("province"),
+            })
+      workbook.close()
+
+      if context.get("policy_number"):
+        distinct_lines = list(dict.fromkeys([claim.get("line_of_business") for claim in claims if claim.get("line_of_business")]))
+        total_premium = 0.0
+        for row in all_rows:
+          row_text = " ".join(clean(cell) for cell in row if good(cell))
+          if re.search(r"(?i)total\s+premium|prime\s+totale", row_text):
+            for cell in row:
+              total_premium = max(total_premium, money(cell))
+        policy_line = " / ".join(distinct_lines) if distinct_lines else line(context.get("policy_type") or "D&O / E&O")
+        policies.append({
+          "policy_number": context.get("policy_number"),
+          "policy": context.get("policy_number"),
+          "line_of_business": policy_line,
+          "policy_type": policy_line,
+          "coverage": policy_line,
+          "carrier": context.get("carrier_name") or "Desjardins Assurances Générales",
+          "carrier_name": context.get("carrier_name") or "Desjardins Assurances Générales",
+          "writing_carrier": context.get("writing_carrier") or context.get("carrier_name") or "Desjardins Assurances Générales",
+          "effective_date": context.get("effective_date"),
+          "expiration_date": context.get("expiration_date"),
+          "current_premium": total_premium or context.get("current_premium"),
+          "province": context.get("province"),
+          "province_code": context.get("province_code"),
+        })
+    except Exception as exc:
+      print("LOSSQ_CANADA_CANONICAL_UPLOAD_OVERLAY_V1_XLSX_ERROR:", str(exc)[:300])
+
+  if not claims:
+    claims = [dict(claim) for claim in parsed_claims if isinstance(claim, dict)]
+  if not policies:
+    for source in (parsed_profile, profile_data, direct_profile):
+      for field in ("policies", "policy_schedule", "exposures"):
+        source_rows = source.get(field) if isinstance(source, dict) else None
+        if isinstance(source_rows, list) and source_rows:
+          policies = [dict(row) for row in source_rows if isinstance(row, dict)]
+          break
+      if policies:
+        break
+
+  if not claims and not policies and not context:
+    return parsed_claims, parsed_profile, profile_data, direct_profile
+
+  deduped_claims = []
+  seen_claims = set()
+  for claim in claims:
+    if not isinstance(claim, dict):
+      continue
+    claim_number = clean(claim.get("claim_number") or claim.get("claim_no") or claim.get("Claim Number"))
+    policy_number = clean(claim.get("policy_number") or claim.get("policy") or claim.get("Policy Number"))
+    claim_key = f"{claim_number.upper()}|{policy_number.upper()}"
+    if not claim_number or claim_key in seen_claims:
+      continue
+    seen_claims.add(claim_key)
+    item = dict(claim)
+    item["claim_number"] = claim_number
+    item["claim_no"] = claim_number
+    item["policy_number"] = policy_number
+    item["policy"] = policy_number
+    item["line_of_business"] = line(item.get("line_of_business") or item.get("coverage") or item.get("claim_type"))
+    item["coverage"] = item.get("line_of_business")
+    item["claim_type"] = item.get("line_of_business")
+    item["status"] = status(item.get("status") or item.get("claim_status"))
+    item["claim_status"] = item.get("status")
+    for date_field in ["date_of_loss", "loss_date", "date_reported", "reported_date", "date_closed", "closed_date"]:
+      if item.get(date_field):
+        item[date_field] = ca_date(item.get(date_field))
+    for amount_field in ["paid_amount", "paid", "reserve_amount", "reserve", "total_incurred", "incurred"]:
+      if item.get(amount_field) not in (None, ""):
+        item[amount_field] = money(item.get(amount_field))
+    if money(item.get("total_incurred")) <= 0 and (money(item.get("paid_amount")) > 0 or money(item.get("reserve_amount")) > 0):
+      item["total_incurred"] = money(item.get("paid_amount")) + money(item.get("reserve_amount"))
+      item["incurred"] = item["total_incurred"]
+    item["currency"] = "CAD"
+    item["market_currency"] = "CAD"
+    item["country"] = "Canada"
+    deduped_claims.append(item)
+
+  parsed_claims = deduped_claims if deduped_claims else parsed_claims
+
+  claim_counts = {}
+  claim_totals = {}
+  total_paid = 0.0
+  total_reserve = 0.0
+  total_incurred = 0.0
+  open_claims = 0
+  closed_claims = 0
+  for claim in parsed_claims:
+    if not isinstance(claim, dict):
+      continue
+    policy_number = clean(claim.get("policy_number") or claim.get("policy"))
+    if policy_number:
+      claim_counts[policy_number.upper()] = claim_counts.get(policy_number.upper(), 0) + 1
+      claim_totals[policy_number.upper()] = claim_totals.get(policy_number.upper(), 0.0) + money(claim.get("total_incurred") or claim.get("incurred"))
+    claim_status = key(claim.get("status") or claim.get("claim_status"))
+    if claim_status in {"closed", "ferme", "fermee", "clos"}:
+      closed_claims += 1
+    elif claim_status:
+      open_claims += 1
+    total_paid += money(claim.get("paid_amount") or claim.get("paid"))
+    total_reserve += money(claim.get("reserve_amount") or claim.get("reserve"))
+    total_incurred += money(claim.get("total_incurred") or claim.get("incurred"))
+
+  cleaned_policies = []
+  seen_policies = set()
+  for policy in policies:
+    if not isinstance(policy, dict):
+      continue
+    policy_number = clean(policy.get("policy_number") or policy.get("policy") or policy.get("policy_no"))
+    policy_line = line(policy.get("line_of_business") or policy.get("policy_type") or policy.get("coverage"))
+    if not policy_number and not policy_line:
+      continue
+    policy_key = (policy_number or policy_line).upper()
+    if policy_key in seen_policies:
+      continue
+    seen_policies.add(policy_key)
+    item = dict(policy)
+    item["policy_number"] = policy_number
+    item["policy"] = policy_number
+    item["line_of_business"] = policy_line
+    item["policy_type"] = policy_line
+    item["coverage"] = policy_line
+    item["carrier"] = item.get("carrier") or item.get("carrier_name") or context.get("carrier_name") or context.get("writing_carrier")
+    item["carrier_name"] = item.get("carrier_name") or item.get("carrier") or context.get("carrier_name") or context.get("writing_carrier")
+    item["writing_carrier"] = item.get("writing_carrier") or item.get("carrier_name") or context.get("writing_carrier") or context.get("carrier_name")
+    item["effective_date"] = ca_date(item.get("effective_date") or context.get("effective_date"))
+    item["expiration_date"] = ca_date(item.get("expiration_date") or context.get("expiration_date"))
+    item["province"] = item.get("province") or context.get("province") or province_display(context.get("province_code"))
+    item["province_code"] = province_code(item.get("province_code") or item.get("province") or context.get("province_code") or context.get("province"))
+    item["claim_count"] = claim_counts.get(policy_number.upper(), item.get("claim_count") or 0) if policy_number else item.get("claim_count", 0)
+    item["claims"] = item["claim_count"]
+    item["total_incurred"] = claim_totals.get(policy_number.upper(), item.get("total_incurred") or 0.0) if policy_number else item.get("total_incurred", 0.0)
+    item["currency"] = "CAD"
+    item["market_currency"] = "CAD"
+    cleaned_policies.append(item)
+
+  for source in (parsed_profile, profile_data, direct_profile):
+    if not isinstance(source, dict):
+      continue
+    for field, value in context.items():
+      if value not in (None, "", [], {}):
+        source[field] = value
+
+  province_value = context.get("province") or context.get("province_code") or parsed_profile.get("province") or parsed_profile.get("state") or profile_data.get("province") or profile_data.get("state")
+  province_code_value = province_code(province_value)
+  province_name_value = province_display(province_value)
+  carrier = context.get("carrier_name") or context.get("writing_carrier") or parsed_profile.get("carrier_name") or profile_data.get("carrier_name")
+  business_name = context.get("business_name") or parsed_profile.get("business_name") or profile_data.get("business_name")
+
+  for target in (parsed_profile, profile_data, direct_profile):
+    if not isinstance(target, dict):
+      continue
+    if business_name:
+      target["business_name"] = business_name
+      target["insured_name"] = business_name
+      target["named_insured"] = business_name
+      target["account_name"] = business_name
+    if carrier:
+      target["carrier_name"] = carrier
+      target["writing_carrier"] = target.get("writing_carrier") or carrier
+      target["carrier"] = target.get("carrier") or carrier
+    if province_code_value:
+      target["province_code"] = province_code_value
+      target["province"] = province_name_value
+      target["state"] = province_code_value
+    target["country"] = "Canada"
+    target["market_country"] = "Canada"
+    target["currency"] = "CAD"
+    target["market_currency"] = "CAD"
+    target["loss_currency"] = "CAD"
+    target["date_format"] = "DD/MM/YYYY"
+    target["market_date_format"] = "DD/MM/YYYY"
+    target["language"] = target.get("language") or ("French" if re.search(r"(?i)\b(assuré|sinistre|réclamant|courtier|québec)\b", file_text) else "English")
+    target["market_language"] = "fr" if target.get("language") == "French" else "en"
+    target["regulator"] = target.get("regulator") or context.get("regulator") or regulator_for(province_code_value)
+    if cleaned_policies:
+      target["policies"] = cleaned_policies
+      target["policy_schedule"] = cleaned_policies
+      target["exposures"] = cleaned_policies
+      target["policy_numbers"] = [policy.get("policy_number") for policy in cleaned_policies if policy.get("policy_number")]
+      target["policy_count"] = len(cleaned_policies)
+      if not target.get("policy_number") and cleaned_policies[0].get("policy_number"):
+        target["policy_number"] = cleaned_policies[0].get("policy_number")
+      if not target.get("main_policy") and cleaned_policies[0].get("policy_number"):
+        target["main_policy"] = cleaned_policies[0].get("policy_number")
+      if not target.get("main_policy_number") and cleaned_policies[0].get("policy_number"):
+        target["main_policy_number"] = cleaned_policies[0].get("policy_number")
+      target["line_of_business"] = "Multi-line: " + ", ".join(dict.fromkeys([p.get("line_of_business") for p in cleaned_policies if p.get("line_of_business")]))
+      target["primary_line_of_business"] = target["line_of_business"]
+      target["effective_date"] = target.get("effective_date") or cleaned_policies[0].get("effective_date")
+      target["expiration_date"] = target.get("expiration_date") or cleaned_policies[0].get("expiration_date")
+    if parsed_claims:
+      target["claims"] = parsed_claims
+      target["parsed_claims"] = parsed_claims
+      target["claim_count"] = len(parsed_claims)
+      target["total_claims"] = len(parsed_claims)
+      target["open_claims"] = open_claims
+      target["closed_claims"] = closed_claims
+      target["total_paid"] = total_paid
+      target["total_reserve"] = total_reserve
+      target["total_incurred"] = total_incurred
+    market_context = target.get("market_context") if isinstance(target.get("market_context"), dict) else {}
+    market_context.update({
+      "country": "Canada",
+      "currency": "CAD",
+      "date_format": "DD/MM/YYYY",
+      "province": province_name_value or target.get("province"),
+      "province_code": province_code_value or target.get("province_code"),
+      "regulator": target.get("regulator"),
+      "language": target.get("market_language"),
+    })
+    target["market_context"] = {k: v for k, v in market_context.items() if v not in (None, "", [], {})}
+
+  print("LOSSQ_CANADA_CANONICAL_UPLOAD_OVERLAY_V1", {
+    "claims": len(parsed_claims or []),
+    "policies": len(cleaned_policies or []),
+    "total_incurred": profile_data.get("total_incurred"),
+    "province": profile_data.get("province") or profile_data.get("province_code"),
+    "currency": profile_data.get("currency"),
+  })
+
+  return parsed_claims, parsed_profile, profile_data, direct_profile
+
 # LOSSQ_SAFE_MONEY_FLOAT_CURRENCY_V4
 def lossq_safe_money_float_currency_v4(value, default=0.0):
   if value in (None, "", [], {}):
@@ -22727,6 +23570,17 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         parsed_profile,
     )
 
+    # LOSSQ_CANADA_CANONICAL_UPLOAD_PRE_EXTEND_CALL_V1
+    # Reapply Canada/CAD/province structured account, policy, and claim rows
+    # late enough that generic cleanup cannot collapse Canadian schedules.
+    parsed_claims, parsed_profile, _lossq_unused_profile_data, direct_profile = lossq_canada_canonical_upload_overlay_v1(
+      file_path,
+      parsed_claims,
+      parsed_profile,
+      {},
+      direct_profile,
+    )
+
     # LOSSQ_UNIVERSAL_TABULAR_UPLOAD_CANONICAL_PRE_EXTEND_CALL_V1
     # Reapply structured account/policy/claim rows after parser cleanups, before
     # claim save, so tabular uploads cannot collapse to one policy or one claim.
@@ -23963,6 +24817,17 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     profile_data.update(_lossq_us_final_profile)
   if _lossq_us_final_claims and len(_lossq_us_final_claims) >= len(all_parsed_claims or []):
     all_parsed_claims = _lossq_us_final_claims
+
+  # LOSSQ_CANADA_CANONICAL_UPLOAD_PROFILE_UPSERT_CALL_V1
+  # Keep Canadian structured policy schedules, claim totals, CAD currency, and
+  # DD/MM/YYYY market context authoritative at the final profile save boundary.
+  all_parsed_claims, parsed_profile, profile_data, direct_profile = lossq_canada_canonical_upload_overlay_v1(
+    file_path,
+    all_parsed_claims,
+    parsed_profile if "parsed_profile" in locals() else {},
+    profile_data,
+    direct_profile,
+  )
 
   # LOSSQ_UNIVERSAL_TABULAR_UPLOAD_CANONICAL_PROFILE_UPSERT_CALL_V1
   # Keep structured tabular policy schedules and claim totals authoritative at
