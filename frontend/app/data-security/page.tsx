@@ -1,81 +1,103 @@
 import LegalPage from "../legal/LegalPage";
 
 const sections = [
-    {
-      heading: 'Security Overview',
-      body: [
-        'LossQ is designed to support secure handling of business, insurance, policy, loss run, and claims-related information.',
-        'Security is a shared responsibility between LossQ and each customer organization.',
-      ],
-    },
-    {
-      heading: 'Access Controls',
-      body: [
-        'LossQ uses authenticated user accounts, role-based access controls, and organization-level separation to help limit access to authorized users.',
-        'Customers are responsible for managing their own users, roles, passwords, and access privileges.',
-      ],
-    },
-    {
-      heading: 'Data Isolation',
-      body: [
-        'LossQ is designed to keep organization data separated so users should only access data associated with their authorized organization.',
-        'Customers should promptly report any suspected cross-account visibility or unauthorized access.',
-      ],
-    },
-    {
-      heading: 'Passwords and Authentication',
-      body: [
-        'Users should use strong passwords and protect login credentials.',
-        'Password reset links are time-limited and should not be shared.',
-      ],
-    },
-    {
-      heading: 'Uploaded Documents',
-      body: [
-        'Uploaded documents may include sensitive business, insurance, claims, and policy data.',
-        'Users should upload only documents they are authorized to process through LossQ.',
-      ],
-    },
-    {
-      heading: 'Operational Safeguards',
-      body: [
-        'LossQ may use logging, monitoring, access restrictions, database controls, secure hosting, backups, and deployment controls to support platform security.',
-        'Security practices may evolve as the platform grows.',
-      ],
-    },
-    {
-      heading: 'Incident Response',
-      body: [
-        'If LossQ becomes aware of a security incident affecting customer data, LossQ will investigate and take appropriate steps based on the nature of the incident and applicable requirements.',
-        'Customers should notify LossQ immediately if they suspect unauthorized account access or data exposure.',
-      ],
-    },
-    {
-      heading: 'Customer Responsibilities',
-      body: [
-        'Customers are responsible for using the platform lawfully, limiting access to authorized users, reviewing exports before distribution, and securing downloaded reports.',
-        'Customers should avoid uploading unnecessary personal, confidential, or regulated information unless needed for legitimate business purposes.',
-      ],
-    },
-    {
-      heading: 'No Absolute Guarantee',
-      body: [
-        'No technology platform can guarantee complete security. LossQ uses safeguards designed to reduce risk but cannot eliminate all risk.',
-      ],
-    },
-    {
-      heading: 'Contact',
-      body: [
-        'Security questions or suspected incidents may be sent to support@lossq.com.',
-      ],
-    },
-  ];
+  {
+    heading: 'Data Protection',
+    body: [
+      'LossQ uses secure application practices to protect uploaded documents, extracted claim information, account profiles, and underwriting summaries. Data is handled for the purpose of providing the LossQ platform services.',
+    ],
+  },
+  {
+    heading: 'Encryption in Transit',
+    body: [
+      "LossQ is intended to use HTTPS/TLS encryption for data transmitted between the user's browser and the LossQ platform.",
+    ],
+  },
+  {
+    heading: 'Organization-Level Access',
+    body: [
+      'LossQ is built to keep organization data separated so users only access accounts, claims, profiles, and reports associated with their authorized organization.',
+    ],
+  },
+  {
+    heading: 'Authentication and Access Control',
+    body: [
+      'LossQ uses account-based authentication, session controls, and role-based access concepts to limit access to authorized users. Users are responsible for maintaining the confidentiality of their login credentials.',
+    ],
+  },
+  {
+    heading: 'Document Handling',
+    body: [
+      'Uploaded loss runs and supporting documents are processed to extract insurance-related information such as policy details, claim details, loss history, and underwriting context. LossQ is not intended to publicly disclose uploaded documents or extracted claim data.',
+    ],
+  },
+  {
+    heading: 'Audit and Activity Tracking',
+    body: [
+      'LossQ may maintain audit logs, user activity records, upload history, and account activity to support security review, troubleshooting, compliance support, and platform integrity.',
+    ],
+  },
+  {
+    heading: 'Payment Security',
+    body: [
+      'LossQ does not store full payment card information on its own servers. Payment processing, when applicable, is handled through third-party payment providers.',
+    ],
+  },
+  {
+    heading: 'Third-Party Infrastructure',
+    body: [
+      'LossQ may rely on trusted third-party infrastructure providers for hosting, database services, authentication, payment processing, storage, analytics, and operational support. These providers may process limited data as necessary to provide platform services.',
+    ],
+  },
+  {
+    heading: 'Administrative Access',
+    body: [
+      'Administrative access is limited to authorized LossQ personnel or approved technical support resources for support, troubleshooting, security, compliance, or platform maintenance purposes.',
+    ],
+  },
+  {
+    heading: 'Security Limitations',
+    body: [
+      'No software platform, AI system, cloud service, or internet transmission can be guaranteed to be completely secure. LossQ uses reasonable security measures, but users should avoid uploading information they are not authorized to share.',
+    ],
+  },
+  {
+    heading: 'Customer Responsibility',
+    body: [
+      'Users are responsible for ensuring they have the right to upload, analyze, and share loss runs, insurance documents, claim information, and account data through LossQ.',
+    ],
+  },
+  {
+    heading: 'Incident Response',
+    body: [
+      'If LossQ becomes aware of a security issue that materially affects user data, LossQ will take reasonable steps to investigate, mitigate, and communicate as appropriate.',
+    ],
+  },
+  {
+    heading: 'Compliance Roadmap',
+    body: [
+      'LossQ is designed with security and compliance readiness in mind. Any future certifications, including SOC 2 or similar third-party audits, will only be represented as completed after they are formally achieved.',
+    ],
+  },
+  {
+    heading: 'Security Contact',
+    body: [
+      'For security, privacy, or data handling questions, users may contact LossQ through the support contact listed on the website.',
+    ],
+  },
+  {
+    heading: 'Transparency Note',
+    body: [
+      'This Security Measures section is provided for transparency and does not replace the full Terms of Service, Privacy Policy, or any written agreement between LossQ and a customer.',
+    ],
+  },
+];
 
 export default function Page() {
   return (
     <LegalPage
-      title='Data Security Policy'
-      subtitle="This policy summarizes LossQ's approach to protecting customer data."
+      title='Security Measures'
+      subtitle='LossQ is designed to help insurance professionals organize, analyze, and review commercial loss run information with security, confidentiality, and organization-level data separation in mind.'
       sections={sections}
     />
   );
