@@ -1,7 +1,8 @@
 const links = [
   { href: "/terms", label: "Terms of Service" },
   { href: "/privacy", label: "Privacy Policy" },
-  { href: "/data-security", label: "Data Security Policy" },
+  { href: "/data-security", label: "Security Measures" },
+  { href: "/metrics-explained", label: "Metrics Explained" },
   { href: "/refund-policy", label: "Refund and Cancellation Policy" },
   { href: "/cancellation-policy", label: "Cancellation Policy" },
   { href: "/ai-disclaimer", label: "AI Disclaimer" },
@@ -20,7 +21,7 @@ export default function LegalIndexPage() {
           <p className="text-sm font-semibold text-cyan-300">LossQ Legal Center</p>
           <h1 className="mt-3 text-4xl font-bold tracking-tight">Legal Policies</h1>
           <p className="mt-4 text-slate-300">
-            Review LossQ's terms, privacy, security, billing, cancellation, AI, and insurance disclaimers.
+            Review LossQ's terms, privacy, security, metrics, billing, cancellation, AI, and insurance disclaimers.
           </p>
 
           <div className="mt-8 grid gap-3">
