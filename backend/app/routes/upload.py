@@ -10982,6 +10982,7 @@ def lossq_canada_canonical_upload_overlay_v1(
     lookup = {
       "cgl": "General Liability", "commercialgeneralliability": "General Liability",
       "responsabilitecivilecommerciale": "General Liability", "responsabilitecivile": "General Liability",
+      "respcivilecgl": "General Liability",
       "contractorcgl": "Contractor CGL", "respcivileentrepreneurscontractorcgl": "Contractor CGL",
       "fleetautomobile": "Commercial Auto", "automobilecommerciale": "Commercial Auto", "auto": "Commercial Auto",
       "wcbwsib": "Workers Compensation", "wsib": "Workers Compensation", "wcb": "Workers Compensation",
@@ -10995,6 +10996,7 @@ def lossq_canada_canonical_upload_overlay_v1(
       "liquorliability": "Liquor Liability", "responsabilitelieealalcool": "Liquor Liability",
       "businessinterruption": "Business Interruption", "interruptiondesaffaires": "Business Interruption",
       "equipment": "Equipment", "equip": "Equipment", "equipement": "Equipment",
+      "equipementequipment": "Equipment",
     }
     return lookup.get(key(raw), raw)
 
@@ -11279,7 +11281,7 @@ def lossq_canada_canonical_upload_overlay_v1(
         if match:
           value = clean(match.group(1))
           context[field] = amount(value) if field == "current_premium" else value
-      carrier_match = re.search(r"\b(RSA CANADA|INTACT FINANCIAL CORPORATION|Intact Insurance|Aviva Canada|Wawanesa|Desjardins)\b", text, re.I)
+      carrier_match = re.search(r"\b(RSA CANADA|INTACT FINANCIAL CORPORATION|Intact Insurance|Aviva Canada|Wawanesa Mutual|Wawanesa|Desjardins)\b", text, re.I)
       if carrier_match:
         context["carrier_name"] = clean(carrier_match.group(1)).title().replace("Rsa", "RSA")
         context["writing_carrier"] = context["carrier_name"]
@@ -11373,7 +11375,72 @@ def lossq_canada_canonical_upload_overlay_v1(
           "venue_state": context.get("province_code") or context.get("province"),
         })
 
-      if main_policy:
+      coverage_summary_rows = []
+      for idx, row in enumerate(lines):
+        row_key = key(row)
+        if not ("coverage" in row_key or "couverture" in row_key) or "ibccode" in row_key:
+          continue
+        header_window = " ".join(key(item) for item in lines[idx + 1:idx + 5])
+        if not all(token in header_window for token in ["claims", "paid"]) or not any(token in header_window for token in ["reserves", "reserve"]):
+          continue
+        pos = idx + 5
+        while pos + 4 < len(lines):
+          coverage_name = clean(lines[pos])
+          if not coverage_name or key(coverage_name) in {"total", "totaltotal"}:
+            break
+          if re.match(r"^\d+$", coverage_name) or re.match(r"^\$?\d", coverage_name):
+            break
+          summary_count = int(money(lines[pos + 1]) or 0)
+          summary_paid = amount(lines[pos + 2])
+          summary_reserve = amount(lines[pos + 3])
+          summary_total = amount(lines[pos + 4])
+          summary_line = line(re.sub(r"\(?\b\d{4,6}\b\)?", "", coverage_name).replace("/", " ").strip() or coverage_name)
+          summary_key = key(summary_line)
+          matched_codes = re.findall(r"\b\d{4,6}\b", coverage_name)
+          for claim in claims:
+            claim_line_key = key(claim.get("line_of_business"))
+            claim_code = clean(claim.get("ibc_code") or claim.get("class_code"))
+            if not claim_code:
+              continue
+            if claim_line_key and (claim_line_key in summary_key or summary_key in claim_line_key or any(part and part in summary_key for part in claim_line_key.split())):
+              matched_codes.extend([code for code in re.split(r"\s*/\s*", claim_code) if code])
+            elif "generalliability" in summary_key and claim_line_key in {"cgl", "generalliability"}:
+              matched_codes.extend([code for code in re.split(r"\s*/\s*", claim_code) if code])
+          matched_codes = list(dict.fromkeys(matched_codes))
+          coverage_summary_rows.append({
+            "policy_number": main_policy,
+            "policy": main_policy,
+            "line_of_business": summary_line,
+            "policy_type": summary_line,
+            "coverage": summary_line,
+            "carrier": context.get("carrier_name") or "RSA Canada",
+            "carrier_name": context.get("carrier_name") or "RSA Canada",
+            "writing_carrier": context.get("writing_carrier") or context.get("carrier_name") or "RSA Canada",
+            "effective_date": context.get("effective_date"),
+            "expiration_date": context.get("expiration_date"),
+            "province": context.get("province"),
+            "province_code": context.get("province_code"),
+            "claim_count": summary_count,
+            "claims": summary_count,
+            "total_paid": summary_paid,
+            "total_reserve": summary_reserve,
+            "total_incurred": summary_total,
+            "class_code": " / ".join(matched_codes),
+            "class_codes": matched_codes,
+            "ibc_code": " / ".join(matched_codes),
+            "coverage_code": " / ".join(matched_codes),
+            "license_number": context.get("license_number"),
+            "neq": context.get("neq"),
+            "regulator": context.get("regulator"),
+            "coverage_summary_row": True,
+          })
+          pos += 5
+        if coverage_summary_rows:
+          break
+
+      if main_policy and coverage_summary_rows:
+        policies.extend(coverage_summary_rows)
+      elif main_policy:
         distinct_lines = list(dict.fromkeys([claim.get("line_of_business") for claim in claims if claim.get("line_of_business")]))
         distinct_codes = list(dict.fromkeys([
           code
@@ -11606,7 +11673,7 @@ def lossq_canada_canonical_upload_overlay_v1(
     policy_line = line(policy.get("line_of_business") or policy.get("policy_type") or policy.get("coverage"))
     if not policy_number and not policy_line:
       continue
-    policy_key = (policy_number or policy_line).upper()
+    policy_key = (f"{policy_number}|{policy_line}" if policy.get("coverage_summary_row") else (policy_number or policy_line)).upper()
     if policy_key in seen_policies:
       continue
     seen_policies.add(policy_key)
@@ -11623,9 +11690,15 @@ def lossq_canada_canonical_upload_overlay_v1(
     item["expiration_date"] = ca_date(item.get("expiration_date") or context.get("expiration_date"))
     item["province"] = item.get("province") or context.get("province") or province_display(context.get("province_code"))
     item["province_code"] = province_code(item.get("province_code") or item.get("province") or context.get("province_code") or context.get("province"))
-    item["claim_count"] = claim_counts.get(policy_number.upper(), item.get("claim_count") or 0) if policy_number else item.get("claim_count", 0)
+    if item.get("coverage_summary_row"):
+      item["claim_count"] = item.get("claim_count") or item.get("claims") or 0
+    else:
+      item["claim_count"] = claim_counts.get(policy_number.upper(), item.get("claim_count") or 0) if policy_number else item.get("claim_count", 0)
     item["claims"] = item["claim_count"]
-    item["total_incurred"] = claim_totals.get(policy_number.upper(), item.get("total_incurred") or 0.0) if policy_number else item.get("total_incurred", 0.0)
+    if item.get("coverage_summary_row"):
+      item["total_incurred"] = item.get("total_incurred") or 0.0
+    else:
+      item["total_incurred"] = claim_totals.get(policy_number.upper(), item.get("total_incurred") or 0.0) if policy_number else item.get("total_incurred", 0.0)
     item["currency"] = "CAD"
     item["market_currency"] = "CAD"
     cleaned_policies.append(item)
