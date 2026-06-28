@@ -4959,7 +4959,10 @@ function normalizeProfileName(item: any) {
 
     if (!backendProfileComplete) {
      try {
-      sessionStorage.setItem("lossq_next_after_onboarding", "/dashboard");
+      sessionStorage.setItem("lossq_next_after_onboarding", "/dashboard?welcome=1");
+      sessionStorage.setItem("lossq_welcome", "1");
+      localStorage.setItem("lossq_new_user_welcome", "1");
+      localStorage.removeItem("lossq_new_user_welcome_seen");
      } catch {}
 
      router.replace("/onboarding?from=billing");

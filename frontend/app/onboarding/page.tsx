@@ -114,12 +114,12 @@ function lossqOnboardingClearPostPaymentFlagsV1() {
 }
 
 function lossqOnboardingNextPathV1() {
- if (typeof window === "undefined") return "/dashboard";
+ if (typeof window === "undefined") return "/dashboard?welcome=1";
 
  try {
-  return sessionStorage.getItem("lossq_next_after_onboarding") || "/dashboard";
+  return sessionStorage.getItem("lossq_next_after_onboarding") || "/dashboard?welcome=1";
  } catch {
-  return "/dashboard";
+  return "/dashboard?welcome=1";
  }
 }
 
@@ -422,6 +422,9 @@ export default function LossQOnboardingPage() {
 
       // LOSSQ_ONBOARDING_COMPLETE_POST_PAYMENT_CLEAR_V1
       const nextPath = lossqOnboardingNextPathV1();
+      sessionStorage.setItem("lossq_welcome", "1");
+      localStorage.setItem("lossq_new_user_welcome", "1");
+      localStorage.removeItem("lossq_new_user_welcome_seen");
       lossqOnboardingClearPostPaymentFlagsV1();
 
       router.push(nextPath);

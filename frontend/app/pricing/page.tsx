@@ -140,7 +140,7 @@ export default function PricingPage() {
       try {
         localStorage.setItem("lossq_pending_paid_onboarding", "true");
         sessionStorage.setItem("lossq_pending_paid_onboarding", "true");
-        sessionStorage.setItem("lossq_next_after_onboarding", "/dashboard");
+        sessionStorage.setItem("lossq_next_after_onboarding", "/dashboard?welcome=1");
       } catch {}
 
       router.replace("/onboarding?from=billing");
@@ -251,7 +251,7 @@ export default function PricingPage() {
         try {
           localStorage.setItem("lossq_pending_paid_onboarding", "true");
           sessionStorage.setItem("lossq_pending_paid_onboarding", "true");
-          sessionStorage.setItem("lossq_next_after_onboarding", "/dashboard");
+          sessionStorage.setItem("lossq_next_after_onboarding", "/dashboard?welcome=1");
         } catch {}
 
         window.location.href = data.checkout_url;

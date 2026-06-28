@@ -740,7 +740,7 @@ def create_checkout_session(
         mode="subscription",
         customer=customer_id,
         line_items=[{"price": price_id, "quantity": 1}],
-        success_url=f"{FRONTEND_URL}/settings?billing=success&session_id={{CHECKOUT_SESSION_ID}}",
+        success_url=f"{FRONTEND_URL}/onboarding?from=billing&billing=success&session_id={{CHECKOUT_SESSION_ID}}",
         cancel_url=f"{FRONTEND_URL}/pricing?billing=cancelled",
         allow_promotion_codes=True,
         subscription_data={
@@ -1050,7 +1050,7 @@ def create_checkout_compat(payload: dict, current_user=Depends(get_current_user)
     success_url = (
         payload.get("success_url")
         or os.getenv("LOSSQ_BILLING_SUCCESS_URL")
-        or f"{FRONTEND_URL}/dashboard?billing=success"
+        or f"{FRONTEND_URL}/onboarding?from=billing&billing=success"
     )
 
     cancel_url = (
