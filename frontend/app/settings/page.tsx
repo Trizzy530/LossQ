@@ -33,6 +33,70 @@ type Organization = {
 
 const API = process.env.NEXT_PUBLIC_API_URL || "https://lossq-production.up.railway.app";
 
+const LANGUAGE_OPTIONS = [
+  { value: "english", label: "English" },
+  { value: "french", label: "French / Francais" },
+  { value: "spanish", label: "Spanish / Espanol" },
+  { value: "portuguese", label: "Portuguese / Portugues" },
+  { value: "german", label: "German / Deutsch" },
+  { value: "italian", label: "Italian / Italiano" },
+  { value: "dutch", label: "Dutch / Nederlands" },
+  { value: "arabic", label: "Arabic" },
+  { value: "chinese", label: "Chinese" },
+  { value: "japanese", label: "Japanese" },
+  { value: "korean", label: "Korean" },
+  { value: "hindi", label: "Hindi" },
+  { value: "punjabi", label: "Punjabi" },
+  { value: "urdu", label: "Urdu" },
+  { value: "vietnamese", label: "Vietnamese" },
+  { value: "tagalog", label: "Tagalog / Filipino" },
+  { value: "polish", label: "Polish" },
+  { value: "russian", label: "Russian" },
+  { value: "ukrainian", label: "Ukrainian" },
+  { value: "greek", label: "Greek" },
+  { value: "turkish", label: "Turkish" },
+  { value: "hebrew", label: "Hebrew" },
+  { value: "swahili", label: "Swahili" },
+];
+
+function normalizeLanguagePreference(value: any) {
+  const clean = String(value || "english").trim().toLowerCase();
+  const aliases: Record<string, string> = {
+    en: "english",
+    fr: "french",
+    es: "spanish",
+    pt: "portuguese",
+    de: "german",
+    it: "italian",
+    nl: "dutch",
+    ar: "arabic",
+    zh: "chinese",
+    ja: "japanese",
+    ko: "korean",
+    hi: "hindi",
+    pa: "punjabi",
+    ur: "urdu",
+    vi: "vietnamese",
+    tl: "tagalog",
+    filipino: "tagalog",
+    pl: "polish",
+    ru: "russian",
+    uk: "ukrainian",
+    el: "greek",
+    tr: "turkish",
+    he: "hebrew",
+    sw: "swahili",
+  };
+
+  return aliases[clean] || clean || "english";
+}
+
+function languageStorageKey(user?: OrgUser | null) {
+  const userId = user?.id || "";
+  const email = String(user?.email || "").trim().toLowerCase();
+  return userId || email ? `lossq_language_output_mode:${userId || email}` : "lossq_language_output_mode";
+}
+
 async function safeJson(res: Response) {
   try {
     return await res.json();
@@ -82,6 +146,7 @@ export default function SettingsPage() {
 
   const [firstName, setFirstName] = useState("");
   const [lastName, setLastName] = useState("");
+  const [languageOutput, setLanguageOutput] = useState("english");
 
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("user");
@@ -231,6 +296,15 @@ export default function SettingsPage() {
       setOrganization(meData?.organization || null);
       setFirstName(loadedMe?.first_name || "");
       setLastName(loadedMe?.last_name || "");
+      if (typeof window !== "undefined") {
+        setLanguageOutput(
+          normalizeLanguagePreference(
+            localStorage.getItem(languageStorageKey(loadedMe)) ||
+              localStorage.getItem("lossq_language_output_mode") ||
+              "english"
+          )
+        );
+      }
 
       const role = String(loadedMe?.role || "user").toLowerCase();
       if (role === "owner" || role === "admin") {
@@ -265,7 +339,12 @@ export default function SettingsPage() {
       });
       const data = await safeJson(res);
       setMe(data?.user || me);
-      setMessage("Profile updated.");
+      if (typeof window !== "undefined") {
+        localStorage.setItem(languageStorageKey(data?.user || me), languageOutput);
+        localStorage.setItem("lossq_language_output_mode", languageOutput);
+        window.dispatchEvent(new Event("lossq-language-output-change"));
+      }
+      setMessage("Profile and dashboard language updated.");
       await loadAccountSecurity();
     } catch (err: any) {
       setError(err?.message || "Profile update failed.");
@@ -557,6 +636,22 @@ export default function SettingsPage() {
               className="mb-4 w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-white outline-none focus:border-blue-400"
               placeholder="Last name"
             />
+
+            <label className="block text-sm text-blue-200 mb-2">Dashboard & Output Language</label>
+            <select
+              value={languageOutput}
+              onChange={(e) => setLanguageOutput(e.target.value)}
+              className="mb-4 w-full rounded-2xl border border-white/10 bg-slate-900/80 px-4 py-3 text-white outline-none focus:border-blue-400"
+            >
+              {LANGUAGE_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            <p className="mb-4 text-xs leading-5 text-slate-400">
+              This controls dashboard labels and the requested language for LossQ-generated summaries, Copilot responses, reports, packets, and memos for your user account.
+            </p>
 
             <div className="rounded-2xl border border-white/10 bg-slate-900/60 p-4 mb-5">
               <div className="text-xs uppercase tracking-[0.2em] text-slate-400">Signed In As</div>

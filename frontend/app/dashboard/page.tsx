@@ -319,6 +319,238 @@ const LOSSQ_FEATURE_LABELS: Record<string, string> = {
  user_permissions: "User Permissions",
 };
 
+const LOSSQ_LANGUAGE_LABELS: Record<string, string> = {
+ english: "English",
+ en: "English",
+ french: "French / Francais",
+ fr: "French / Francais",
+ spanish: "Spanish / Espanol",
+ es: "Spanish / Espanol",
+ portuguese: "Portuguese / Portugues",
+ pt: "Portuguese / Portugues",
+ german: "German / Deutsch",
+ de: "German / Deutsch",
+ italian: "Italian / Italiano",
+ it: "Italian / Italiano",
+ dutch: "Dutch / Nederlands",
+ nl: "Dutch / Nederlands",
+ arabic: "Arabic",
+ ar: "Arabic",
+ chinese: "Chinese",
+ zh: "Chinese",
+ japanese: "Japanese",
+ ja: "Japanese",
+ korean: "Korean",
+ ko: "Korean",
+ hindi: "Hindi",
+ hi: "Hindi",
+ punjabi: "Punjabi",
+ pa: "Punjabi",
+ urdu: "Urdu",
+ ur: "Urdu",
+ vietnamese: "Vietnamese",
+ vi: "Vietnamese",
+ tagalog: "Tagalog / Filipino",
+ filipino: "Tagalog / Filipino",
+ tl: "Tagalog / Filipino",
+ polish: "Polish",
+ pl: "Polish",
+ russian: "Russian",
+ ru: "Russian",
+ ukrainian: "Ukrainian",
+ uk: "Ukrainian",
+ greek: "Greek",
+ el: "Greek",
+ turkish: "Turkish",
+ tr: "Turkish",
+ hebrew: "Hebrew",
+ he: "Hebrew",
+ swahili: "Swahili",
+ sw: "Swahili",
+};
+
+const LOSSQ_DASHBOARD_LANGUAGE_TEXT: Record<string, Record<string, string>> = {
+ english: {},
+ french: {
+  overview: "Vue d'ensemble",
+  profiles: "Profils transporteurs",
+  upload: "Centre de televersement",
+  exposureInputs: "Donnees d'exposition",
+  submissionBuilder: "Creation de soumission",
+  renewalRisk: "Risque de renouvellement",
+  premiumForecast: "Prevision de prime",
+  decision: "Decision de souscription",
+  carrierAppetite: "Appetit transporteur",
+  submissionReadiness: "Preparation de soumission",
+  carrierMatch: "Correspondance transporteurs",
+  summary: "Resume IA",
+  memo: "Memo de renouvellement",
+  charts: "Graphiques",
+  claims: "Sinistres",
+  totalClaims: "Total des sinistres",
+  openClaims: "Sinistres ouverts",
+  totalIncurred: "Total engage",
+  riskLevel: "Niveau de risque",
+  renewalProbability: "Probabilite de renouvellement",
+  marketContext: "Contexte marche",
+  outputLanguage: "Langue de sortie",
+  reviewLanguage: "Modifier la langue",
+  dashboardIntro: "Selectionnez un outil dans la barre laterale pour analyser les sinistres, le risque de renouvellement, les decisions de souscription, les rapports et la strategie transporteur.",
+ },
+ spanish: {
+  overview: "Resumen",
+  profiles: "Perfiles de aseguradoras",
+  upload: "Centro de carga",
+  exposureInputs: "Datos de exposicion",
+  submissionBuilder: "Constructor de presentacion",
+  renewalRisk: "Riesgo de renovacion",
+  premiumForecast: "Pronostico de prima",
+  decision: "Decision de suscripcion",
+  carrierAppetite: "Apetito de aseguradora",
+  submissionReadiness: "Preparacion de presentacion",
+  carrierMatch: "Coincidencia de aseguradoras",
+  summary: "Resumen IA",
+  memo: "Memo de renovacion",
+  charts: "Graficos",
+  claims: "Reclamos",
+  totalClaims: "Total de reclamos",
+  openClaims: "Reclamos abiertos",
+  totalIncurred: "Total incurrido",
+  riskLevel: "Nivel de riesgo",
+  renewalProbability: "Probabilidad de renovacion",
+  marketContext: "Contexto de mercado",
+  outputLanguage: "Idioma de salida",
+  reviewLanguage: "Cambiar idioma",
+  dashboardIntro: "Seleccione una herramienta en la barra lateral para analizar reclamos, riesgo de renovacion, decisiones de suscripcion, informes y estrategia de aseguradoras.",
+ },
+ portuguese: {
+  overview: "Visao geral",
+  profiles: "Perfis de seguradoras",
+  upload: "Centro de upload",
+  exposureInputs: "Entradas de exposicao",
+  submissionBuilder: "Criador de submissao",
+  renewalRisk: "Risco de renovacao",
+  premiumForecast: "Previsao de premio",
+  decision: "Decisao de subscricao",
+  carrierAppetite: "Apetite da seguradora",
+  submissionReadiness: "Prontidao da submissao",
+  carrierMatch: "Correspondencia de seguradoras",
+  summary: "Resumo IA",
+  memo: "Memo de renovacao",
+  charts: "Graficos",
+  claims: "Sinistros",
+  totalClaims: "Total de sinistros",
+  openClaims: "Sinistros abertos",
+  totalIncurred: "Total incorrido",
+  riskLevel: "Nivel de risco",
+  renewalProbability: "Probabilidade de renovacao",
+  marketContext: "Contexto de mercado",
+  outputLanguage: "Idioma de saida",
+  reviewLanguage: "Alterar idioma",
+  dashboardIntro: "Selecione uma ferramenta na barra lateral para analisar sinistros, risco de renovacao, decisoes de subscricao, relatorios e estrategia de seguradoras.",
+ },
+};
+
+function lossqNormalizeLanguagePreference(value: any) {
+ const clean = String(value || "english").trim().toLowerCase();
+ const aliases: Record<string, string> = {
+  en: "english",
+  fr: "french",
+  es: "spanish",
+  pt: "portuguese",
+  de: "german",
+  it: "italian",
+  nl: "dutch",
+  ar: "arabic",
+  zh: "chinese",
+  ja: "japanese",
+  ko: "korean",
+  hi: "hindi",
+  pa: "punjabi",
+  ur: "urdu",
+  vi: "vietnamese",
+  tl: "tagalog",
+  filipino: "tagalog",
+  pl: "polish",
+  ru: "russian",
+  uk: "ukrainian",
+  el: "greek",
+  tr: "turkish",
+  he: "hebrew",
+  sw: "swahili",
+ };
+
+ return aliases[clean] || clean || "english";
+}
+
+function lossqDashboardLanguageLabel(value: any) {
+ const clean = lossqNormalizeLanguagePreference(value);
+ return LOSSQ_LANGUAGE_LABELS[clean] || LOSSQ_LANGUAGE_LABELS[String(value || "").toLowerCase()] || "English";
+}
+
+function lossqDashboardLanguageText(language: any) {
+ const clean = lossqNormalizeLanguagePreference(language);
+ const selected = LOSSQ_DASHBOARD_LANGUAGE_TEXT[clean] || {};
+
+ return {
+  overview: "Overview",
+  profiles: "Carrier Profiles",
+  upload: "Upload Center",
+  exposureInputs: "Exposure Inputs",
+  submissionBuilder: "Submission Builder",
+  renewalRisk: "Renewal Risk",
+  premiumForecast: "Premium Forecast",
+  decision: "Underwriter Decision",
+  carrierAppetite: "Carrier Appetite",
+  submissionReadiness: "Submission Readiness",
+  carrierMatch: "Carrier Match",
+  summary: "AI Summary",
+  memo: "Renewal Memo",
+  charts: "Charts",
+  claims: "Claims",
+  totalClaims: "Total Claims",
+  openClaims: "Open Claims",
+  totalIncurred: "Total Incurred",
+  riskLevel: "Risk Level",
+  renewalProbability: "Renewal Probability",
+  marketContext: "Market Context",
+  outputLanguage: "Language Output",
+  reviewLanguage: "Change Language",
+  dashboardIntro: "Select a tool from the sidebar to analyze claims, renewal risk, underwriting decisions, reports, and carrier strategy.",
+  ...selected,
+ };
+}
+
+function lossqCurrentUserLanguageStorageKey() {
+ if (typeof window === "undefined") return "lossq_language_output_mode";
+
+ try {
+  const rawUser = localStorage.getItem("lossq_user");
+  const user = rawUser ? JSON.parse(rawUser) : {};
+  const userId = user?.id || user?.user_id || "";
+  const email = String(user?.email || user?.user_email || "").trim().toLowerCase();
+  return userId || email
+   ? `lossq_language_output_mode:${userId || email}`
+   : "lossq_language_output_mode";
+ } catch {
+  return "lossq_language_output_mode";
+ }
+}
+
+function lossqReadLanguagePreference() {
+ if (typeof window === "undefined") return "english";
+
+ try {
+  return lossqNormalizeLanguagePreference(
+   localStorage.getItem(lossqCurrentUserLanguageStorageKey()) ||
+    localStorage.getItem("lossq_language_output_mode") ||
+    "english"
+  );
+ } catch {
+  return "english";
+ }
+}
+
 
 
 // LOSSQ_SIMPLIFY_UPLOAD_SUCCESS_MESSAGE_V1
@@ -4774,7 +5006,27 @@ export default function DashboardPage() {
  };
 
 
- const [activeTool, setActiveTool] = useState<ToolKey>("overview");
+  const [activeTool, setActiveTool] = useState<ToolKey>("overview");
+  const [dashboardLanguage, setDashboardLanguage] = useState("english");
+  const dashboardText = lossqDashboardLanguageText(dashboardLanguage);
+  const dashboardLanguageLabel = lossqDashboardLanguageLabel(dashboardLanguage);
+
+  useEffect(() => {
+   if (typeof window === "undefined") return;
+
+   const loadLanguagePreference = () => {
+    setDashboardLanguage(lossqReadLanguagePreference());
+   };
+
+   loadLanguagePreference();
+   window.addEventListener("storage", loadLanguagePreference);
+   window.addEventListener("lossq-language-output-change", loadLanguagePreference);
+
+   return () => {
+    window.removeEventListener("storage", loadLanguagePreference);
+    window.removeEventListener("lossq-language-output-change", loadLanguagePreference);
+   };
+  }, []);
 
 
 // LOSSQ_CLAIM_ANALYSIS_SORTABLE_TABLE_V1
@@ -8407,10 +8659,12 @@ function buildReportPayload() {
   ].map((item) => normalizePolicyNumber(item)).filter(Boolean))
  );
 
- return {
-  profile: safeCurrentReportProfile,
-  claims: reportClaims,
-  summary: effectiveSummary || summary || {},
+  return {
+   profile: safeCurrentReportProfile,
+   claims: reportClaims,
+   language_output: dashboardLanguage,
+   language_output_label: dashboardLanguageLabel,
+   summary: effectiveSummary || summary || {},
   decision: effectiveDecision || decision || {},
   carrier_appetite: effectiveCarrierAppetite || carrierAppetite || {},
   carrier_match: effectiveCarrierMatch || carrierMatch || {},
@@ -8536,9 +8790,11 @@ async function exportCarrierLossRun() {
   };
 
   try {
-   const policy = selectedPolicy
-    ? `?policy_number=${encodeURIComponent(selectedPolicy)}`
-    : "";
+   const memoParams = new URLSearchParams();
+   if (selectedPolicy) memoParams.set("policy_number", selectedPolicy);
+   memoParams.set("language_output", dashboardLanguage);
+   memoParams.set("language_output_label", dashboardLanguageLabel);
+   const policy = memoParams.toString() ? `?${memoParams.toString()}` : "";
 
    const res = await fetch(`${API}/renewal/memo${policy}`, {
     headers: authHeaders(),
@@ -8852,9 +9108,11 @@ async function askCopilot(questionOverride?: string) {
      "Content-Type": "application/json",
     ...authHeaders(),
     },
-    body: JSON.stringify({
-     question,
-     policy_number: copilotPrimaryPolicy,
+     body: JSON.stringify({
+      question,
+      language_output: dashboardLanguage,
+      language_output_label: dashboardLanguageLabel,
+      policy_number: copilotPrimaryPolicy,
       account_number: copilotProfile?.account_number || copilotProfile?.customer_number || "",
       profile_id: copilotProfile?.id || profile?.id || null,
       policy_numbers: copilotPolicyNumbers,
@@ -10444,63 +10702,63 @@ const modelChartNarrative =
  </div>
 
  <ToolButton active={activeTool === "overview"} onClick={() => changeActiveTool("overview")}>
-  Overview
+   {dashboardText.overview}
  </ToolButton>
 
  <ToolButton active={activeTool === "profiles"} onClick={() => changeActiveTool("profiles")}>
-  Carrier Profiles
+   {dashboardText.profiles}
  </ToolButton>
 
  <ToolButton active={activeTool === "upload"} onClick={() => changeActiveTool("upload")}>
-  Upload Center
+   {dashboardText.upload}
  </ToolButton>
 
  <ToolButton active={activeTool === "exposure-inputs"} onClick={() => changeActiveTool("exposure-inputs")}>
-  Exposure Inputs
+   {dashboardText.exposureInputs}
  </ToolButton>
 
  <ToolButton active={activeTool === "submission-builder"} onClick={() => changeActiveTool("submission-builder")}>
-  Submission Builder
+   {dashboardText.submissionBuilder}
  </ToolButton>
 
  <ToolButton active={activeTool === "renewal-risk"} onClick={() => changeActiveTool("renewal-risk")}>
-  Renewal Risk
+   {dashboardText.renewalRisk}
  </ToolButton>
 
  <ToolButton active={activeTool === "premium-forecast"} onClick={() => changeActiveTool("premium-forecast")}>
-  Premium Forecast
+  {dashboardText.premiumForecast}
  </ToolButton>
 
  <ToolButton active={activeTool === "decision"} onClick={() => changeActiveTool("decision")}>
-  Underwriter Decision
+  {dashboardText.decision}
  </ToolButton>
 
  <ToolButton active={activeTool === "carrier-appetite"} onClick={() => setActiveTool("carrier-appetite")}>
-  Carrier Appetite
+   {dashboardText.carrierAppetite}
  </ToolButton>
 
  <ToolButton active={activeTool === "submission-readiness"} onClick={() => setActiveTool("submission-readiness")}>
-  Submission Readiness
+  {dashboardText.submissionReadiness}
  </ToolButton>
 
  <ToolButton active={activeTool === "carrier-match"} onClick={() => changeActiveTool("carrier-match")}>
-  Carrier Match
+  {dashboardText.carrierMatch}
  </ToolButton>
 
  <ToolButton active={activeTool === "summary"} onClick={() => changeActiveTool("summary")}>
-  AI Summary
+  {dashboardText.summary}
  </ToolButton>
 
  <ToolButton active={activeTool === "memo"} onClick={() => changeActiveTool("memo")}>
-  Renewal Memo
+  {dashboardText.memo}
  </ToolButton>
 
  <ToolButton active={activeTool === "charts"} onClick={() => changeActiveTool("charts")}>
-  Charts
+  {dashboardText.charts}
  </ToolButton>
 
  <ToolButton active={activeTool === "claims"} onClick={() => changeActiveTool("claims")}>
-  Claims
+  {dashboardText.claims}
  </ToolButton>
 
  <div className="mt-auto space-y-3 pt-6 border-t border-white/10">
@@ -10550,9 +10808,9 @@ const modelChartNarrative =
      )}
 
 
-       <p className="text-slate-300 mt-3 max-w-2xl">
-        Select a tool from the sidebar to analyze claims, renewal risk, underwriting decisions, reports, and carrier strategy.
-       </p>
+        <p className="text-slate-300 mt-3 max-w-2xl">
+         {dashboardText.dashboardIntro}
+        </p>
       </div>
 
       <div className="flex flex-wrap gap-3">
@@ -10625,9 +10883,9 @@ const modelChartNarrative =
 
      <div className="lg:hidden glass-panel p-3 mb-6 overflow-x-auto sticky top-3 z-40">
       <div className="flex gap-2 min-w-max">
-       <MobileToolButton active={activeTool === "overview"} onClick={() => changeActiveTool("overview")}>Overview</MobileToolButton>
-       <MobileToolButton active={activeTool === "profiles"} onClick={() => changeActiveTool("profiles")}>Profiles</MobileToolButton>
-       <MobileToolButton active={activeTool === "upload"} onClick={() => changeActiveTool("upload")}>Upload</MobileToolButton>
+       <MobileToolButton active={activeTool === "overview"} onClick={() => changeActiveTool("overview")}>{dashboardText.overview}</MobileToolButton>
+       <MobileToolButton active={activeTool === "profiles"} onClick={() => changeActiveTool("profiles")}>{dashboardText.profiles}</MobileToolButton>
+       <MobileToolButton active={activeTool === "upload"} onClick={() => changeActiveTool("upload")}>{dashboardText.upload}</MobileToolButton>
        {/* LOSSQ_MOBILE_REPORT_SETTINGS_NAV_V1 */}
        <button
         type="button"
@@ -10642,22 +10900,22 @@ const modelChartNarrative =
        >
         Settings
        </a>
-       <MobileToolButton active={activeTool === "exposure-inputs"} onClick={() => changeActiveTool("exposure-inputs")}>Exposure Inputs</MobileToolButton>
-       <MobileToolButton active={activeTool === "renewal-risk"} onClick={() => changeActiveTool("renewal-risk")}>Renewal Risk</MobileToolButton>
-       <MobileToolButton active={activeTool === "decision"} onClick={() => changeActiveTool("decision")}>Decision</MobileToolButton>
-       <MobileToolButton active={activeTool === "carrier-appetite"} onClick={() => setActiveTool("carrier-appetite")}>Carrier Appetite</MobileToolButton>
-       <MobileToolButton active={activeTool === "submission-readiness"} onClick={() => setActiveTool("submission-readiness")}>Submission Readiness</MobileToolButton>
-       <MobileToolButton active={activeTool === "carrier-match"} onClick={() => changeActiveTool("carrier-match")}>Carrier Match</MobileToolButton>
+        <MobileToolButton active={activeTool === "exposure-inputs"} onClick={() => changeActiveTool("exposure-inputs")}>{dashboardText.exposureInputs}</MobileToolButton>
+        <MobileToolButton active={activeTool === "renewal-risk"} onClick={() => changeActiveTool("renewal-risk")}>{dashboardText.renewalRisk}</MobileToolButton>
+        <MobileToolButton active={activeTool === "decision"} onClick={() => changeActiveTool("decision")}>{dashboardText.decision}</MobileToolButton>
+        <MobileToolButton active={activeTool === "carrier-appetite"} onClick={() => setActiveTool("carrier-appetite")}>{dashboardText.carrierAppetite}</MobileToolButton>
+        <MobileToolButton active={activeTool === "submission-readiness"} onClick={() => setActiveTool("submission-readiness")}>{dashboardText.submissionReadiness}</MobileToolButton>
+        <MobileToolButton active={activeTool === "carrier-match"} onClick={() => changeActiveTool("carrier-match")}>{dashboardText.carrierMatch}</MobileToolButton>
 <MobileToolButton active={activeTool === "premium-forecast"} onClick={() => changeActiveTool("premium-forecast")}>
- Premium Forecast
+ {dashboardText.premiumForecast}
 </MobileToolButton>
 <MobileToolButton active={activeTool === "submission-builder"} onClick={() => changeActiveTool("submission-builder")}>
- Submission Builder
+  {dashboardText.submissionBuilder}
 </MobileToolButton>
-       <MobileToolButton active={activeTool === "summary"} onClick={() => changeActiveTool("summary")}>Summary</MobileToolButton>
-       <MobileToolButton active={activeTool === "memo"} onClick={() => changeActiveTool("memo")}>Memo</MobileToolButton>
-       <MobileToolButton active={activeTool === "charts"} onClick={() => changeActiveTool("charts")}>Charts</MobileToolButton>
-       <MobileToolButton active={activeTool === "claims"} onClick={() => changeActiveTool("claims")}>Claims</MobileToolButton>
+       <MobileToolButton active={activeTool === "summary"} onClick={() => changeActiveTool("summary")}>{dashboardText.summary}</MobileToolButton>
+       <MobileToolButton active={activeTool === "memo"} onClick={() => changeActiveTool("memo")}>{dashboardText.memo}</MobileToolButton>
+       <MobileToolButton active={activeTool === "charts"} onClick={() => changeActiveTool("charts")}>{dashboardText.charts}</MobileToolButton>
+       <MobileToolButton active={activeTool === "claims"} onClick={() => changeActiveTool("claims")}>{dashboardText.claims}</MobileToolButton>
       </div>
      </div>
 
@@ -10670,17 +10928,17 @@ const modelChartNarrative =
      {activeTool === "overview" && (
       <>
        <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-        <MetricCard title="Total Claims" value={totalClaimsDisplay} />
-        <MetricCard title="Open Claims" value={openClaimsDisplay} />
-        <MetricCard title="Total Incurred" value={totalIncurredDisplay} />
+         <MetricCard title={dashboardText.totalClaims} value={totalClaimsDisplay} />
+         <MetricCard title={dashboardText.openClaims} value={openClaimsDisplay} />
+         <MetricCard title={dashboardText.totalIncurred} value={totalIncurredDisplay} />
         <MetricCard title="Renewal Score" value={effectiveSummary?.renewal_score ?? "-"} />
        </section>
 
        <section className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-        <MetricCard title="Risk Level" value={effectiveSummary?.renewal_risk_level || "Not Rated"} />
-        <MetricCard title="Renewal Probability" value={effectiveDecision?.renewal_probability != null ? `${effectiveDecision.renewal_probability}%` : "-"} />
-        <MetricCard title="Carrier Appetite" value={effectiveCarrierAppetite?.carrier_appetite_score != null ? `${effectiveCarrierAppetite.carrier_appetite_score}/100` : "-"} />
-        <MetricCard title="Submission Readiness" value={effectiveSubmissionReadiness?.submission_readiness_score != null ? `${effectiveSubmissionReadiness.submission_readiness_score}/100` : "-"} />
+         <MetricCard title={dashboardText.riskLevel} value={effectiveSummary?.renewal_risk_level || "Not Rated"} />
+         <MetricCard title={dashboardText.renewalProbability} value={effectiveDecision?.renewal_probability != null ? `${effectiveDecision.renewal_probability}%` : "-"} />
+         <MetricCard title={dashboardText.carrierAppetite} value={effectiveCarrierAppetite?.carrier_appetite_score != null ? `${effectiveCarrierAppetite.carrier_appetite_score}/100` : "-"} />
+         <MetricCard title={dashboardText.submissionReadiness} value={effectiveSubmissionReadiness?.submission_readiness_score != null ? `${effectiveSubmissionReadiness.submission_readiness_score}/100` : "-"} />
        </section>
 
        {/* LOSSQ_DASHBOARD_MARKET_CONTEXT_PANEL_V2 */}
@@ -10912,7 +11170,7 @@ const modelChartNarrative =
          <section className="glass-panel border border-blue-400/20 bg-blue-500/5 p-5 md:p-6">
           <div className="flex flex-col gap-4 lg:flex-row lg:items-center lg:justify-between">
            <div>
-            <p className="text-xs uppercase tracking-[0.25em] text-blue-300">Market Context</p>
+             <p className="text-xs uppercase tracking-[0.25em] text-blue-300">{dashboardText.marketContext}</p>
             <h2 className="mt-2 text-xl font-bold text-white">
              {marketCountry || "Review Required"}
             </h2>
@@ -10925,7 +11183,7 @@ const modelChartNarrative =
             onClick={() => changeActiveTool("exposure-inputs")}
             className="rounded-xl border border-blue-400/30 bg-blue-500/10 px-4 py-2 text-sm font-bold text-blue-100 hover:bg-blue-500/20"
            >
-            Review Market Context
+             {dashboardText.reviewLanguage}
            </button>
           </div>
 
@@ -10957,8 +11215,8 @@ const modelChartNarrative =
            </div>
 
            <div className="grid min-h-[6.5rem] grid-rows-[2.75rem_1fr] rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
-            <p className="text-xs uppercase tracking-[0.25em] leading-4 text-blue-300">Language Output</p>
-            <p className="self-start text-base font-bold leading-5 text-white">{marketLanguageOutput || "-"}</p>
+             <p className="text-xs uppercase tracking-[0.25em] leading-4 text-blue-300">{dashboardText.outputLanguage}</p>
+             <p className="self-start text-base font-bold leading-5 text-white">{dashboardLanguageLabel || marketLanguageOutput || "-"}</p>
            </div>
 
            <div className="grid min-h-[6.5rem] grid-rows-[2.75rem_1fr] rounded-2xl border border-white/10 bg-slate-950/60 px-4 py-3">
@@ -12179,9 +12437,9 @@ const modelChartNarrative =
 
   <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
    <MetricCard title="Renewal Score" value={effectiveSummary?.renewal_score ?? "-"} />
-   <MetricCard title="Risk Level" value={effectiveSummary?.renewal_risk_level || "Not Rated"} />
+    <MetricCard title={dashboardText.riskLevel} value={effectiveSummary?.renewal_risk_level || "Not Rated"} />
    <MetricCard
-    title="Premium Forecast"
+     title={dashboardText.premiumForecast}
     value={
      effectivePremiumForecast?.expected_increase_percent != null
       ? `${effectivePremiumForecast.expected_increase_percent}%`
@@ -12603,10 +12861,10 @@ const modelChartNarrative =
        <h2 className="text-2xl md:text-3xl font-bold mb-6">Claims Analysis</h2>
 
        <div className="grid grid-cols-1 md:grid-cols-4 gap-5 mb-8">
-        <MetricCard title="Total Claims" value={totalClaimsDisplay} />
-		<MetricCard title="Open Claims" value={openClaimsDisplay} />
+         <MetricCard title={dashboardText.totalClaims} value={totalClaimsDisplay} />
+		<MetricCard title={dashboardText.openClaims} value={openClaimsDisplay} />
 		<MetricCard title="Flagged Claims" value={flaggedClaimsDisplay} />
-		<MetricCard title="Total Incurred" value={totalIncurredDisplay} />
+		<MetricCard title={dashboardText.totalIncurred} value={totalIncurredDisplay} />
        </div>
 
        <div className="overflow-x-auto">
