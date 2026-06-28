@@ -11394,7 +11394,7 @@ def lossq_canada_canonical_upload_overlay_v1(
           summary_paid = amount(lines[pos + 2])
           summary_reserve = amount(lines[pos + 3])
           summary_total = amount(lines[pos + 4])
-          summary_line = line(re.sub(r"\(?\b\d{4,6}\b\)?", "", coverage_name).replace("/", " ").strip() or coverage_name)
+          summary_line = line(re.sub(r"\(?\b\d{4,6}\b\)?", "", coverage_name).strip(" /-") or coverage_name)
           summary_key = key(summary_line)
           matched_codes = re.findall(r"\b\d{4,6}\b", coverage_name)
           for claim in claims:
@@ -11407,9 +11407,14 @@ def lossq_canada_canonical_upload_overlay_v1(
             elif "generalliability" in summary_key and claim_line_key in {"cgl", "generalliability"}:
               matched_codes.extend([code for code in re.split(r"\s*/\s*", claim_code) if code])
           matched_codes = list(dict.fromkeys(matched_codes))
+          coverage_key_part = matched_codes[0] if matched_codes else key(summary_line).upper()[:20]
+          coverage_policy_number = f"{main_policy}-{coverage_key_part}" if main_policy and coverage_key_part else main_policy
           coverage_summary_rows.append({
-            "policy_number": main_policy,
-            "policy": main_policy,
+            "policy_number": coverage_policy_number,
+            "policy": coverage_policy_number,
+            "source_policy_number": main_policy,
+            "main_policy_number": main_policy,
+            "base_policy_number": main_policy,
             "line_of_business": summary_line,
             "policy_type": summary_line,
             "coverage": summary_line,
@@ -11439,6 +11444,27 @@ def lossq_canada_canonical_upload_overlay_v1(
           break
 
       if main_policy and coverage_summary_rows:
+        coverage_policy_map = []
+        for row in coverage_summary_rows:
+          row_codes = [code for code in re.split(r"\s*/\s*", clean(row.get("ibc_code") or row.get("class_code"))) if code]
+          coverage_policy_map.append({
+            "policy_number": row.get("policy_number"),
+            "line_key": key(row.get("line_of_business")),
+            "codes": row_codes,
+          })
+        for claim in claims:
+          claim_codes = [code for code in re.split(r"\s*/\s*", clean(claim.get("ibc_code") or claim.get("class_code"))) if code]
+          claim_line_key = key(claim.get("line_of_business"))
+          for row in coverage_policy_map:
+            code_match = bool(set(claim_codes) & set(row.get("codes") or []))
+            line_match = bool(claim_line_key and row.get("line_key") and (claim_line_key in row.get("line_key") or row.get("line_key") in claim_line_key))
+            if code_match or line_match:
+              claim["source_policy_number"] = main_policy
+              claim["main_policy_number"] = main_policy
+              claim["base_policy_number"] = main_policy
+              claim["policy_number"] = row.get("policy_number")
+              claim["policy"] = row.get("policy_number")
+              break
         policies.extend(coverage_summary_rows)
       elif main_policy:
         distinct_lines = list(dict.fromkeys([claim.get("line_of_business") for claim in claims if claim.get("line_of_business")]))
@@ -11724,6 +11750,10 @@ def lossq_canada_canonical_upload_overlay_v1(
       target["insured_name"] = business_name
       target["named_insured"] = business_name
       target["account_name"] = business_name
+    if context.get("policy_number"):
+      target["policy_number"] = context.get("policy_number")
+      target["main_policy"] = context.get("policy_number")
+      target["main_policy_number"] = context.get("policy_number")
     if carrier:
       target["carrier_name"] = carrier
       target["writing_carrier"] = target.get("writing_carrier") or carrier
@@ -11739,6 +11769,9 @@ def lossq_canada_canonical_upload_overlay_v1(
     target["loss_currency"] = "CAD"
     target["date_format"] = "DD/MM/YYYY"
     target["market_date_format"] = "DD/MM/YYYY"
+    target["effective_date_format"] = "DD/MM/YYYY"
+    target["expiration_date_format"] = "DD/MM/YYYY"
+    target["evaluation_date_format"] = "DD/MM/YYYY"
     target["language"] = target.get("language") or ("French" if re.search(r"(?i)\b(assuré|sinistre|réclamant|courtier|québec)\b", file_text) else "English")
     target["market_language"] = "fr" if target.get("language") == "French" else "en"
     target["regulator"] = target.get("regulator") or context.get("regulator") or regulator_for(province_code_value)
@@ -11760,11 +11793,21 @@ def lossq_canada_canonical_upload_overlay_v1(
       exposure_inputs["exposure_rows"] = cleaned_policies
       if target.get("effective_date"):
         exposure_inputs["effective_date"] = target.get("effective_date")
+        exposure_inputs["Effective Date"] = target.get("effective_date")
       if target.get("expiration_date"):
         exposure_inputs["expiration_date"] = target.get("expiration_date")
+        exposure_inputs["Expiration Date"] = target.get("expiration_date")
       for code_key in ("ibc_code", "class_code", "coverage_code", "license_number", "neq"):
         if target.get(code_key):
           exposure_inputs[code_key] = target.get(code_key)
+      if target.get("class_code"):
+        exposure_inputs["classCode"] = target.get("class_code")
+        exposure_inputs["class_codes"] = target.get("class_code")
+        exposure_inputs["Class Code(s)"] = target.get("class_code")
+        exposure_inputs["Class Codes"] = target.get("class_code")
+      if target.get("ibc_code"):
+        exposure_inputs["ibcCode"] = target.get("ibc_code")
+        exposure_inputs["IBC Code"] = target.get("ibc_code")
       target["exposure_inputs"] = exposure_inputs
       target["policy_numbers"] = [policy.get("policy_number") for policy in cleaned_policies if policy.get("policy_number")]
       target["policy_count"] = len(cleaned_policies)
