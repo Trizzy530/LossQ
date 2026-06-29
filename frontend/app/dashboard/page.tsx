@@ -1047,7 +1047,9 @@ function normalizeDateInput(value: any) {
 
 // LOSSQ_FRONTEND_UNIVERSAL_WRITING_CARRIER_DISPLAY_V2
 function lossqFrontendCarrierDisplayCleanV2(value: any) {
- return String(value ?? "").replace(/\s+/g, " ").trim();
+ const clean = String(value ?? "").replace(/\s+/g, " ").trim();
+ if (/sample data only|not an actual insurance record/i.test(clean)) return "";
+ return clean;
 }
 
 function lossqFrontendLooksLikeCarrierFamilyAliasV2(value: any) {
@@ -1335,14 +1337,18 @@ function lossqFrontendDDMMYYYYV1(value: any) {
 }
 
 function lossqFrontendDateForMarketV1(value: any, profileLike: any, policiesLike: any[] = [], claimsLike: any[] = []) {
- const raw = lossqFrontendCleanDisplayTextV1(value);
- if (!raw) return "";
+  const raw = lossqFrontendCleanDisplayTextV1(value);
+  if (!raw) return "";
 
- if (!lossqFrontendCanadaOrDDMMDateMarketV1(profileLike, policiesLike, claimsLike)) {
-  return raw;
- }
+  if (lossqFrontendCanadaOrDDMMDateMarketV1(profileLike, policiesLike, claimsLike)) {
+   return lossqFrontendDDMMYYYYV1(raw);
+  }
 
- return lossqFrontendDDMMYYYYV1(raw);
+  return lossqUsDashboardDisplayDateV1(raw, {
+   ...(profileLike || {}),
+   policies: policiesLike,
+   claims: claimsLike,
+  }) || raw;
 }
 
 function lossqFrontendCanadaRegionForMarketV1(currentRegion: any, profileLike: any, marketContextLike: any, policiesLike: any[] = [], claimsLike: any[] = []) {
@@ -2125,9 +2131,10 @@ function looksLikeExposureText(value: any) {
 }
 
 function looksLikeCarrierName(value: any) {
- const text = String(value || "").trim();
- if (!text || looksLikeDateOnly(text) || looksLikeExposureText(text)) return false;
- return /insurance|mutual|specialty|casualty|indemnity|underwriters|carrier|risk|group|national|state|commercial|berkley|zurich|travelers|hartford|liberty|carolina/i.test(text);
+  const text = String(value || "").trim();
+  if (/sample data only|not an actual insurance record/i.test(text)) return false;
+  if (!text || looksLikeDateOnly(text) || looksLikeExposureText(text)) return false;
+  return /insurance|mutual|specialty|casualty|indemnity|underwriters|carrier|risk|group|national|state|commercial|berkley|zurich|travelers|hartford|liberty|carolina/i.test(text);
 }
 
 function cleanScheduleDate(value: any, fallback?: any) {
@@ -2142,8 +2149,8 @@ function cleanScheduleDate(value: any, fallback?: any) {
 }
 
 function cleanScheduleCarrier(value: any, fallback?: any) {
- const primary = String(value || "").trim();
- const secondary = String(fallback || "").trim();
+  const primary = lossqFrontendCarrierDisplayCleanV2(value);
+  const secondary = lossqFrontendCarrierDisplayCleanV2(fallback);
 
  const primaryIsPartial =
   /^(specialty|commercial|mutual|insurance|carrier)$/i.test(primary) ||

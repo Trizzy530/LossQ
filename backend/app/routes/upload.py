@@ -17018,6 +17018,31 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
     "policy number", "line of business", "effective", "expiration",
     "limit / attachment", "deductible / sir", "premium",
   }
+
+  # LOSSQ_US_PDF_SPLIT_POLICY_NUMBER_REPAIR_V1
+  # Text extraction may split the last policy-number segment onto its own line:
+  # CARGO-2025-QCFM-410 / 1. Join only when the following cells still form a
+  # valid policy row, so ordinary policy numbers remain untouched.
+  repaired_policy_lines = []
+  idx = 0
+  while idx < len(vertical_policy_lines):
+    value = vertical_policy_lines[idx]
+    if (
+      policy_number_re.match(value)
+      and idx + 4 < len(vertical_policy_lines)
+      and re.fullmatch(r"[A-Z0-9]{1,4}", vertical_policy_lines[idx + 1] or "")
+      and not date_re.match(vertical_policy_lines[idx + 1])
+      and not date_re.match(vertical_policy_lines[idx + 2])
+      and date_re.match(vertical_policy_lines[idx + 3])
+      and date_re.match(vertical_policy_lines[idx + 4])
+    ):
+      repaired_policy_lines.append(f"{value}{vertical_policy_lines[idx + 1]}")
+      idx += 2
+      continue
+    repaired_policy_lines.append(value)
+    idx += 1
+
+  vertical_policy_lines = repaired_policy_lines
   idx = 0
   while idx < len(vertical_policy_lines):
     value = vertical_policy_lines[idx]
