@@ -16618,6 +16618,26 @@ def lossq_us_profile_market_format_cleanup_v1(file_path, profile_data=None, pars
           if item.get("expiration_date"):
             item["expiration_date"] = us_date(item.get("expiration_date"))
 
+  for claim in parsed_claims:
+    if not isinstance(claim, dict):
+      continue
+    for claim_date_key in [
+      "date_of_loss",
+      "loss_date",
+      "date_reported",
+      "reported_date",
+      "date_closed",
+      "closed_date",
+      "evaluation_date",
+      "valuation_date",
+    ]:
+      if claim.get(claim_date_key):
+        claim[claim_date_key] = us_date(claim.get(claim_date_key))
+    claim["currency"] = claim.get("currency") or "USD"
+    claim["market_currency"] = claim.get("market_currency") or "USD"
+    claim["date_format"] = "MM/DD/YYYY"
+    claim["market_date_format"] = "MM/DD/YYYY"
+
   print("LOSSQ_US_PROFILE_MARKET_FORMAT_CLEANUP_V1:", {
     "market_country": profile_data.get("market_country"),
     "state": profile_data.get("state", ""),
@@ -16744,11 +16764,98 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
     m = re.search(rf"(?im)^\s*{re.escape(label)}\s*$\s*^\s*(.+?)\s*$", raw_text)
     return clean(m.group(1)) if m else ""
 
+  inline_labels = [
+    "Named Insured",
+    "Business Name",
+    "Insured Name",
+    "Account Name",
+    "Producing Agency",
+    "Producer",
+    "Account Number",
+    "Customer Number",
+    "Writing Carrier",
+    "Insurance Carrier",
+    "Carrier",
+    "Market / Country",
+    "Market/Country",
+    "Country / Market",
+    "Currency",
+    "Date Format",
+    "Valuation Date",
+    "Evaluation Date",
+    "Policy Period",
+    "Policy Term",
+    "Loss Run Period",
+    "Primary Contact",
+    "Policy Schedule",
+    "Claim Number",
+  ]
+  inline_stop = "|".join(re.escape(label) for label in sorted(inline_labels, key=len, reverse=True))
+  bad_labeled_values = {
+    "sample data only - not an actual insurance record",
+    "deductible / sir",
+    "limit / attachment",
+    "policy number",
+    "line of business",
+    "effective",
+    "expiration",
+    "premium",
+    "currency",
+    "date format",
+  }
+
+  def acceptable_label_value(value):
+    value = clean(value)
+    lowered = value.lower()
+    if not value or lowered in bad_labeled_values:
+      return ""
+    if "sample data only" in lowered or "not an actual insurance record" in lowered:
+      return ""
+    if re.search(r"(?i)\b(policy schedule|claim number|claim detail|loss summary)\b", value):
+      return ""
+    if len(value) > 140:
+      return ""
+    return value
+
+  def labeled_inline_value(*labels):
+    lines = raw_text.splitlines()
+    for label in labels:
+      label_pattern = re.escape(label).replace(r"\ ", r"\s+")
+      for idx, line in enumerate(lines):
+        if re.fullmatch(rf"(?i)\s*{label_pattern}\s*", line or ""):
+          for next_line in lines[idx + 1:idx + 5]:
+            value = acceptable_label_value(next_line)
+            if value:
+              return value
+
+        if label.lower() == "carrier":
+          match = re.search(rf"(?i)^\s*{label_pattern}\s*[:#-]\s*(.+)$", line)
+        else:
+          match = re.search(rf"(?i)(?<![A-Za-z]){label_pattern}(?![A-Za-z])\s*[:#-]?\s*(.+)$", line)
+        if not match:
+          continue
+        value = re.split(
+          rf"\s+(?:{inline_stop})(?:\s*[:#-]|\s+)",
+          match.group(1),
+          maxsplit=1,
+          flags=re.I,
+        )[0]
+        value = acceptable_label_value(value)
+        if value:
+          return value
+
+    for label in labels:
+      value = acceptable_label_value(labeled_value(label))
+      if value:
+        return value
+
+    return ""
+
   insured_name = (
-    labeled_value("Business Name")
-    or labeled_value("Named Insured")
-    or labeled_value("Insured Name")
-    or labeled_value("Account Name")
+    labeled_inline_value("Business Name")
+    or labeled_inline_value("Named Insured")
+    or labeled_inline_value("Insured Name")
+    or labeled_inline_value("Account Name")
   )
 
   if insured_name:
@@ -16768,13 +16875,40 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
     if insured_match:
       insured_name = clean(insured_match.group(1))
 
-  account_number = labeled_value("Account Number")
-  carrier = labeled_value("Writing Carrier") or labeled_value("Carrier")
+  account_number = labeled_inline_value("Account Number", "Customer Number")
+  producing_agency = labeled_inline_value("Producing Agency", "Agency", "Producer")
+  carrier = labeled_inline_value("Writing Carrier", "Insurance Carrier", "Carrier")
   if not carrier:
     carrier_match = re.search(r"(?im)^\s*Carrier\s*[-:]\s*(.+?)\s*$", raw_text)
-    carrier = clean(carrier_match.group(1)) if carrier_match else ""
-  policy_period = labeled_value("Policy Period") or labeled_value("Policy Term")
-  evaluation_date = labeled_value("Evaluation Date") or labeled_value("Report Valuation Date") or labeled_value("Valuation Date")
+    carrier = acceptable_label_value(carrier_match.group(1)) if carrier_match else ""
+  policy_period = labeled_inline_value("Policy Period", "Policy Term", "Loss Run Period")
+  evaluation_date = labeled_inline_value("Evaluation Date", "Report Valuation Date", "Valuation Date")
+  market_country_value = labeled_inline_value("Market / Country", "Market/Country", "Country / Market")
+
+  us_states = {
+    "ALABAMA": "AL", "ALASKA": "AK", "ARIZONA": "AZ", "ARKANSAS": "AR", "CALIFORNIA": "CA",
+    "COLORADO": "CO", "CONNECTICUT": "CT", "DELAWARE": "DE", "FLORIDA": "FL", "GEORGIA": "GA",
+    "HAWAII": "HI", "IDAHO": "ID", "ILLINOIS": "IL", "INDIANA": "IN", "IOWA": "IA",
+    "KANSAS": "KS", "KENTUCKY": "KY", "LOUISIANA": "LA", "MAINE": "ME", "MARYLAND": "MD",
+    "MASSACHUSETTS": "MA", "MICHIGAN": "MI", "MINNESOTA": "MN", "MISSISSIPPI": "MS", "MISSOURI": "MO",
+    "MONTANA": "MT", "NEBRASKA": "NE", "NEVADA": "NV", "NEW HAMPSHIRE": "NH", "NEW JERSEY": "NJ",
+    "NEW MEXICO": "NM", "NEW YORK": "NY", "NORTH CAROLINA": "NC", "NORTH DAKOTA": "ND", "OHIO": "OH",
+    "OKLAHOMA": "OK", "OREGON": "OR", "PENNSYLVANIA": "PA", "RHODE ISLAND": "RI", "SOUTH CAROLINA": "SC",
+    "SOUTH DAKOTA": "SD", "TENNESSEE": "TN", "TEXAS": "TX", "UTAH": "UT", "VERMONT": "VT",
+    "VIRGINIA": "VA", "WASHINGTON": "WA", "WEST VIRGINIA": "WV", "WISCONSIN": "WI", "WYOMING": "WY",
+    "DISTRICT OF COLUMBIA": "DC",
+  }
+
+  def state_from_value(value):
+    value = clean(value).upper()
+    if value in set(us_states.values()):
+      return value
+    for state_name, code in us_states.items():
+      if re.search(rf"\b{re.escape(state_name)}\b", value):
+        return code
+    return ""
+
+  state_code = state_from_value(market_country_value)
 
   effective_date = ""
   expiration_date = ""
@@ -16836,7 +16970,7 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
 
   policy_block_section = section_between(
     r"\bPOLICY\s+SCHEDULE\b",
-    [r"\bLOSS\s+SUMMARY\b", r"\bCLAIM\s+DETAIL\b", r"\bUNDERWRITING\s+NOTES\b"],
+    [r"\bEXPOSURE\s+SCHEDULE\b", r"\bLOSS\s+SUMMARY\b", r"\bCLAIM\s+DETAIL\b", r"\bUNDERWRITING\s+NOTES\b"],
   )
 
   for block in re.split(r"(?i)\bPolicy\s+Block\s+\d+\b", policy_block_section):
@@ -16880,6 +17014,49 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
   policy_number_re = re.compile(r"^[A-Z0-9]+(?:-[A-Z0-9]+){2,}$")
   date_re = re.compile(r"^\d{1,4}[/-]\d{1,2}[/-]\d{1,4}$")
   money_re = re.compile(r"^\$?\s*[0-9][0-9,]*(?:\.\d{2})?$")
+  policy_header_words = {
+    "policy number", "line of business", "effective", "expiration",
+    "limit / attachment", "deductible / sir", "premium",
+  }
+  idx = 0
+  while idx < len(vertical_policy_lines):
+    value = vertical_policy_lines[idx]
+    if not policy_number_re.match(value) or idx + 3 >= len(vertical_policy_lines):
+      idx += 1
+      continue
+
+    line_name = vertical_policy_lines[idx + 1]
+    eff = vertical_policy_lines[idx + 2]
+    exp = vertical_policy_lines[idx + 3]
+    if not (date_re.match(eff) and date_re.match(exp)):
+      idx += 1
+      continue
+
+    cursor = idx + 4
+    detail_parts = []
+    while cursor < len(vertical_policy_lines) and not policy_number_re.match(vertical_policy_lines[cursor]):
+      piece = vertical_policy_lines[cursor]
+      if piece.lower() not in policy_header_words:
+        detail_parts.append(piece)
+      cursor += 1
+
+    money_parts = [piece for piece in detail_parts if money_re.match(piece)]
+    premium = money_parts[-1] if money_parts else ""
+    deductible = money_parts[-2] if len(money_parts) > 1 else ""
+    limit_parts = [piece for piece in detail_parts if piece not in money_parts]
+
+    add_policy({
+      "policy_number": value,
+      "line_of_business": line_name,
+      "carrier": carrier,
+      "effective_date": eff,
+      "expiration_date": exp,
+      "current_premium": premium,
+      "deductible": deductible,
+      "limits": " ".join(limit_parts),
+    })
+    idx = max(cursor, idx + 1)
+
   idx = 0
   while idx < len(vertical_policy_lines):
     value = vertical_policy_lines[idx]
@@ -17022,7 +17199,7 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
 
   claim_block_section = section_between(
     r"\bCLAIM\s+DETAIL\b",
-    [r"\bUNDERWRITING\s+NOTES\b", r"\bEND\s+OF\s+LOSS\s+RUN\b"],
+    [r"\bLOSS\s+SUMMARY\b", r"\bUNDERWRITING\s+NOTES\b", r"\bEND\s+OF\s+LOSS\s+RUN\b"],
   )
 
   for block in re.split(r"(?i)\bClaim\s+Block\s+\d+\b", claim_block_section):
@@ -17203,6 +17380,163 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
       "cause_of_loss": clean(match.group(9)),
     })
 
+  def clean_authoritative_policies(policy_items):
+    if not policy_items:
+      return policy_items
+    policy_numbers = [clean(item.get("policy_number")).upper() for item in policy_items if isinstance(item, dict)]
+    filtered = []
+    seen_filtered = set()
+    for item in policy_items:
+      if not isinstance(item, dict):
+        continue
+      policy_number = clean(item.get("policy_number"))
+      key = policy_number.upper()
+      if not key or key in seen_filtered:
+        continue
+      if any((other.startswith(key + "-") or other.endswith("-" + key)) for other in policy_numbers if other != key):
+        continue
+      if not clean(item.get("line_of_business") or item.get("policy_type") or item.get("coverage")):
+        continue
+      filtered.append(item)
+      seen_filtered.add(key)
+    return filtered or policy_items
+
+  policies = clean_authoritative_policies(policies)
+  policy_lookup = {
+    clean(policy.get("policy_number")).upper(): policy
+    for policy in policies
+    if isinstance(policy, dict) and clean(policy.get("policy_number"))
+  }
+
+  if policies:
+    first_policy = policies[0]
+    if first_policy.get("effective_date"):
+      effective_date = us_date(first_policy.get("effective_date"))
+    if first_policy.get("expiration_date"):
+      expiration_date = us_date(first_policy.get("expiration_date"))
+    if effective_date and expiration_date:
+      policy_period = f"{effective_date} - {expiration_date}"
+
+  # LOSSQ_US_PDF_STRUCTURED_CLAIM_ROWS_REPAIR_V2
+  # Prefer true claim-detail rows over summary lines when a PDF provides a
+  # claim-number/policy-number table with policy schedule evidence.
+  row_start_len = len(claims)
+  structured_row_claim_count = 0
+  if claim_block_section and re.search(r"(?is)\bClaim\s+Number\s+Policy\s+Number\b", raw_text):
+    row_blocks = []
+    current_block = []
+    for raw_line in claim_block_section.splitlines():
+      line = clean(raw_line)
+      if not line:
+        continue
+      if re.search(r"(?i)\b(loss\s+summary|total\s+incurred\s+by|claim\s+count\s+by)\b", line):
+        break
+      if re.match(r"^[A-Z]{2,12}-\d{5,}\b", line):
+        if current_block:
+          row_blocks.append(" ".join(current_block))
+        current_block = [line]
+      elif current_block:
+        current_block.append(line)
+    if current_block:
+      row_blocks.append(" ".join(current_block))
+
+    lob_aliases = {
+      "GL": "General Liability",
+      "CGL": "General Liability",
+      "WC": "Workers Compensation",
+      "BOP": "Businessowners Policy",
+      "PROPERTY": "Property",
+      "CYBER": "Cyber Liability",
+      "UMB": "Umbrella Liability",
+    }
+
+    for row_block in row_blocks:
+      row_match = re.match(r"^(\S+)\s+(\S+)\s+(.+)$", row_block)
+      if not row_match:
+        continue
+
+      claim_number = clean(row_match.group(1))
+      policy_number = clean(row_match.group(2))
+      rest = row_match.group(3)
+      original_policy_number = policy_number
+
+      policy_key = policy_number.upper()
+      if policy_key not in policy_lookup:
+        for known_policy in policy_lookup:
+          if known_policy.startswith(policy_key) or known_policy.endswith("-" + policy_key):
+            policy_number = clean(policy_lookup[known_policy].get("policy_number"))
+            policy_key = known_policy
+            break
+
+      date_matches = list(re.finditer(r"\b\d{1,2}/\d{1,2}/\d{4}\b", row_block))
+      money_matches = list(re.finditer(r"\$\s*[0-9][0-9,]*(?:\.\d{2})?", row_block))
+      if len(date_matches) < 2 or len(money_matches) < 3:
+        continue
+
+      first_date = date_matches[0]
+      before_dates = clean(row_block[row_match.start(3):first_date.start()])
+      before_tokens = before_dates.split()
+      if policy_key in policy_lookup:
+        known_policy = clean(policy_lookup[policy_key].get("policy_number"))
+        if known_policy.upper().startswith(original_policy_number.upper()) and known_policy.upper() != original_policy_number.upper():
+          suffix = known_policy[len(original_policy_number):].lstrip("-")
+          if before_tokens and suffix and before_tokens[0].upper() == suffix.upper():
+            before_tokens = before_tokens[1:]
+      raw_lob = before_tokens[0] if before_tokens else ""
+      policy_line = ""
+      if policy_key in policy_lookup:
+        policy_line = clean(policy_lookup[policy_key].get("line_of_business") or policy_lookup[policy_key].get("policy_type") or policy_lookup[policy_key].get("coverage"))
+      line_name = policy_line or lob_aliases.get(raw_lob.upper(), raw_lob)
+
+      claimant = ""
+      jurisdiction_state = state_code
+      adjuster = ""
+      party_segment = clean(" ".join(before_tokens[1:]))
+      state_match = re.search(r"\b([A-Z]{2})\b", party_segment)
+      if state_match:
+        jurisdiction_state = state_match.group(1)
+        claimant = clean(party_segment[:state_match.start()])
+        adjuster = clean(party_segment[state_match.end():])
+      else:
+        claimant = party_segment
+
+      first_money = money_matches[-3]
+      status_segment = row_block[:first_money.start()]
+      status_matches = list(re.finditer(r"\b(Open|Closed|Reopened|Pending|Denied)\b", status_segment, flags=re.I))
+      status = clean(status_matches[-1].group(1)) if status_matches else ""
+      paid = money_matches[-3].group(0)
+      reserve = money_matches[-2].group(0)
+      incurred = money_matches[-1].group(0)
+      description = clean(row_block[money_matches[-1].end():])
+      if policy_key in policy_lookup and description:
+        known_policy = clean(policy_lookup[policy_key].get("policy_number"))
+        if known_policy.upper().startswith(original_policy_number.upper()) and known_policy.upper() != original_policy_number.upper():
+          suffix = known_policy[len(original_policy_number):].lstrip("-")
+          if suffix:
+            description = clean(re.sub(rf"^{re.escape(suffix)}\b", "", description))
+
+      add_claim({
+        "claim_number": claim_number,
+        "policy_number": policy_number,
+        "line_of_business": line_name,
+        "claimant": claimant,
+        "jurisdiction_state": jurisdiction_state,
+        "adjuster": adjuster,
+        "date_of_loss": date_matches[0].group(0),
+        "date_reported": date_matches[1].group(0),
+        "date_closed": date_matches[2].group(0) if len(date_matches) > 2 and status.lower() == "closed" else "",
+        "status": status,
+        "paid": paid,
+        "reserve": reserve,
+        "total_incurred": incurred,
+        "description": description,
+        "cause_of_loss": description,
+      })
+
+    if len(claims) > row_start_len:
+      structured_row_claim_count = len(claims) - row_start_len
+      claims = claims[row_start_len:]
+
   if policies:
     claim_counts = {}
     claim_totals = {}
@@ -17246,8 +17580,14 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
     parsed_profile["customer_number"] = account_number
 
   if carrier:
+    parsed_profile["carrier"] = carrier
     parsed_profile["carrier_name"] = carrier
     parsed_profile["writing_carrier"] = carrier
+
+  if producing_agency:
+    parsed_profile["producing_agency"] = producing_agency
+    parsed_profile["agency_name"] = producing_agency
+    parsed_profile["producer"] = producing_agency
 
   if policy_period:
     parsed_profile["policy_period"] = policy_period
@@ -17283,8 +17623,15 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
   }
   parsed_profile["validation"] = _lossq_us_validation
 
+  if state_code:
+    parsed_profile["state"] = state_code
+    parsed_profile["market_region"] = state_code
+    parsed_profile["market_region_code"] = state_code
+
   # Only replace claims when the PDF table gives a stronger complete claim set.
-  if claims and len(claims) >= len(parsed_claims):
+  if structured_row_claim_count:
+    parsed_claims = claims
+  elif claims and len(claims) >= len(parsed_claims):
     parsed_claims = claims
   elif claims:
     by_key = {}
