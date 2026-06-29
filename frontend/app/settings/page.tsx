@@ -433,8 +433,15 @@ export default function SettingsPage() {
 
   async function removeUser(user: OrgUser) {
     if (!user?.id) return;
+    const organizationId = organization?.id || user.organization_id || me?.organization_id;
+    if (!organizationId) {
+      setError("Organization ID is required before permanently deleting a user.");
+      return;
+    }
 
-    const confirmed = confirm(`Remove ${user.email} from this LossQ account?`);
+    const confirmed = confirm(
+      `Permanently delete ${user.email} from this LossQ organization?\n\nOrganization ID: ${organizationId}\nUser ID: ${user.id}\n\nThis cannot be undone.`
+    );
     if (!confirmed) return;
 
     setSaving(true);
@@ -442,12 +449,15 @@ export default function SettingsPage() {
     setMessage("");
 
     try {
-      const res = await apiFetch(`/auth/users/${user.id}`, { method: "DELETE" });
+      const res = await apiFetch(
+        `/admin-users/organizations/${organizationId}/users/${user.id}/permanent`,
+        { method: "DELETE" }
+      );
       const data = await safeJson(res);
-      setMessage(data?.message || `${user.email} was removed.`);
+      setMessage(data?.message || `${user.email} was permanently deleted.`);
       await loadAccountSecurity();
     } catch (err: any) {
-      setError(err?.message || "User removal failed.");
+      setError(err?.message || "Permanent user deletion failed.");
     } finally {
       setSaving(false);
     }
@@ -739,7 +749,7 @@ export default function SettingsPage() {
             <div>
               <h2 className="text-2xl font-bold">User Management</h2>
               <p className="text-sm text-slate-400 mt-2">
-                Owners can invite admins and users. Admins can invite and remove normal users only.
+                Owners can invite admins and users. Permanent deletion requires both organization ID and user ID. Admins can delete normal users only.
               </p>
             </div>
             <button
@@ -832,7 +842,7 @@ export default function SettingsPage() {
                           disabled={saving}
                           className="rounded-xl border border-red-400/30 bg-red-500/10 px-4 py-2 font-semibold text-red-200 hover:bg-red-500/20 disabled:opacity-50"
                         >
-                          Remove
+                          Permanent Delete
                         </button>
                       ) : (
                         <span className="text-slate-500">Protected</span>
