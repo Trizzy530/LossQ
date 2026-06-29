@@ -11269,6 +11269,7 @@ def lossq_canada_canonical_upload_overlay_v1(
   parsed_profile = parsed_profile if isinstance(parsed_profile, dict) else {}
   profile_data = profile_data if isinstance(profile_data, dict) else {}
   direct_profile = direct_profile if isinstance(direct_profile, dict) else {}
+  explicit_exposure_fields = set()
 
   import datetime as _lossq_ca_dt
   import unicodedata as _lossq_ca_unicodedata
@@ -11731,10 +11732,326 @@ def lossq_canada_canonical_upload_overlay_v1(
             return candidate
         return ""
 
+      def pdf_section(start_pattern, end_patterns):
+        start = re.search(start_pattern, text, flags=re.I)
+        if not start:
+          return ""
+        tail = text[start.end():]
+        stops = []
+        for pattern in end_patterns:
+          stop = re.search(pattern, tail, flags=re.I)
+          if stop:
+            stops.append(stop.start())
+        return tail[:min(stops)] if stops else tail
+
+      def pdf_section_lines(start_pattern, end_patterns):
+        return [clean(row) for row in pdf_section(start_pattern, end_patterns).splitlines() if clean(row)]
+
+      def first_policy_date_format():
+        fmt = key(pdf_next_label_value("Date Format", "Format de date"))
+        if fmt:
+          context["source_date_format"] = pdf_next_label_value("Date Format", "Format de date")
+        return fmt
+
+      context["business_name"] = context.get("business_name") or pdf_next_label_value("Named Insured", "Insured", "Assuré")
+      context["account_number"] = context.get("account_number") or pdf_next_label_value("Account Number", "Customer Number", "Client Number")
+      context["customer_number"] = context.get("customer_number") or context.get("account_number")
+      context["producing_agency"] = context.get("producing_agency") or pdf_next_label_value("Producing Agency", "Brokerage", "Broker", "Courtier")
+      context["agency_name"] = context.get("agency_name") or context.get("producing_agency")
+      context["producer"] = context.get("producer") or pdf_next_label_value("Primary Contact", "Producer", "Contact principal")
+      writing_carrier_label = pdf_next_label_value("Writing Carrier", "Insurance Carrier", "Carrier", "Insurer", "Assureur")
+      if good(writing_carrier_label) and not re.search(r"(?i)sample data only|not an actual insurance record|deductible|policy number|line of business", writing_carrier_label):
+        context["carrier_name"] = context.get("carrier_name") or writing_carrier_label
+        context["writing_carrier"] = context.get("writing_carrier") or writing_carrier_label
+
+      market_country_label = pdf_next_label_value("Market / Country", "Market/Country", "Country / Market", "Pays")
+      if market_country_label:
+        province_hits = []
+        for province_name_key, province_code_value in province_names.items():
+          display_name = province_display(province_code_value)
+          if re.search(rf"\b{re.escape(display_name)}\b", market_country_label, flags=re.I):
+            province_hits.append(province_code_value)
+        for province_code_value in province_codes:
+          if re.search(rf"\b{re.escape(province_code_value)}\b", market_country_label):
+            province_hits.append(province_code_value)
+        province_hits = list(dict.fromkeys(province_hits))
+        if province_hits:
+          context["province_code"] = context.get("province_code") or province_hits[0]
+          context["province"] = context.get("province") or province_display(province_hits[0])
+          context["market_region_codes"] = province_hits
+          context["market_region"] = " / ".join(province_hits)
+
+      valuation_label = pdf_next_label_value("Valuation Date", "Evaluation Date", "Run Date", "Report Date", "Date d'évaluation")
+      if valuation_label:
+        context["evaluation_date"] = ca_date(valuation_label)
+        context["valuation_date"] = ca_date(valuation_label)
+
+      loss_run_period_label = pdf_next_label_value("Loss Run Period", "Policy Period", "Coverage Period", "Période")
+      if loss_run_period_label:
+        parse_policy_period(loss_run_period_label)
+      first_policy_date_format()
+
+      exposure_inputs = context.get("exposure_inputs") if isinstance(context.get("exposure_inputs"), dict) else {}
+      exposure_lines = pdf_section_lines(
+        r"\bEXPOSURE\s+SCHEDULE\b",
+        [r"\bEXPOSURE\s+MARKUP\s+NOTES\b", r"\bCLAIM\s+DETAIL\b", r"\bLOSS\s+SUMMARY\b"],
+      )
+      exposure_header_keys = {"exposurefield", "value", "basisunderwritinguse", "parserfieldname"}
+      exposure_idx = 0
+      while exposure_idx + 3 < len(exposure_lines):
+        field_label = exposure_lines[exposure_idx]
+        value_label = exposure_lines[exposure_idx + 1]
+        parser_field_raw = clean(exposure_lines[exposure_idx + 3])
+        parser_field = re.sub(r"[^a-zA-Z0-9_]+", "_", parser_field_raw).strip("_").lower()
+        if key(field_label) in exposure_header_keys or not parser_field:
+          exposure_idx += 1
+          continue
+        parsed_value = amount(value_label) if re.search(r"(?i)\bCAD\b|\$|\d[\d,]{3,}", value_label) else clean(value_label)
+        if parsed_value not in ("", None, [], {}):
+          explicit_exposure_fields.add(parser_field)
+          context[parser_field] = parsed_value
+          exposure_inputs[parser_field] = parsed_value
+          exposure_inputs[field_label] = parsed_value
+        exposure_idx += 4
+      if exposure_inputs:
+        context["exposure_inputs"] = exposure_inputs
+
       context["ibc_code"] = context.get("ibc_code") or pdf_next_label_value("IBC Code", "Code IBC")
       context["class_code"] = context.get("class_code") or context.get("ibc_code")
       context["neq"] = context.get("neq") or pdf_next_label_value("NEQ")
       context["license_number"] = context.get("license_number") or pdf_next_label_value("Licence RBQ", "License")
+
+      structured_policies = []
+      policy_section_lines = pdf_section_lines(
+        r"\bPOLICY\s+SCHEDULE\b",
+        [r"\bEXPOSURE\s+SCHEDULE\b", r"\bCLAIM\s+DETAIL\b", r"\bLOSS\s+SUMMARY\b"],
+      )
+      policy_number_re = re.compile(r"^[A-Z0-9]+(?:-[A-Z0-9]+){2,}$")
+      date_re = re.compile(r"^\d{4}[/-]\d{1,2}[/-]\d{1,2}$|^\d{1,2}[/-]\d{1,2}[/-]\d{2,4}$")
+      money_re = re.compile(r"(?i)^(?:CAD|CDN|CA\$|C\$|\$)?\s*[0-9][0-9,]*(?:\.\d{2})?(?:\s*(?:CAD|CDN))?$")
+      policy_header_words = {
+        "policynumber", "lineofbusiness", "effective", "expiration",
+        "limitattachment", "deductiblesir", "premium",
+      }
+      repaired_policy_lines = []
+      idx = 0
+      while idx < len(policy_section_lines):
+        value = policy_section_lines[idx]
+        if (
+          policy_number_re.match(value)
+          and idx + 4 < len(policy_section_lines)
+          and re.fullmatch(r"[A-Z0-9]{1,4}", policy_section_lines[idx + 1] or "")
+          and not date_re.match(policy_section_lines[idx + 1])
+          and not date_re.match(policy_section_lines[idx + 2])
+          and date_re.match(policy_section_lines[idx + 3])
+          and date_re.match(policy_section_lines[idx + 4])
+        ):
+          repaired_policy_lines.append(f"{value}{policy_section_lines[idx + 1]}")
+          idx += 2
+          continue
+        repaired_policy_lines.append(value)
+        idx += 1
+
+      idx = 0
+      while idx < len(repaired_policy_lines):
+        policy_number = repaired_policy_lines[idx]
+        if not policy_number_re.match(policy_number):
+          idx += 1
+          continue
+        cursor = idx + 1
+        line_parts = []
+        while cursor < len(repaired_policy_lines) and not date_re.match(repaired_policy_lines[cursor]):
+          if key(repaired_policy_lines[cursor]) not in policy_header_words:
+            line_parts.append(repaired_policy_lines[cursor])
+          cursor += 1
+        if cursor + 1 >= len(repaired_policy_lines):
+          idx += 1
+          continue
+        effective = repaired_policy_lines[cursor]
+        expiration = repaired_policy_lines[cursor + 1]
+        if not (date_re.match(effective) and date_re.match(expiration)):
+          idx += 1
+          continue
+        cursor += 2
+        detail_parts = []
+        while cursor < len(repaired_policy_lines) and not policy_number_re.match(repaired_policy_lines[cursor]):
+          if key(repaired_policy_lines[cursor]) not in policy_header_words:
+            detail_parts.append(repaired_policy_lines[cursor])
+          cursor += 1
+        money_parts = [piece for piece in detail_parts if money_re.match(piece)]
+        structured_policies.append({
+          "policy_number": policy_number,
+          "policy": policy_number,
+          "line_of_business": line(" ".join(line_parts)),
+          "policy_type": line(" ".join(line_parts)),
+          "coverage": line(" ".join(line_parts)),
+          "carrier": context.get("carrier_name") or context.get("writing_carrier"),
+          "carrier_name": context.get("carrier_name") or context.get("writing_carrier"),
+          "writing_carrier": context.get("writing_carrier") or context.get("carrier_name"),
+          "effective_date": ca_date(effective),
+          "expiration_date": ca_date(expiration),
+          "current_premium": amount(money_parts[-1]) if money_parts else context.get("current_premium"),
+          "deductible": amount(money_parts[-2]) if len(money_parts) > 1 else "",
+          "limits": " ".join(piece for piece in detail_parts if piece not in money_parts),
+          "province": context.get("province"),
+          "province_code": context.get("province_code"),
+        })
+        idx = max(cursor, idx + 1)
+
+      if structured_policies:
+        policies = structured_policies
+        context["policy_number"] = context.get("policy_number") or structured_policies[0].get("policy_number")
+        context["effective_date"] = structured_policies[0].get("effective_date") or context.get("effective_date")
+        context["expiration_date"] = structured_policies[0].get("expiration_date") or context.get("expiration_date")
+
+      policy_lookup = {
+        clean(policy.get("policy_number")).upper(): policy
+        for policy in structured_policies
+        if isinstance(policy, dict) and clean(policy.get("policy_number"))
+      }
+
+      structured_claims = []
+      claim_section_lines = pdf_section_lines(
+        r"\bCLAIM\s+DETAIL\b",
+        [r"\bLOSS\s+SUMMARY\b", r"\bUNDERWRITING\s+MARKUP\b", r"\bSUBMISSION\s+READINESS\b"],
+      )
+      claim_start_re = re.compile(r"^[A-Z0-9]+(?:-[A-Z0-9]+)*-\d{5,6}$")
+      claim_blocks = []
+      current_claim_block = []
+      for claim_line in claim_section_lines:
+        if key(claim_line) in {
+          "claimnumber", "policynumber", "lob", "claimant", "jurisdiction",
+          "adjusterexaminer", "lossdate", "reported", "closed", "status",
+          "paid", "reserve", "incurred", "claimnotes",
+        }:
+          continue
+        if claim_start_re.match(claim_line):
+          if current_claim_block:
+            claim_blocks.append(current_claim_block)
+          current_claim_block = [claim_line]
+        elif current_claim_block:
+          current_claim_block.append(claim_line)
+      if current_claim_block:
+        claim_blocks.append(current_claim_block)
+
+      lob_aliases = {
+        "gl": "General Liability",
+        "wc": "Workers Compensation",
+        "auto": "Commercial Auto",
+        "property": "Commercial Property",
+        "cargo": "Motor Truck Cargo",
+        "equipment": "Equipment Breakdown",
+        "breakdown": "Equipment Breakdown",
+      }
+
+      def claim_policy_from_block(block):
+        if len(block) < 2:
+          return "", 1
+        raw_policy = block[1]
+        consumed = 1
+        if raw_policy.upper() not in policy_lookup and len(block) > 2 and re.fullmatch(r"[A-Z0-9]{1,4}", block[2] or ""):
+          candidate = f"{raw_policy}{block[2]}"
+          if candidate.upper() in policy_lookup:
+            raw_policy = candidate
+            consumed = 2
+        if raw_policy.upper() not in policy_lookup:
+          for known_policy in policy_lookup:
+            if known_policy.startswith(raw_policy.upper()) or known_policy.endswith("-" + raw_policy.upper()):
+              raw_policy = clean(policy_lookup[known_policy].get("policy_number"))
+              break
+        return raw_policy, consumed
+
+      for block in claim_blocks:
+        claim_number = block[0]
+        policy_number, consumed_policy_parts = claim_policy_from_block(block)
+        if not policy_number:
+          continue
+        dates = [(idx, value) for idx, value in enumerate(block) if date_re.match(value)]
+        money_items = [(idx, value) for idx, value in enumerate(block) if money_re.match(value) and re.search(r"(?i)\bCAD\b|CA\$|C\$|\$", value)]
+        if len(dates) < 2 or len(money_items) < 3:
+          continue
+        first_date_idx = dates[0][0]
+        pre_date_parts = block[1 + consumed_policy_parts:first_date_idx]
+        policy_line = line((policy_lookup.get(policy_number.upper()) or {}).get("line_of_business") or "")
+        raw_lob_parts = []
+        claim_party_parts = pre_date_parts[:]
+        if policy_line:
+          policy_line_parts = policy_line.split()
+          if [key(part) for part in claim_party_parts[:len(policy_line_parts)]] == [key(part) for part in policy_line_parts]:
+            raw_lob_parts = claim_party_parts[:len(policy_line_parts)]
+            claim_party_parts = claim_party_parts[len(policy_line_parts):]
+        if not raw_lob_parts and claim_party_parts:
+          first_lob_key = key(claim_party_parts[0])
+          if first_lob_key in lob_aliases:
+            raw_lob_parts = [claim_party_parts[0]]
+            claim_party_parts = claim_party_parts[1:]
+            if first_lob_key == "equipment" and claim_party_parts and key(claim_party_parts[0]) == "breakdown":
+              raw_lob_parts.append(claim_party_parts[0])
+              claim_party_parts = claim_party_parts[1:]
+        claim_line_name = policy_line or line(" ".join(raw_lob_parts))
+
+        jurisdiction = context.get("province_code") or context.get("province")
+        claimant_parts = claim_party_parts
+        adjuster_parts = []
+        for part_idx, part in enumerate(claim_party_parts):
+          if province_code(part):
+            jurisdiction = province_code(part)
+            claimant_parts = claim_party_parts[:part_idx]
+            adjuster_parts = claim_party_parts[part_idx + 1:]
+            break
+
+        status_idx = None
+        claim_status = ""
+        for part_idx, part in enumerate(block):
+          if key(part) in {"open", "closed", "ouvert", "ouverte", "ferme", "fermee", "clos"}:
+            status_idx = part_idx
+            claim_status = status(part)
+            break
+        if status_idx is None:
+          claim_status = "Closed" if len(dates) > 2 else "Open"
+
+        paid = amount(money_items[-3][1])
+        reserve = amount(money_items[-2][1])
+        incurred = amount(money_items[-1][1])
+        if (incurred == "" or money(incurred) <= 0) and (money(paid) > 0 or money(reserve) > 0):
+          incurred = money(paid) + money(reserve)
+
+        structured_claims.append({
+          "claim_number": claim_number,
+          "claim_no": claim_number,
+          "policy_number": policy_number,
+          "policy": policy_number,
+          "line_of_business": claim_line_name,
+          "claim_type": claim_line_name,
+          "coverage": claim_line_name,
+          "claimant": clean(" ".join(claimant_parts)),
+          "jurisdiction_state": jurisdiction,
+          "venue_state": jurisdiction,
+          "adjuster": clean(" ".join(adjuster_parts)),
+          "examiner": clean(" ".join(adjuster_parts)),
+          "date_of_loss": ca_date(dates[0][1]),
+          "loss_date": ca_date(dates[0][1]),
+          "date_reported": ca_date(dates[1][1]),
+          "reported_date": ca_date(dates[1][1]),
+          "date_closed": ca_date(dates[2][1]) if len(dates) > 2 and claim_status == "Closed" else "",
+          "closed_date": ca_date(dates[2][1]) if len(dates) > 2 and claim_status == "Closed" else "",
+          "status": claim_status,
+          "claim_status": claim_status,
+          "paid_amount": paid,
+          "paid": paid,
+          "reserve_amount": reserve,
+          "reserve": reserve,
+          "total_incurred": incurred,
+          "incurred": incurred,
+          "description": clean(" ".join(block[money_items[-1][0] + 1:])),
+          "loss_description": clean(" ".join(block[money_items[-1][0] + 1:])),
+          "currency": "CAD",
+          "market_currency": "CAD",
+          "country": "Canada",
+        })
+
+      if structured_claims:
+        claims = structured_claims
 
       for idx, row in enumerate(lines):
         row_key = key(row)
@@ -11920,6 +12237,10 @@ def lossq_canada_canonical_upload_overlay_v1(
           "neq": context.get("neq"),
           "regulator": context.get("regulator"),
         })
+      if structured_policies:
+        policies = structured_policies
+      if structured_claims:
+        claims = structured_claims
     except Exception as exc:
       print("LOSSQ_CANADA_CANONICAL_UPLOAD_OVERLAY_V1_PDF_ERROR:", str(exc)[:300])
 
@@ -12203,6 +12524,14 @@ def lossq_canada_canonical_upload_overlay_v1(
       target["policy_effective_date"] = target.get("policy_effective_date") or target.get("effective_date")
     if target.get("expiration_date"):
       target["policy_expiration_date"] = target.get("policy_expiration_date") or target.get("expiration_date")
+    if (
+      ext.endswith(".pdf")
+      and "property_tiv" not in explicit_exposure_fields
+      and clean(target.get("property_tiv"))
+      and clean(target.get("property_tiv")) == clean(target.get("job_site_count"))
+    ):
+      target["property_tiv"] = ""
+      target["tiv"] = ""
     for code_key in ("ibc_code", "class_code", "coverage_code", "license_number", "neq", "federal_regulator"):
       if context.get(code_key):
         target[code_key] = context.get(code_key)
