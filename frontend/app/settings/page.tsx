@@ -151,6 +151,8 @@ export default function SettingsPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("user");
   const [inviteLink, setInviteLink] = useState("");
+  const [deleteOrganizationId, setDeleteOrganizationId] = useState("");
+  const [deleteUserId, setDeleteUserId] = useState("");
 
   const [currentPassword, setCurrentPassword] = useState("");
   const [newPassword, setNewPassword] = useState("");
@@ -294,6 +296,9 @@ export default function SettingsPage() {
       const loadedMe = meData?.user || null;
       setMe(loadedMe);
       setOrganization(meData?.organization || null);
+      if (meData?.organization?.id) {
+        setDeleteOrganizationId(String(meData.organization.id));
+      }
       setFirstName(loadedMe?.first_name || "");
       setLastName(loadedMe?.last_name || "");
       if (typeof window !== "undefined") {
@@ -310,8 +315,12 @@ export default function SettingsPage() {
       if (role === "owner" || role === "admin") {
         const usersRes = await apiFetch("/auth/users");
         const usersData = await safeJson(usersRes);
+        const loadedOrganization = usersData?.organization || meData?.organization || null;
         setUsers(Array.isArray(usersData?.users) ? usersData.users : []);
-        setOrganization(usersData?.organization || meData?.organization || null);
+        setOrganization(loadedOrganization);
+        if (loadedOrganization?.id) {
+          setDeleteOrganizationId(String(loadedOrganization.id));
+        }
       } else {
         setUsers(loadedMe ? [loadedMe] : []);
       }
@@ -455,6 +464,43 @@ export default function SettingsPage() {
       );
       const data = await safeJson(res);
       setMessage(data?.message || `${user.email} was permanently deleted.`);
+      await loadAccountSecurity();
+    } catch (err: any) {
+      setError(err?.message || "Permanent user deletion failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function permanentDeleteByIds() {
+    const organizationId = deleteOrganizationId.trim();
+    const userId = deleteUserId.trim();
+
+    if (!organizationId || !userId) {
+      setError("Enter both organization ID and user ID before permanently deleting a user.");
+      return;
+    }
+
+    const targetUser = users.find((user) => String(user.id) === userId);
+    const targetLabel = targetUser?.email || `user ID ${userId}`;
+
+    const confirmed = confirm(
+      `Permanently delete ${targetLabel}?\n\nOrganization ID: ${organizationId}\nUser ID: ${userId}\n\nThis cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await apiFetch(
+        `/admin-users/organizations/${organizationId}/users/${userId}/permanent`,
+        { method: "DELETE" }
+      );
+      const data = await safeJson(res);
+      setDeleteUserId("");
+      setMessage(data?.message || `${targetLabel} was permanently deleted.`);
       await loadAccountSecurity();
     } catch (err: any) {
       setError(err?.message || "Permanent user deletion failed.");
@@ -804,6 +850,41 @@ export default function SettingsPage() {
                   </button>
                 </div>
               )}
+
+              <div className="mb-6 rounded-2xl border border-red-400/30 bg-red-500/10 p-4">
+                <div className="flex flex-col gap-1 mb-4">
+                  <h3 className="text-lg font-bold text-red-100">Permanent Delete by IDs</h3>
+                  <p className="text-sm text-red-100/80">
+                    Enter the organization ID and user ID exactly. The backend only allows owner/admin deletion inside your own organization.
+                  </p>
+                </div>
+
+                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                  <input
+                    value={deleteOrganizationId}
+                    onChange={(e) => setDeleteOrganizationId(e.target.value)}
+                    className="rounded-2xl border border-red-400/20 bg-slate-950/80 px-4 py-3 text-white outline-none focus:border-red-300"
+                    placeholder="Organization ID"
+                    inputMode="numeric"
+                  />
+
+                  <input
+                    value={deleteUserId}
+                    onChange={(e) => setDeleteUserId(e.target.value)}
+                    className="rounded-2xl border border-red-400/20 bg-slate-950/80 px-4 py-3 text-white outline-none focus:border-red-300"
+                    placeholder="User ID"
+                    inputMode="numeric"
+                  />
+
+                  <button
+                    onClick={permanentDeleteByIds}
+                    disabled={saving || !deleteOrganizationId || !deleteUserId}
+                    className="md:col-span-3 rounded-2xl border border-red-400/40 bg-red-600 px-5 py-3 font-bold text-white hover:bg-red-500 disabled:opacity-50"
+                  >
+                    Permanently Delete User
+                  </button>
+                </div>
+              </div>
             </>
           ) : (
             <div className="rounded-2xl border border-yellow-400/30 bg-yellow-500/10 p-4 text-yellow-100">
