@@ -11364,7 +11364,7 @@ def lossq_canada_canonical_upload_overlay_v1(
 
   def ca_date(value):
     if isinstance(value, (_lossq_ca_dt.datetime, _lossq_ca_dt.date)):
-      return value.strftime("%d/%m/%Y")
+      return value.strftime("%Y/%d/%m")
     text = clean(value)
     if not text:
       return ""
@@ -11372,13 +11372,13 @@ def lossq_canada_canonical_upload_overlay_v1(
     match = re.match(r"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$", text)
     if match:
       year, month, day = [int(part) for part in match.groups()]
-      return f"{day:02d}/{month:02d}/{year:04d}"
+      return f"{year:04d}/{day:02d}/{month:02d}"
     match = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$", text)
     if match:
       day, month, year = [int(part) for part in match.groups()]
       if year < 100:
         year += 2000
-      return f"{day:02d}/{month:02d}/{year:04d}"
+      return f"{year:04d}/{day:02d}/{month:02d}"
     match = re.match(r"^(\d{1,2})[-\s]([A-Za-zéûÉÛ\.]+)[-\s](\d{2,4})$", text)
     if match:
       day = int(match.group(1))
@@ -11387,7 +11387,7 @@ def lossq_canada_canonical_upload_overlay_v1(
       if year < 100:
         year += 2000
       if mon:
-        return f"{day:02d}/{mon:02d}/{year:04d}"
+        return f"{year:04d}/{day:02d}/{mon:02d}"
     return text
 
   def date_pair(value):
@@ -12509,11 +12509,11 @@ def lossq_canada_canonical_upload_overlay_v1(
     target["currency"] = "CAD"
     target["market_currency"] = "CAD"
     target["loss_currency"] = "CAD"
-    target["date_format"] = "DD/MM/YYYY"
-    target["market_date_format"] = "DD/MM/YYYY"
-    target["effective_date_format"] = "DD/MM/YYYY"
-    target["expiration_date_format"] = "DD/MM/YYYY"
-    target["evaluation_date_format"] = "DD/MM/YYYY"
+    target["date_format"] = "YYYY/DD/MM"
+    target["market_date_format"] = "YYYY/DD/MM"
+    target["effective_date_format"] = "YYYY/DD/MM"
+    target["expiration_date_format"] = "YYYY/DD/MM"
+    target["evaluation_date_format"] = "YYYY/DD/MM"
     target["language"] = target.get("language") or ("French" if re.search(r"(?i)\b(assuré|sinistre|réclamant|courtier|québec)\b", file_text) else "English")
     target["market_language"] = "fr" if target.get("language") == "French" else "en"
     target["regulator"] = target.get("regulator") or context.get("regulator") or regulator_for(province_code_value)
@@ -12532,6 +12532,64 @@ def lossq_canada_canonical_upload_overlay_v1(
     ):
       target["property_tiv"] = ""
       target["tiv"] = ""
+
+    exposure_inputs = target.get("exposure_inputs") if isinstance(target.get("exposure_inputs"), dict) else {}
+    exposure_aliases = {
+      "annual_revenue": ("Annual Revenue", "Revenue / Sales", "Sales", "Receipts"),
+      "revenue": ("Revenue / Sales", "Annual Revenue", "Sales", "Receipts"),
+      "payroll": ("Payroll", "Annual Payroll"),
+      "employee_count": ("Employee Count", "Employees"),
+      "vehicle_count": ("Vehicle Count", "Vehicles"),
+      "driver_count": ("Driver Count", "Drivers"),
+      "property_tiv": ("Property TIV", "TIV", "Total Insured Value"),
+      "subcontractor_cost": ("Subcontractor Cost", "Subcontractor Costs"),
+      "job_site_count": ("Job Site Count", "Active Job Sites"),
+      "inventory_value": ("Inventory Value", "Stock Value"),
+      "forklift_count": ("Forklift Count", "Forklifts"),
+      "hot_work_percent": ("Hot Work Percent", "Hot Work %"),
+    }
+    exposure_value_rows = exposure_inputs.get("exposure_value_rows")
+    if not isinstance(exposure_value_rows, list):
+      exposure_value_rows = []
+    existing_exposure_value_row_keys = {
+      key(row.get("field") or row.get("label"))
+      for row in exposure_value_rows
+      if isinstance(row, dict)
+    }
+    for exposure_field, labels in exposure_aliases.items():
+      exposure_value = target.get(exposure_field) or context.get(exposure_field)
+      if exposure_field == "annual_revenue":
+        exposure_value = exposure_value or target.get("revenue") or context.get("revenue")
+      if exposure_value in (None, "", [], {}):
+        continue
+      target[exposure_field] = exposure_value
+      exposure_inputs[exposure_field] = exposure_value
+      for label in labels:
+        exposure_inputs[label] = exposure_value
+      if exposure_field in {"annual_revenue", "revenue"}:
+        target["revenue"] = exposure_value
+        target["sales"] = exposure_value
+        target["receipts"] = exposure_value
+        target["annual_revenue"] = exposure_value
+      if exposure_field == "property_tiv":
+        target["tiv"] = exposure_value
+      row_key = key(exposure_field)
+      if row_key not in existing_exposure_value_row_keys:
+        exposure_value_rows.append({
+          "field": exposure_field,
+          "label": labels[0],
+          "value": exposure_value,
+          "source": "canada_pdf_exposure_schedule",
+        })
+        existing_exposure_value_row_keys.add(row_key)
+    if exposure_value_rows:
+      exposure_inputs["exposure_value_rows"] = exposure_value_rows
+      exposure_inputs["exposureValueRows"] = exposure_value_rows
+    if exposure_inputs:
+      target["exposure_inputs"] = exposure_inputs
+      target["exposureInputs"] = exposure_inputs
+      target["manual_exposure_inputs"] = exposure_inputs
+      target["manualExposureInputs"] = exposure_inputs
     for code_key in ("ibc_code", "class_code", "coverage_code", "license_number", "neq", "federal_regulator"):
       if context.get(code_key):
         target[code_key] = context.get(code_key)
@@ -12539,7 +12597,6 @@ def lossq_canada_canonical_upload_overlay_v1(
       target["policies"] = cleaned_policies
       target["policy_schedule"] = cleaned_policies
       target["exposures"] = cleaned_policies
-      exposure_inputs = target.get("exposure_inputs") if isinstance(target.get("exposure_inputs"), dict) else {}
       exposure_inputs["exposure_rows"] = cleaned_policies
       if target.get("effective_date"):
         exposure_inputs["effective_date"] = target.get("effective_date")
@@ -12559,6 +12616,7 @@ def lossq_canada_canonical_upload_overlay_v1(
         exposure_inputs["ibcCode"] = target.get("ibc_code")
         exposure_inputs["IBC Code"] = target.get("ibc_code")
       target["exposure_inputs"] = exposure_inputs
+      target["exposureInputs"] = exposure_inputs
       target["policy_numbers"] = [policy.get("policy_number") for policy in cleaned_policies if policy.get("policy_number")]
       target["policy_count"] = len(cleaned_policies)
       if not target.get("policy_number") and cleaned_policies[0].get("policy_number"):
@@ -12585,7 +12643,7 @@ def lossq_canada_canonical_upload_overlay_v1(
     market_context.update({
       "country": "Canada",
       "currency": "CAD",
-      "date_format": "DD/MM/YYYY",
+      "date_format": "YYYY/DD/MM",
       "province": province_name_value or target.get("province"),
       "province_code": province_code_value or target.get("province_code"),
       "regulator": target.get("regulator"),
