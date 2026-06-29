@@ -45,45 +45,67 @@ class AccountProfileUpdate(BaseModel):
     raw_text_preview: Optional[str] = ""
 
     # LOSSQ_ACCOUNT_PROFILE_UPDATE_EXPOSURE_FIELDS_V1
-    current_premium: Optional[str] = ""
-    expiring_premium: Optional[str] = ""
-    target_renewal_premium: Optional[str] = ""
+    current_premium: Optional[Any] = ""
+    expiring_premium: Optional[Any] = ""
+    target_renewal_premium: Optional[Any] = ""
     line_of_business: Optional[str] = ""
     state: Optional[str] = ""
     class_code: Optional[str] = ""
     class_codes: Optional[str] = ""
-    limits: Optional[str] = ""
-    coverage_limit: Optional[str] = ""
-    deductible: Optional[str] = ""
-    retention: Optional[str] = ""
-    payroll: Optional[str] = ""
-    revenue: Optional[str] = ""
-    sales: Optional[str] = ""
-    receipts: Optional[str] = ""
-    employee_count: Optional[str] = ""
+    limits: Optional[Any] = ""
+    coverage_limit: Optional[Any] = ""
+    deductible: Optional[Any] = ""
+    retention: Optional[Any] = ""
+    payroll: Optional[Any] = ""
+    revenue: Optional[Any] = ""
+    sales: Optional[Any] = ""
+    receipts: Optional[Any] = ""
+    employee_count: Optional[Any] = ""
     # LOSSQ_ACCOUNT_PROFILE_UPDATE_PHYSICIAN_COUNT_FIELD_V2
-    physician_count: Optional[str] = ""
-    vehicle_count: Optional[str] = ""
-    driver_count: Optional[str] = ""
-    property_tiv: Optional[str] = ""
-    tiv: Optional[str] = ""
-    building_value: Optional[str] = ""
-    contents_value: Optional[str] = ""
-    square_footage: Optional[str] = ""
-    location_count: Optional[str] = ""
+    physician_count: Optional[Any] = ""
+    vehicle_count: Optional[Any] = ""
+    driver_count: Optional[Any] = ""
+    property_tiv: Optional[Any] = ""
+    tiv: Optional[Any] = ""
+    building_value: Optional[Any] = ""
+    contents_value: Optional[Any] = ""
+    square_footage: Optional[Any] = ""
+    location_count: Optional[Any] = ""
     # LOSSQ_PROFILE_LOCATION_LIQUOR_RESPONSE_V1
-    liquor_sales: Optional[str] = ""
-    alcohol_sales: Optional[str] = ""
-    unit_count: Optional[str] = ""
-    cargo_limit: Optional[str] = ""
-    umbrella_limit: Optional[str] = ""
-    experience_mod: Optional[str] = ""
-    mod: Optional[str] = ""
-    exposure_change_percent: Optional[str] = ""
-    cyber_revenue: Optional[str] = ""
-    professional_revenue: Optional[str] = ""
-    exposure_basis: Optional[str] = ""
+    liquor_sales: Optional[Any] = ""
+    alcohol_sales: Optional[Any] = ""
+    unit_count: Optional[Any] = ""
+    cargo_limit: Optional[Any] = ""
+    umbrella_limit: Optional[Any] = ""
+    experience_mod: Optional[Any] = ""
+    mod: Optional[Any] = ""
+    exposure_change_percent: Optional[Any] = ""
+    cyber_revenue: Optional[Any] = ""
+    professional_revenue: Optional[Any] = ""
+    exposure_basis: Optional[Any] = ""
     underwriter_notes: Optional[str] = ""
+    # LOSSQ_ACCOUNT_PROFILE_MARKET_CONTEXT_SAVE_FIELDS_V1
+    country: Optional[Any] = ""
+    market: Optional[Any] = ""
+    market_country: Optional[Any] = ""
+    marketCountry: Optional[Any] = ""
+    market_country_code: Optional[Any] = ""
+    marketCountryCode: Optional[Any] = ""
+    currency: Optional[Any] = ""
+    market_currency: Optional[Any] = ""
+    marketCurrency: Optional[Any] = ""
+    date_format: Optional[Any] = ""
+    market_date_format: Optional[Any] = ""
+    marketDateFormat: Optional[Any] = ""
+    effective_date_format: Optional[Any] = ""
+    expiration_date_format: Optional[Any] = ""
+    evaluation_date_format: Optional[Any] = ""
+    province: Optional[Any] = ""
+    province_code: Optional[Any] = ""
+    market_context: Optional[Any] = None
+    marketContext: Optional[Any] = None
+    exposure_inputs: Optional[Any] = None
+    exposureInputs: Optional[Any] = None
 
 
 def get_db():
@@ -398,6 +420,7 @@ def lossq_account_profile_is_true_account_identifier(value):
     return bool(
         re.search(r"\b(ACCT|ACCOUNT|CUST|CUSTOMER|CLIENT)\b", text)
         or re.search(r"[-_ ](ACCT|ACCOUNT|CUST|CUSTOMER|CLIENT)[-_ ]", text)
+        or re.search(r"^[A-Z]{2,8}[-_ ]CAN[-_ ]\d{4,}$", text)
     )
 
 def lossq_account_profile_looks_like_policy_number(value):
@@ -518,7 +541,7 @@ def lossq_account_profile_to_dict_raw(profile):
     canada_signal = bool(
         "CANADA" in raw_market_country.upper()
         or raw_market_currency == "CAD"
-        or raw_market_date_format.upper() == "DD/MM/YYYY"
+        or raw_market_date_format.upper() in {"DD/MM/YYYY", "YYYY/DD/MM"}
         or any(_lossq_response_upper(item.get("market_currency", "")) == "CAD" for item in policies if isinstance(item, dict))
     )
 
@@ -599,6 +622,7 @@ def lossq_account_profile_to_dict_raw(profile):
         "payroll": clean_value(getattr(profile, "payroll", "")),
         "revenue": clean_value(getattr(profile, "revenue", "")),
         "sales": clean_value(getattr(profile, "sales", "")),
+        "receipts": clean_value(getattr(profile, "receipts", "")),
         "employee_count": clean_value(getattr(profile, "employee_count", "")),
         # LOSSQ_ACCOUNT_PROFILE_EXPOSURE_RESPONSE_ALIASES_V2
         "employeeCount": clean_value(getattr(profile, "employee_count", "")),
@@ -648,7 +672,14 @@ def lossq_account_profile_to_dict_raw(profile):
             "currentPremium": clean_value(getattr(profile, "current_premium", "")),
             "expiring_premium": clean_value(getattr(profile, "expiring_premium", "")),
             "expiringPremium": clean_value(getattr(profile, "expiring_premium", "")),
+            "Payroll": clean_value(getattr(profile, "payroll", "")),
+            "payroll": clean_value(getattr(profile, "payroll", "")),
             "revenue": clean_value(getattr(profile, "revenue", "")),
+            "Revenue / Sales": clean_value(getattr(profile, "revenue", "")),
+            "Sales": clean_value(getattr(profile, "sales", "") or getattr(profile, "revenue", "")),
+            "Receipts": clean_value(getattr(profile, "receipts", "") or getattr(profile, "revenue", "")),
+            "Vehicle Count": clean_value(getattr(profile, "vehicle_count", "")),
+            "Property TIV": clean_value(getattr(profile, "property_tiv", "")),
             "professional_revenue": clean_value(getattr(profile, "revenue", "")),
             "professionalRevenue": clean_value(getattr(profile, "revenue", "")),
         },
@@ -924,6 +955,47 @@ def save_account_profile_root(payload: AccountProfileUpdate, current_user: dict 
             value = re.sub(r"-+", "-", value)
             return value[:90]
 
+        # LOSSQ_ACCOUNT_PROFILE_MARKET_CONTEXT_SAVE_BRIDGE_V1
+        validation_data = parse_json_value(data.get("validation"), {})
+        if not isinstance(validation_data, dict):
+            validation_data = {}
+
+        market_context = validation_data.get("market_context")
+        if not isinstance(market_context, dict):
+            market_context = {}
+
+        incoming_market_context = data.get("market_context") or data.get("marketContext")
+        if isinstance(incoming_market_context, dict):
+            market_context.update({
+                key: value
+                for key, value in incoming_market_context.items()
+                if value not in (None, "", [], {})
+            })
+
+        market_pairs = {
+            "country": data.get("market_country") or data.get("marketCountry") or data.get("country"),
+            "country_code": data.get("market_country_code") or data.get("marketCountryCode") or data.get("market"),
+            "currency": data.get("market_currency") or data.get("marketCurrency") or data.get("currency"),
+            "date_format": data.get("market_date_format") or data.get("marketDateFormat") or data.get("date_format"),
+            "province": data.get("province"),
+            "province_code": data.get("province_code") or data.get("state"),
+            "language": data.get("market_language") or data.get("language"),
+        }
+        for key, value in market_pairs.items():
+            clean_value_local = clean_local(value)
+            if clean_value_local:
+                market_context[key] = clean_value_local
+
+        if market_context:
+            validation_data["market_context"] = market_context
+
+        exposure_inputs = data.get("exposure_inputs") or data.get("exposureInputs")
+        if isinstance(exposure_inputs, dict):
+            validation_data["exposure_inputs"] = exposure_inputs
+
+        if validation_data:
+            data["validation"] = validation_data
+
         profile_id = data.get("id")
 
         policy_number = clean_local(
@@ -1064,6 +1136,9 @@ def save_account_profile_root(payload: AccountProfileUpdate, current_user: dict 
 
             if field == "validation":
                 value = serialize_json(value, {})
+
+            if field not in {"policies", "validation"} and isinstance(value, (int, float)):
+                value = str(int(value)) if isinstance(value, float) and value.is_integer() else str(value)
 
             if value not in (None, ""):
                 setattr(profile, field, value)
