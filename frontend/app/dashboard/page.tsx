@@ -4289,32 +4289,54 @@ function lossqFilterRealClaims(rows: any): any[] {
    "TOTAL",
    "TOTALS",
    "SUMMARY",
-   "LOSSSUMMARY",
-   "CLAIMSDETAIL",
-   "EXPOSUREPOLICYINFORMATION",
-   "POLICYINFORMATION",
-   "HEADER",
-   "FIELD",
-   "VALUE",
-  ]);
+    "LOSSSUMMARY",
+    "CLAIMSDETAIL",
+    "EXPOSUREPOLICYINFORMATION",
+    "POLICYINFORMATION",
+    "PROPERTYTIV",
+    "CARRIERRESPONSEREVENUE",
+    "REPORTBASIS",
+    "CLOSEDCLAIMS",
+    "OPENCLAIMS",
+    "3YEARLOSSRATIO",
+    "LOSSRATIO",
+    "ALLEGESBOARD",
+    "HEADER",
+    "FIELD",
+    "VALUE",
+   ]);
 
-  if (blockedClaimNumbers.has(claimKey)) return false;
+   if (blockedClaimNumbers.has(claimKey)) return false;
+   if (!/\d/.test(claimKey)) return false;
 
-  const hasPolicy = Boolean(clean(claim.policy_number || claim.policyNumber || claim["Policy Number"]));
-  const hasLine = Boolean(clean(claim.line_of_business || claim.claim_type || claim.coverage || claim["Line of Business"]));
-  const hasStatus = Boolean(clean(claim.status || claim.claim_status || claim["Status"]));
-  const hasDate = Boolean(clean(claim.date_of_loss || claim.loss_date || claim.date_reported || claim["Date of Loss"]));
-  const hasDescription = Boolean(clean(claim.description || claim.cause_of_loss || claim["Description"]));
-  const hasClaimant = Boolean(clean(claim.claimant || claim.claimant_name || claim["Claimant"]));
+   const policyNumber = clean(claim.policy_number || claim.policyNumber || claim.policy || claim["Policy Number"]);
+   const policyKey = key(policyNumber);
+   const hasPolicy = Boolean(policyNumber);
+   const hasLine = Boolean(clean(claim.line_of_business || claim.claim_type || claim.coverage || claim["Line of Business"]));
+   const hasStatus = Boolean(clean(claim.status || claim.claim_status || claim["Status"]));
+   const hasDate = Boolean(clean(claim.date_of_loss || claim.loss_date || claim.date_reported || claim["Date of Loss"]));
+   const hasDescription = Boolean(clean(claim.description || claim.cause_of_loss || claim["Description"]));
+   const hasClaimant = Boolean(clean(claim.claimant || claim.claimant_name || claim["Claimant"]));
+   const fallbackPolicyKey = policyKey.startsWith("UPLOAD") || [
+    "LINECOVERAGE",
+    "LINEOFBUSINESS",
+    "LINE",
+    "POLICY",
+   ].includes(policyKey);
+   const policyOnlyClaimNumber = /^(UMB|GL|WC|BOP|PROP|CY|AUTO|PL|DOL|CARGO|EPLI|IM|CGL|CPP)[A-Z0-9]*\d/.test(claimKey);
 
-  const paid = Number(claim.paid_amount ?? claim.paid ?? claim["Paid"] ?? 0) || 0;
-  const reserve = Number(claim.reserve_amount ?? claim.reserve ?? claim["Reserve"] ?? 0) || 0;
-  const incurred = Number(claim.total_incurred ?? claim.incurred ?? claim["Total Incurred"] ?? 0) || 0;
-  const hasMoney = paid !== 0 || reserve !== 0 || incurred !== 0;
+   const paid = Number(claim.paid_amount ?? claim.paid ?? claim["Paid"] ?? 0) || 0;
+   const reserve = Number(claim.reserve_amount ?? claim.reserve ?? claim["Reserve"] ?? 0) || 0;
+   const incurred = Number(claim.total_incurred ?? claim.incurred ?? claim["Total Incurred"] ?? 0) || 0;
+   const hasMoney = paid !== 0 || reserve !== 0 || incurred !== 0;
 
-  return hasPolicy || hasLine || hasStatus || hasDate || hasDescription || hasClaimant || hasMoney;
- });
+   if (fallbackPolicyKey && policyOnlyClaimNumber && !hasDate && !hasDescription && !hasClaimant) return false;
+
+   return hasPolicy || hasLine || hasStatus || hasDate || hasDescription || hasClaimant || hasMoney;
+  });
 }
+
+const CLAIMS_ANALYSIS_PAGE_SIZE = 6;
 
 function lossqDateValue(...values: unknown[]): string {
  for (const value of values) {
@@ -5037,6 +5059,7 @@ export default function DashboardPage() {
   key: "total",
   direction: "desc",
  });
+ const [claimAnalysisPage, setClaimAnalysisPage] = useState(1);
 
 useEffect(() => {
   if (typeof window === "undefined") return;
@@ -9511,6 +9534,7 @@ const visibleClaims = blankWorkspaceMode
 
 
 const validatedVisibleClaims = lossqFilterRealClaims(visibleClaims);
+const claimsForDashboard = blankWorkspaceMode ? [] : validatedVisibleClaims;
 // LOSSQ_VISIBLE_CLAIMS_RENDER_DEBUG_V1
 console.log("LOSSQ_VISIBLE_CLAIMS_RENDER_DEBUG", {
  blankWorkspaceMode,
@@ -9519,7 +9543,7 @@ console.log("LOSSQ_VISIBLE_CLAIMS_RENDER_DEBUG", {
  visibleClaims: Array.isArray(visibleClaims) ? visibleClaims.length : 0,
 });
 
-const intelligenceClaims = validatedVisibleClaims.length > 0 ? validatedVisibleClaims : visibleClaims;
+const intelligenceClaims = claimsForDashboard;
 const validatedClaimsAvailable = intelligenceClaims.length > 0;
 
 const backendMetrics =
@@ -9541,20 +9565,34 @@ const backendClaimsUsed =
  decision?.claims_used;
 
 const totalClaims = hasActiveAccount
- ? visibleClaims.length
+ ? claimsForDashboard.length
  : Number(backendMetrics?.total_claims ?? backendClaimsUsed ?? 0);
 
 const openClaims = hasActiveAccount
- ? visibleClaims.filter((c: any) => String(c.status || "").toLowerCase() === "open").length
+ ? claimsForDashboard.filter((c: any) => String(c.status || "").toLowerCase() === "open").length
  : Number(backendMetrics?.open_claims ?? 0);
 
 const totalIncurred = hasActiveAccount
- ? visibleClaims.reduce((sum: number, c: any) => sum + getClaimIncurred(c), 0)
+ ? claimsForDashboard.reduce((sum: number, c: any) => sum + getClaimIncurred(c), 0)
  : Number(backendMetrics?.total_incurred ?? 0);
 
-const openVisibleClaims = visibleClaims.filter((claim: any) => isOpenClaimStatus(claim));
-const closedVisibleClaims = visibleClaims.filter((claim: any) => !isOpenClaimStatus(claim));
+const openVisibleClaims = claimsForDashboard.filter((claim: any) => isOpenClaimStatus(claim));
+const closedVisibleClaims = claimsForDashboard.filter((claim: any) => !isOpenClaimStatus(claim));
 const groupedVisibleClaims = [...openVisibleClaims,...closedVisibleClaims];
+const claimAnalysisPageCount = Math.max(1, Math.ceil(groupedVisibleClaims.length / CLAIMS_ANALYSIS_PAGE_SIZE));
+const boundedClaimAnalysisPage = Math.min(Math.max(claimAnalysisPage, 1), claimAnalysisPageCount);
+const claimAnalysisPageStartIndex = (boundedClaimAnalysisPage - 1) * CLAIMS_ANALYSIS_PAGE_SIZE;
+const claimAnalysisPageEndIndex = Math.min(claimAnalysisPageStartIndex + CLAIMS_ANALYSIS_PAGE_SIZE, groupedVisibleClaims.length);
+
+useEffect(() => {
+ setClaimAnalysisPage(1);
+}, [activeTool, claims.length, profile?.id, profile?.business_name]);
+
+useEffect(() => {
+ if (claimAnalysisPage > claimAnalysisPageCount) {
+  setClaimAnalysisPage(claimAnalysisPageCount);
+ }
+}, [claimAnalysisPage, claimAnalysisPageCount]);
 
 // LOSSQ_DASHBOARD_CLAIM_ATTORNEY_FLAG_STRICT_V5
 const lossqDashboardClaimFlagV1 = (claim: any) => {
@@ -12911,7 +12949,7 @@ const modelChartNarrative =
          </thead>
 
 <tbody>
- {visibleClaims.length === 0 && (
+ {groupedVisibleClaims.length === 0 && (
   <tr className="border-b border-white/10 text-slate-400">
    <td className="py-6 text-center" colSpan={8}>
     No claims found for the selected account. Upload or select another account to view claim-level detail.
@@ -12972,7 +13010,8 @@ const modelChartNarrative =
 
    return claimAnalysisSort.direction === "asc" ? comparison : -comparison;
   })
- .map((claim: any) => {
+  .slice(claimAnalysisPageStartIndex, claimAnalysisPageEndIndex)
+  .map((claim: any) => {
    const cleanPolicyKey = (value: any) =>
     String(value || "").toUpperCase().replace(/[^A-Z0-9]/g, "");
 
@@ -13072,12 +13111,22 @@ const modelChartNarrative =
 
       : "-";
 
+   const policyNumberOnly = (value: any) => {
+    const raw = String(value || "").trim();
+    const normalized = normalizePolicyNumber(raw);
+    const candidate = normalized || raw;
+    const candidateKey = cleanPolicyKey(candidate);
+    if (!candidate || !/[A-Z]/i.test(candidate) || !/\d/.test(candidate)) return "";
+    if (
+     candidateKey.startsWith("UPLOAD") ||
+     ["LINECOVERAGE", "LINEOFBUSINESS", "LINE", "POLICY"].includes(candidateKey)
+    ) return "";
+    return candidate;
+   };
+
    const displayPolicyNumber =
-    claim?.policy_number ||
-    claim?.policyNumber ||
-    claim?.policy_no ||
-    claim?.policy ||
-    matchedPolicy?.policyNumber ||
+    policyNumberOnly(claim?.policy_number || claim?.policyNumber || claim?.policy_no || claim?.policy) ||
+    policyNumberOnly(matchedPolicy?.policyNumber) ||
     "-";
    return (
   <tr
@@ -13118,6 +13167,35 @@ const modelChartNarrative =
 </tbody>
 </table>
 </div>
+
+{groupedVisibleClaims.length > CLAIMS_ANALYSIS_PAGE_SIZE && (
+ <div className="mt-5 flex flex-col gap-3 border-t border-white/10 pt-4 text-sm text-slate-300 sm:flex-row sm:items-center sm:justify-between">
+  <span>
+   Showing {claimAnalysisPageStartIndex + 1}-{claimAnalysisPageEndIndex} of {groupedVisibleClaims.length} claims
+  </span>
+  <div className="flex items-center gap-3">
+   <button
+    type="button"
+    onClick={() => setClaimAnalysisPage((page) => Math.max(1, page - 1))}
+    disabled={boundedClaimAnalysisPage <= 1}
+    className="rounded-lg border border-white/10 px-4 py-2 font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-white/10"
+   >
+    Previous
+   </button>
+   <span className="text-slate-400">
+    Page {boundedClaimAnalysisPage} of {claimAnalysisPageCount}
+   </span>
+   <button
+    type="button"
+    onClick={() => setClaimAnalysisPage((page) => Math.min(claimAnalysisPageCount, page + 1))}
+    disabled={boundedClaimAnalysisPage >= claimAnalysisPageCount}
+    className="rounded-lg border border-white/10 px-4 py-2 font-semibold text-slate-200 disabled:cursor-not-allowed disabled:opacity-40 hover:bg-white/10"
+   >
+    Next
+   </button>
+  </div>
+ </div>
+)}
 
 {selectedClaimDetail && (
  <div className="mt-6 rounded-2xl border border-blue-400/20 bg-blue-500/10 p-5">
