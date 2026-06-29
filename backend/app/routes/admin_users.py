@@ -2,7 +2,11 @@ from fastapi import APIRouter, Depends, HTTPException, Request
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
+from app.models.account_profile import AccountProfile
+from app.models.audit_log import AuditLog
+from app.models.claim import Claim
 from app.models.organization import Organization
+from app.models.upload_history import UploadHistory
 from app.models.user import User
 from app.routes.auth import get_current_user, require_admin_or_owner, public_user
 from app.services.audit_service import write_audit_event
@@ -116,4 +120,76 @@ def permanently_delete_org_user(
         "message": f"{deleted_user['email']} was permanently deleted from {organization.name}.",
         "deleted_user_id": user_id,
         "organization_id": organization_id,
+    }
+
+
+@router.delete("/organizations/{organization_id}/users/{user_id}/account/permanent")
+def permanently_delete_organization_account(
+    organization_id: int,
+    user_id: int,
+    current_user: User = Depends(require_admin_or_owner),
+    db: Session = Depends(get_db),
+):
+    # LOSSQ_ADMIN_ORGANIZATION_ACCOUNT_PERMANENT_DELETE_V1
+    current_role = str(current_user.role or "user").strip().lower()
+    current_org_id = int(current_user.organization_id or 0)
+    current_user_id = int(current_user.id or 0)
+
+    if current_role not in {"owner", "admin"}:
+        raise HTTPException(status_code=403, detail="Owner or admin access required")
+
+    if not current_org_id:
+        raise HTTPException(status_code=403, detail="Organization access required")
+
+    if int(organization_id) != current_org_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Owners and admins can only permanently delete their own organization account",
+        )
+
+    if int(user_id) != current_user_id:
+        raise HTTPException(
+            status_code=403,
+            detail="Use your signed-in user ID to permanently delete the organization account",
+        )
+
+    organization = db.query(Organization).filter(Organization.id == organization_id).first()
+    if not organization:
+        raise HTTPException(status_code=404, detail="Organization not found")
+
+    signed_in_user = (
+        db.query(User)
+        .filter(User.id == user_id, User.organization_id == organization_id)
+        .first()
+    )
+    if not signed_in_user:
+        raise HTTPException(status_code=404, detail="User not found for this organization")
+
+    organization_name = organization.name or f"Organization {organization_id}"
+
+    deleted_counts = {
+        "claims": db.query(Claim)
+        .filter(Claim.organization_id == organization_id)
+        .delete(synchronize_session=False),
+        "upload_history": db.query(UploadHistory)
+        .filter(UploadHistory.organization_id == organization_id)
+        .delete(synchronize_session=False),
+        "account_profiles": db.query(AccountProfile)
+        .filter(AccountProfile.organization_id == organization_id)
+        .delete(synchronize_session=False),
+        "audit_logs": db.query(AuditLog)
+        .filter(AuditLog.organization_id == organization_id)
+        .delete(synchronize_session=False),
+        "users": db.query(User)
+        .filter(User.organization_id == organization_id)
+        .delete(synchronize_session=False),
+    }
+
+    db.delete(organization)
+    db.commit()
+
+    return {
+        "message": f"{organization_name} was permanently deleted.",
+        "organization_id": organization_id,
+        "deleted_counts": deleted_counts,
     }

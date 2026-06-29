@@ -65,6 +65,11 @@ function normalizeLanguagePreference(value: any) {
     en: "english",
     fr: "french",
     es: "spanish",
+    espanol: "spanish",
+    español: "spanish",
+    latin: "spanish",
+    latina: "spanish",
+    latino: "spanish",
     pt: "portuguese",
     de: "german",
     it: "italian",
@@ -509,6 +514,44 @@ export default function SettingsPage() {
     }
   }
 
+  async function permanentDeleteOrganizationAccountByIds() {
+    const organizationId = deleteOrganizationId.trim();
+    const userId = deleteUserId.trim();
+
+    if (!organizationId || !userId) {
+      setError("Enter both organization ID and your user ID before permanently deleting the organization account.");
+      return;
+    }
+
+    const confirmed = confirm(
+      `Permanently delete this whole LossQ organization account?\n\nOrganization ID: ${organizationId}\nYour User ID: ${userId}\n\nThis deletes organization users, saved profiles, claims, upload history, and audit records. This cannot be undone.`
+    );
+    if (!confirmed) return;
+
+    const finalConfirmed = confirm(
+      "Final confirmation: permanently delete the whole organization account now?"
+    );
+    if (!finalConfirmed) return;
+
+    setSaving(true);
+    setError("");
+    setMessage("");
+
+    try {
+      const res = await apiFetch(
+        `/admin-users/organizations/${organizationId}/users/${userId}/account/permanent`,
+        { method: "DELETE" }
+      );
+      const data = await safeJson(res);
+      setMessage(data?.message || "Organization account was permanently deleted.");
+      logout();
+    } catch (err: any) {
+      setError(err?.message || "Permanent organization account deletion failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
+
   function canRemoveUser(user: OrgUser) {
     const myRole = String(me?.role || "user").toLowerCase();
     const targetRole = String(user.role || "user").toLowerCase();
@@ -859,7 +902,7 @@ export default function SettingsPage() {
                   </p>
                 </div>
 
-                <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                <div className="grid grid-cols-1 md:grid-cols-6 gap-4">
                   <input
                     value={deleteOrganizationId}
                     onChange={(e) => setDeleteOrganizationId(e.target.value)}
@@ -879,9 +922,17 @@ export default function SettingsPage() {
                   <button
                     onClick={permanentDeleteByIds}
                     disabled={saving || !deleteOrganizationId || !deleteUserId}
-                    className="md:col-span-3 rounded-2xl border border-red-400/40 bg-red-600 px-5 py-3 font-bold text-white hover:bg-red-500 disabled:opacity-50"
+                    className="md:col-span-2 rounded-2xl border border-red-400/40 bg-red-600 px-5 py-3 font-bold text-white hover:bg-red-500 disabled:opacity-50"
                   >
                     Permanently Delete User
+                  </button>
+
+                  <button
+                    onClick={permanentDeleteOrganizationAccountByIds}
+                    disabled={saving || !deleteOrganizationId || !deleteUserId}
+                    className="md:col-span-2 rounded-2xl border border-red-300/50 bg-red-950 px-5 py-3 font-bold text-red-50 hover:bg-red-900 disabled:opacity-50"
+                  >
+                    Delete Organization Account
                   </button>
                 </div>
               </div>
