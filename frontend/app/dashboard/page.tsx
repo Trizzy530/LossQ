@@ -5906,18 +5906,31 @@ function normalizeProfileName(item: any) {
  function getNewUserWelcomeName() {
   if (typeof window === "undefined") return "";
 
+  const firstNameOnly = (value: unknown) => {
+   const raw = String(value || "").trim();
+   if (!raw || raw.includes("@")) return "";
+   const first = raw.split(/\s+/)[0]?.replace(/[,.;:]+$/g, "") || "";
+   return first.includes("@") ? "" : first;
+  };
+
   const storedName =
    sessionStorage.getItem("lossq_welcome_name") ||
    localStorage.getItem("lossq_new_user_welcome_name") ||
    "";
 
-  if (storedName.trim()) return storedName.trim();
+  const storedFirstName = firstNameOnly(storedName);
+  if (storedFirstName) return storedFirstName;
 
   try {
    const rawUser = localStorage.getItem("lossq_user");
    const user = rawUser ? JSON.parse(rawUser) : null;
-   const fullName = `${user?.first_name || ""} ${user?.last_name || ""}`.trim();
-   return fullName || user?.name || user?.email || "";
+   return (
+    firstNameOnly(user?.first_name) ||
+    firstNameOnly(user?.firstName) ||
+    firstNameOnly(user?.given_name) ||
+    firstNameOnly(user?.name) ||
+    ""
+   );
   } catch {
    return "";
   }

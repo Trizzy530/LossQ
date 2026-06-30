@@ -10012,9 +10012,63 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
     value = clean(value).strip(" :-|/")
     if not value or len(value) > 120:
       return ""
+    if compact_key(value) in {
+      "accountnumber", "accountno", "customernumber", "clientnumber",
+      "businessname", "namedinsured", "insuredname", "producingagency",
+      "agency", "carrier", "writingcarrier", "policynumber", "lineofbusiness",
+    }:
+      return ""
     if re.search(r"(?i)\b(loss run|claim detail|claims detail|policy schedule|loss summary|report basis|premium worksheet|upload-\d+)\b", value):
       return ""
     return value
+
+  def exposure_field_from_label(value):
+    key = compact_key(value)
+    if not key:
+      return ""
+    if "payroll" in key:
+      return "payroll"
+    if any(token in key for token in ["grossreceipts", "annualrevenue", "revenue", "receipts", "sales"]):
+      return "revenue"
+    if any(token in key for token in ["powerunits", "vehicles", "vehiclecount", "autos", "fleet", "trucks", "units"]):
+      return "vehicle_count"
+    if "driver" in key:
+      return "driver_count"
+    if any(token in key for token in ["employee", "employees", "staff", "helper"]):
+      return "employee_count"
+    if "location" in key:
+      return "location_count"
+    if any(token in key for token in ["propertytiv", "totalinsuredvalue", "buildingvalue", "buildinglimit"]):
+      return "property_tiv"
+    if "contents" in key:
+      return "contents_value"
+    if any(token in key for token in ["squarefeet", "sqft", "warehousesquarefeet"]):
+      return "square_footage"
+    if "cargolimit" in key:
+      return "cargo_limit"
+    if any(token in key for token in ["annualmiles", "mileage"]):
+      return "annual_mileage"
+    if any(token in key for token in ["treatmentrooms", "examrooms", "chairs"]):
+      return "unit_count"
+    return ""
+
+  def set_profile_exposure_value(profile, field, value):
+    if not isinstance(profile, dict) or not field:
+      return
+    raw_value = clean(value)
+    if not raw_value:
+      return
+    parsed_value = money_float(raw_value) if re.search(r"\d", raw_value) else raw_value
+    profile[field] = parsed_value
+    exposure_inputs = profile.get("exposure_inputs") if isinstance(profile.get("exposure_inputs"), dict) else {}
+    exposure_inputs[field] = parsed_value
+    if field == "revenue":
+      profile["annual_revenue"] = parsed_value
+      exposure_inputs["annual_revenue"] = parsed_value
+    if field == "property_tiv":
+      profile["tiv"] = parsed_value
+      exposure_inputs["tiv"] = parsed_value
+    profile["exposure_inputs"] = exposure_inputs
 
   def is_canada_context(*values):
     text_parts = []
@@ -10094,6 +10148,156 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
         except Exception:
           return value
 
+      # LOSSQ_US_RECORD_TYPE_TABULAR_OVERLAY_V1
+      # Supports wide semantic CSVs where ACCOUNT / EXPOSURE / POLICY / CLAIM
+      # rows share one header. This is additive and stays out of Canada files via
+      # the guard above.
+      if rows and any(row_key(cell) == "recordtype" for cell in rows[0]):
+        record_headers = rows[0]
+        record_policies = []
+        record_claims = []
+
+        for record_row in rows[1:]:
+          record = row_map(record_headers, record_row)
+          record_type = first(record, "record_type", "Record Type", "Type").upper()
+          if not record_type:
+            continue
+
+          if record_type in {"EXPOSURE", "POLICY"}:
+            shifted_basis = first(record, "Subrogation Recovery")
+            shifted_value = first(record, "Deductible")
+            shifted_premium = first(record, "Exposure Basis")
+            if exposure_field_from_label(shifted_basis) and re.search(r"\d", shifted_value or ""):
+              record["exposurebasis"] = shifted_basis
+              record["exposurevalue"] = shifted_value
+              record["premium"] = shifted_premium or first(record, "Premium")
+              record["deductible"] = ""
+
+          profile_values = {
+            "business_name": first(record, "Insured Name", "Named Insured", "Business Name", "Account Name"),
+            "insured_name": first(record, "Insured Name", "Named Insured", "Business Name", "Account Name"),
+            "named_insured": first(record, "Insured Name", "Named Insured", "Business Name", "Account Name"),
+            "account_name": first(record, "Insured Name", "Named Insured", "Business Name", "Account Name"),
+            "account_number": first(record, "Account Number", "Account No", "Account #", "Customer Number", "Client Number"),
+            "customer_number": first(record, "Account Number", "Account No", "Account #", "Customer Number", "Client Number"),
+            "carrier_name": first(record, "Carrier", "Writing Carrier"),
+            "writing_carrier": first(record, "Writing Carrier", "Carrier"),
+            "agency_name": first(record, "Producing Agency", "Broker Agency", "Agency", "Producer", "Broker"),
+            "producing_agency": first(record, "Producing Agency", "Broker Agency", "Agency", "Producer", "Broker"),
+            "producer": first(record, "Producing Agency", "Broker Agency", "Agency", "Producer", "Broker"),
+            "evaluation_date": first(record, "Valuation Date", "Evaluation Date", "Run Date", "As Of Date"),
+            "state": first(record, "Province State", "Province/State", "State", "Jurisdiction"),
+            "market_country": first(record, "Country", "Market"),
+            "country": first(record, "Country", "Market"),
+            "market_currency": first(record, "Currency"),
+            "currency": first(record, "Currency"),
+            "industry": first(record, "Industry"),
+            "naics_sic": first(record, "NAICS SIC", "NAICS/SIC", "NAICS", "SIC"),
+          }
+          for field, value in profile_values.items():
+            if field in {"business_name", "insured_name", "named_insured", "account_name"}:
+              value = safe_business_value(value)
+            if value:
+              parsed_profile[field] = value
+              context[field] = value
+
+          if clean(profile_values.get("country")).lower() in {"united states", "usa", "us"} or clean(profile_values.get("currency")).upper() == "USD":
+            parsed_profile["market_country"] = "United States"
+            parsed_profile["country"] = "United States"
+            parsed_profile["market_currency"] = "USD"
+            parsed_profile["currency"] = "USD"
+            parsed_profile["date_format"] = "MM/DD/YYYY"
+            context["market_country"] = "United States"
+            context["country"] = "United States"
+            context["market_currency"] = "USD"
+            context["currency"] = "USD"
+            context["date_format"] = "MM/DD/YYYY"
+
+          exposure_basis = first(record, "Exposure Basis", "Basis")
+          exposure_value = first(record, "Exposure Value", "Exposure", "Value")
+          exposure_field = exposure_field_from_label(exposure_basis)
+          if exposure_field and exposure_value:
+            set_profile_exposure_value(parsed_profile, exposure_field, exposure_value)
+
+          if record_type == "POLICY":
+            policy_number = first(record, "Policy Number", "Policy No", "Policy")
+            line = first(record, "Line of Business", "Coverage / Line", "Coverage", "Policy Type", "LOB")
+            if policy_number or line:
+              policy_row = {
+                "policy_number": policy_number,
+                "policy_type": line,
+                "line_of_business": line,
+                "coverage": line,
+                "carrier": first(record, "Carrier", "Writing Carrier") or parsed_profile.get("carrier_name", ""),
+                "carrier_name": first(record, "Carrier", "Writing Carrier") or parsed_profile.get("carrier_name", ""),
+                "writing_carrier": first(record, "Writing Carrier", "Carrier") or parsed_profile.get("writing_carrier") or parsed_profile.get("carrier_name", ""),
+                "state": first(record, "Province State", "Province/State", "State", "Jurisdiction") or parsed_profile.get("state", ""),
+                "effective_date": first(record, "Effective Date", "Effective", "Policy Effective Date"),
+                "expiration_date": first(record, "Expiration Date", "Expiration", "Policy Expiration Date"),
+                "policy_status": first(record, "Policy Status", "Status"),
+                "exposure_basis": exposure_basis,
+                "exposure_value": first_money(record, "Exposure Value", "Exposure", "Value"),
+                "current_premium": first_money(record, "Premium", "Current Premium", "Annual Premium", "Written Premium"),
+                "deductible": first_money(record, "Deductible"),
+              }
+              if exposure_field and exposure_value:
+                policy_row[exposure_field] = first_money(record, "Exposure Value", "Exposure", "Value")
+              record_policies.append(policy_row)
+
+          if record_type == "CLAIM":
+            claim_number = first(record, "Claim Number", "Claim #", "Claim No", "Claim ID", "Claim")
+            if real_claim_number(claim_number):
+              paid = first_money(record, "Paid Total", "Paid", "Paid Amount", "Total Paid")
+              if money_float(paid) <= 0:
+                paid = money_float(first_money(record, "Paid Indemnity")) + money_float(first_money(record, "Paid Expense"))
+              reserve = first_money(record, "Reserve Total", "Reserve", "Reserve Amount", "Outstanding Reserve")
+              if money_float(reserve) <= 0:
+                reserve = money_float(first_money(record, "Reserve Indemnity")) + money_float(first_money(record, "Reserve Expense"))
+              incurred = first_money(record, "Total Incurred", "Incurred", "Gross Incurred", "Net Incurred")
+              if money_float(incurred) <= 0 and (money_float(paid) > 0 or money_float(reserve) > 0):
+                incurred = money_float(paid) + money_float(reserve)
+              status = first(record, "Claim Status", "Status") or ("Open" if money_float(reserve) > 0 else "Closed")
+              line = first(record, "Line of Business", "Coverage / Line", "Coverage", "Policy Type", "LOB")
+              claim_row = {
+                "claim_number": claim_number,
+                "policy_number": first(record, "Policy Number", "Policy No", "Policy"),
+                "line_of_business": line,
+                "claim_type": line,
+                "coverage": first(record, "Coverage") or line,
+                "claimant": first(record, "Claimant", "Claimant / Party", "Claimant Party", "Claimant Name", "Injured Worker", "Injured Party", "Employee Name", "Plaintiff", "Customer Name", "Third Party", "Third Party Name"),
+                "cause_of_loss": first(record, "Cause of Loss", "Loss Cause", "Cause", "Cause Description"),
+                "description": first(record, "Loss Description", "Description", "Claim Description", "Narrative", "Cause of Loss"),
+                "status": status,
+                "claim_status": status,
+                "date_of_loss": first(record, "Loss Date", "Date of Loss"),
+                "loss_date": first(record, "Loss Date", "Date of Loss"),
+                "date_reported": first(record, "Reported Date", "Date Reported"),
+                "date_closed": first(record, "Closed Date", "Date Closed"),
+                "jurisdiction_state": first(record, "Jurisdiction", "Jurisdiction/State", "State", "Venue State", "Loss State") or parsed_profile.get("state", ""),
+                "venue_state": first(record, "Jurisdiction", "Jurisdiction/State", "State", "Venue State", "Loss State") or parsed_profile.get("state", ""),
+                "adjuster": first(record, "Adjuster Examiner", "Adjuster/Examiner", "Adjuster", "Examiner", "Claim Adjuster", "Claim Examiner", "File Handler"),
+                "examiner": first(record, "Adjuster Examiner", "Adjuster/Examiner", "Examiner", "Adjuster", "Claim Examiner", "File Handler"),
+                "paid_amount": paid,
+                "paid": paid,
+                "reserve_amount": reserve,
+                "reserve": reserve,
+                "total_incurred": incurred,
+                "incurred": incurred,
+                "deductible": first_money(record, "Deductible"),
+                "business_name": parsed_profile.get("business_name"),
+                "carrier_name": parsed_profile.get("carrier_name"),
+                "writing_carrier": parsed_profile.get("writing_carrier") or parsed_profile.get("carrier_name"),
+                "account_number": parsed_profile.get("account_number"),
+                "customer_number": parsed_profile.get("customer_number") or parsed_profile.get("account_number"),
+              }
+              if is_real_claim_row(claim_row):
+                record_claims.append(claim_row)
+
+        if record_policies:
+          context["exposure_rows"] = record_policies
+        if record_claims:
+          context["claims"] = record_claims
+
       def next_row_value(row, start_idx):
         for value in row[start_idx + 1:]:
           value = clean(value)
@@ -10140,6 +10344,19 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
         "state": "state",
       }
 
+      csv_profile_value_label_keys = set(csv_profile_label_map.keys()).union({
+        "claimnumber", "claimno", "claimid", "dateofloss", "lossdate",
+        "datereported", "reporteddate", "dateclosed", "closeddate", "status",
+        "claimstatus", "paid", "reserve", "reserves", "totalincurred",
+        "description", "causeofloss", "lossdescription", "exposurebasis",
+        "exposurevalue", "currentpremium", "annualpremium", "expiringpremium",
+        "targetrenewalpremium", "payroll", "revenue", "sales", "employeecount",
+        "vehiclecount", "drivercount", "propertytiv", "deductible",
+      })
+
+      def csv_profile_value_is_label(value):
+        return row_key(value) in csv_profile_value_label_keys
+
       for row in rows[:80]:
         row_keys = {row_key(cell) for cell in row if clean(cell)}
         table_header_signals = {
@@ -10156,7 +10373,7 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
           if not field:
             continue
           value = next_row_value(row, idx)
-          if not value:
+          if not value or csv_profile_value_is_label(value):
             continue
           if field == "business_name":
             value = safe_business_value(value)
@@ -10197,6 +10414,35 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
             break
 
           data = row_map(semantic_claim_headers, row)
+          claim_business_name = safe_business_value(first(data, "Business Name", "Named Insured", "Insured Name", "Account Name"))
+          if claim_business_name and not safe_business_value(parsed_profile.get("business_name")):
+            parsed_profile["business_name"] = claim_business_name
+            parsed_profile["insured_name"] = claim_business_name
+            parsed_profile["named_insured"] = claim_business_name
+            parsed_profile["account_name"] = claim_business_name
+          claim_account_number = first(data, "Account Number", "Account No", "Account #", "Customer Number", "Client Number")
+          if claim_account_number and not csv_profile_value_is_label(claim_account_number):
+            parsed_profile["account_number"] = parsed_profile.get("account_number") or claim_account_number
+            parsed_profile["customer_number"] = parsed_profile.get("customer_number") or claim_account_number
+          claim_carrier = first(data, "Carrier", "Writing Carrier")
+          if claim_carrier and not csv_profile_value_is_label(claim_carrier):
+            parsed_profile["carrier_name"] = parsed_profile.get("carrier_name") or claim_carrier
+            parsed_profile["writing_carrier"] = parsed_profile.get("writing_carrier") or claim_carrier
+          claim_agency = first(data, "Producing Agency", "Broker Agency", "Agency", "Producer", "Broker")
+          if claim_agency and not csv_profile_value_is_label(claim_agency):
+            parsed_profile["agency_name"] = parsed_profile.get("agency_name") or claim_agency
+            parsed_profile["producing_agency"] = parsed_profile.get("producing_agency") or claim_agency
+            parsed_profile["producer"] = parsed_profile.get("producer") or claim_agency
+
+          for exposure_label in [
+            "Payroll", "Revenue", "Revenue / Sales", "Sales", "Gross Sales",
+            "Employee Count", "Vehicle Count", "Driver Count", "Property TIV",
+          ]:
+            exposure_field = exposure_field_from_label(exposure_label)
+            exposure_value = first(data, exposure_label)
+            if exposure_field and exposure_value:
+              set_profile_exposure_value(parsed_profile, exposure_field, exposure_value)
+
           claim_number = first(data, "Claim Number", "Claim #", "Claim No", "Claim ID", "Claim")
           if not real_claim_number(claim_number):
             continue
@@ -10224,6 +10470,17 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
             "loss_date": first(data, "Date of Loss", "Loss Date"),
             "date_reported": first(data, "Date Reported", "Reported Date"),
             "date_closed": first(data, "Date Closed", "Closed Date"),
+            "effective_date": first(data, "Effective Date", "Effective", "Policy Effective Date"),
+            "expiration_date": first(data, "Expiration Date", "Expiration", "Policy Expiration Date"),
+            "current_premium": first_money(data, "Current Premium", "Annual Premium", "Premium", "Written Premium"),
+            "expiring_premium": first_money(data, "Expiring Premium"),
+            "target_renewal_premium": first_money(data, "Target Renewal Premium"),
+            "payroll": first_money(data, "Payroll"),
+            "revenue": first_money(data, "Revenue", "Revenue / Sales", "Sales", "Gross Sales"),
+            "employee_count": first_money(data, "Employee Count", "Employees"),
+            "vehicle_count": first_money(data, "Vehicle Count", "Vehicles", "Autos"),
+            "driver_count": first_money(data, "Driver Count", "Drivers"),
+            "property_tiv": first_money(data, "Property TIV", "TIV", "Total Insured Value"),
             "jurisdiction_state": first(data, "Jurisdiction/State", "Jurisdiction", "State", "Venue State", "Loss State") or parsed_profile.get("state", ""),
             "venue_state": first(data, "Jurisdiction/State", "Jurisdiction", "State", "Venue State", "Loss State") or parsed_profile.get("state", ""),
             "paid_amount": paid,
@@ -10258,8 +10515,44 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
         })
 
       if semantic_claim_rows:
+        claim_policy_rows = []
+        seen_claim_policies = set()
+        for claim_row in semantic_claim_rows:
+          policy_number = clean(claim_row.get("policy_number"))
+          if not policy_number or policy_is_upload_fallback(policy_number):
+            continue
+          policy_key = policy_number.upper()
+          if policy_key in seen_claim_policies:
+            continue
+          seen_claim_policies.add(policy_key)
+          line = clean(claim_row.get("line_of_business") or claim_row.get("claim_type") or claim_row.get("coverage"))
+          claim_policy_rows.append({
+            "policy_number": policy_number,
+            "policy_type": line,
+            "line_of_business": line,
+            "coverage": line,
+            "carrier": parsed_profile.get("carrier_name") or parsed_profile.get("writing_carrier", ""),
+            "carrier_name": parsed_profile.get("carrier_name") or parsed_profile.get("writing_carrier", ""),
+            "writing_carrier": parsed_profile.get("writing_carrier") or parsed_profile.get("carrier_name", ""),
+            "state": claim_row.get("jurisdiction_state") or parsed_profile.get("state", ""),
+            "effective_date": claim_row.get("effective_date") or parsed_profile.get("effective_date", ""),
+            "expiration_date": claim_row.get("expiration_date") or parsed_profile.get("expiration_date", ""),
+            "current_premium": claim_row.get("current_premium"),
+            "expiring_premium": claim_row.get("expiring_premium"),
+            "target_renewal_premium": claim_row.get("target_renewal_premium"),
+            "payroll": claim_row.get("payroll"),
+            "revenue": claim_row.get("revenue"),
+            "employee_count": claim_row.get("employee_count"),
+            "vehicle_count": claim_row.get("vehicle_count"),
+            "driver_count": claim_row.get("driver_count"),
+            "property_tiv": claim_row.get("property_tiv"),
+          })
+        if claim_policy_rows and len(claim_policy_rows) > len(semantic_policy_rows):
+          semantic_policy_rows = claim_policy_rows
+
+      if semantic_claim_rows and not context.get("claims"):
         context["claims"] = semantic_claim_rows
-      if semantic_policy_rows:
+      if semantic_policy_rows and not context.get("exposure_rows"):
         context["exposure_rows"] = semantic_policy_rows
 
       exposure_idx = None
@@ -10326,7 +10619,7 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
             "target_renewal_premium": first_money(data, "Target Renewal Premium"),
           })
 
-      if strong_exposure_rows:
+      if strong_exposure_rows and not context.get("exposure_rows"):
         context["exposure_rows"] = strong_exposure_rows
     except Exception as exc:
       print("LOSSQ_UNIVERSAL_TABULAR_UPLOAD_CANONICAL_SAVE_OVERLAY_V1_EXPOSURE_ERROR:", str(exc)[:300])
@@ -10487,6 +10780,20 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
         "state": "state",
       }
 
+      profile_value_label_keys = set(profile_label_map.keys()).union({
+        "claimnumber", "claimno", "claimid", "dateofloss", "lossdate",
+        "datereported", "reporteddate", "dateclosed", "closeddate", "status",
+        "claimstatus", "paid", "reserve", "reserves", "totalincurred",
+        "description", "causeofloss", "lossdescription", "exposuretype",
+        "exposurefield", "exposurebasis", "exposureamount", "exposurevalue",
+        "currentpremium", "annualpremium", "expiringpremium", "targetrenewalpremium",
+        "payroll", "revenue", "sales", "employeecount", "vehiclecount",
+        "drivercount", "propertytiv", "limit", "deductible", "notes",
+      })
+
+      def profile_value_is_label(value):
+        return cell_key(value) in profile_value_label_keys
+
       for worksheet in workbook.worksheets:
         for row in worksheet.iter_rows(values_only=True):
           values = [cell_clean(cell) for cell in row]
@@ -10495,7 +10802,7 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
           for col_idx in range(0, len(values) - 1):
             label_key = cell_key(values[col_idx])
             field = profile_label_map.get(label_key)
-            if not field or not good(values[col_idx + 1]):
+            if not field or not good(values[col_idx + 1]) or profile_value_is_label(values[col_idx + 1]):
               continue
             value = values[col_idx + 1]
             if field == "business_name":
@@ -10565,6 +10872,26 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
                 "expiring_premium": money_value(first_cell(data, "Expiring Premium")),
                 "target_renewal_premium": money_value(first_cell(data, "Target Renewal Premium")),
               })
+
+          exposure_header = (
+            any(option in row_keys for option in {"exposuretype", "exposurefield", "exposurebasis", "basis"})
+            and any(option in row_keys for option in {"value", "exposurevalue", "amount"})
+          )
+
+          if exposure_header:
+            headers = row
+            for data_row in rows[idx + 1:]:
+              if not any(good(cell) for cell in data_row):
+                break
+              row_text = " ".join(cell_clean(cell).lower() for cell in data_row if good(cell))
+              if any(stop in row_text for stop in ["claim detail", "claims detail", "policy schedule", "loss summary"]):
+                break
+              data = table_row_map(headers, data_row)
+              exposure_label = first_cell(data, "Exposure Type", "Exposure Field", "Exposure Basis", "Basis")
+              exposure_value = first_cell(data, "Value", "Exposure Value", "Amount")
+              exposure_field = exposure_field_from_label(exposure_label)
+              if exposure_field and exposure_value:
+                set_profile_exposure_value(parsed_profile, exposure_field, exposure_value)
 
           if claim_header:
             headers = row
@@ -10866,8 +11193,23 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
   for key, value in (context or {}).items():
     if key in {"claims", "exposure_rows"}:
       continue
-    if value not in ("", None, [], {}):
-      parsed_profile[key] = value
+    if value in ("", None, [], {}):
+      continue
+    if key in {"business_name", "insured_name", "named_insured", "account_name"}:
+      safe_value = safe_business_value(value)
+      if not safe_value:
+        continue
+      current_value = safe_business_value(parsed_profile.get(key))
+      if current_value:
+        continue
+      value = safe_value
+    if key in {"account_number", "customer_number", "carrier_name", "writing_carrier", "agency_name", "producing_agency", "producer"}:
+      if compact_key(value) in {
+        "accountnumber", "accountno", "customernumber", "clientnumber",
+        "carrier", "writingcarrier", "producer", "producingagency", "agency",
+      }:
+        continue
+    parsed_profile[key] = value
 
   if parsed_profile.get("carrier_name") and not parsed_profile.get("writing_carrier"):
     parsed_profile["writing_carrier"] = parsed_profile.get("carrier_name")
