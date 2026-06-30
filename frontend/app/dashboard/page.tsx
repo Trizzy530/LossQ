@@ -7170,6 +7170,8 @@ setLazyLoadedTools,
  }
  async function deleteProfile(profileToDelete: any) {
   const profileId = profileToDelete?.id;
+  const normalizedProfileId = String(profileId || "").trim();
+  const hasNumericProfileId = /^\d+$/.test(normalizedProfileId);
   const policyNumber =
   profileToDelete?.policy_number ||
   profileToDelete?.account_number ||
@@ -7184,7 +7186,7 @@ setLazyLoadedTools,
   policyNumber ||
   "this profile";
 
- if (!profileId && !policyNumber) {
+ if (!hasNumericProfileId && !policyNumber) {
   setMessage("No saved profile selected to delete.");
   return;
  }
@@ -7240,9 +7242,9 @@ setLazyLoadedTools,
   );
 
   const deleteUrls = [
-  ...(profileId
-    ? [`${API}/account-profile/id/${encodeURIComponent(String(profileId))}?delete_claims=true`]
-    : []),
+  ...(hasNumericProfileId
+     ? [`${API}/account-profile/id/${encodeURIComponent(normalizedProfileId)}?delete_claims=true`]
+     : []),
   ...deleteKeys.map(
     (key) =>
      `${API}/account-profile/?policy_number=${encodeURIComponent(key)}&delete_claims=true`
@@ -7273,7 +7275,7 @@ setLazyLoadedTools,
     break;
    }
 
-   if (res.status !== 404) {
+   if (res.status !== 404 && res.status !== 422) {
     break;
    }
   }
