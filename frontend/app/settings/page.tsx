@@ -256,6 +256,9 @@ export default function SettingsPage() {
 
   function logout() {
     localStorage.removeItem("lossq_token");
+    localStorage.removeItem("token");
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("authToken");
     sessionStorage.removeItem("lossq_tab_token");
     localStorage.removeItem("lossq_user");
     localStorage.removeItem("lossq_login_time");
@@ -279,6 +282,11 @@ export default function SettingsPage() {
         logout();
       }
       throw new Error(data?.detail || "Access denied");
+    }
+
+    if (!res.ok) {
+      const data = await safeJson(res);
+      throw new Error(data?.detail || data?.message || `Request failed with status ${res.status}`);
     }
 
     return res;

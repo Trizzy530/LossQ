@@ -1,17 +1,18 @@
+import re
+
 from fastapi import APIRouter, Depends, HTTPException, Request
+from sqlalchemy import inspect, text
 from sqlalchemy.orm import Session
 
 from app.database import SessionLocal
-from app.models.account_profile import AccountProfile
-from app.models.audit_log import AuditLog
-from app.models.claim import Claim
 from app.models.organization import Organization
-from app.models.upload_history import UploadHistory
 from app.models.user import User
 from app.routes.auth import get_current_user, require_admin_or_owner, public_user
 from app.services.audit_service import write_audit_event
 
 router = APIRouter(prefix="/admin-users", tags=["Admin Users"])
+
+LOSSQ_SAFE_SQL_IDENTIFIER_RE = re.compile(r"^[A-Za-z_][A-Za-z0-9_]*$")
 
 
 def get_db():
@@ -20,6 +21,28 @@ def get_db():
         yield db
     finally:
         db.close()
+
+
+def lossq_safe_sql_identifier(identifier: str) -> str:
+    if not LOSSQ_SAFE_SQL_IDENTIFIER_RE.match(str(identifier or "")):
+        raise HTTPException(status_code=500, detail="Unsafe database identifier")
+    return f'"{identifier}"'
+
+
+def lossq_delete_rows_by_column(
+    db: Session,
+    table_name: str,
+    column_name: str,
+    value_name: str,
+    value: int,
+) -> int:
+    table_sql = lossq_safe_sql_identifier(table_name)
+    column_sql = lossq_safe_sql_identifier(column_name)
+    result = db.execute(
+        text(f"DELETE FROM {table_sql} WHERE {column_sql} = :{value_name}"),
+        {value_name: value},
+    )
+    return int(result.rowcount or 0)
 
 
 @router.get("/")
@@ -167,26 +190,57 @@ def permanently_delete_organization_account(
 
     organization_name = organization.name or f"Organization {organization_id}"
 
-    deleted_counts = {
-        "claims": db.query(Claim)
-        .filter(Claim.organization_id == organization_id)
-        .delete(synchronize_session=False),
-        "upload_history": db.query(UploadHistory)
-        .filter(UploadHistory.organization_id == organization_id)
-        .delete(synchronize_session=False),
-        "account_profiles": db.query(AccountProfile)
-        .filter(AccountProfile.organization_id == organization_id)
-        .delete(synchronize_session=False),
-        "audit_logs": db.query(AuditLog)
-        .filter(AuditLog.organization_id == organization_id)
-        .delete(synchronize_session=False),
-        "users": db.query(User)
-        .filter(User.organization_id == organization_id)
-        .delete(synchronize_session=False),
-    }
+    inspector = inspect(db.bind)
+    deleted_counts = {}
 
-    db.delete(organization)
-    db.commit()
+    try:
+        for table_name in inspector.get_table_names():
+            if table_name in {"organizations", "users"}:
+                continue
+
+            columns = {column["name"] for column in inspector.get_columns(table_name)}
+            if "organization_id" not in columns:
+                continue
+
+            deleted_counts[table_name] = lossq_delete_rows_by_column(
+                db,
+                table_name,
+                "organization_id",
+                "organization_id",
+                organization_id,
+            )
+
+        deleted_counts["users"] = lossq_delete_rows_by_column(
+            db,
+            "users",
+            "organization_id",
+            "organization_id",
+            organization_id,
+        )
+        deleted_counts["organizations"] = lossq_delete_rows_by_column(
+            db,
+            "organizations",
+            "id",
+            "organization_id",
+            organization_id,
+        )
+
+        if deleted_counts["users"] < 1 or deleted_counts["organizations"] != 1:
+            db.rollback()
+            raise HTTPException(
+                status_code=500,
+                detail="Organization account deletion did not remove the required user and organization records",
+            )
+
+        db.commit()
+    except HTTPException:
+        raise
+    except Exception as exc:
+        db.rollback()
+        raise HTTPException(
+            status_code=500,
+            detail=f"Permanent organization account deletion failed: {exc}",
+        ) from exc
 
     return {
         "message": f"{organization_name} was permanently deleted.",
