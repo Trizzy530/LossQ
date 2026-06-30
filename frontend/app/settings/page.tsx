@@ -523,16 +523,16 @@ export default function SettingsPage() {
   }
 
   async function permanentDeleteOrganizationAccountByIds() {
-    const organizationId = deleteOrganizationId.trim();
-    const userId = deleteUserId.trim();
+    const organizationId = String(organization?.id || me?.organization_id || deleteOrganizationId).trim();
+    const userId = String(me?.id || "").trim();
 
     if (!organizationId || !userId) {
-      setError("Enter both organization ID and your user ID before permanently deleting the organization account.");
+      setError("Your signed-in organization ID and user ID are required before permanently deleting the organization account.");
       return;
     }
 
     const confirmed = confirm(
-      `Permanently delete this whole LossQ organization account?\n\nOrganization ID: ${organizationId}\nYour User ID: ${userId}\n\nThis deletes organization users, saved profiles, claims, upload history, and audit records. This cannot be undone.`
+      `Permanently delete this whole LossQ organization account?\n\nOrganization ID: ${organizationId}\nSigned-in User ID: ${userId}\n\nThis deletes organization users, saved profiles, claims, upload history, and audit records. This cannot be undone.`
     );
     if (!confirmed) return;
 
@@ -906,7 +906,7 @@ export default function SettingsPage() {
                 <div className="flex flex-col gap-1 mb-4">
                   <h3 className="text-lg font-bold text-red-100">Permanent Delete by IDs</h3>
                   <p className="text-sm text-red-100/80">
-                    Enter the organization ID and user ID exactly. The backend only allows owner/admin deletion inside your own organization.
+                    Enter IDs to permanently delete a user. The organization account delete button uses your signed-in organization and user IDs automatically.
                   </p>
                 </div>
 
@@ -937,10 +937,10 @@ export default function SettingsPage() {
 
                   <button
                     onClick={permanentDeleteOrganizationAccountByIds}
-                    disabled={saving || !deleteOrganizationId || !deleteUserId}
+                    disabled={saving || !(organization?.id || me?.organization_id || deleteOrganizationId) || !me?.id}
                     className="md:col-span-2 rounded-2xl border border-red-300/50 bg-red-950 px-5 py-3 font-bold text-red-50 hover:bg-red-900 disabled:opacity-50"
                   >
-                    Delete Organization Account
+                    Delete My Organization Account
                   </button>
                 </div>
               </div>

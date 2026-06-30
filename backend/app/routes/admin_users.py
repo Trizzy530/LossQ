@@ -156,7 +156,6 @@ def permanently_delete_organization_account(
     # LOSSQ_ADMIN_ORGANIZATION_ACCOUNT_PERMANENT_DELETE_V1
     current_role = str(current_user.role or "user").strip().lower()
     current_org_id = int(current_user.organization_id or 0)
-    current_user_id = int(current_user.id or 0)
 
     if current_role not in {"owner", "admin"}:
         raise HTTPException(status_code=403, detail="Owner or admin access required")
@@ -170,23 +169,20 @@ def permanently_delete_organization_account(
             detail="Owners and admins can only permanently delete their own organization account",
         )
 
-    if int(user_id) != current_user_id:
-        raise HTTPException(
-            status_code=403,
-            detail="Use your signed-in user ID to permanently delete the organization account",
-        )
-
     organization = db.query(Organization).filter(Organization.id == organization_id).first()
     if not organization:
         raise HTTPException(status_code=404, detail="Organization not found")
 
-    signed_in_user = (
+    requested_user = (
         db.query(User)
         .filter(User.id == user_id, User.organization_id == organization_id)
         .first()
     )
-    if not signed_in_user:
-        raise HTTPException(status_code=404, detail="User not found for this organization")
+    if not requested_user:
+        raise HTTPException(
+            status_code=404,
+            detail="User ID was not found inside this organization account",
+        )
 
     organization_name = organization.name or f"Organization {organization_id}"
 
