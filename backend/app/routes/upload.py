@@ -6447,7 +6447,13 @@ def lossq_pdf_account_market_context_priority_v1(file_path, profile_data=None, d
       target["default_currency"] = currency
 
     if is_canada:
-      target["date_format"] = "DD/MM/YYYY"
+      target["date_format"] = "YYYY/DD/MM"
+      target["dateFormat"] = "YYYY/DD/MM"
+      target["market_date_format"] = "YYYY/DD/MM"
+      target["marketDateFormat"] = "YYYY/DD/MM"
+      target["effective_date_format"] = "YYYY/DD/MM"
+      target["expiration_date_format"] = "YYYY/DD/MM"
+      target["evaluation_date_format"] = "YYYY/DD/MM"
 
     if regulator:
       target["regulator"] = regulator
@@ -6471,9 +6477,11 @@ def lossq_pdf_account_market_context_priority_v1(file_path, profile_data=None, d
 
     if currency:
       market_context["currency"] = currency
+      market_context["market_currency"] = currency
 
     if is_canada:
-      market_context["date_format"] = "DD/MM/YYYY"
+      market_context["date_format"] = "YYYY/DD/MM"
+      market_context["dateFormat"] = "YYYY/DD/MM"
 
     if regulator:
       market_context["regulator"] = regulator
@@ -6627,7 +6635,7 @@ def lossq_pdf_final_profile_display_alias_sync_v1(file_path, profile_data=None, 
   Purpose:
   - Make Account Snapshot, Market Context, Exposure Inputs, and Policy Schedule
     see the same corrected values.
-  - Format effective, expiration, and evaluation/report dates as DD/MM/YYYY.
+  - Format Canadian effective, expiration, and evaluation/report dates as YYYY/DD/MM.
   - Prioritize insured account province over carrier address/footer province.
   - Does not touch claims, claim totals, auth, billing, dashboard layout, CSV, or Excel.
   """
@@ -6645,7 +6653,7 @@ def lossq_pdf_final_profile_display_alias_sync_v1(file_path, profile_data=None, 
   def compact(value):
     return re.sub(r"[^a-z0-9]+", "", clean(value).lower())
 
-  def ddmmyyyy(value):
+  def canada_profile_date(value):
     raw_value = clean(value)
     if not raw_value:
       return ""
@@ -6674,13 +6682,15 @@ def lossq_pdf_final_profile_display_alias_sync_v1(file_path, profile_data=None, 
           year += 2000 if year < 50 else 1900
         if not (1 <= day <= 31 and 1 <= month <= 12):
           return raw_value
-        return f"{day:02d}/{month:02d}/{year:04d}"
+        return f"{year:04d}/{day:02d}/{month:02d}"
       except Exception:
         return raw_value
 
-    m = re.search(r"\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b", raw_value)
+    m = re.search(r"\b(\d{4})([-/])(\d{1,2})[-/](\d{1,2})\b", raw_value)
     if m:
-      return out(m.group(3), m.group(2), m.group(1))
+      if m.group(2) == "/":
+        return out(m.group(3), m.group(4), m.group(1))
+      return out(m.group(4), m.group(3), m.group(1))
 
     m = re.search(r"(?i)\b([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{2,4})\b", raw_value)
     if m:
@@ -6818,9 +6828,9 @@ def lossq_pdf_final_profile_display_alias_sync_v1(file_path, profile_data=None, 
   if report_match:
     report_date = clean(report_match.group(1))
 
-  effective_date = ddmmyyyy(effective_date)
-  expiration_date = ddmmyyyy(expiration_date)
-  report_date = ddmmyyyy(report_date)
+  effective_date = canada_profile_date(effective_date)
+  expiration_date = canada_profile_date(expiration_date)
+  report_date = canada_profile_date(report_date)
 
   carrier = clean(profile_data.get("carrier_name") or profile_data.get("writing_carrier") or profile_data.get("carrier") or direct_profile.get("carrier_name") or direct_profile.get("writing_carrier") or direct_profile.get("carrier"))
 
@@ -6853,8 +6863,13 @@ def lossq_pdf_final_profile_display_alias_sync_v1(file_path, profile_data=None, 
       target["market"] = "Canada"
       target["country_market"] = "Canada"
       target["market_country"] = "Canada"
-      target["date_format"] = "DD/MM/YYYY"
-      target["dateFormat"] = "DD/MM/YYYY"
+      target["date_format"] = "YYYY/DD/MM"
+      target["dateFormat"] = "YYYY/DD/MM"
+      target["market_date_format"] = "YYYY/DD/MM"
+      target["marketDateFormat"] = "YYYY/DD/MM"
+      target["effective_date_format"] = "YYYY/DD/MM"
+      target["expiration_date_format"] = "YYYY/DD/MM"
+      target["evaluation_date_format"] = "YYYY/DD/MM"
 
     if province_code:
       target["state"] = province_code
@@ -6872,6 +6887,7 @@ def lossq_pdf_final_profile_display_alias_sync_v1(file_path, profile_data=None, 
 
     if currency:
       target["currency"] = currency
+      target["market_currency"] = currency
       target["default_currency"] = currency
       target["defaultCurrency"] = currency
 
@@ -6889,8 +6905,8 @@ def lossq_pdf_final_profile_display_alias_sync_v1(file_path, profile_data=None, 
       market_context["market"] = "Canada"
       market_context["country_market"] = "Canada"
       market_context["countryMarket"] = "Canada"
-      market_context["date_format"] = "DD/MM/YYYY"
-      market_context["dateFormat"] = "DD/MM/YYYY"
+      market_context["date_format"] = "YYYY/DD/MM"
+      market_context["dateFormat"] = "YYYY/DD/MM"
 
     if province_code:
       market_context["state"] = province_code
@@ -6906,6 +6922,7 @@ def lossq_pdf_final_profile_display_alias_sync_v1(file_path, profile_data=None, 
 
     if currency:
       market_context["currency"] = currency
+      market_context["market_currency"] = currency
 
     if regulator:
       market_context["regulator"] = regulator
@@ -7670,7 +7687,7 @@ def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, dir
   def lossq_day_month_year_date_format_v1(value):
     """
     Universal display-safe date formatter for profile dates.
-    Always returns DD/MM/YYYY when a clear date is detected.
+    For Canadian account-profile grid repairs, return YYYY/DD/MM when a clear date is detected.
     """
     import re
     from datetime import datetime
@@ -7703,14 +7720,17 @@ def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, dir
           year += 2000 if year < 50 else 1900
         if day < 1 or day > 31 or month < 1 or month > 12:
           return raw_value
-        return f"{day:02d}/{month:02d}/{year:04d}"
+        return f"{year:04d}/{day:02d}/{month:02d}"
       except Exception:
         return raw_value
 
-    # ISO / database style: YYYY-MM-DD or YYYY/MM/DD.
-    m = re.search(r"\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b", raw_value)
+    # ISO/database hyphen dates convert to YYYY/DD/MM; slash dates are already
+    # the saved Canada display format and should remain idempotent.
+    m = re.search(r"\b(\d{4})([-/])(\d{1,2})[-/](\d{1,2})\b", raw_value)
     if m:
-      return out(m.group(3), m.group(2), m.group(1))
+      if m.group(2) == "/":
+        return out(m.group(3), m.group(4), m.group(1))
+      return out(m.group(4), m.group(3), m.group(1))
 
     # Month-name style: November 15, 2024.
     m = re.search(r"(?i)\b([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{2,4})\b", raw_value)
@@ -7726,13 +7746,13 @@ def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, dir
       if month:
         return out(m.group(1), month, m.group(3))
 
-    # Slash style. Output must still be DD/MM/YYYY.
+    # Slash style. Output must still be YYYY/DD/MM.
     m = re.search(r"\b(\d{1,2})/(\d{1,2})/(\d{2,4})\b", raw_value)
     if m:
       first = int(m.group(1))
       second = int(m.group(2))
 
-      # If obvious US-style MM/DD/YYYY, convert to DD/MM/YYYY.
+      # If obvious US-style MM/DD/YYYY, convert to Canadian YYYY/DD/MM.
       if first <= 12 and second > 12:
         return out(second, first, m.group(3))
 
@@ -7843,13 +7863,14 @@ def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, dir
       target["expiration"] = expiration_date
 
     if report_date:
-      formatted_report_date = lossq_day_month_year_date_format_v1(report_date)
+      formatted_report_date = lossq_day_month_year_date_format_v1(report_date) if is_canada else report_date
       target["evaluation_date"] = formatted_report_date
       target["valuation_date"] = formatted_report_date
       target["report_date"] = formatted_report_date
 
     if currency:
       target["currency"] = currency.upper()
+      target["market_currency"] = currency.upper()
       target["default_currency"] = currency.upper()
 
     if province_name:
@@ -7869,6 +7890,13 @@ def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, dir
       target["market_country"] = "Canada"
       target["country_market"] = "Canada"
       target["market"] = "Canada"
+      target["date_format"] = "YYYY/DD/MM"
+      target["dateFormat"] = "YYYY/DD/MM"
+      target["market_date_format"] = "YYYY/DD/MM"
+      target["marketDateFormat"] = "YYYY/DD/MM"
+      target["effective_date_format"] = "YYYY/DD/MM"
+      target["expiration_date_format"] = "YYYY/DD/MM"
+      target["evaluation_date_format"] = "YYYY/DD/MM"
 
     current_schedule = target.get("policy_schedule") or target.get("policies")
     schedule_missing = not isinstance(current_schedule, list) or not any(isinstance(p, dict) and clean(p.get("policy_number")) for p in current_schedule)
@@ -7916,10 +7944,11 @@ def lossq_pdf_account_profile_grid_repair_v1(file_path, parsed_profile=None, dir
       target["policies"] = current_schedule
       target["policy_schedule"] = current_schedule
 
-  # LOSSQ_PDF_ACCOUNT_PROFILE_GRID_DATES_DD_MM_YYYY_CALL_V1
-  effective_date = lossq_profile_date_dd_mm_yyyy_global_v1(effective_date)
-  expiration_date = lossq_profile_date_dd_mm_yyyy_global_v1(expiration_date)
-  report_date = lossq_profile_date_dd_mm_yyyy_global_v1(report_date)
+  # LOSSQ_PDF_ACCOUNT_PROFILE_GRID_DATES_YYYY_DD_MM_CALL_V2
+  if is_canada:
+    effective_date = lossq_day_month_year_date_format_v1(effective_date)
+    expiration_date = lossq_day_month_year_date_format_v1(expiration_date)
+    report_date = lossq_day_month_year_date_format_v1(report_date)
 
   apply(parsed_profile)
   apply(direct_profile)
@@ -11017,7 +11046,7 @@ def lossq_canada_date_v11(value):
     if year < 100:
       year += 2000
     if mon:
-      return f"{year:04d}-{mon:02d}-{day:02d}"
+      return f"{year:04d}/{day:02d}/{mon:02d}"
   m = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$", raw_value)
   if m:
     day = int(m.group(1))
@@ -11026,15 +11055,19 @@ def lossq_canada_date_v11(value):
     if year < 100:
       year += 2000
     if 1 <= day <= 31 and 1 <= month <= 12:
-      return f"{year:04d}-{month:02d}-{day:02d}"
-  m = re.match(r"^(20\d{2}|19\d{2})[/-](\d{1,2})[/-](\d{1,2})$", raw_value)
+      return f"{year:04d}/{day:02d}/{month:02d}"
+  m = re.match(r"^(20\d{2}|19\d{2})([/-])(\d{1,2})[/-](\d{1,2})$", raw_value)
   if m:
     year = int(m.group(1))
-    middle = int(m.group(2))
-    last = int(m.group(3))
-    if middle > 12 and 1 <= last <= 12:
-      return f"{year:04d}-{last:02d}-{middle:02d}"
-    return f"{year:04d}-{middle:02d}-{last:02d}"
+    separator = m.group(2)
+    middle = int(m.group(3))
+    last = int(m.group(4))
+    if separator == "/" and 1 <= middle <= 31 and 1 <= last <= 12:
+      return f"{year:04d}/{middle:02d}/{last:02d}"
+    if 1 <= middle <= 12 and 1 <= last <= 31:
+      return f"{year:04d}/{last:02d}/{middle:02d}"
+    if 1 <= middle <= 31 and 1 <= last <= 12:
+      return f"{year:04d}/{middle:02d}/{last:02d}"
   return value
 
 def lossq_canada_policy_number_v11(value):
@@ -11104,7 +11137,27 @@ def lossq_canada_upload_cleanup_v11(profile_data, claims=None, file_path=None):
   if preamble.get("province"):
     profile_data["province"] = preamble.get("province")
   profile_data["country"] = "Canada"
+  profile_data["market_country"] = "Canada"
+  profile_data["market"] = "Canada"
   profile_data["currency"] = "CAD"
+  profile_data["market_currency"] = "CAD"
+  profile_data["loss_currency"] = "CAD"
+  profile_data["date_format"] = "YYYY/DD/MM"
+  profile_data["dateFormat"] = "YYYY/DD/MM"
+  profile_data["market_date_format"] = "YYYY/DD/MM"
+  profile_data["marketDateFormat"] = "YYYY/DD/MM"
+  profile_data["effective_date_format"] = "YYYY/DD/MM"
+  profile_data["expiration_date_format"] = "YYYY/DD/MM"
+  profile_data["evaluation_date_format"] = "YYYY/DD/MM"
+  market_context = profile_data.get("market_context") if isinstance(profile_data.get("market_context"), dict) else {}
+  market_context.update({
+    "country": "Canada",
+    "currency": "CAD",
+    "market_currency": "CAD",
+    "date_format": "YYYY/DD/MM",
+    "dateFormat": "YYYY/DD/MM",
+  })
+  profile_data["market_context"] = {k: v for k, v in market_context.items() if v not in (None, "", [], {})}
 
   claim_counts = {}
   claim_totals = {}
@@ -11155,7 +11208,7 @@ def lossq_canada_upload_cleanup_v11(profile_data, claims=None, file_path=None):
     profile_data["policy_schedule"] = cleaned_policies
     profile_data["policy_numbers"] = [p.get("policy_number") for p in cleaned_policies]
 
-  for key in ["effective_date", "expiration_date", "policy_effective_date", "policy_expiration_date"]:
+  for key in ["effective_date", "expiration_date", "evaluation_date", "valuation_date", "report_date", "policy_effective_date", "policy_expiration_date"]:
     if profile_data.get(key):
       profile_data[key] = lossq_canada_date_v11(profile_data.get(key))
 
@@ -11369,10 +11422,19 @@ def lossq_canada_canonical_upload_overlay_v1(
     if not text:
       return ""
     text = text.replace("–", "-").replace("—", "-")
-    match = re.match(r"^(\d{4})[/-](\d{1,2})[/-](\d{1,2})$", text)
+    match = re.match(r"^(\d{4})([/-])(\d{1,2})[/-](\d{1,2})$", text)
     if match:
-      year, month, day = [int(part) for part in match.groups()]
-      return f"{year:04d}/{day:02d}/{month:02d}"
+      year = int(match.group(1))
+      separator = match.group(2)
+      middle = int(match.group(3))
+      last = int(match.group(4))
+      if separator == "/" and 1 <= middle <= 31 and 1 <= last <= 12:
+        return f"{year:04d}/{middle:02d}/{last:02d}"
+      if 1 <= middle <= 12 and 1 <= last <= 31:
+        return f"{year:04d}/{last:02d}/{middle:02d}"
+      if 1 <= middle <= 31 and 1 <= last <= 12:
+        return f"{year:04d}/{middle:02d}/{last:02d}"
+      return text
     match = re.match(r"^(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})$", text)
     if match:
       day, month, year = [int(part) for part in match.groups()]
@@ -12510,7 +12572,9 @@ def lossq_canada_canonical_upload_overlay_v1(
     target["market_currency"] = "CAD"
     target["loss_currency"] = "CAD"
     target["date_format"] = "YYYY/DD/MM"
+    target["dateFormat"] = "YYYY/DD/MM"
     target["market_date_format"] = "YYYY/DD/MM"
+    target["marketDateFormat"] = "YYYY/DD/MM"
     target["effective_date_format"] = "YYYY/DD/MM"
     target["expiration_date_format"] = "YYYY/DD/MM"
     target["evaluation_date_format"] = "YYYY/DD/MM"
@@ -12643,7 +12707,9 @@ def lossq_canada_canonical_upload_overlay_v1(
     market_context.update({
       "country": "Canada",
       "currency": "CAD",
+      "market_currency": "CAD",
       "date_format": "YYYY/DD/MM",
+      "dateFormat": "YYYY/DD/MM",
       "province": province_name_value or target.get("province"),
       "province_code": province_code_value or target.get("province_code"),
       "regulator": target.get("regulator"),
@@ -16905,6 +16971,76 @@ def lossq_us_profile_market_format_cleanup_v1(file_path, profile_data=None, pars
 
   insured_name = extract_insured_name()
 
+  def invalid_carrier(value):
+    lowered = clean(value).lower()
+    if not lowered:
+      return True
+    if lowered in {
+      "carrier not set",
+      "not set",
+      "unknown",
+      "n/a",
+      "na",
+      "none",
+      "carrier",
+      "writing carrier",
+      "insurance carrier",
+    }:
+      return True
+    return bool(
+      "sample data only" in lowered
+      or "not an actual insurance record" in lowered
+      or re.search(r"(?i)\b(policy schedule|claim detail|loss summary|exposure basis|exposure value|policy number|line of business)\b", lowered)
+    )
+
+  def clean_carrier_value(value):
+    value = clean(value)
+    if invalid_carrier(value) or len(value) > 120:
+      return ""
+    return value.title() if value.isupper() else value
+
+  def extract_carrier_name():
+    for key in ["carrier_name", "writing_carrier", "carrier", "insurance_carrier"]:
+      candidate = clean_carrier_value(profile_data.get(key))
+      if candidate:
+        return candidate
+
+    for source_key in ["policies", "policy_schedule", "exposures"]:
+      rows = profile_data.get(source_key)
+      if not isinstance(rows, list):
+        continue
+      for row in rows:
+        if not isinstance(row, dict):
+          continue
+        candidate = clean_carrier_value(row.get("carrier_name") or row.get("writing_carrier") or row.get("carrier"))
+        if candidate:
+          return candidate
+
+    for claim in parsed_claims:
+      if not isinstance(claim, dict):
+        continue
+      candidate = clean_carrier_value(claim.get("carrier_name") or claim.get("writing_carrier") or claim.get("carrier"))
+      if candidate:
+        return candidate
+
+    for label in ["Writing Carrier", "Insurance Carrier", "Insurance Company", "Carrier"]:
+      match = re.search(rf"(?im)^\s*{re.escape(label)}\s*[:#-]\s*(.+?)\s*$", raw_text)
+      if not match:
+        continue
+      candidate = re.split(
+        r"\b(Named Insured|Business Name|Account Number|Policy Number|Effective|Expiration|Evaluation|Policy Schedule|Claim Detail)\b",
+        match.group(1),
+        maxsplit=1,
+        flags=re.I,
+      )[0]
+      candidate = clean_carrier_value(candidate)
+      if candidate:
+        return candidate
+
+    return ""
+
+  carrier_name = extract_carrier_name()
+
   def us_date(value):
     value = clean(value)
     if not value:
@@ -16957,9 +17093,15 @@ def lossq_us_profile_market_format_cleanup_v1(file_path, profile_data=None, pars
   profile_data["market"] = "US"
   profile_data["currency"] = "USD"
   profile_data["market_currency"] = "USD"
+  profile_data["loss_currency"] = "USD"
+  profile_data["default_currency"] = "USD"
   profile_data["date_format"] = "MM/DD/YYYY"
+  profile_data["dateFormat"] = "MM/DD/YYYY"
   profile_data["market_date_format"] = "MM/DD/YYYY"
+  profile_data["marketDateFormat"] = "MM/DD/YYYY"
   profile_data["effective_date_format"] = "MM/DD/YYYY"
+  profile_data["expiration_date_format"] = "MM/DD/YYYY"
+  profile_data["evaluation_date_format"] = "MM/DD/YYYY"
   # LOSSQ_US_MARKET_CONTEXT_VALIDATION_STASH_V1
   _lossq_us_validation = profile_data.get("validation") if isinstance(profile_data.get("validation"), dict) else {}
   _lossq_us_validation["market_context"] = {
@@ -16970,6 +17112,17 @@ def lossq_us_profile_market_format_cleanup_v1(file_path, profile_data=None, pars
     "language": "en",
   }
   profile_data["validation"] = _lossq_us_validation
+  market_context = profile_data.get("market_context") if isinstance(profile_data.get("market_context"), dict) else {}
+  market_context.update({
+    "country": "United States",
+    "country_code": "US",
+    "currency": "USD",
+    "market_currency": "USD",
+    "date_format": "MM/DD/YYYY",
+    "dateFormat": "MM/DD/YYYY",
+    "language": profile_data.get("market_language") or "en",
+  })
+  profile_data["market_context"] = {k: v for k, v in market_context.items() if v not in (None, "", [], {})}
 
   if state_code:
     profile_data["state"] = state_code
@@ -16983,6 +17136,11 @@ def lossq_us_profile_market_format_cleanup_v1(file_path, profile_data=None, pars
     profile_data["account_name"] = insured_name
     profile_data["insured"] = insured_name
     profile_data["insured_box"] = insured_name
+
+  if carrier_name:
+    profile_data["carrier_name"] = carrier_name
+    profile_data["writing_carrier"] = carrier_name
+    profile_data["carrier"] = carrier_name
 
   if effective:
     profile_data["effective_date"] = effective
@@ -17000,6 +17158,11 @@ def lossq_us_profile_market_format_cleanup_v1(file_path, profile_data=None, pars
     if isinstance(policies, list):
       for item in policies:
         if isinstance(item, dict):
+          row_carrier = clean_carrier_value(item.get("carrier_name") or item.get("writing_carrier") or item.get("carrier")) or carrier_name
+          if row_carrier:
+            item["carrier_name"] = row_carrier
+            item["writing_carrier"] = row_carrier
+            item["carrier"] = row_carrier
           if item.get("effective_date"):
             item["effective_date"] = us_date(item.get("effective_date"))
           if item.get("expiration_date"):
@@ -17023,6 +17186,7 @@ def lossq_us_profile_market_format_cleanup_v1(file_path, profile_data=None, pars
     claim["currency"] = claim.get("currency") or "USD"
     claim["market_currency"] = claim.get("market_currency") or "USD"
     claim["date_format"] = "MM/DD/YYYY"
+    claim["dateFormat"] = "MM/DD/YYYY"
     claim["market_date_format"] = "MM/DD/YYYY"
 
   print("LOSSQ_US_PROFILE_MARKET_FORMAT_CLEANUP_V1:", {
@@ -26541,7 +26705,7 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
   # LOSSQ_CANADA_CANONICAL_UPLOAD_PROFILE_UPSERT_CALL_V1
   # Keep Canadian structured policy schedules, claim totals, CAD currency, and
-  # DD/MM/YYYY market context authoritative at the final profile save boundary.
+  # YYYY/DD/MM market context authoritative at the final profile save boundary.
   all_parsed_claims, parsed_profile, profile_data, direct_profile = lossq_canada_canonical_upload_overlay_v1(
     file_path,
     all_parsed_claims,
@@ -26560,6 +26724,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     profile_data,
     direct_profile,
   )
+
+  # LOSSQ_US_PROFILE_MARKET_FORMAT_FINAL_SAVE_BOUNDARY_CALL_V2
+  # Reapply US-only market/date/carrier normalization after PDF/table repairs so
+  # final profile save cannot retain ISO dates or placeholder carrier text.
+  profile_data = lossq_us_profile_market_format_cleanup_v1(file_path, profile_data, all_parsed_claims)
+  parsed_profile = lossq_us_profile_market_format_cleanup_v1(file_path, parsed_profile if "parsed_profile" in locals() else {}, all_parsed_claims)
+  direct_profile = lossq_us_profile_market_format_cleanup_v1(file_path, direct_profile, all_parsed_claims)
 
   profile = upsert_account_profile(db, profile_data, current_user)
 
