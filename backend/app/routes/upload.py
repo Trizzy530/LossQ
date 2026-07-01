@@ -10028,9 +10028,11 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
       return ""
     if "payroll" in key:
       return "payroll"
+    if any(token in key for token in ["alcoholsales", "liquorsales"]):
+      return "liquor_sales"
     if any(token in key for token in ["grossreceipts", "annualrevenue", "revenue", "receipts", "sales"]):
       return "revenue"
-    if any(token in key for token in ["powerunits", "vehicles", "vehiclecount", "autos", "fleet", "trucks", "units"]):
+    if any(token in key for token in ["powerunits", "vehiclecount", "vehicles", "autos", "fleet", "trucks"]):
       return "vehicle_count"
     if "driver" in key:
       return "driver_count"
@@ -10038,36 +10040,88 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
       return "employee_count"
     if "location" in key:
       return "location_count"
-    if any(token in key for token in ["propertytiv", "totalinsuredvalue", "buildingvalue", "buildinglimit"]):
-      return "property_tiv"
-    if "contents" in key:
-      return "contents_value"
-    if any(token in key for token in ["squarefeet", "sqft", "warehousesquarefeet"]):
+    if any(token in key for token in ["apartmentunits", "unitcount", "dwellingunits", "rentalunits", "restaurantseats", "seats"]):
+      return "unit_count"
+    if key == "units":
+      return "unit_count"
+    if any(token in key for token in ["squarefootage", "squarefeet", "sqft", "warehousesquarefeet"]):
       return "square_footage"
+    if any(token in key for token in ["propertytiv", "totalinsuredvalue", "buildingtiv", "propertyvalues", "statementofvalues", "sov"]):
+      return "property_tiv"
+    if any(token in key for token in ["buildingvalue", "buildinglimit"]):
+      return "building_value"
+    if any(token in key for token in ["businesspersonalproperty", "bpp", "contents", "contentsvalue"]):
+      return "contents_value"
     if "cargolimit" in key:
       return "cargo_limit"
+    if any(token in key for token in ["umbrellalimit", "excesslimit"]):
+      return "umbrella_limit"
     if any(token in key for token in ["annualmiles", "mileage"]):
       return "annual_mileage"
     if any(token in key for token in ["treatmentrooms", "examrooms", "chairs"]):
       return "unit_count"
     return ""
 
+  def exposure_label_for_field(field):
+    return {
+      "current_premium": "Current Premium",
+      "expiring_premium": "Expiring Premium",
+      "target_renewal_premium": "Target Renewal Premium",
+      "payroll": "Payroll",
+      "liquor_sales": "Liquor Sales",
+      "revenue": "Revenue / Sales",
+      "sales": "Revenue / Sales",
+      "receipts": "Receipts",
+      "employee_count": "Employee Count",
+      "vehicle_count": "Vehicle Count",
+      "driver_count": "Driver Count",
+      "location_count": "Location Count",
+      "unit_count": "Unit Count",
+      "square_footage": "Square Footage",
+      "property_tiv": "Property TIV",
+      "building_value": "Building Value",
+      "contents_value": "Contents Value",
+      "cargo_limit": "Cargo Limit",
+      "umbrella_limit": "Umbrella / Excess Limit",
+      "annual_mileage": "Annual Mileage",
+    }.get(field, field)
+
+  def normalize_exposure_number(value):
+    raw_value = clean(value)
+    if not raw_value:
+      return ""
+    if not re.search(r"\d", raw_value):
+      return raw_value
+    parsed_number = money_float(raw_value)
+    if isinstance(parsed_number, float) and parsed_number.is_integer():
+      return int(parsed_number)
+    return parsed_number
+
   def set_profile_exposure_value(profile, field, value):
     if not isinstance(profile, dict) or not field:
       return
-    raw_value = clean(value)
-    if not raw_value:
+    parsed_value = normalize_exposure_number(value)
+    if parsed_value in ("", None, [], {}):
       return
-    parsed_value = money_float(raw_value) if re.search(r"\d", raw_value) else raw_value
     profile[field] = parsed_value
     exposure_inputs = profile.get("exposure_inputs") if isinstance(profile.get("exposure_inputs"), dict) else {}
     exposure_inputs[field] = parsed_value
+    exposure_inputs[exposure_label_for_field(field)] = parsed_value
     if field == "revenue":
       profile["annual_revenue"] = parsed_value
+      profile["sales"] = parsed_value
       exposure_inputs["annual_revenue"] = parsed_value
+      exposure_inputs["Annual Revenue"] = parsed_value
+      exposure_inputs["Sales"] = parsed_value
+    if field == "liquor_sales":
+      profile["alcohol_sales"] = parsed_value
+      exposure_inputs["Alcohol Sales"] = parsed_value
     if field == "property_tiv":
       profile["tiv"] = parsed_value
       exposure_inputs["tiv"] = parsed_value
+      exposure_inputs["Total Insured Value"] = parsed_value
+    if field == "location_count":
+      profile["locations"] = parsed_value
     profile["exposure_inputs"] = exposure_inputs
 
   def is_canada_context(*values):
@@ -10219,7 +10273,7 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
           if exposure_field and exposure_value:
             set_profile_exposure_value(parsed_profile, exposure_field, exposure_value)
 
-          if record_type == "POLICY":
+          if record_type in {"EXPOSURE", "POLICY"}:
             policy_number = first(record, "Policy Number", "Policy No", "Policy")
             line = first(record, "Line of Business", "Coverage / Line", "Coverage", "Policy Type", "LOB")
             if policy_number or line:
@@ -10809,6 +10863,8 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
               value = safe_business_value(value)
               if not value:
                 continue
+            if parsed_profile.get(field):
+              continue
             parsed_profile[field] = value
 
       if parsed_profile.get("business_name"):
@@ -10984,6 +11040,44 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
         exposure_rows = [item for item in value if isinstance(item, dict)]
         break
 
+  def apply_exposure_basis_value_rollup(rows):
+    if not isinstance(rows, list):
+      return rows
+    repaired_rows = []
+    for row in rows:
+      if not isinstance(row, dict):
+        repaired_rows.append(row)
+        continue
+      copy_row = dict(row)
+      basis = clean(
+        copy_row.get("exposure_basis")
+        or copy_row.get("exposureBasis")
+        or copy_row.get("Exposure Basis")
+        or copy_row.get("basis")
+        or copy_row.get("Basis")
+        or copy_row.get("exposure_type")
+        or copy_row.get("Exposure Type")
+      )
+      value = (
+        copy_row.get("exposure_value")
+        or copy_row.get("exposureValue")
+        or copy_row.get("Exposure Value")
+        or copy_row.get("exposure")
+        or copy_row.get("Exposure")
+        or copy_row.get("value")
+        or copy_row.get("Value")
+      )
+      field = exposure_field_from_label(basis)
+      if field and value not in ("", None, [], {}):
+        normalized_value = normalize_exposure_number(value)
+        if normalized_value not in ("", None, [], {}):
+          copy_row[field] = normalized_value
+          set_profile_exposure_value(parsed_profile, field, normalized_value)
+      repaired_rows.append(copy_row)
+    return repaired_rows
+
+  exposure_rows = apply_exposure_basis_value_rollup(exposure_rows)
+
   if not section_claims and not exposure_rows:
     return parsed_claims, parsed_profile, profile_data, direct_profile
 
@@ -11152,14 +11246,35 @@ def lossq_universal_tabular_upload_canonical_save_overlay_v1(
     for field in ["current_premium", "expiring_premium", "target_renewal_premium"]:
       values = exposure_numbers(field)
       if values:
-        parsed_profile[field] = sum(values)
-        exposure_inputs[field] = sum(values)
+        selected_value = sum(values)
+        parsed_profile[field] = selected_value
+        exposure_inputs[field] = selected_value
+        exposure_inputs[exposure_label_for_field(field)] = selected_value
 
-    for field in ["payroll", "revenue", "employee_count", "vehicle_count", "driver_count", "property_tiv"]:
+    for field in [
+      "payroll", "revenue", "liquor_sales", "employee_count", "vehicle_count",
+      "driver_count", "location_count", "unit_count", "square_footage", "property_tiv",
+      "building_value", "contents_value", "cargo_limit", "umbrella_limit", "annual_mileage",
+    ]:
       values = exposure_numbers(field)
       if values:
-        parsed_profile[field] = max(values)
-        exposure_inputs[field] = max(values)
+        selected_value = max(values)
+        parsed_profile[field] = selected_value
+        exposure_inputs[field] = selected_value
+        exposure_inputs[exposure_label_for_field(field)] = selected_value
+        if field == "revenue":
+          parsed_profile["annual_revenue"] = selected_value
+          parsed_profile["sales"] = selected_value
+          exposure_inputs["Annual Revenue"] = selected_value
+          exposure_inputs["Sales"] = selected_value
+        if field == "liquor_sales":
+          parsed_profile["alcohol_sales"] = selected_value
+          exposure_inputs["Alcohol Sales"] = selected_value
+        if field == "property_tiv":
+          parsed_profile["tiv"] = selected_value
+          exposure_inputs["Total Insured Value"] = selected_value
+        if field == "location_count":
+          parsed_profile["locations"] = selected_value
 
     parsed_profile["exposure_inputs"] = exposure_inputs
     parsed_profile["exposures"] = policies
