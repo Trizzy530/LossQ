@@ -36,6 +36,12 @@ FRONTEND_URL = os.getenv("FRONTEND_URL", "https://lossq.com").rstrip("/")
 FROM_EMAIL = os.getenv("FROM_EMAIL", "LossQ <onboarding@resend.dev>")
 RESEND_API_KEY = os.getenv("RESEND_API_KEY")
 REQUIRE_EMAIL_VERIFICATION = os.getenv("REQUIRE_EMAIL_VERIFICATION", "false").strip().lower() in {"1", "true", "yes", "on"}
+
+def lossq_configured_owner_email():
+    # LOSSQ_OWNER_EMAIL_ENV_ONLY_V1
+    # Owner identity must come from deployment configuration or the user role stored in the database.
+    return os.getenv("LOSSQ_OWNER_EMAIL", "").strip().lower()
+
 if RESEND_API_KEY:
     resend.api_key = RESEND_API_KEY
 
@@ -377,8 +383,8 @@ def lossq_email_verification_required(user):
         return False
 
     email = str(getattr(user, "email", "") or "").strip().lower()
-    owner_email = os.getenv("LOSSQ_OWNER_EMAIL", "tmckenzie49@gmail.com").strip().lower()
-    if email and email == owner_email:
+    owner_email = lossq_configured_owner_email()
+    if owner_email and email and email == owner_email:
         return False
 
     role = str(getattr(user, "role", "") or "").strip().lower()
@@ -1177,10 +1183,12 @@ def validate_token(credentials: HTTPAuthorizationCredentials = Depends(security)
 
 @router.post("/bootstrap-owner")
 def bootstrap_owner(request: Request, current_user: User = Depends(get_current_user), db: Session = Depends(get_db)):
-    allowed_owner_email = os.getenv("LOSSQ_OWNER_EMAIL", "tmckenzie49@gmail.com").strip().lower()
+    allowed_owner_email = lossq_configured_owner_email()
     current_email = (current_user.email or "").strip().lower()
+    current_role = str(getattr(current_user, "role", "") or "").strip().lower()
+    current_is_platform_owner = current_role in {"founder", "platform_owner", "platform_admin", "super_admin"}
 
-    if current_email != allowed_owner_email:
+    if not current_is_platform_owner and not (allowed_owner_email and current_email == allowed_owner_email):
         raise HTTPException(status_code=403, detail="This account is not allowed to become owner")
 
     organization = db.query(Organization).filter(Organization.id == current_user.organization_id).first()

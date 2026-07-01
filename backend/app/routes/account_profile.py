@@ -430,13 +430,17 @@ def lossq_account_profile_looks_like_policy_number(value):
     return False if lossq_account_profile_is_true_account_identifier(value) else bool(re.search(r"\b[A-Z]{1,8}[- ]?\d{2,6}[- ]?[A-Z0-9]{2,12}\b", value))
 
 
-def lossq_account_profile_clean_account_number(value):
+def lossq_account_profile_clean_account_number(value, business_name=""):
     # LOSSQ_ACCOUNT_PROFILE_TRUE_ACCOUNT_NUMBER_CLEANER_V1
     clean = clean_value(value)
     if not clean:
         return ""
 
     compact = re.sub(r"[^A-Z0-9]+", "", clean.upper())
+    business_compact = re.sub(r"[^A-Z0-9]+", "", clean_value(business_name).upper())
+
+    if business_compact and compact == business_compact:
+        return ""
 
     true_account_signal = any(token in compact for token in [
         "ACCT",
@@ -516,6 +520,35 @@ def lossq_account_profile_to_dict_raw(profile):
 
         return value
 
+    def _lossq_response_canada_date(value):
+        value = _lossq_response_clean(value)
+        if not value:
+            return ""
+
+        match = re.match(r"^(\d{4})-(\d{1,2})-(\d{1,2})$", value)
+        if match:
+            year = int(match.group(1))
+            middle = int(match.group(2))
+            last = int(match.group(3))
+            if middle > 12 and 1 <= last <= 12:
+                return f"{year:04d}/{middle:02d}/{last:02d}"
+            if 1 <= middle <= 12 and 1 <= last <= 31:
+                return f"{year:04d}/{last:02d}/{middle:02d}"
+            return value
+
+        match = re.match(r"^(\d{4})/(\d{1,2})/(\d{1,2})$", value)
+        if match:
+            return f"{int(match.group(1)):04d}/{int(match.group(2)):02d}/{int(match.group(3)):02d}"
+
+        match = re.match(r"^(\d{1,2})/(\d{1,2})/(\d{2,4})$", value)
+        if match:
+            year = int(match.group(3))
+            if year < 100:
+                year += 2000 if year < 50 else 1900
+            return f"{year:04d}/{int(match.group(1)):02d}/{int(match.group(2)):02d}"
+
+        return value
+
     policy_text = " ".join([
         _lossq_response_clean(getattr(profile, "policy_number", "")),
         " ".join([_lossq_response_clean(item.get("policy_number", "")) for item in policies if isinstance(item, dict)]),
@@ -560,6 +593,11 @@ def lossq_account_profile_to_dict_raw(profile):
         response_market_country_code = "US"
         response_market_currency = "USD"
         response_market_date_format = "MM/DD/YYYY"
+    elif canada_signal:
+        response_market_country = "Canada"
+        response_market_country_code = "CA"
+        response_market_currency = raw_market_currency or "CAD"
+        response_market_date_format = "YYYY/DD/MM"
     else:
         response_market_country = raw_market_country
         response_market_country_code = _lossq_response_clean(getattr(profile, "market_country_code", "") or market_context.get("country_code", ""))
@@ -581,17 +619,36 @@ def lossq_account_profile_to_dict_raw(profile):
                     _policy["effective_date"] = _lossq_response_us_date(_policy.get("effective_date"))
                 if _policy.get("expiration_date"):
                     _policy["expiration_date"] = _lossq_response_us_date(_policy.get("expiration_date"))
+    elif canada_signal:
+        response_effective_date = _lossq_response_canada_date(response_effective_date)
+        response_expiration_date = _lossq_response_canada_date(response_expiration_date)
+        response_evaluation_date = _lossq_response_canada_date(response_evaluation_date)
+
+        for _policy in policies:
+            if isinstance(_policy, dict):
+                if _policy.get("effective_date"):
+                    _policy["effective_date"] = _lossq_response_canada_date(_policy.get("effective_date"))
+                if _policy.get("effective"):
+                    _policy["effective"] = _lossq_response_canada_date(_policy.get("effective"))
+                if _policy.get("expiration_date"):
+                    _policy["expiration_date"] = _lossq_response_canada_date(_policy.get("expiration_date"))
+                if _policy.get("expiration"):
+                    _policy["expiration"] = _lossq_response_canada_date(_policy.get("expiration"))
+
+    response_business_name = clean_value(getattr(profile, "business_name", ""))
+    response_account_number = lossq_account_profile_clean_account_number(getattr(profile, "account_number", ""), response_business_name)
+    response_customer_number = lossq_account_profile_clean_account_number(getattr(profile, "customer_number", ""), response_business_name)
 
     return {
         "id": getattr(profile, "id", None),
-        "business_name": clean_value(getattr(profile, "business_name", "")),
-        "insured": clean_value(getattr(profile, "business_name", "")),
-        "named_insured": clean_value(getattr(profile, "business_name", "")),
+        "business_name": response_business_name,
+        "insured": response_business_name,
+        "named_insured": response_business_name,
         "carrier_name": clean_value(getattr(profile, "carrier_name", "")),
         "writing_carrier": clean_value(getattr(profile, "writing_carrier", "") or getattr(profile, "carrier_name", "")),
         "agency_name": clean_value(getattr(profile, "agency_name", "")),
-        "account_number": lossq_account_profile_clean_account_number(getattr(profile, "account_number", "")),
-        "customer_number": lossq_account_profile_clean_account_number(getattr(profile, "customer_number", "")),
+        "account_number": response_account_number,
+        "customer_number": response_customer_number,
         "producer_number": clean_value(getattr(profile, "producer_number", "")),
         "policy_number": clean_value(getattr(profile, "policy_number", "")),
         "effective_date": response_effective_date,

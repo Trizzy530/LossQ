@@ -218,26 +218,13 @@ export default function SettingsPage() {
 
   const internalUser = (me as any)?.user || me || {};
   const internalRole = String(internalUser?.role || internalTokenPayload?.role || "").trim().toLowerCase();
-  const internalEmail = String(
-    internalUser?.email ||
-      internalTokenPayload?.email ||
-      internalTokenPayload?.user_email ||
-      internalTokenPayload?.sub ||
-      ""
-  ).trim().toLowerCase();
-
-  const LOSSQ_INTERNAL_ADMIN_EMAIL_ALLOWLIST = new Set([
-    "tmckenzie49@gmail.com",
-  ]);
-
   const canSeePlatformAdminLinks =
     [
       "founder",
       "platform_owner",
       "platform_admin",
       "super_admin",
-    ].includes(internalRole) ||
-    LOSSQ_INTERNAL_ADMIN_EMAIL_ALLOWLIST.has(internalEmail);
+    ].includes(internalRole);
 
   const activeUsers = useMemo(
     () => users.filter((user) => user.is_active !== false),
