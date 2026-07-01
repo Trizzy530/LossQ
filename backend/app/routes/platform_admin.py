@@ -66,6 +66,28 @@ def _lossq_current_user_value(current_user, key):
     return ""
 
 
+def _lossq_org3_owner_or_admin(current_user):
+  role = _lossq_current_user_value(current_user, "role").lower()
+  organization_id = (
+    _lossq_current_user_value(current_user, "organization_id")
+    or _lossq_current_user_value(current_user, "org_id")
+  )
+
+  if not organization_id and not isinstance(current_user, dict):
+    try:
+      organization = getattr(current_user, "organization", None)
+      organization_id = str(getattr(organization, "id", "") or "").strip()
+    except Exception:
+      organization_id = ""
+
+  try:
+    org_id = int(organization_id or 0)
+  except Exception:
+    org_id = 0
+
+  return org_id == 3 and role in {"owner", "admin"}
+
+
 # LOSSQ_PLATFORM_ADMIN_STRICT_ROLE_GATE_V1
 def require_platform_admin(current_user: dict):
   """
@@ -91,6 +113,9 @@ def require_platform_admin(current_user: dict):
     return current_user
 
   if user_role and user_role in allowed_roles:
+    return current_user
+
+  if _lossq_org3_owner_or_admin(current_user):
     return current_user
 
   raise HTTPException(status_code=403, detail="Platform admin access required.")
@@ -152,6 +177,9 @@ def require_founder_or_tech_support(current_user=Depends(get_current_user)):
     return current_user
 
   if user_role and user_role in allowed_roles:
+    return current_user
+
+  if _lossq_org3_owner_or_admin(current_user):
     return current_user
 
   raise HTTPException(status_code=403, detail="Support lookup access required.")

@@ -6260,64 +6260,73 @@ function normalizeProfileName(item: any) {
   }
  }
 
- function updateProfileList(incomingProfiles: AnyObject[]) {
-  const cleanedIncoming = (incomingProfiles || [])
-  .filter(Boolean)
-  .map((item) => normalizeProfileName(item))
-  .map((item) => {
-    const safePolicyNumber = chooseSafePolicyNumber(
-     item?.policy_number,
-     item?.account_number,
-     item?.customer_number
-    );
+ function normalizeProfilesForWorkspace(incomingProfiles: AnyObject[]) {
+ const cleanedIncoming = (incomingProfiles || [])
+ .filter(Boolean)
+ .map((item) => normalizeProfileName(item))
+ .map((item) => {
+   const safePolicyNumber = chooseSafePolicyNumber(
+    item?.policy_number,
+    item?.account_number,
+    item?.customer_number
+   );
 
-    return {
-    ...item,
-     policy_number: safePolicyNumber || "",
-     account_number: item?.account_number || item?.customer_number || "",
-     customer_number: item?.customer_number || item?.account_number || "",
-    };
-   });
-
-  setProfiles((prev) => {
-   const merged = [
-   ...cleanedIncoming,
-   ...prev.map((item) => normalizeProfileName(item)),
-   ];
-
-   const seen = new Set<string>();
-
-   const next = merged.filter((item) => {
-    const safePolicy = chooseSafePolicyNumber(
-     item?.account_number,
-     item?.customer_number,
-     item?.policy_number
-    );
-
-    const key =
-     item?.id ||
-     item?.account_number ||
-     item?.customer_number ||
-     safePolicy ||
-     `${getAccountDisplayName(item)}-${item?.carrier_name || item?.writing_carrier || ""}`;
-
-    if (!key) return false;
-
-    const normalizedKey = String(key).trim().toUpperCase();
-
-    if (seen.has(normalizedKey)) return false;
-
-    seen.add(normalizedKey);
-    return true;
-   });
-
-   setCachedProfiles(next);
-   return next;
+   return {
+   ...item,
+    policy_number: safePolicyNumber || "",
+    account_number: item?.account_number || item?.customer_number || "",
+    customer_number: item?.customer_number || item?.account_number || "",
+   };
   });
- }
+
+ const seen = new Set<string>();
+
+ return cleanedIncoming.filter((item) => {
+  const safePolicy = chooseSafePolicyNumber(
+   item?.account_number,
+   item?.customer_number,
+   item?.policy_number
+  );
+
+  const key =
+   item?.id ||
+   item?.account_number ||
+   item?.customer_number ||
+   safePolicy ||
+   `${getAccountDisplayName(item)}-${item?.carrier_name || item?.writing_carrier || ""}`;
+
+  if (!key) return false;
+
+  const normalizedKey = String(key).trim().toUpperCase();
+
+  if (seen.has(normalizedKey)) return false;
+
+  seen.add(normalizedKey);
+  return true;
+ });
+}
+
+function replaceProfileList(incomingProfiles: AnyObject[]) {
+ const next = normalizeProfilesForWorkspace(incomingProfiles);
+ setProfiles(next);
+ setCachedProfiles(next);
+ return next;
+}
+
+function updateProfileList(incomingProfiles: AnyObject[]) {
+ setProfiles((prev) => {
+  const next = normalizeProfilesForWorkspace([
+   ...(incomingProfiles || []),
+   ...prev.map((item) => normalizeProfileName(item)),
+  ]);
+
+  setCachedProfiles(next);
+  return next;
+ });
+}
 
 
- async function loadProfileList() {
+async function loadProfileList() {
   try {
    const cachedProfiles = getCachedProfiles();
 
@@ -6339,7 +6348,7 @@ function normalizeProfileName(item: any) {
    }
 
    if (!profilesRes.ok) {
-    return;
+    return getCachedProfiles();
    }
 
    const data = await safeJson(profilesRes);
@@ -6643,9 +6652,10 @@ function normalizeProfileName(item: any) {
 
 
 
-   updateProfileList(serverProfiles);
+   return replaceProfileList(serverProfiles);
   } catch {
    // Keep dashboard usable if profile list fetch fails.
+   return getCachedProfiles();
   }
  }
 
@@ -6715,7 +6725,7 @@ function normalizeProfileName(item: any) {
   const requestedPolicyNumber = normalizePolicyNumber(policyNumberOverride || cachedPolicyNumber);
 
   try {
-   if (!skipProfileList) await loadProfileList();
+   const loadedProfiles = !skipProfileList ? await loadProfileList() : getCachedProfiles();
 
   // Pre-load ref from cache immediately so filteredVisibleClaims has correct policies on first render
   if (requestedPolicyNumber) {
@@ -6783,6 +6793,11 @@ function normalizeProfileName(item: any) {
  setProfile(activeProfile);
 }
     }
+   } else if (Array.isArray(loadedProfiles) && loadedProfiles.length === 0) {
+    activeProfile = {};
+    activeProfileRef.current = {};
+    setBlankWorkspaceMode(true);
+    setProfile({});
    } else {
     const profileRes = await fetch(`${API}/account-profile/`, {
      headers: authHeaders(),
@@ -6936,7 +6951,25 @@ if (activeProfile?.policy_number) {
     }
    } else {
     if (myVersion === loadVersionRef.current) {
+     setBlankWorkspaceMode(true);
+     activeProfileRef.current = {};
+     setProfile({});
      setClaims(lossqFilterRealClaims([]));
+     resetProfileAnalyticsState({
+      setSummary,
+      setDecision,
+      setCarrierAppetite,
+      setSubmissionReadiness,
+      setCarrierMatch,
+      setPremiumForecast,
+      setSubmissionBuilder,
+      setTimeline,
+      setSelectedClaim: setSelectedClaimDetail,
+      setLazyLoadedTools,
+      setLazyToolLoading,
+     });
+     clearCachedSelectedPolicy();
+     clearCachedCurrentUpload();
     }
    }
 
@@ -6994,6 +7027,24 @@ if (activeProfile?.policy_number) {
    );
 
   const hasPolicy = selectedPolicy && selectedPolicy !== "POLICY NOT SET";
+
+  if (blankWorkspaceMode || !hasPolicy) {
+   resetProfileAnalyticsState({
+    setSummary,
+    setDecision,
+    setCarrierAppetite,
+    setSubmissionReadiness,
+    setCarrierMatch,
+    setPremiumForecast,
+    setSubmissionBuilder,
+    setTimeline,
+    setSelectedClaim: setSelectedClaimDetail,
+    setLazyLoadedTools,
+    setLazyToolLoading,
+   });
+   setMessage("Upload or select a loss run before generating account intelligence.");
+   return;
+  }
 
   const withPolicy = (base: string) =>
    hasPolicy ? `${base}?policy_number=${encodeURIComponent(selectedPolicy)}` : base;
@@ -7092,7 +7143,7 @@ if (activeProfile?.policy_number) {
  useEffect(() => {
   loadLazyToolData(activeTool);
   // eslint-disable-next-line react-hooks/exhaustive-deps
- }, [activeTool, profile?.policy_number, profile?.account_number]);
+ }, [activeTool, blankWorkspaceMode, profile?.policy_number, profile?.account_number]);
 
  // LOSSQ_CLEAR_STALE_EXPOSURE_AUTOFILL_MESSAGE_V1
  useEffect(() => {
@@ -9601,19 +9652,16 @@ function lossqCopilotPolicyNumbersFromProfileSafe(profileLike: any): string[] {
 }
 
 
+function lossqCopilotWantsPackage(question: string) {
+ const clean = String(question || "").toLowerCase();
+ return /\b(generate|build|create|prepare|make)\b/.test(clean) && /\b(package|submission|carrier packet|packet)\b/.test(clean);
+}
+
 async function askCopilot(questionOverride?: string) {
   const question = questionOverride || copilotQuestion;
 
   if (!question.trim()) {
    setCopilotAnswer("Ask a question first.");
-   return;
-  }
-
-  if (!profile?.policy_number) {
-   setCopilotAnswer(
-    "Select a policy/account first so Copilot analyzes the correct claims."
-   );
-   setCopilotOpen(true);
    return;
   }
 
@@ -9645,7 +9693,29 @@ async function askCopilot(questionOverride?: string) {
    getCachedSelectedPolicy() ||
    "";
 
-  const copilotVisibleClaims = Array.isArray(claims) ? claims : [];
+  const copilotVisibleClaims = blankWorkspaceMode ? [] : Array.isArray(claims) ? claims : [];
+
+  if (blankWorkspaceMode || !copilotPrimaryPolicy) {
+   setCopilotAnswer(
+    "Upload or select a loss run first. Once an account is active, I can answer questions about the file, explain the claims, and build the submission package."
+   );
+   setCopilotLoading(false);
+   return;
+  }
+
+  if (lossqCopilotWantsPackage(question)) {
+   setCopilotAnswer(`Building the submission package for ${getAccountDisplayName(copilotProfile) || copilotPrimaryPolicy}...`);
+   setActiveTool("submission-builder");
+   setLazyLoadedTools((prev) => ({...prev, "submission-builder": false }));
+   await loadDashboard(copilotPrimaryPolicy, true);
+   await loadLazyToolData("submission-builder");
+   setCopilotQuestion(question);
+   setCopilotAnswer(
+    `Done. I opened Submission Builder and generated the carrier-ready package context for ${getAccountDisplayName(copilotProfile) || copilotPrimaryPolicy}. Review the executive summary, policy schedule, claim story, carrier appetite, premium forecast, and readiness notes before sending it out.`
+   );
+   setCopilotLoading(false);
+   return;
+  }
 
   setCopilotAnswer(`Thinking about account ${getAccountDisplayName(copilotProfile) || copilotPrimaryPolicy || "selected account"}...`);
 
@@ -9769,11 +9839,18 @@ async function askCopilot(questionOverride?: string) {
   router.replace("/login?fresh=1");
  }
 
-const safeDisplayProfile = {
-...(profile || {}),
- account_number: lossqCleanAccountNumber(profile?.account_number),
- customer_number: lossqCleanAccountNumber(profile?.customer_number),
-};
+const safeDisplayProfile = blankWorkspaceMode
+ ? {
+  ...(profile || {}),
+  account_number: "",
+  customer_number: "",
+  policies: [],
+ }
+ : {
+  ...(profile || {}),
+  account_number: lossqCleanAccountNumber(profile?.account_number),
+  customer_number: lossqCleanAccountNumber(profile?.customer_number),
+ };
 
 const backendAccountProfile =
  summary?.account_profile ||
@@ -9807,19 +9884,28 @@ const backendPolicyNumbers = [
  the selected profile's own policy schedule.
 */
 
-const recoveredPolicySchedule = firstNonEmptyArray(
- (activeProfileRef.current?.policies?.length || 0) > 0 ? activeProfileRef.current.policies : null,
- profile?.policies,
- backendAccountProfile?.policies,
- summary?.account_profile?.policies,
- submissionBuilder?.account_profile?.policies
-);
+const recoveredPolicySchedule = blankWorkspaceMode
+ ? []
+ : firstNonEmptyArray(
+  (activeProfileRef.current?.policies?.length || 0) > 0 ? activeProfileRef.current.policies : null,
+  profile?.policies,
+  backendAccountProfile?.policies,
+  summary?.account_profile?.policies,
+  submissionBuilder?.account_profile?.policies
+ );
 
-const displayProfile = {
-...(backendAccountProfile || {}),
-...(profile || {}),
- policies: recoveredPolicySchedule,
-};
+const displayProfile = blankWorkspaceMode
+ ? {
+  ...(profile || {}),
+  account_number: "",
+  customer_number: "",
+  policies: [],
+ }
+ : {
+  ...(backendAccountProfile || {}),
+  ...(profile || {}),
+  policies: recoveredPolicySchedule,
+ };
 
 const claimBasedPolicySchedule = Object.values(
  (claims || []).reduce((acc: any, claim: any) => {
@@ -9956,7 +10042,7 @@ const activePolicyNumbers = blankWorkspaceMode
  )
 );
 
-const hasActiveAccount = Boolean(
+const hasActiveAccount = !blankWorkspaceMode && Boolean(
  getAccountDisplayName(displayProfile) ||
   displayProfile?.carrier_name ||
   displayProfile?.policy_number ||

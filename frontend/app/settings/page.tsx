@@ -185,11 +185,6 @@ export default function SettingsPage() {
     .trim()
     .toLowerCase();
 
-  const showBetaSettingsLinks =
-    settingsPlan === "beta" ||
-    settingsPlan === "beta_access" ||
-    settingsPlan === "early_access";
-
   // LOSSQ_INTERNAL_ADMIN_LINK_VISIBILITY_V2
   // Platform Admin and Support Lookup are LossQ-internal tools.
   // Do not allow normal customer owners/admins or generic @lossq.com test users.
@@ -218,7 +213,24 @@ export default function SettingsPage() {
 
   const internalUser = (me as any)?.user || me || {};
   const internalRole = String(internalUser?.role || internalTokenPayload?.role || "").trim().toLowerCase();
+  const internalOrganizationId = Number(
+    internalUser?.organization_id ||
+      internalUser?.organization?.id ||
+      internalTokenPayload?.organization_id ||
+      internalTokenPayload?.org_id ||
+      0
+  );
+  const isOrgThreeOwnerOrAdmin =
+    internalOrganizationId === 3 && ["owner", "admin"].includes(internalRole);
+
+  const showBetaSettingsLinks =
+    isOrgThreeOwnerOrAdmin ||
+    settingsPlan === "beta" ||
+    settingsPlan === "beta_access" ||
+    settingsPlan === "early_access";
+
   const canSeePlatformAdminLinks =
+    isOrgThreeOwnerOrAdmin ||
     [
       "founder",
       "platform_owner",
