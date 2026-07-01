@@ -17789,9 +17789,20 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
     return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|/")
 
   def read_pdf_text():
+    pdf_reader = None
     try:
-      from pypdf import PdfReader
-      reader = PdfReader(str(file_path))
+      from pypdf import PdfReader as pdf_reader
+    except Exception:
+      try:
+        from PyPDF2 import PdfReader as pdf_reader
+      except Exception:
+        pdf_reader = None
+
+    if not pdf_reader:
+      return ""
+
+    try:
+      reader = pdf_reader(str(file_path))
       chunks = []
       for page in reader.pages[:5]:
         try:
@@ -17922,7 +17933,9 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
   def acceptable_label_value(value):
     value = clean(value)
     lowered = value.lower()
-    if not value or lowered in bad_labeled_values:
+    if not value or value in {".", "..", "..."} or lowered in bad_labeled_values:
+      return ""
+    if re.fullmatch(r"[a-z]+(?:_[a-z0-9]+)+", value):
       return ""
     if "sample data only" in lowered or "not an actual insurance record" in lowered:
       return ""
@@ -18182,8 +18195,10 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
 
     money_parts = [piece for piece in detail_parts if money_re.match(piece)]
     premium = money_parts[-1] if money_parts else ""
-    deductible = money_parts[-2] if len(money_parts) > 1 else ""
-    limit_parts = [piece for piece in detail_parts if piece not in money_parts]
+    exposure_value = money_parts[-2] if len(money_parts) > 1 else ""
+    status_values = {"in force", "active", "current", "renewal", "expired", "cancelled", "canceled", "bound"}
+    status = next((piece for piece in detail_parts if piece.lower() in status_values), "")
+    basis_parts = [piece for piece in detail_parts if piece not in money_parts and piece.lower() not in status_values]
 
     add_policy({
       "policy_number": value,
@@ -18192,8 +18207,9 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
       "effective_date": eff,
       "expiration_date": exp,
       "current_premium": premium,
-      "deductible": deductible,
-      "limits": " ".join(limit_parts),
+      "exposure_basis": " ".join(basis_parts),
+      "exposure_value": exposure_value,
+      "status": status,
     })
     idx = max(cursor, idx + 1)
 
@@ -18557,6 +18573,81 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
     if effective_date and expiration_date:
       policy_period = f"{effective_date} - {expiration_date}"
 
+  def set_profile_exposure(field, label, value):
+    value = money_number(value)
+    if not value:
+      return
+    parsed_profile[field] = value
+    exposure_inputs = parsed_profile.get("exposure_inputs") if isinstance(parsed_profile.get("exposure_inputs"), dict) else {}
+    exposure_inputs[label] = value
+    parsed_profile["exposure_inputs"] = exposure_inputs
+
+  def apply_policy_exposure_rollup():
+    for policy in policies:
+      if not isinstance(policy, dict):
+        continue
+      basis = clean(policy.get("exposure_basis")).lower()
+      value = policy.get("exposure_value")
+      if not basis or not value:
+        continue
+      if "unit" in basis or "location" in basis:
+        set_profile_exposure("unit_count", "Unit Count", value)
+      elif "building" in basis or "tiv" in basis or "property" in basis or "insured value" in basis:
+        set_profile_exposure("property_tiv", "Property TIV", value)
+      elif "payroll" in basis:
+        set_profile_exposure("payroll", "Payroll", value)
+      elif "receipt" in basis or "revenue" in basis or "sales" in basis:
+        set_profile_exposure("revenue", "Revenue / Sales", value)
+      elif "vehicle" in basis or "power unit" in basis or "driver" in basis:
+        label = "Driver Count" if "driver" in basis else "Vehicle Count"
+        field = "driver_count" if "driver" in basis else "vehicle_count"
+        set_profile_exposure(field, label, value)
+
+  def apply_exposure_schedule_values():
+    exposure_section = section_between(
+      r"\bEXPOSURE\s+SCHEDULE\b",
+      [r"\bCLAIM\s+DETAIL\b", r"\bLOSS\s+SUMMARY\b", r"\bUNDERWRITING\s+NOTES\b"],
+    )
+    lines = [clean(part) for part in exposure_section.splitlines() if clean(part)]
+    ignored = {"exposure type", "value", "risk detail", "needed for submission"}
+    for idx, label in enumerate(lines):
+      key = label.lower()
+      if key in ignored or idx + 1 >= len(lines):
+        continue
+      value = lines[idx + 1]
+      if not re.search(r"\d", value):
+        continue
+      if "unit" in key or "location count" in key:
+        set_profile_exposure("unit_count", "Unit Count", value)
+      elif "building" in key or "property tiv" in key or "tiv" in key or "insured value" in key:
+        set_profile_exposure("property_tiv", "Property TIV", value)
+      elif "payroll" in key:
+        set_profile_exposure("payroll", "Payroll", value)
+      elif "receipt" in key or "revenue" in key or "sales" in key:
+        set_profile_exposure("revenue", "Revenue / Sales", value)
+      elif "vehicle" in key or "auto" in key or "power unit" in key:
+        set_profile_exposure("vehicle_count", "Vehicle Count", value)
+      elif "driver" in key:
+        set_profile_exposure("driver_count", "Driver Count", value)
+
+  def clear_misplaced_exposure_values():
+    exposure_inputs = parsed_profile.get("exposure_inputs") if isinstance(parsed_profile.get("exposure_inputs"), dict) else {}
+    property_tiv = clean(parsed_profile.get("property_tiv"))
+    has_receipts_signal = bool(re.search(r"\b(receipts?|gross receipts?|revenue|sales)\b", raw_text, flags=re.I))
+    has_vehicle_signal = bool(re.search(r"\b(vehicle count|vehicle schedule|vehicles?|autos?|power units?)\b", raw_text, flags=re.I))
+    if property_tiv and clean(parsed_profile.get("receipts")) == property_tiv and not has_receipts_signal:
+      parsed_profile.pop("receipts", None)
+      exposure_inputs.pop("Receipts", None)
+    if property_tiv and clean(parsed_profile.get("vehicle_count")) == property_tiv and not has_vehicle_signal:
+      parsed_profile.pop("vehicle_count", None)
+      exposure_inputs.pop("Vehicle Count", None)
+    parsed_profile["exposure_inputs"] = exposure_inputs
+
+  # LOSSQ_US_PDF_TYPED_EXPOSURE_REPAIR_V1
+  apply_policy_exposure_rollup()
+  apply_exposure_schedule_values()
+  clear_misplaced_exposure_values()
+
   # LOSSQ_US_PDF_STRUCTURED_CLAIM_ROWS_REPAIR_V2
   # Prefer true claim-detail rows over summary lines when a PDF provides a
   # claim-number/policy-number table with policy schedule evidence.
@@ -18571,7 +18662,13 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
         continue
       if re.search(r"(?i)\b(loss\s+summary|total\s+incurred\s+by|claim\s+count\s+by)\b", line):
         break
-      if re.match(r"^[A-Z]{2,12}-\d{5,}\b", line):
+      upper_line = line.upper()
+      looks_like_policy_number = any(known == upper_line or known.startswith(upper_line) for known in policy_lookup)
+      if (
+        re.match(r"^[A-Z0-9]+(?:-[A-Z0-9]+)+\b", line)
+        and not looks_like_policy_number
+        and not re.match(r"(?i)^(policy|claim|loss|reported|reserve|total)\b", line)
+      ):
         if current_block:
           row_blocks.append(" ".join(current_block))
         current_block = [line]
@@ -18598,6 +18695,12 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
       claim_number = clean(row_match.group(1))
       policy_number = clean(row_match.group(2))
       rest = row_match.group(3)
+      shifted_policy = re.match(r"^([A-Z0-9]+(?:-[A-Z0-9]+)+)\s+(.+)$", rest)
+      if re.fullmatch(r"\d{1,4}", policy_number or "") and shifted_policy:
+        policy_number = clean(shifted_policy.group(1))
+        rest = shifted_policy.group(2)
+        row_block = clean(f"{claim_number} {policy_number} {rest}")
+        row_match = re.match(r"^(\S+)\s+(\S+)\s+(.+)$", row_block)
       original_policy_number = policy_number
 
       policy_key = policy_number.upper()
@@ -18622,6 +18725,8 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
           suffix = known_policy[len(original_policy_number):].lstrip("-")
           if before_tokens and suffix and before_tokens[0].upper() == suffix.upper():
             before_tokens = before_tokens[1:]
+      if before_tokens and re.fullmatch(r"\d{1,4}", before_tokens[0]):
+        before_tokens = before_tokens[1:]
       raw_lob = before_tokens[0] if before_tokens else ""
       policy_line = ""
       if policy_key in policy_lookup:
