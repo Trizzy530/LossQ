@@ -1757,7 +1757,7 @@ function lossqFrontendCanadaOrDDMMDateMarketV1(profileLike: any, policiesLike: a
  ].map(lossqFrontendCleanDisplayTextV1).join(" ").toLowerCase();
 
  if (text.includes("canada") || /\bcad\b/i.test(text)) return true;
- if (text.includes("dd/mm/yyyy")) return true;
+ if (text.includes("dd/mm/yyyy") || text.includes("yyyy/dd/mm")) return true;
  if (/intact|aviva canada|wawanesa|northbridge|definity|economical|lloyd|chubb canada|zurich canada|cna canada|co-operators|gore mutual|heartland/.test(text)) return true;
 
  const province = lossqFrontendProvinceCodeV1(
@@ -1778,7 +1778,7 @@ function lossqFrontendCanadaOrDDMMDateMarketV1(profileLike: any, policiesLike: a
  return Boolean(lossqFrontendProvinceFromPolicyOrClaimV1(profileLike, policiesLike, claimsLike));
 }
 
-function lossqFrontendDDMMYYYYV1(value: any) {
+function lossqFrontendYYYYDDMMV1(value: any) {
  const raw = lossqFrontendCleanDisplayTextV1(value);
  if (!raw) return "";
 
@@ -1806,10 +1806,13 @@ function lossqFrontendDDMMYYYYV1(value: any) {
   if (year < 100) year += year < 50 ? 2000 : 1900;
   if (day < 1 || day > 31 || month < 1 || month > 12) return raw;
 
-  return `${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}/${String(year).padStart(4, "0")}`;
+  return `${String(year).padStart(4, "0")}/${String(day).padStart(2, "0")}/${String(month).padStart(2, "0")}`;
  };
 
- let match = raw.match(/\b(\d{4})[-/](\d{1,2})[-/](\d{1,2})\b/);
+ let match = raw.match(/^\s*(\d{4})\/(\d{1,2})\/(\d{1,2})\s*$/);
+ if (match) return `${String(match[1]).padStart(4, "0")}/${String(match[2]).padStart(2, "0")}/${String(match[3]).padStart(2, "0")}`;
+
+ match = raw.match(/\b(\d{4})-(\d{1,2})-(\d{1,2})\b/);
  if (match) return emit(match[3], match[2], match[1]);
 
  match = raw.match(/\b([A-Za-z]{3,9})\s+(\d{1,2})(?:st|nd|rd|th)?[,]?\s+(\d{2,4})\b/i);
@@ -1840,7 +1843,7 @@ function lossqFrontendDateForMarketV1(value: any, profileLike: any, policiesLike
   if (!raw) return "";
 
   if (lossqFrontendCanadaOrDDMMDateMarketV1(profileLike, policiesLike, claimsLike)) {
-   return lossqFrontendDDMMYYYYV1(raw);
+   return lossqFrontendYYYYDDMMV1(raw);
   }
 
   return lossqUsDashboardDisplayDateV1(raw, {
@@ -5452,6 +5455,7 @@ function lossqUsDashboardDisplayDateV1(value: any, source?: any) {
    country.includes("CANADA") ||
    currency === "CAD" ||
    dateFormat === "DD/MM/YYYY" ||
+   dateFormat === "YYYY/DD/MM" ||
    ["ON", "BC", "AB", "QC", "MB", "SK", "NS", "NB", "PE", "NL", "YT", "NU", "NT"].includes(region);
 
   const policyText = JSON.stringify(source?.policies || source?.policy_schedule || source?.policySchedule || source?.policy_number || "");
