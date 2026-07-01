@@ -1454,6 +1454,21 @@ async function safeJson(res: Response) {
  }
 }
 
+// LOSSQ_DASHBOARD_STARTUP_FETCH_TIMEOUT_V1
+async function lossqFetchWithTimeout(input: RequestInfo | URL, init: RequestInit = {}, timeoutMs = 8000) {
+ const controller = new AbortController();
+ const timeout = window.setTimeout(() => controller.abort(), timeoutMs);
+
+ try {
+  return await fetch(input, {
+   ...init,
+   signal: init.signal || controller.signal,
+  });
+ } finally {
+  window.clearTimeout(timeout);
+ }
+}
+
 function objectToChartData(data: Record<string, number>) {
  return Object.entries(data || {}).map(([name, value]) => ({
   name,
@@ -5720,11 +5735,11 @@ function normalizeProfileName(item: any) {
    }
 
    try {
-    const validateRes = await fetch(`${API}/auth/validate`, {
+    const validateRes = await lossqFetchWithTimeout(`${API}/auth/validate`, {
      headers: {
       Authorization: `Bearer ${token}`,
      },
-    });
+    }, 5000);
 
     if (validateRes.status === 401 || validateRes.status === 403) {
      clearSession();
@@ -5758,7 +5773,8 @@ function normalizeProfileName(item: any) {
    }
 
    setAuthReady(true);
-   await loadDashboard(getCachedSelectedPolicy());
+   setDashboardLoading(false);
+   void loadDashboard(getCachedSelectedPolicy(), false, false);
   }
 
   validateSession();
@@ -5992,9 +6008,9 @@ function normalizeProfileName(item: any) {
 
   async function loadBillingStatusForLimits() {
    try {
-    const res = await fetch(`${API}/billing/status`, {
+    const res = await lossqFetchWithTimeout(`${API}/billing/status`, {
      headers: authHeaders(),
-    });
+    }, 5000);
 
     const data = res.ok ? ((await safeJson(res)) || {}) : {};
     setBillingStatus(data);
@@ -6337,9 +6353,9 @@ async function loadProfileList() {
     setProfiles(normalizedCached);
    }
 
-   const profilesRes = await fetch(`${API}/account-profile/all`, {
+   const profilesRes = await lossqFetchWithTimeout(`${API}/account-profile/all`, {
     headers: authHeaders(),
-   });
+   }, 7000);
 
    if (profilesRes.status === 401 || profilesRes.status === 403) {
     clearSession();
@@ -6385,13 +6401,13 @@ async function loadProfileList() {
     try {
 
 
-     const historyRes = await fetch(`${API}/upload-history/`, {
+     const historyRes = await lossqFetchWithTimeout(`${API}/upload-history/`, {
 
 
       headers: authHeaders(),
 
 
-     });
+     }, 5000);
 
 
 
@@ -6711,13 +6727,13 @@ async function loadProfileList() {
   }
  }
 
- async function loadDashboard(policyNumberOverride?: string, skipProfileList = false) {
+ async function loadDashboard(policyNumberOverride?: string, skipProfileList = false, showBlockingLoader = true) {
   if (!getToken()) {
    router.replace("/login?fresh=1");
    return;
   }
 
-  setDashboardLoading(true);
+  if (showBlockingLoader) setDashboardLoading(true);
   const myVersion = ++loadVersionRef.current;
   setDashboardError("");
 
@@ -6741,9 +6757,10 @@ async function loadProfileList() {
    let activeProfile = profile;
 
    if (requestedPolicyNumber) {
-    const selectedRes = await fetch(
+    const selectedRes = await lossqFetchWithTimeout(
      `${API}/account-profile/policy/${encodeURIComponent(requestedPolicyNumber)}`,
-     { headers: authHeaders() }
+     { headers: authHeaders() },
+     7000
     );
 
     if (selectedRes.status === 401 || selectedRes.status === 403) {
@@ -6799,9 +6816,9 @@ async function loadProfileList() {
     setBlankWorkspaceMode(true);
     setProfile({});
    } else {
-    const profileRes = await fetch(`${API}/account-profile/`, {
+    const profileRes = await lossqFetchWithTimeout(`${API}/account-profile/`, {
      headers: authHeaders(),
-    });
+    }, 7000);
 
     if (profileRes.status === 401 || profileRes.status === 403) {
      clearSession();
@@ -6918,11 +6935,11 @@ if (activeProfile?.policy_number) {
      ? `${API}/claims/?policy_numbers=${encodeURIComponent(uniqueClaimReloadKeys.join(","))}`
      : `${API}/claims/`;
 
-   const claimsResponse = await fetch(claimsUrl, {
+   const claimsResponse = await lossqFetchWithTimeout(claimsUrl, {
     headers: {
      Authorization: `Bearer ${getToken() || ""}`,
     },
-   });
+   }, 8000);
 
    const serverClaims: any[] = claimsResponse.ok ? await claimsResponse.json() : [];
 
