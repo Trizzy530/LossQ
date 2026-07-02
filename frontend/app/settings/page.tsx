@@ -156,6 +156,8 @@ export default function SettingsPage() {
   const [inviteEmail, setInviteEmail] = useState("");
   const [inviteRole, setInviteRole] = useState("user");
   const [inviteLink, setInviteLink] = useState("");
+  const [betaInviteEmail, setBetaInviteEmail] = useState("");
+  const [betaInviteLink, setBetaInviteLink] = useState("");
   const [deleteOrganizationId, setDeleteOrganizationId] = useState("");
   const [deleteUserId, setDeleteUserId] = useState("");
 
@@ -452,6 +454,40 @@ export default function SettingsPage() {
     }
   }
 
+  async function createBetaInvite() {
+    setSaving(true);
+    setError("");
+    setMessage("");
+    setBetaInviteLink("");
+
+    if (!isOrgThreeOwnerOrAdmin) {
+      setSaving(false);
+      setError("Beta invites are available only to organization 3 owners and admins.");
+      return;
+    }
+
+    if (!betaInviteEmail.includes("@")) {
+      setSaving(false);
+      setError("Enter a valid beta invite email.");
+      return;
+    }
+
+    try {
+      const res = await apiFetch("/auth/invite", {
+        method: "POST",
+        body: JSON.stringify({ email: betaInviteEmail, role: "user" }),
+      });
+      const data = await safeJson(res);
+      setBetaInviteLink(data?.invite_link || "");
+      setBetaInviteEmail("");
+      setMessage("Beta invite created for organization 3. Copy the invite link and send it to the beta user.");
+      await loadAccountSecurity();
+    } catch (err: any) {
+      setError(err?.message || "Beta invite failed.");
+    } finally {
+      setSaving(false);
+    }
+  }
   async function removeUser(user: OrgUser) {
     if (!user?.id) return;
     const organizationId = organization?.id || user.organization_id || me?.organization_id;
@@ -858,6 +894,50 @@ export default function SettingsPage() {
 
           {canManageUsers ? (
             <>
+              {isOrgThreeOwnerOrAdmin && (
+                <div className="mb-6 rounded-2xl border border-cyan-400/30 bg-cyan-500/10 p-4">
+                  <div className="flex flex-col gap-1 mb-4">
+                    <h3 className="text-lg font-bold text-cyan-100">Beta Invite</h3>
+                    <p className="text-sm text-cyan-100/80">
+                      Create a beta access invite from organization 3 for a new tester. The user will join as a standard user.
+                    </p>
+                  </div>
+
+                  <div className="grid grid-cols-1 md:grid-cols-5 gap-4">
+                    <input
+                      type="email"
+                      value={betaInviteEmail}
+                      onChange={(e) => setBetaInviteEmail(e.target.value)}
+                      className="md:col-span-4 rounded-2xl border border-cyan-400/20 bg-slate-950/80 px-4 py-3 text-white outline-none focus:border-cyan-300"
+                      placeholder="beta-user@company.com"
+                    />
+
+                    <button
+                      onClick={createBetaInvite}
+                      disabled={saving || !betaInviteEmail}
+                      className="rounded-2xl bg-cyan-500 px-5 py-3 font-bold text-slate-950 hover:bg-cyan-400 disabled:opacity-50"
+                    >
+                      Create Beta Invite
+                    </button>
+                  </div>
+
+                  {betaInviteLink && (
+                    <div className="mt-4 rounded-2xl border border-cyan-400/30 bg-slate-950/50 p-4">
+                      <div className="text-sm font-bold text-cyan-200 mb-2">Beta Invite Link</div>
+                      <div className="break-all text-sm text-slate-200">{betaInviteLink}</div>
+                      <button
+                        onClick={() => {
+                          navigator.clipboard.writeText(betaInviteLink);
+                          setMessage("Beta invite link copied.");
+                        }}
+                        className="mt-3 rounded-xl border border-cyan-400/40 px-4 py-2 text-sm font-semibold text-cyan-100 hover:bg-cyan-500/20"
+                      >
+                        Copy Beta Invite Link
+                      </button>
+                    </div>
+                  )}
+                </div>
+              )}
               <div className="grid grid-cols-1 md:grid-cols-5 gap-4 rounded-2xl border border-white/10 bg-slate-900/50 p-4 mb-6">
                 <input
                   type="email"
