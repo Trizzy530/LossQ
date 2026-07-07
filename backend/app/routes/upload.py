@@ -12083,6 +12083,59 @@ def lossq_canada_canonical_upload_overlay_v1(
       or re.search(r"\b[a-z]\d[a-z][ -]?\d[a-z]\d\b", text)
     )
 
+  us_state_codes = {
+    "al", "ak", "az", "ar", "ca", "co", "ct", "de", "fl", "ga", "hi", "id",
+    "il", "in", "ia", "ks", "ky", "la", "me", "md", "ma", "mi", "mn", "ms",
+    "mo", "mt", "ne", "nv", "nh", "nj", "nm", "ny", "nc", "nd", "oh", "ok",
+    "or", "pa", "ri", "sc", "sd", "tn", "tx", "ut", "vt", "va", "wa", "wv",
+    "wi", "wy", "dc",
+  }
+  us_state_pattern = "|".join(sorted(us_state_codes))
+
+  def source_us_score(value):
+    text = fold(lossq_canada_context_text_v3(value))
+    if not text:
+      return 0
+    score = 0
+    if re.search(r"\b(?:market|country|country market|market country)\s*[:#|/-]?\s*(?:united states|usa|us)\b", text):
+      score += 6
+    if re.search(r"\b(?:united states|usa|u\.s\.)\b", text):
+      score += 4
+    if re.search(r"\b(?:currency|curr|loss currency|market currency)\s*[:#|/-]?\s*(?:usd|\$)\b", text):
+      score += 6
+    if re.search(r"\b(?:usd|us\$)\b", text):
+      score += 3
+    if re.search(r"\bus-[a-z0-9]{2,}-\d{2,}\b", text):
+      score += 4
+    if re.search(rf"\b(?:state|st|jur|jurisdiction|market state)\s*[:#|/-]?\s*(?:{us_state_pattern})\b", text):
+      score += 4
+    if re.search(r"\b(?:naic|zip code|zipcode)\b", text):
+      score += 2
+    if re.search(r"\b(?:philadelphia indemnity|cincinnati insurance|cna insurance|great american insurance|travelers|hartford|acuity|chubb insurance)\b", text):
+      score += 3
+    return score
+
+  def source_canada_score(value):
+    text = fold(lossq_canada_context_text_v3(value))
+    if not text:
+      return 0
+    score = 0
+    if re.search(r"\b(?:market|country|country market|market country|pays)\s*[:#|/-]?\s*canada\b", text):
+      score += 6
+    if re.search(r"\bcanada|canadian\b", text):
+      score += 4
+    if re.search(r"\b(?:currency|curr|devise|loss currency|market currency)\s*[:#|/-]?\s*(?:cad|cdn|ca\$|c\$)\b", text):
+      score += 6
+    if "ca$" in text or "c$" in text:
+      score += 3
+    if re.search(r"\b[a-z]\d[a-z][ -]?\d[a-z]\d\b", text):
+      score += 4
+    if re.search(r"\b(?:quebec|ontario|alberta|british columbia|colombie britannique|saskatchewan|manitoba|nova scotia|nouvelle ecosse|new brunswick|nouveau brunswick|prince edward island|ile du prince edouard|newfoundland|labrador|yukon|nunavut|northwest territories|territoires du nord ouest)\b", text):
+      score += 3
+    if re.search(r"\b(?:desjardins|rsa canada|intact|wawanesa|northbridge|aviva canada|lloyd's canada|amf|osfi|fsra|wsib|wcb|worksafebc|cnesst)\b", text):
+      score += 3
+    return score
+
   def explicit_us_only(*values):
     text = fold(" ".join(lossq_canada_context_text_v3(value) for value in values if value not in (None, "", [], {})))
     if has_canada_signal(text):
@@ -12112,13 +12165,23 @@ def lossq_canada_canonical_upload_overlay_v1(
       workbook_parts = []
       for worksheet in workbook.worksheets:
         workbook_parts.append(worksheet.title)
-        for row in worksheet.iter_rows(values_only=True):
+        max_row = min(worksheet.max_row or 0, 1000)
+        max_col = min(worksheet.max_column or 0, 80)
+        for row in worksheet.iter_rows(max_row=max_row, max_col=max_col, values_only=True):
           workbook_parts.extend(clean(cell) for cell in row if good(cell))
       file_text = "\n".join(workbook_parts)
       workbook.close()
     except Exception as exc:
       print("LOSSQ_CANADA_CANONICAL_UPLOAD_OVERLAY_V1_XLSX_TEXT_ERROR:", str(exc)[:200])
       file_text = ""
+
+  source_us_market_score = source_us_score(file_text)
+  source_canada_market_score = source_canada_score(file_text)
+  if source_us_market_score >= 4 and source_us_market_score > source_canada_market_score:
+    profile_data = lossq_us_profile_market_format_cleanup_v1(file_path, profile_data, parsed_claims)
+    parsed_profile = lossq_us_profile_market_format_cleanup_v1(file_path, parsed_profile, parsed_claims)
+    direct_profile = lossq_us_profile_market_format_cleanup_v1(file_path, direct_profile, parsed_claims)
+    return parsed_claims, parsed_profile, profile_data, direct_profile
 
   if explicit_us_only(file_text, parsed_profile, profile_data, direct_profile, parsed_claims):
     return parsed_claims, parsed_profile, profile_data, direct_profile
@@ -17819,6 +17882,19 @@ def lossq_us_profile_market_format_cleanup_v1(file_path, profile_data=None, pars
           chunks.append(open(path_text, "r", encoding="utf-8-sig", errors="ignore").read(250000))
         except Exception:
           pass
+      elif lower.endswith((".xlsx", ".xlsm", ".xls")):
+        try:
+          from openpyxl import load_workbook
+          workbook = load_workbook(path_text, data_only=True, read_only=True)
+          for worksheet in workbook.worksheets:
+            chunks.append(str(worksheet.title or ""))
+            max_row = min(worksheet.max_row or 0, 1000)
+            max_col = min(worksheet.max_column or 0, 80)
+            for row in worksheet.iter_rows(max_row=max_row, max_col=max_col, values_only=True):
+              chunks.extend(clean(cell) for cell in row if cell not in (None, ""))
+          workbook.close()
+        except Exception:
+          pass
     except Exception:
       pass
 
@@ -17831,6 +17907,20 @@ def lossq_us_profile_market_format_cleanup_v1(file_path, profile_data=None, pars
   raw_text = read_text()
   normalized = clean(raw_text)
   upper_blob = normalized.upper()
+
+  source_us_file_signal = bool(
+    re.search(r"\b(?:Market|Country|Country Market|Market Country)\s*[:#|/-]?\s*(?:United States|USA|US)\b", normalized, re.I) or
+    re.search(r"\b(?:Currency|Curr|Loss Currency|Market Currency)\s*[:#|/-]?\s*(?:USD|US\$|\$)\b", normalized, re.I) or
+    re.search(r"\bUS-[A-Z0-9]{2,}-\d{2,}\b", upper_blob) or
+    re.search(r"\b(?:PHILADELPHIA INDEMNITY|CINCINNATI INSURANCE|CNA INSURANCE|GREAT AMERICAN INSURANCE|TRAVELERS|HARTFORD|ACUITY|CHUBB INSURANCE)\b", upper_blob)
+  )
+  source_canada_file_signal = bool(
+    re.search(r"\b(?:Market|Country|Country Market|Market Country|Pays)\s*[:#|/-]?\s*Canada\b", normalized, re.I) or
+    re.search(r"\b(?:Currency|Curr|Devise|Loss Currency|Market Currency)\s*[:#|/-]?\s*(?:CAD|CDN|CA\$|C\$)\b", normalized, re.I) or
+    re.search(r"\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b", upper_blob) or
+    re.search(r"\b(?:QUEBEC|QUÉBEC|ONTARIO|ALBERTA|MANITOBA|SASKATCHEWAN|BRITISH COLUMBIA|NOVA SCOTIA|NEW BRUNSWICK|NEWFOUNDLAND|LABRADOR|PRINCE EDWARD ISLAND|YUKON|NUNAVUT|NORTHWEST TERRITORIES)\b", upper_blob) or
+    re.search(r"\b(?:DESJARDINS|RSA CANADA|INTACT|WAWANESA|NORTHBRIDGE|AVIVA CANADA|LLOYD'S CANADA|AMF|OSFI|FSRA|WSIB|WCB|WORKSAFEBC|CNESST)\b", upper_blob)
+  )
 
   existing_country = clean(
     profile_data.get("market_country")
@@ -17846,13 +17936,12 @@ def lossq_us_profile_market_format_cleanup_v1(file_path, profile_data=None, pars
   ).upper()
 
   canada_signal = bool(
-    existing_country in {"CA", "CAN", "CANADA"} or
-    existing_currency == "CAD" or
+    ((existing_country in {"CA", "CAN", "CANADA"} or existing_currency == "CAD") and not source_us_file_signal) or
     re.search(r"\b(CANADA|CANADIAN|CAD|IBC\s+\d+|ONTARIO|QUEBEC|QUÉBEC|ALBERTA|MANITOBA|SASKATCHEWAN|BRITISH COLUMBIA|NOVA SCOTIA|NEW BRUNSWICK|NEWFOUNDLAND|LABRADOR|PRINCE EDWARD ISLAND|YUKON|NUNAVUT|NORTHWEST TERRITORIES|WSIB)\b", upper_blob) or
     re.search(r"\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b", upper_blob)
   )
 
-  if canada_signal:
+  if canada_signal and not (source_us_file_signal and not source_canada_file_signal):
     return profile_data
 
   us_states = {
