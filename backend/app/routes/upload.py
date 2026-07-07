@@ -11359,6 +11359,17 @@ def lossq_true_account_number_value(value):
   if not raw:
     return ""
 
+  upper_raw = raw.upper()
+  if re.fullmatch(r"US-[A-Z0-9]{2,}-\d{4,}", upper_raw):
+    return raw
+
+  if (
+    len(raw) > 80
+    or raw.count(" ") > 6
+    or re.search(r"(?i)\b(claims?|polic(?:y|ies)|associated|product|property|auto|remain|must)\b", raw)
+  ):
+    return ""
+
   compact = re.sub(r"[^A-Z0-9]+", "", raw.upper())
 
   true_account_signal = any(token in compact for token in [
@@ -19440,6 +19451,625 @@ def lossq_us_pdf_policy_claim_table_repair_v1(file_path, parsed_claims=None, par
 
   return parsed_claims, parsed_profile
 
+
+# LOSSQ_US_READABLE_LOSS_RUN_OVERLAY_V1
+def lossq_us_readable_loss_run_overlay_v1(file_path, parsed_claims=None, parsed_profile=None):
+  """
+  US-only overlay for readable carrier/broker loss runs with semantic sections.
+
+  Handles PDF text tables and wide CSV exports without touching Canadian/CAD
+  files. It trusts policy and claim detail sections over summary text.
+  """
+  import csv
+  import os
+  import re
+  from datetime import datetime
+
+  parsed_claims = parsed_claims if isinstance(parsed_claims, list) else []
+  parsed_profile = dict(parsed_profile) if isinstance(parsed_profile, dict) else {}
+  file_text = str(file_path or "")
+  ext = os.path.splitext(file_text.lower())[1]
+  if ext not in {".pdf", ".csv"}:
+    return parsed_claims, parsed_profile
+
+  def clean(value):
+    return re.sub(r"\s+", " ", str(value or "").replace("\ufeff", "").strip()).strip(" :-|")
+
+  def compact(value):
+    return re.sub(r"[^a-z0-9]+", "", str(value or "").strip().lower())
+
+  def money_number(value):
+    raw = clean(value)
+    if not raw:
+      return ""
+    raw = raw.replace("O", "0")
+    raw = re.sub(r"[^0-9.\-]", "", raw)
+    if raw in {"", "-", "."}:
+      return ""
+    try:
+      amount = float(raw)
+      return int(amount) if amount.is_integer() else amount
+    except Exception:
+      return ""
+
+  def money_float(value):
+    num = money_number(value)
+    try:
+      return float(num or 0)
+    except Exception:
+      return 0.0
+
+  def us_date(value):
+    raw = clean(value)
+    if not raw or raw.lower() in {"open", "closed", "not set"}:
+      return ""
+
+    for fmt in [
+      "%m/%d/%Y", "%m/%d/%y", "%m-%d-%Y", "%m-%d-%y",
+      "%Y-%m-%d", "%Y/%m/%d", "%d %b %Y", "%d %B %Y",
+    ]:
+      try:
+        return datetime.strptime(raw, fmt).strftime("%m/%d/%Y")
+      except Exception:
+        pass
+
+    match = re.search(r"\b(\d{1,2})[/-](\d{1,2})[/-](\d{2,4})\b", raw)
+    if match:
+      first = int(match.group(1))
+      second = int(match.group(2))
+      year = int(match.group(3))
+      if year < 100:
+        year += 2000
+      try:
+        return datetime(year, first, second).strftime("%m/%d/%Y")
+      except Exception:
+        return ""
+
+    return ""
+
+  def is_date_like(value):
+    return bool(us_date(value))
+
+  def is_money_like(value):
+    return money_number(value) != ""
+
+  def policy_number_like(value):
+    text = clean(value).upper()
+    if lossq_is_true_account_identifier(text):
+      return False
+    return bool(re.fullmatch(
+      r"(?:CGL|GL|PROP|PROPERTY|AUTO|AU|WC|WCB|UMB|UMBRELLA|CYBER|CY|PROF|PL|EPL|IM|BOP|CARGO|LIQ|LIAB)-[A-Z]{2}-\d{4}-\d{3,6}",
+      text,
+    ))
+
+  def claim_number_like(value):
+    text = clean(value).upper()
+    return bool(re.fullmatch(r"[A-Z]{2,6}-[A-Z]{2,4}-\d{5,6}", text))
+
+  def normalize_lob(value):
+    text = clean(value)
+    upper = text.upper()
+    aliases = {
+      "CGL": "Commercial General Liability",
+      "GL": "General Liability",
+      "PROP": "Property",
+      "PR": "Property",
+      "AUTO": "Commercial Auto",
+      "AU": "Commercial Auto",
+      "WC": "Workers Compensation",
+      "WCB": "Workers Compensation",
+      "CY": "Cyber Liability",
+      "CYBER": "Cyber Liability",
+      "UMB": "Umbrella Liability",
+      "IM": "Inland Marine",
+      "PROF": "Professional Liability",
+      "PL": "Professional Liability",
+      "LIQ": "Liquor Liability",
+    }
+    return aliases.get(upper, text)
+
+  def reject_canada(blob):
+    upper = str(blob or "").upper()
+    return bool(
+      re.search(r"\b(CANADA|CANADIAN|CAD|CA\$|C\$|IBC|WSIB|ONTARIO|QUEBEC|QUÉBEC|ALBERTA|MANITOBA|SASKATCHEWAN|BRITISH COLUMBIA|NOVA SCOTIA|NEW BRUNSWICK|NEWFOUNDLAND|LABRADOR|YUKON|NUNAVUT)\b", upper)
+      or re.search(r"\b[A-Z]\d[A-Z][ -]?\d[A-Z]\d\b", upper)
+    )
+
+  def finalize_overlay(profile, claims, policies):
+    if not claims and not policies:
+      return parsed_claims, parsed_profile
+
+    profile = dict(parsed_profile, **{k: v for k, v in profile.items() if v not in ("", None, [], {})})
+    claims = [claim for claim in claims if isinstance(claim, dict) and clean(claim.get("claim_number"))]
+    policies = [policy for policy in policies if isinstance(policy, dict) and clean(policy.get("policy_number"))]
+
+    by_claim = {}
+    for claim in claims:
+      claim_number = clean(claim.get("claim_number") or claim.get("claimNumber"))
+      policy_number = clean(claim.get("policy_number") or claim.get("policyNumber"))
+      if not claim_number:
+        continue
+      claim["claim_number"] = claim_number
+      claim["policy_number"] = policy_number
+      claim["policy"] = policy_number
+      claim["line_of_business"] = normalize_lob(claim.get("line_of_business") or claim.get("policy_line") or "")
+      claim["policy_line"] = claim["line_of_business"]
+      claim["status"] = clean(claim.get("status") or claim.get("claim_status") or "Open")
+      claim["claim_status"] = claim["status"]
+      claim["paid_amount"] = money_number(claim.get("paid_amount") or claim.get("paid") or 0)
+      claim["paid"] = claim["paid_amount"]
+      claim["reserve_amount"] = money_number(claim.get("reserve_amount") or claim.get("reserve") or 0)
+      claim["reserve"] = claim["reserve_amount"]
+      claim["total_incurred"] = money_number(claim.get("total_incurred") or claim.get("incurred") or claim.get("total") or 0)
+      claim["incurred"] = claim["total_incurred"]
+      claim["currency"] = "USD"
+      claim["market_currency"] = "USD"
+      claim["date_format"] = "MM/DD/YYYY"
+      claim["dateFormat"] = "MM/DD/YYYY"
+      for key in ["loss_date", "date_of_loss", "reported_date", "date_reported", "closed_date", "date_closed"]:
+        if claim.get(key):
+          claim[key] = us_date(claim.get(key)) or clean(claim.get(key))
+      if claim.get("loss_date") and not claim.get("date_of_loss"):
+        claim["date_of_loss"] = claim.get("loss_date")
+      if claim.get("reported_date") and not claim.get("date_reported"):
+        claim["date_reported"] = claim.get("reported_date")
+      if claim.get("closed_date") and not claim.get("date_closed"):
+        claim["date_closed"] = claim.get("closed_date")
+      by_claim[f"{claim_number}|{policy_number}".upper()] = claim
+    claims = list(by_claim.values())
+
+    claim_totals_by_policy = {}
+    claim_counts_by_policy = {}
+    for claim in claims:
+      policy_number = clean(claim.get("policy_number"))
+      if not policy_number:
+        continue
+      claim_totals_by_policy[policy_number] = claim_totals_by_policy.get(policy_number, 0.0) + money_float(claim.get("total_incurred"))
+      claim_counts_by_policy[policy_number] = claim_counts_by_policy.get(policy_number, 0) + 1
+
+    by_policy = {}
+    for policy in policies:
+      policy_number = clean(policy.get("policy_number"))
+      line = normalize_lob(policy.get("line_of_business") or policy.get("policy_type") or policy.get("coverage") or "")
+      policy["policy_number"] = policy_number
+      policy["policy_type"] = line
+      policy["line_of_business"] = line
+      policy["coverage"] = line
+      policy["carrier"] = clean(policy.get("carrier") or profile.get("carrier_name") or profile.get("writing_carrier"))
+      policy["effective_date"] = us_date(policy.get("effective_date") or policy.get("effective")) or clean(policy.get("effective_date") or policy.get("effective"))
+      policy["expiration_date"] = us_date(policy.get("expiration_date") or policy.get("expiration")) or clean(policy.get("expiration_date") or policy.get("expiration"))
+      policy["exposure_amount"] = money_number(policy.get("exposure_amount") or policy.get("exposure") or 0)
+      policy["current_premium"] = money_number(policy.get("current_premium") or policy.get("premium") or 0)
+      policy["premium"] = policy["current_premium"]
+      policy["total_incurred"] = int(claim_totals_by_policy.get(policy_number, 0)) if claim_totals_by_policy.get(policy_number, 0).is_integer() else claim_totals_by_policy.get(policy_number, 0)
+      policy["claims"] = claim_counts_by_policy.get(policy_number, 0)
+      by_policy[policy_number] = policy
+    policies = list(by_policy.values())
+
+    total_paid = sum(money_float(claim.get("paid_amount")) for claim in claims)
+    total_reserve = sum(money_float(claim.get("reserve_amount")) for claim in claims)
+    total_incurred = sum(money_float(claim.get("total_incurred")) for claim in claims)
+    open_claims = sum(1 for claim in claims if "closed" not in clean(claim.get("status")).lower())
+    closed_claims = sum(1 for claim in claims if "closed" in clean(claim.get("status")).lower())
+    current_premium = sum(money_float(policy.get("current_premium")) for policy in policies)
+
+    profile["market_country"] = "United States"
+    profile["country"] = "United States"
+    profile["currency"] = "USD"
+    profile["market_currency"] = "USD"
+    profile["date_format"] = "MM/DD/YYYY"
+    profile["dateFormat"] = "MM/DD/YYYY"
+    profile["market_date_format"] = "MM/DD/YYYY"
+    if policies:
+      first_policy = policies[0]
+      profile["policies"] = policies
+      profile["policy_numbers"] = [policy.get("policy_number") for policy in policies if policy.get("policy_number")]
+      profile["policy_number"] = clean(profile.get("policy_number")) if clean(profile.get("policy_number")) and policy_number_like(profile.get("policy_number")) else first_policy.get("policy_number")
+      profile["main_policy"] = profile.get("policy_number")
+      profile["policy_type"] = first_policy.get("policy_type")
+      profile["line_of_business"] = first_policy.get("line_of_business")
+      profile["effective_date"] = us_date(profile.get("effective_date")) or first_policy.get("effective_date")
+      profile["expiration_date"] = us_date(profile.get("expiration_date")) or first_policy.get("expiration_date")
+    if claims:
+      profile["claims"] = claims
+      profile["parsed_claims"] = claims
+      profile["claim_count"] = len(claims)
+      profile["total_claims"] = len(claims)
+      profile["open_claims"] = open_claims
+      profile["closed_claims"] = closed_claims
+      profile["total_paid"] = int(total_paid) if total_paid.is_integer() else total_paid
+      profile["total_reserve"] = int(total_reserve) if total_reserve.is_integer() else total_reserve
+      profile["total_incurred"] = int(total_incurred) if total_incurred.is_integer() else total_incurred
+    if current_premium:
+      profile["current_premium"] = int(current_premium) if current_premium.is_integer() else current_premium
+    for carrier_key in ["carrier_name", "writing_carrier"]:
+      if profile.get(carrier_key):
+        profile[carrier_key] = clean(profile.get(carrier_key))
+    if profile.get("carrier_name") and not profile.get("writing_carrier"):
+      profile["writing_carrier"] = profile.get("carrier_name")
+    if profile.get("writing_carrier") and not profile.get("carrier_name"):
+      profile["carrier_name"] = profile.get("writing_carrier")
+
+    exposure_inputs = dict(profile.get("exposure_inputs") or {})
+    if profile.get("current_premium"):
+      exposure_inputs["current_premium"] = profile.get("current_premium")
+    if profile.get("line_of_business"):
+      exposure_inputs["primary_line_of_business"] = profile.get("line_of_business")
+    if profile.get("state"):
+      exposure_inputs["state"] = profile.get("state")
+    for policy in policies:
+      basis = compact(policy.get("exposure_basis"))
+      exposure_amount = money_number(policy.get("exposure_amount"))
+      if not exposure_amount:
+        continue
+      if "payroll" in basis:
+        exposure_inputs["payroll"] = exposure_amount
+      elif "vehicle" in basis or "powerunit" in basis:
+        exposure_inputs["vehicle_count"] = exposure_amount
+      elif "receipt" in basis or "sales" in basis or "revenue" in basis or "gross" in basis:
+        exposure_inputs["receipts"] = exposure_amount
+        exposure_inputs["revenue_sales"] = exposure_amount
+      elif "tiv" in basis or "property" in basis or "building" in basis:
+        exposure_inputs["property_tiv"] = exposure_amount
+      elif "record" in basis:
+        exposure_inputs["records_count"] = exposure_amount
+      elif "case" in basis:
+        exposure_inputs["case_count"] = exposure_amount
+    if exposure_inputs:
+      profile["exposure_inputs"] = exposure_inputs
+
+    return claims if claims else parsed_claims, profile
+
+  def read_pdf_text():
+    reader_class = None
+    try:
+      from pypdf import PdfReader as reader_class
+    except Exception:
+      try:
+        from PyPDF2 import PdfReader as reader_class
+      except Exception:
+        reader_class = None
+    if not reader_class:
+      return ""
+    try:
+      reader = reader_class(str(file_path))
+      return "\n".join((page.extract_text() or "") for page in reader.pages[:6])
+    except Exception:
+      return ""
+
+  def parse_pdf_overlay():
+    raw_text = read_pdf_text()
+    if not raw_text or reject_canada(raw_text):
+      return parsed_claims, parsed_profile
+    if not re.search(r"\b(USD|UNITED STATES|U\.S\.|USA|US-[A-Z0-9]{2,}-\d{4,})\b", raw_text, re.I):
+      return parsed_claims, parsed_profile
+
+    lines = [clean(line) for line in raw_text.splitlines()]
+    lines = [line for line in lines if line]
+    blob = "\n".join(lines)
+    profile = {}
+
+    header_match = re.search(r"\b([A-Z]{2})\s*\|\s*USD\s*\|\s*Valuation\s+([0-9A-Za-z /-]+)", blob, re.I)
+    if header_match:
+      profile["state"] = header_match.group(1).upper()
+      profile["evaluation_date"] = us_date(header_match.group(2))
+    state_match = re.search(r"\bState\s*:\s*([A-Z]{2})\s*\|\s*Currency\s*:\s*USD\s*\|\s*Valuation Date\s*:\s*([0-9A-Za-z /-]+)", blob, re.I)
+    if state_match:
+      profile["state"] = state_match.group(1).upper()
+      profile["evaluation_date"] = us_date(state_match.group(2))
+
+    account_inline = re.search(r"Account\s*(?:no\.?|number)?\s*[:#.-]+\s*(US-[A-Z0-9]{2,}-\d{4,})\s*\|\s*Carrier\s*:\s*([^\n]+)", blob, re.I)
+    if account_inline:
+      profile["account_number"] = account_inline.group(1)
+      profile["customer_number"] = account_inline.group(1)
+      profile["carrier_name"] = clean(account_inline.group(2))
+      profile["writing_carrier"] = clean(account_inline.group(2))
+
+    named_inline = re.search(r"Named insured\s*:\s*(.+?)(?:\s*\|\s*DBA\s*:\s*(.+?))?$", raw_text, re.I | re.M)
+    if named_inline:
+      profile["business_name"] = clean(named_inline.group(1))
+      profile["insured_name"] = profile["business_name"]
+      profile["named_insured"] = profile["business_name"]
+      if named_inline.group(2):
+        profile["dba"] = clean(named_inline.group(2))
+
+    agency_inline = re.search(r"Producing agency\s*:\s*([^\n]+)", raw_text, re.I)
+    if agency_inline:
+      profile["producing_agency"] = clean(agency_inline.group(1))
+      profile["agency_name"] = profile["producing_agency"]
+
+    label_names = {
+      "insured name", "named insured", "account number", "carrier",
+      "producing agency", "dba", "industry",
+    }
+    overlay_keys = {
+      "insured_name", "account_number", "carrier_name", "producing_agency",
+      "business_description", "dba",
+    }
+
+    def value_after_label(label, max_lines=3):
+      for idx, line in enumerate(lines):
+        if compact(line) != compact(label):
+          continue
+        parts = []
+        for next_line in lines[idx + 1:idx + 1 + max_lines + 4]:
+          next_clean = clean(next_line)
+          next_compact = compact(next_clean)
+          if not next_clean or next_clean.lower() in label_names or next_clean.lower() in overlay_keys:
+            break
+          if next_compact in {compact("Field"), compact("Value"), compact("Overlay Target"), compact("Underwriting Note")}:
+            continue
+          if re.search(r"(?i)\b(policy and exposure schedule|policy / exposure schedule|claim detail|detailed exposure)\b", next_clean):
+            break
+          parts.append(next_clean)
+          if len(parts) >= max_lines:
+            break
+        return clean(" ".join(parts))
+      return ""
+
+    table_account = value_after_label("Account Number", 1)
+    if lossq_true_account_number_value(table_account):
+      profile["account_number"] = table_account
+      profile["customer_number"] = table_account
+    table_insured = value_after_label("Insured Name", 3)
+    if table_insured and not profile.get("business_name"):
+      profile["business_name"] = table_insured
+      profile["insured_name"] = table_insured
+      profile["named_insured"] = table_insured
+    table_carrier = value_after_label("Carrier", 2)
+    if table_carrier and "sample data only" not in table_carrier.lower():
+      profile["carrier_name"] = table_carrier
+      profile["writing_carrier"] = table_carrier
+    table_agency = value_after_label("Producing Agency", 2)
+    if table_agency:
+      profile["producing_agency"] = table_agency
+      profile["agency_name"] = table_agency
+    table_dba = value_after_label("DBA", 2)
+    if table_dba:
+      profile["dba"] = table_dba
+
+    policies = []
+    policy_start = next((i for i, line in enumerate(lines) if re.search(r"(?i)policy.*exposure.*schedule", line)), -1)
+    policy_end = len(lines)
+    if policy_start >= 0:
+      for i in range(policy_start + 1, len(lines)):
+        if re.search(r"(?i)\b(detailed exposure|exposure / control notes|claim detail)\b", lines[i]):
+          policy_end = i
+          break
+      policy_lines = lines[policy_start:policy_end]
+      for idx, line in enumerate(policy_lines):
+        if not policy_number_like(line):
+          continue
+        if idx + 7 >= len(policy_lines):
+          continue
+        policy = {
+          "policy_number": line,
+          "line_of_business": policy_lines[idx + 1],
+          "effective_date": policy_lines[idx + 2],
+          "expiration_date": policy_lines[idx + 3],
+          "status": policy_lines[idx + 4],
+          "exposure_basis": policy_lines[idx + 5],
+          "exposure_amount": money_number(policy_lines[idx + 6]),
+          "current_premium": money_number(policy_lines[idx + 7]),
+          "deductible": money_number(policy_lines[idx + 8]) if idx + 8 < len(policy_lines) else "",
+          "carrier": profile.get("carrier_name") or profile.get("writing_carrier") or "",
+        }
+        policies.append(policy)
+
+    known_policies = {policy.get("policy_number") for policy in policies}
+    claims = []
+    claim_start = next((i for i, line in enumerate(lines) if re.fullmatch(r"(?i)claim detail(?: - compact table)?", line)), -1)
+    if claim_start >= 0:
+      claim_end = len(lines)
+      for i in range(claim_start + 1, len(lines)):
+        if re.search(r"(?i)\b(claim notes|loss summary|underwriter markup|totals:)\b", lines[i]):
+          claim_end = i
+          break
+      claim_lines = lines[claim_start:claim_end]
+      for idx, line in enumerate(claim_lines):
+        if not claim_number_like(line):
+          continue
+        if idx + 6 >= len(claim_lines):
+          continue
+        policy_number = clean(claim_lines[idx + 1])
+        if known_policies and policy_number not in known_policies:
+          continue
+        line_of_business = claim_lines[idx + 2]
+        if idx + 7 < len(claim_lines) and re.fullmatch(r"[A-Z]{2}", claim_lines[idx + 4] or "") and is_date_like(claim_lines[idx + 5]):
+          status_index = idx + 7
+          closed_date = ""
+          if idx + 8 < len(claim_lines) and is_date_like(claim_lines[idx + 7]):
+            closed_date = claim_lines[idx + 7]
+            status_index = idx + 8
+          paid_index = status_index + 1
+          claim = {
+            "claim_number": line,
+            "policy_number": policy_number,
+            "line_of_business": line_of_business,
+            "claimant": claim_lines[idx + 3],
+            "jurisdiction": claim_lines[idx + 4],
+            "loss_date": claim_lines[idx + 5],
+            "reported_date": claim_lines[idx + 6],
+            "closed_date": closed_date,
+            "status": claim_lines[status_index] if status_index < len(claim_lines) else "Open",
+            "paid_amount": claim_lines[paid_index] if paid_index < len(claim_lines) else 0,
+            "reserve_amount": claim_lines[paid_index + 1] if paid_index + 1 < len(claim_lines) else 0,
+            "total_incurred": claim_lines[paid_index + 2] if paid_index + 2 < len(claim_lines) else 0,
+            "adjuster": claim_lines[paid_index + 3] if paid_index + 3 < len(claim_lines) else "",
+            "description": claim_lines[paid_index + 4] if paid_index + 4 < len(claim_lines) else "",
+          }
+          claims.append(claim)
+          continue
+
+        cursor = idx + 3
+        claimant_parts = []
+        while cursor < len(claim_lines) and not is_date_like(claim_lines[cursor]):
+          if claim_number_like(claim_lines[cursor]) or policy_number_like(claim_lines[cursor]):
+            break
+          claimant_parts.append(claim_lines[cursor])
+          cursor += 1
+        if cursor + 4 >= len(claim_lines):
+          continue
+        claim = {
+          "claim_number": line,
+          "policy_number": policy_number,
+          "line_of_business": line_of_business,
+          "claimant": clean(" ".join(claimant_parts)),
+          "loss_date": claim_lines[cursor],
+          "status": claim_lines[cursor + 1],
+          "paid_amount": claim_lines[cursor + 2],
+          "reserve_amount": claim_lines[cursor + 3],
+          "total_incurred": claim_lines[cursor + 4],
+        }
+        claims.append(claim)
+
+    notes_start = next((i for i, line in enumerate(lines) if re.search(r"(?i)claim notes", line)), -1)
+    if notes_start >= 0 and claims:
+      claims_by_number = {clean(claim.get("claim_number")): claim for claim in claims}
+      note_lines = lines[notes_start:]
+      for idx, line in enumerate(note_lines):
+        if not claim_number_like(line) or line not in claims_by_number:
+          continue
+        claim = claims_by_number[line]
+        if idx + 1 < len(note_lines):
+          claim["jurisdiction"] = note_lines[idx + 1]
+        if idx + 2 < len(note_lines):
+          parts = [clean(part) for part in re.split(r"\s+/\s+", note_lines[idx + 2]) if clean(part)]
+          if parts:
+            claim["reported_date"] = parts[0]
+          if len(parts) > 1 and parts[1].lower() != "open":
+            claim["closed_date"] = parts[1]
+        if idx + 3 < len(note_lines):
+          claim["adjuster"] = note_lines[idx + 3]
+        desc_parts = []
+        for next_line in note_lines[idx + 4:]:
+          if claim_number_like(next_line) or re.search(r"(?i)loss summary", next_line):
+            break
+          desc_parts.append(next_line)
+        if desc_parts:
+          claim["description"] = clean(" ".join(desc_parts))
+
+    return finalize_overlay(profile, claims, policies)
+
+  def parse_csv_overlay():
+    try:
+      with open(file_path, "r", encoding="utf-8-sig", errors="replace", newline="") as handle:
+        rows = list(csv.DictReader(handle))
+    except Exception:
+      return parsed_claims, parsed_profile
+    if not rows:
+      return parsed_claims, parsed_profile
+    sample_blob = "\n".join(" ".join(str(value or "") for value in row.values()) for row in rows[:20])
+    if reject_canada(sample_blob):
+      return parsed_claims, parsed_profile
+    if not re.search(r"\b(US|USA|UNITED STATES|USD|\$|US-[A-Z0-9]{2,}-\d{4,})\b", sample_blob, re.I):
+      return parsed_claims, parsed_profile
+
+    keys_by_compact = {}
+    for key in rows[0].keys():
+      if key is not None:
+        keys_by_compact[compact(key)] = key
+
+    def get(row, *aliases):
+      for alias in aliases:
+        key = keys_by_compact.get(compact(alias))
+        if key is not None:
+          value = clean(row.get(key))
+          if value:
+            return value
+      return ""
+
+    profile = {}
+    policies = []
+    claims = []
+    for row in rows:
+      row_type = clean(get(row, "type??", "type", "record type", "section")).upper()
+      if not row_type:
+        continue
+      if not profile.get("business_name"):
+        profile["business_name"] = get(row, "insured account name", "insured", "insured name", "account name")
+        profile["insured_name"] = profile.get("business_name")
+        profile["named_insured"] = profile.get("business_name")
+      if not profile.get("account_number"):
+        account_number = get(row, "acct/customer", "account number", "account no", "customer number", "client number")
+        if lossq_true_account_number_value(account_number):
+          profile["account_number"] = account_number
+          profile["customer_number"] = account_number
+      if not profile.get("carrier_name"):
+        profile["carrier_name"] = get(row, "carrier name", "carrier", "writing carrier", "insurance carrier")
+        profile["writing_carrier"] = profile.get("carrier_name")
+      if not profile.get("producing_agency"):
+        profile["producing_agency"] = get(row, "broker/producer", "producing agency", "producer", "agency")
+        profile["agency_name"] = profile.get("producing_agency")
+      if not profile.get("state"):
+        profile["state"] = get(row, "state/juris", "state", "jurisdiction")
+      if not profile.get("evaluation_date"):
+        profile["evaluation_date"] = us_date(get(row, "valuation dt", "valuation date", "evaluation date", "run date"))
+      if not profile.get("business_description"):
+        profile["business_description"] = get(row, "operations desc", "operations", "business description", "description")
+      if get(row, "DBA") and not profile.get("dba"):
+        profile["dba"] = get(row, "DBA")
+
+      policy_number = get(row, "policy ref", "policy number", "policy", "policy no")
+      if row_type == "POLICY" and policy_number_like(policy_number):
+        policies.append({
+          "policy_number": policy_number,
+          "line_of_business": get(row, "coverage/LOB", "line of business", "lob", "coverage"),
+          "effective_date": get(row, "eff", "effective", "effective date"),
+          "expiration_date": get(row, "exp", "expiration", "expiration date"),
+          "status": get(row, "status maybe", "status"),
+          "exposure_basis": get(row, "exposure basis", "basis"),
+          "exposure_amount": get(row, "exposure amount", "exposure"),
+          "current_premium": get(row, "premium amt", "premium", "current premium"),
+          "deductible": get(row, "deductible"),
+          "carrier": profile.get("carrier_name") or "",
+        })
+
+      claim_number = get(row, "claim number", "claim no", "claim")
+      if row_type == "CLAIM" and claim_number_like(claim_number):
+        paid = get(row, "paid total", "paid", "paid amount")
+        if not paid:
+          paid = str(money_float(get(row, "paid indemnity")) + money_float(get(row, "paid expense")))
+        reserve = get(row, "reserve total", "reserve", "reserve amount")
+        if not reserve:
+          reserve = str(money_float(get(row, "reserve indemnity")) + money_float(get(row, "reserve expense")))
+        claims.append({
+          "claim_number": claim_number,
+          "policy_number": policy_number,
+          "line_of_business": get(row, "coverage/LOB", "coverage detail", "line of business", "lob", "coverage"),
+          "claimant": get(row, "claimant / party", "claimant", "party"),
+          "jurisdiction": get(row, "state/juris", "jurisdiction", "state"),
+          "loss_date": get(row, "loss date", "date of loss"),
+          "reported_date": get(row, "reported date", "date reported"),
+          "closed_date": get(row, "closed date", "date closed"),
+          "status": get(row, "claim status", "status"),
+          "cause_of_loss": get(row, "cause of loss", "cause"),
+          "description": get(row, "free text description", "description", "loss description"),
+          "adjuster": get(row, "adjuster/examiner", "adjuster", "examiner"),
+          "paid_amount": paid,
+          "reserve_amount": reserve,
+          "total_incurred": get(row, "total incurred", "incurred", "total"),
+        })
+
+    return finalize_overlay(profile, claims, policies)
+
+  if ext == ".pdf":
+    repaired_claims, repaired_profile = parse_pdf_overlay()
+  else:
+    repaired_claims, repaired_profile = parse_csv_overlay()
+
+  if repaired_profile is not parsed_profile:
+    print("LOSSQ_US_READABLE_LOSS_RUN_OVERLAY_V1:", {
+      "file": os.path.basename(str(file_path or "")),
+      "claims": len(repaired_claims or []),
+      "policies": len(repaired_profile.get("policies") or []),
+      "account_number": repaired_profile.get("account_number"),
+      "insured": repaired_profile.get("business_name"),
+      "total_incurred": repaired_profile.get("total_incurred"),
+    })
+  return repaired_claims, repaired_profile
+
+
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
   # LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_CALL_V6
   profile_data = lossq_sanitize_profile_policies_before_upsert_v6(profile_data)
@@ -25852,6 +26482,16 @@ def lossq_is_true_account_identifier(value):
   if not text:
     return False
 
+  if re.fullmatch(r"US-[A-Z0-9]{2,}-\d{4,}", text):
+    return True
+
+  if (
+    len(text) > 80
+    or text.count(" ") > 6
+    or re.search(r"\b(CLAIMS?|POLIC(?:Y|IES)|ASSOCIATED|PRODUCT|PROPERTY|AUTO|REMAIN|MUST)\b", text)
+  ):
+    return False
+
   # Universal account/customer/client identifiers should never be treated as policies.
   return bool(
     re.search(r"\b(ACCT|ACCOUNT|CUST|CUSTOMER|CLIENT)\b", text)
@@ -26653,6 +27293,15 @@ async def save_uploaded_files(files, policy_number, db, current_user):
       parsed_profile,
       {},
       direct_profile,
+    )
+
+    # LOSSQ_US_READABLE_LOSS_RUN_OVERLAY_PRE_EXTEND_CALL_V1
+    # Repair readable US PDF/CSV account, policy, and claim detail sections late
+    # enough that generic cleanup cannot replace them with narrative text.
+    parsed_claims, parsed_profile = lossq_us_readable_loss_run_overlay_v1(
+      file_path,
+      parsed_claims,
+      parsed_profile,
     )
 
     all_parsed_claims.extend(parsed_claims)
@@ -27991,6 +28640,19 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     profile_data,
     direct_profile,
   )
+
+  # LOSSQ_US_READABLE_LOSS_RUN_OVERLAY_PROFILE_UPSERT_CALL_V1
+  # Keep readable US PDF/CSV detail sections authoritative at the final save
+  # boundary, after broad overlays have run.
+  _lossq_us_readable_final_claims, _lossq_us_readable_final_profile = lossq_us_readable_loss_run_overlay_v1(
+    file_path,
+    all_parsed_claims,
+    profile_data,
+  )
+  if _lossq_us_readable_final_profile:
+    profile_data.update(_lossq_us_readable_final_profile)
+  if _lossq_us_readable_final_claims and len(_lossq_us_readable_final_claims) >= len(all_parsed_claims or []):
+    all_parsed_claims = _lossq_us_readable_final_claims
 
   # LOSSQ_US_PROFILE_MARKET_FORMAT_FINAL_SAVE_BOUNDARY_CALL_V2
   # Reapply US-only market/date/carrier normalization after PDF/table repairs so
