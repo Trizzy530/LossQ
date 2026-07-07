@@ -27399,6 +27399,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
       if any(token in upper for token in account_tokens):
         return raw
 
+      if _lossq_excel_re.fullmatch(r"US-[A-Z0-9]{2,}-\d{4,}", upper):
+        return raw
+
       if _lossq_excel_re.search(r"-\d{5,}$", upper) and not _lossq_excel_re.search(r"-\d{4}-", upper):
         return ""
 
@@ -27458,6 +27461,9 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         "valuationdate": "evaluation_date",
         "asofdate": "evaluation_date",
         "lossrundate": "evaluation_date",
+        "state": "state",
+        "accountstate": "state",
+        "marketstate": "state",
       }
 
       if str(file_path or "").lower().endswith(".xlsx"):
@@ -27467,8 +27473,16 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         for worksheet in workbook.worksheets:
           sheet_name_key = _lossq_excel_key_v1(worksheet.title)
 
-          # Prefer Account/Profile sheets, but allow field/value rows anywhere.
-          prefer_sheet = ("account" in sheet_name_key or "profile" in sheet_name_key)
+          # Prefer account-like workbook sections; messy broker workbooks often
+          # keep the canonical account fields on a cover/summary tab.
+          prefer_sheet = any(token in sheet_name_key for token in [
+            "account",
+            "profile",
+            "broker",
+            "cover",
+            "summary",
+            "overlay",
+          ])
 
           for row in worksheet.iter_rows(values_only=True):
             values = [_lossq_excel_clean_v1(cell) for cell in row]
@@ -27511,6 +27525,11 @@ async def save_uploaded_files(files, policy_number, db, current_user):
               if good_value:
                 excel_profile_values[field] = good_value
 
+            elif field == "state":
+              good_value = _lossq_excel_clean_v1(right).upper()
+              if _lossq_excel_re.fullmatch(r"[A-Z]{2}", good_value):
+                excel_profile_values[field] = good_value
+
       final_business_name = _lossq_excel_good_business_v1(excel_profile_values.get("business_name"))
       if final_business_name:
         profile_data["business_name"] = final_business_name
@@ -27529,6 +27548,15 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         profile_data["carrier_name"] = final_carrier_name
         profile_data["writing_carrier"] = final_carrier_name
         profile_data["carrier"] = final_carrier_name
+
+      final_state = _lossq_excel_clean_v1(excel_profile_values.get("state")).upper()
+      if _lossq_excel_re.fullmatch(r"[A-Z]{2}", final_state):
+        profile_data["state"] = final_state
+        profile_data["market_state"] = final_state
+        market_context = profile_data.get("market_context")
+        if isinstance(market_context, dict):
+          market_context["state"] = final_state
+          profile_data["market_context"] = market_context
 
       # LOSSQ_EXCEL_EXPOSURE_INPUTS_FINAL_BEFORE_UPSERT_V2
       # Pull Excel two-column Exposure Inputs sheet directly into top-level
@@ -27580,6 +27608,28 @@ async def save_uploaded_files(files, policy_number, db, current_user):
         cleaned = raw.replace("$", "").replace(",", "").strip()
         return cleaned
 
+      def _lossq_excel_exposure_field_from_basis_v1(value):
+        basis = _lossq_excel_key_v1(value)
+        if not basis:
+          return ""
+        if "payroll" in basis:
+          return "payroll"
+        if any(token in basis for token in ["revenue", "sales", "receipts"]):
+          return "revenue"
+        if any(token in basis for token in ["employee", "staff", "headcount"]):
+          return "employee_count"
+        if "vehicle" in basis:
+          return "vehicle_count"
+        if "driver" in basis:
+          return "driver_count"
+        if any(token in basis for token in ["location", "premises", "site"]):
+          return "location_count"
+        if any(token in basis for token in ["tiv", "insuredvalue", "propertyvalue", "buildingvalue"]):
+          return "property_tiv"
+        if any(token in basis for token in ["patientvisit", "annualpatient", "visits", "records", "recordcount", "unit"]):
+          return "unit_count"
+        return ""
+
       for worksheet in workbook.worksheets:
         sheet_name_key = _lossq_excel_key_v1(worksheet.title)
 
@@ -27601,6 +27651,45 @@ async def save_uploaded_files(files, policy_number, db, current_user):
           value = _lossq_excel_money_or_count_v2(right)
           if value:
             excel_exposure_values[field] = value
+
+        table_headers = None
+        for row in worksheet.iter_rows(values_only=True):
+          values = [_lossq_excel_clean_v1(cell) for cell in row]
+          header_keys = [_lossq_excel_key_v1(cell) for cell in values]
+          if "basis" in header_keys and ("exposurevalue" in header_keys or "premium" in header_keys):
+            table_headers = header_keys
+            continue
+
+          if not table_headers:
+            continue
+
+          if not any(values):
+            continue
+
+          row_map = {}
+          for idx, header_key in enumerate(table_headers):
+            if header_key and idx < len(values):
+              row_map[header_key] = values[idx]
+
+          policy_ref = row_map.get("policyref") or row_map.get("policynumber") or row_map.get("policy")
+          coverage = row_map.get("coverageish") or row_map.get("coverage") or row_map.get("lineofbusiness")
+          if policy_ref and not _lossq_upload_value_looks_like_policy(policy_ref) and not coverage:
+            continue
+
+          basis = row_map.get("basis") or row_map.get("exposurebasis")
+          exposure_value = _lossq_excel_money_or_count_v2(row_map.get("exposurevalue") or row_map.get("value"))
+          premium_value = _lossq_excel_money_or_count_v2(row_map.get("premium") or row_map.get("currentpremium"))
+          field = _lossq_excel_exposure_field_from_basis_v1(basis)
+
+          if field and exposure_value and not excel_exposure_values.get(field):
+            excel_exposure_values[field] = exposure_value
+
+          if premium_value:
+            existing_premium = float(excel_exposure_values.get("current_premium") or 0)
+            try:
+              excel_exposure_values["current_premium"] = str(int(existing_premium + float(premium_value)))
+            except Exception:
+              pass
 
       if excel_exposure_values:
         exposure_inputs = profile_data.get("exposure_inputs")
