@@ -29,6 +29,7 @@ from app.routes import (
     platform_admin,
     review,
     loss_intelligence,
+    loss_run_requests,
     )
 
 from app.models.user import User
@@ -38,6 +39,7 @@ from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
 from app.models.audit_log import AuditLog
 from app.models.underwriting_rule_set import UnderwritingRuleSet
+from app.models.loss_run_request import LossRunRequest, LossRunRequestEvent
 from app.services.schema_maintenance import ensure_claim_soft_delete_columns
 
 load_dotenv()
@@ -113,6 +115,7 @@ app.include_router(upload.router)
 app.include_router(upload_v2.router)
 app.include_router(review.router)
 app.include_router(loss_intelligence.router)
+app.include_router(loss_run_requests.router)
 app.include_router(claims.router)
 app.include_router(summary.router)
 app.include_router(upload_history.router)
