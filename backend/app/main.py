@@ -27,6 +27,8 @@ from app.routes import (
     audit_logs,
     billing,
     platform_admin,
+    review,
+    loss_intelligence,
     )
 
 from app.models.user import User
@@ -35,6 +37,8 @@ from app.models.claim import Claim
 from app.models.upload_history import UploadHistory
 from app.models.account_profile import AccountProfile
 from app.models.audit_log import AuditLog
+from app.models.underwriting_rule_set import UnderwritingRuleSet
+from app.services.schema_maintenance import ensure_claim_soft_delete_columns
 
 load_dotenv()
 
@@ -51,6 +55,7 @@ ALLOWED_ORIGINS = [
 ALLOWED_LOSSQ_ORIGINS = set(ALLOWED_ORIGINS)
 
 Base.metadata.create_all(bind=engine)
+ensure_claim_soft_delete_columns(engine)
 
 app = FastAPI(title="LossQ API", redirect_slashes=False)
 
@@ -106,6 +111,8 @@ app.include_router(beta.router)
 app.include_router(platform_admin.router)
 app.include_router(upload.router)
 app.include_router(upload_v2.router)
+app.include_router(review.router)
+app.include_router(loss_intelligence.router)
 app.include_router(claims.router)
 app.include_router(summary.router)
 app.include_router(upload_history.router)

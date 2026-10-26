@@ -45,5 +45,5 @@ class Claim(Base):
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"))
     uploaded_at = Column(String)
 
-is_deleted = Column(Boolean, default=False)
-deleted_at = Column(DateTime, nullable=True)
+    is_deleted = Column(Boolean, default=False)
+    deleted_at = Column(DateTime, nullable=True)

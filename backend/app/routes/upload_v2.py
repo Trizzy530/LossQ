@@ -19,6 +19,8 @@ from app.role_utils import require_permission
 from app.services.audit import record_audit_event
 from app.services.document_intelligence.parser_cleanup import cleanup_loss_run_extraction
 from app.services.lossq_loss_run_pipeline_v2 import parse_loss_run_upload
+from app.services.loss_intelligence_guard import decide_claim_replacement
+from app.services.source_evidence import build_loss_run_evidence
 
 from app.routes.upload import (
     validate_upload_file_security,
@@ -3556,8 +3558,11 @@ async def save_uploaded_files_v2(
     all_repaired_claims: List[Dict[str, Any]] = []
     all_filtered_out_claims: List[Dict[str, Any]] = []
     saved_claim_rows: List[Dict[str, Any]] = []
+    replacement_decisions: List[Dict[str, Any]] = []
+    source_evidence_packets: List[Dict[str, Any]] = []
     latest_profile_data: Dict[str, Any] = {}
     latest_saved_profile = None
+    latest_profile_persistence_allowed = False
 
     upload_session_id = datetime.now().strftime("%Y%m%d%H%M%S")
     clean_input_policy = clean_profile_value(policy_number)
@@ -3666,6 +3671,21 @@ async def save_uploaded_files_v2(
         repaired_claims = filtered_repaired_claims
         all_filtered_out_claims.extend(filtered_out_claims)
 
+        source_evidence = build_loss_run_evidence(
+            content=content,
+            filename=safe_upload_filename or file.filename or safe_filename,
+            profile=parsed_profile,
+            policies=parsed_policies,
+            claims=repaired_claims,
+        )
+        source_evidence_packets.append(source_evidence)
+        parsed_profile["source_evidence"] = source_evidence.get("profile") or {}
+        parsed_validation["source_evidence_summary"] = source_evidence.get("summary") or {}
+        for claim_index, claim in enumerate(repaired_claims):
+            claim_packet = (source_evidence.get("claims") or [])[claim_index]
+            claim["source_evidence"] = claim_packet.get("fields") or {}
+            claim["evidence_id"] = claim_packet.get("evidence_id")
+
         rollup_from_claims = _filter_policy_schedule_items(
             _build_policy_rollup_from_claims(repaired_claims)
         )
@@ -3740,13 +3760,6 @@ async def save_uploaded_files_v2(
         latest_profile_data = parsed_profile
         latest_saved_profile = None
 
-        if can_persist_policy:
-            latest_saved_profile = force_save_account_profile_v2(
-                db,
-                profile_data=parsed_profile,
-                current_user=current_user,
-            )
-
         file_existing_claims_deleted = 0
         policies_to_replace = [
             policy_number_item
@@ -3755,7 +3768,50 @@ async def save_uploaded_files_v2(
             and policy_number_item not in policies_replaced_this_upload
         ]
 
-        if policies_to_replace and len(repaired_claims) > 0:
+        existing_policy_claim_count = 0
+        if policies_to_replace:
+            existing_policy_claim_count = (
+                db.query(Claim)
+                .filter(
+                    Claim.organization_id == current_user["organization_id"],
+                    func.upper(func.trim(Claim.policy_number)).in_(policies_to_replace),
+                )
+                .count()
+            )
+
+        extraction_quality = (
+            parsed_profile.get("extraction_quality")
+            or (parsed_profile.get("validation") or {}).get("extraction_quality")
+            or {}
+        )
+        reported_total_claims = (
+            (parsed_profile.get("validation") or {})
+            .get("reported_totals", {})
+            .get("reported_total_claims")
+        )
+        replacement_decision = decide_claim_replacement(
+            existing_claim_count=existing_policy_claim_count,
+            incoming_claims=repaired_claims,
+            extraction_quality=extraction_quality,
+            reported_total_claims=reported_total_claims,
+        )
+        replacement_decision_payload = replacement_decision.to_dict()
+        replacement_decision_payload["policy_numbers"] = sorted(policies_to_replace)
+        replacement_decision_payload["filename"] = safe_upload_filename or file.filename
+        replacement_decisions.append(replacement_decision_payload)
+        parsed_profile["validation"]["replacement_decision"] = replacement_decision_payload
+
+        latest_profile_persistence_allowed = (
+            can_persist_policy and replacement_decision.safe_to_replace
+        )
+        if latest_profile_persistence_allowed:
+            latest_saved_profile = force_save_account_profile_v2(
+                db,
+                profile_data=parsed_profile,
+                current_user=current_user,
+            )
+
+        if policies_to_replace and replacement_decision.safe_to_replace:
             existing_claims_deleted = (
                 db.query(Claim)
                 .filter(
@@ -3773,7 +3829,11 @@ async def save_uploaded_files_v2(
         file_saved = 0
         file_duplicates = 0
 
-        for claim_data in repaired_claims:
+        claims_eligible_for_persistence = (
+            repaired_claims if replacement_decision.safe_to_replace else []
+        )
+
+        for claim_data in claims_eligible_for_persistence:
             normalized = normalize_claim_data(
                 raw=claim_data,
                 fallback_policy_number=_clean(file_policy_number).upper() if can_persist_policy else "",
@@ -3861,6 +3921,8 @@ async def save_uploaded_files_v2(
                     "total_incurred": getattr(saved_claim, "total_incurred", 0),
                     "flag": getattr(saved_claim, "flag", None),
                     "litigation": getattr(saved_claim, "litigation", False),
+                    "source_evidence": claim_data.get("source_evidence") or {},
+                    "evidence_id": claim_data.get("evidence_id"),
                 }
             )
 
@@ -3903,13 +3965,19 @@ async def save_uploaded_files_v2(
                 "policy_number": _clean(file_policy_number).upper() if can_persist_policy else "",
                 "debug_policy_number": debug_policy_number,
                 "can_persist_policy": can_persist_policy,
+                "persistence_mode": replacement_decision.mode,
+                "replacement_decision": replacement_decision_payload,
             }
         )
 
         all_parsed_claims.extend(parsed_claims)
         all_repaired_claims.extend(repaired_claims)
 
-    if latest_profile_data and _valid_policy_number(latest_profile_data.get("policy_number")):
+    if (
+        latest_profile_persistence_allowed
+        and latest_profile_data
+        and _valid_policy_number(latest_profile_data.get("policy_number"))
+    ):
         latest_saved_profile = force_save_account_profile_v2(
             db,
             profile_data=latest_profile_data,
@@ -3938,6 +4006,7 @@ async def save_uploaded_files_v2(
             "policy_count": len(latest_profile_data.get("policies") or []),
             "validation": latest_profile_data.get("validation") or {},
             "uploaded_files": uploaded_files,
+            "replacement_decisions": replacement_decisions,
         },
     )
 
@@ -3997,6 +4066,8 @@ async def save_uploaded_files_v2(
         "policies": latest_profile_data.get("policies") or [],
         "validation": latest_profile_data.get("validation") or {},
         "uploaded_files": uploaded_files,
+        "replacement_decisions": replacement_decisions,
+        "source_evidence": source_evidence_packets,
         "claims": saved_claim_rows or all_repaired_claims,
         "saved_claim_rows": saved_claim_rows,
         "parsed_claims": all_repaired_claims,
