@@ -670,6 +670,13 @@ export default function SettingsPage() {
               </a>
             )}
 
+            <a
+              href="/loss-run-requests"
+              className="rounded-xl border border-cyan-400/30 bg-cyan-400/10 px-5 py-3 font-semibold text-cyan-100 hover:bg-cyan-400/20"
+            >
+              Loss Run Requests
+            </a>
+
             {showBetaSettingsLinks && (
             <a
               href="/beta-exit-survey"
