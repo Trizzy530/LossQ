@@ -20,6 +20,7 @@ from app.services.audit import record_audit_event
 from app.services.document_intelligence.parser_cleanup import cleanup_loss_run_extraction
 from app.services.lossq_loss_run_pipeline_v2 import parse_loss_run_upload
 from app.services.loss_intelligence_guard import decide_claim_replacement
+from app.services.source_evidence import build_loss_run_evidence
 
 from app.routes.upload import (
     validate_upload_file_security,
@@ -3558,6 +3559,7 @@ async def save_uploaded_files_v2(
     all_filtered_out_claims: List[Dict[str, Any]] = []
     saved_claim_rows: List[Dict[str, Any]] = []
     replacement_decisions: List[Dict[str, Any]] = []
+    source_evidence_packets: List[Dict[str, Any]] = []
     latest_profile_data: Dict[str, Any] = {}
     latest_saved_profile = None
     latest_profile_persistence_allowed = False
@@ -3668,6 +3670,21 @@ async def save_uploaded_files_v2(
 
         repaired_claims = filtered_repaired_claims
         all_filtered_out_claims.extend(filtered_out_claims)
+
+        source_evidence = build_loss_run_evidence(
+            content=content,
+            filename=safe_upload_filename or file.filename or safe_filename,
+            profile=parsed_profile,
+            policies=parsed_policies,
+            claims=repaired_claims,
+        )
+        source_evidence_packets.append(source_evidence)
+        parsed_profile["source_evidence"] = source_evidence.get("profile") or {}
+        parsed_validation["source_evidence_summary"] = source_evidence.get("summary") or {}
+        for claim_index, claim in enumerate(repaired_claims):
+            claim_packet = (source_evidence.get("claims") or [])[claim_index]
+            claim["source_evidence"] = claim_packet.get("fields") or {}
+            claim["evidence_id"] = claim_packet.get("evidence_id")
 
         rollup_from_claims = _filter_policy_schedule_items(
             _build_policy_rollup_from_claims(repaired_claims)
@@ -3904,6 +3921,8 @@ async def save_uploaded_files_v2(
                     "total_incurred": getattr(saved_claim, "total_incurred", 0),
                     "flag": getattr(saved_claim, "flag", None),
                     "litigation": getattr(saved_claim, "litigation", False),
+                    "source_evidence": claim_data.get("source_evidence") or {},
+                    "evidence_id": claim_data.get("evidence_id"),
                 }
             )
 
@@ -4048,6 +4067,7 @@ async def save_uploaded_files_v2(
         "validation": latest_profile_data.get("validation") or {},
         "uploaded_files": uploaded_files,
         "replacement_decisions": replacement_decisions,
+        "source_evidence": source_evidence_packets,
         "claims": saved_claim_rows or all_repaired_claims,
         "saved_claim_rows": saved_claim_rows,
         "parsed_claims": all_repaired_claims,

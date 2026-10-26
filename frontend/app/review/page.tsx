@@ -179,6 +179,8 @@ export default function ReviewExtractionPage() {
   const criticalItems = normalizeArray(validation.extraction_critical_issues);
   const replacementDecision = validation.replacement_decision || packet.raw_response?.replacement_decisions?.[0] || {};
   const replacementReasons = normalizeArray(replacementDecision.reasons);
+  const evidencePackets = normalizeArray(packet.source_evidence || packet.raw_response?.source_evidence);
+  const evidenceSummary = evidencePackets[0]?.summary || validation.source_evidence_summary || {};
 
   return (
     <main className="min-h-screen bg-[#020617] text-white px-5 py-8">
@@ -216,6 +218,22 @@ export default function ReviewExtractionPage() {
           <Metric title="Open Claims" value={totals.openClaims} />
           <Metric title="Total Incurred" value={money(totals.totalIncurred)} />
         </section>
+
+        {evidenceSummary.populated_fields > 0 && (
+          <section className="rounded-3xl border border-emerald-400/30 bg-emerald-500/10 p-6 mb-8">
+            <div className="flex flex-wrap items-center justify-between gap-3">
+              <div>
+                <h2 className="text-2xl font-bold text-emerald-200">Source Evidence</h2>
+                <p className="text-emerald-100 mt-1">
+                  {evidenceSummary.matched_fields} of {evidenceSummary.populated_fields} populated fields linked to source text.
+                </p>
+              </div>
+              <div className="text-3xl font-black text-emerald-200">
+                {Number(evidenceSummary.coverage_percent || 0).toFixed(1)}%
+              </div>
+            </div>
+          </section>
+        )}
 
         {claims.length === 0 && (
           <section className="rounded-3xl border border-blue-400/30 bg-blue-500/10 p-6 mb-8">
@@ -323,6 +341,7 @@ export default function ReviewExtractionPage() {
                   <th className="py-3 pr-4">Reserve</th>
                   <th className="py-3 pr-4">Total Incurred</th>
                   <th className="py-3 pr-4">Loss Date</th>
+                  <th className="py-3 pr-4">Source</th>
                 </tr>
               </thead>
               <tbody>
@@ -336,10 +355,11 @@ export default function ReviewExtractionPage() {
                     <td className="py-3 pr-4"><SmallInput value={String(claim.reserve_amount ?? claim.reserve ?? "")} onChange={(v) => updateClaim(index, "reserve_amount", v)} /></td>
                     <td className="py-3 pr-4"><SmallInput value={String(claim.total_incurred ?? claim.incurred ?? "")} onChange={(v) => updateClaim(index, "total_incurred", v)} /></td>
                     <td className="py-3 pr-4"><SmallInput value={claim.loss_date || claim.date_of_loss || ""} onChange={(v) => updateClaim(index, "loss_date", v)} /></td>
+                    <td className="py-3 pr-4 min-w-[260px]"><SourceEvidence evidence={claim.source_evidence} /></td>
                   </tr>
                 ))}
                 {claims.length === 0 && (
-                  <tr><td colSpan={8} className="py-5 text-slate-400">No claim rows found in the saved review packet.</td></tr>
+                  <tr><td colSpan={9} className="py-5 text-slate-400">No claim rows found in the saved review packet.</td></tr>
                 )}
               </tbody>
             </table>
@@ -379,5 +399,17 @@ function EditField({ label, value, onChange }: { label: string; value: string; o
 function SmallInput({ value, onChange }: { value: string; onChange: (value: string) => void }) {
   return (
     <input value={value} onChange={(e) => onChange(e.target.value)} className="w-full min-w-[120px] rounded-xl bg-slate-950/70 border border-white/10 px-3 py-2 text-white outline-none focus:border-blue-400" />
+  );
+}
+
+function SourceEvidence({ evidence }: { evidence?: AnyObject }) {
+  const fields = evidence && typeof evidence === "object" ? Object.values(evidence) : [];
+  const first = fields.find((item: any) => item?.verified) as AnyObject | undefined;
+  if (!first) return <span className="text-amber-300">Not linked</span>;
+  return (
+    <div title={first.excerpt || ""} className="text-xs text-emerald-200">
+      <div className="font-bold">Page {first.page}</div>
+      <div className="mt-1 max-w-[280px] truncate text-slate-300">{first.excerpt}</div>
+    </div>
   );
 }
