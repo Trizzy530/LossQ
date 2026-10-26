@@ -40,6 +40,7 @@ export default function ReviewExtractionPage() {
   const [packet, setPacket] = useState<AnyObject>(blankPacket());
   const [message, setMessage] = useState("");
   const [saving, setSaving] = useState(false);
+  const [confirmNoLoss, setConfirmNoLoss] = useState(false);
 
   useEffect(() => {
     const token = localStorage.getItem("lossq_token");
@@ -145,6 +146,7 @@ export default function ReviewExtractionPage() {
           claims,
           validation,
           source: "manual_review_screen",
+          confirm_no_loss: confirmNoLoss,
         }),
       });
 
@@ -174,6 +176,9 @@ export default function ReviewExtractionPage() {
 
   const warningItems = normalizeArray(validation.warnings || validation.warning_flags || validation.issues);
   const needsReviewItems = normalizeArray(validation.needs_review || validation.needs_manual_review || []);
+  const criticalItems = normalizeArray(validation.extraction_critical_issues);
+  const replacementDecision = validation.replacement_decision || packet.raw_response?.replacement_decisions?.[0] || {};
+  const replacementReasons = normalizeArray(replacementDecision.reasons);
 
   return (
     <main className="min-h-screen bg-[#020617] text-white px-5 py-8">
@@ -193,7 +198,11 @@ export default function ReviewExtractionPage() {
           <div className="flex flex-wrap gap-3">
             <button onClick={() => router.push("/dashboard")} className="btn-secondary">Back to Dashboard</button>
             <button onClick={saveLocalReview} className="btn-secondary">Save Local Review</button>
-            <button onClick={submitReviewedData} disabled={saving} className="btn-primary disabled:opacity-50">
+            <button
+              onClick={submitReviewedData}
+              disabled={saving || (claims.length === 0 && !confirmNoLoss)}
+              className="btn-primary disabled:opacity-50"
+            >
               {saving ? "Saving..." : "Confirm Reviewed Data"}
             </button>
           </div>
@@ -208,11 +217,41 @@ export default function ReviewExtractionPage() {
           <Metric title="Total Incurred" value={money(totals.totalIncurred)} />
         </section>
 
-        {(warningItems.length > 0 || needsReviewItems.length > 0) && (
+        {claims.length === 0 && (
+          <section className="rounded-3xl border border-blue-400/30 bg-blue-500/10 p-6 mb-8">
+            <label className="flex items-start gap-3 text-blue-100">
+              <input
+                type="checkbox"
+                checked={confirmNoLoss}
+                onChange={(event) => setConfirmNoLoss(event.target.checked)}
+                className="mt-1 h-5 w-5"
+              />
+              <span>
+                I reviewed the source document and confirm this is a complete no-loss history with no claim rows to save.
+              </span>
+            </label>
+          </section>
+        )}
+
+        {replacementDecision.mode === "review_only" && (
+          <section className="rounded-3xl border border-red-400/30 bg-red-500/10 p-6 mb-8">
+            <h2 className="text-2xl font-bold text-red-200 mb-3">Protected Review Mode</h2>
+            <p className="text-red-100 mb-3">
+              LossQ did not overwrite the saved account because this extraction needs human confirmation.
+            </p>
+            <ul className="list-disc pl-6 space-y-2 text-red-100">
+              {replacementReasons.map((item: any, index: number) => (
+                <li key={index}>{String(item)}</li>
+              ))}
+            </ul>
+          </section>
+        )}
+
+        {(warningItems.length > 0 || needsReviewItems.length > 0 || criticalItems.length > 0) && (
           <section className="rounded-3xl border border-yellow-400/30 bg-yellow-500/10 p-6 mb-8">
             <h2 className="text-2xl font-bold text-yellow-200 mb-3">Needs Review</h2>
             <ul className="list-disc pl-6 space-y-2 text-yellow-100">
-              {[...warningItems, ...needsReviewItems].map((item: any, index: number) => (
+              {[...warningItems, ...needsReviewItems, ...criticalItems].map((item: any, index: number) => (
                 <li key={index}>{typeof item === "string" ? item : JSON.stringify(item)}</li>
               ))}
             </ul>

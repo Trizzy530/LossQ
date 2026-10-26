@@ -27,6 +27,7 @@ from app.routes import (
     audit_logs,
     billing,
     platform_admin,
+    review,
     )
 
 from app.models.user import User
@@ -106,6 +107,7 @@ app.include_router(beta.router)
 app.include_router(platform_admin.router)
 app.include_router(upload.router)
 app.include_router(upload_v2.router)
+app.include_router(review.router)
 app.include_router(claims.router)
 app.include_router(summary.router)
 app.include_router(upload_history.router)
