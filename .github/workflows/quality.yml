@@ -32,9 +32,13 @@ jobs:
           backend/app/main.py
           backend/app/routes/review.py
           backend/app/routes/upload_v2.py
+          backend/app/routes/loss_intelligence.py
+          backend/app/models/underwriting_rule_set.py
           backend/app/services/loss_intelligence_guard.py
           backend/app/services/review_confirmation.py
           backend/app/services/source_evidence.py
+          backend/app/services/underwriting_intelligence.py
+          backend/app/services/schema_maintenance.py
       - name: Run backend regression suite
         env:
           PYTHONPATH: backend

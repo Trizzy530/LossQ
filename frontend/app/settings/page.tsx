@@ -661,6 +661,15 @@ export default function SettingsPage() {
               Billing & Subscription
             </a>
 
+            {canManageUsers && (
+              <a
+                href="/settings/underwriting-rules"
+                className="rounded-xl border border-blue-400/30 bg-blue-500/10 px-5 py-3 font-semibold text-blue-100 hover:bg-blue-500/20"
+              >
+                Underwriting Rules
+              </a>
+            )}
+
             {showBetaSettingsLinks && (
             <a
               href="/beta-exit-survey"
