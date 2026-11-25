@@ -11924,8 +11924,7 @@ const modelChartNarrative =
           label="Producing Agency"
           value={lossqProducingAgencyFromObject({
            // LOSSQ_DASHBOARD_PRODUCING_AGENCY_FROM_SETTINGS_V1
-           // Dashboard Account Snapshot should match Settings / Company Info first,
-           // then fall back to uploaded profile-specific agency values.
+           // Prefer the uploaded producing agency; company settings are fallback only.
           ...(profile || {}),
           ...(displayProfile || {}),
            dashboardIdentity,
@@ -11947,6 +11946,10 @@ const modelChartNarrative =
             dashboardIdentity?.agency_profile ||
             {},
            agency_name:
+            displayProfile?.producing_agency ||
+            displayProfile?.agency_name ||
+            profile?.producing_agency ||
+            profile?.agency_name ||
             dashboardIdentity?.organization?.agency_name ||
             dashboardIdentity?.organization?.company_name ||
             dashboardIdentity?.organization?.organization_name ||
