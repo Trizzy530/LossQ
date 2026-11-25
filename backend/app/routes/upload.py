@@ -20070,9 +20070,9 @@ def lossq_us_readable_loss_run_overlay_v1(file_path, parsed_claims=None, parsed_
   return repaired_claims, repaired_profile
 
 
-def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
+def upsert_account_profile(db: Session, profile_data: dict, current_user: dict, verified=False):
   # LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_CALL_V6
-  if not (profile_data.get("validation") or {}).get("structured_reconciled"):
+  if not verified:
     profile_data = lossq_sanitize_profile_policies_before_upsert_v6(profile_data)
     # LOSSQ_MARKET_INTELLIGENCE_PROFILE_APPLY_CALL_V1
     profile_data = lossq_apply_market_intelligence_to_profile_v1(profile_data)
@@ -26644,7 +26644,16 @@ def _save_reconciled_structured_pdf(db, current_user, file, file_path, safe_file
       raise HTTPException(status_code=409, detail="Existing account uses a different primary policy. Review the existing profile.")
   if len(candidates) > 1:
     raise HTTPException(status_code=409, detail="Duplicate existing account profiles require review.")
-  profile = upsert_account_profile(db, profile_data, current_user)
+  # Preserve market and non-column exposures through the existing JSON storage.
+  validation = profile_data["validation"]
+  validation["market_context"] = {
+    "country": profile_data["country"], "currency": profile_data["currency"],
+    "country_code": "CA" if profile_data["currency"] == "CAD" else "US",
+    "region_code": profile_data["state"],
+    "date_format": "YYYY/DD/MM" if profile_data["currency"] == "CAD" else "MM/DD/YYYY",
+  }
+  validation["exposure_inputs"] = profile_data.get("exposure_inputs", {})
+  profile = upsert_account_profile(db, profile_data, current_user, verified=True)
   if profile is None:
     raise StructuredPDFError("Verified account could not be saved.")
   for key, payload in payloads:
