@@ -638,6 +638,10 @@ def lossq_account_profile_to_dict_raw(profile):
     response_business_name = clean_value(getattr(profile, "business_name", ""))
     response_account_number = lossq_account_profile_clean_account_number(getattr(profile, "account_number", ""), response_business_name)
     response_customer_number = lossq_account_profile_clean_account_number(getattr(profile, "customer_number", ""), response_business_name)
+    if isinstance(validation, dict) and validation.get("structured_reconciled") is True:
+        # Verified source account identifiers must not be reclassified by prefix heuristics.
+        response_account_number = clean_value(getattr(profile, "account_number", ""))
+        response_customer_number = clean_value(getattr(profile, "customer_number", ""))
 
     return {
         "id": getattr(profile, "id", None),

@@ -20070,13 +20070,14 @@ def lossq_us_readable_loss_run_overlay_v1(file_path, parsed_claims=None, parsed_
   return repaired_claims, repaired_profile
 
 
-def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
+def upsert_account_profile(db: Session, profile_data: dict, current_user: dict, verified=False):
   # LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_CALL_V6
-  profile_data = lossq_sanitize_profile_policies_before_upsert_v6(profile_data)
-  # LOSSQ_MARKET_INTELLIGENCE_PROFILE_APPLY_CALL_V1
-  profile_data = lossq_apply_market_intelligence_to_profile_v1(profile_data)
-  # LOSSQ_EXPOSURE_INPUT_UNIVERSAL_TERMINOLOGY_CALL_V1
-  profile_data = lossq_exposure_input_universal_terminology_v1(profile_data)
+  if not verified:
+    profile_data = lossq_sanitize_profile_policies_before_upsert_v6(profile_data)
+    # LOSSQ_MARKET_INTELLIGENCE_PROFILE_APPLY_CALL_V1
+    profile_data = lossq_apply_market_intelligence_to_profile_v1(profile_data)
+    # LOSSQ_EXPOSURE_INPUT_UNIVERSAL_TERMINOLOGY_CALL_V1
+    profile_data = lossq_exposure_input_universal_terminology_v1(profile_data)
 
   policy_number = clean_profile_value(
     profile_data.get("policy_number")
@@ -26602,6 +26603,94 @@ def lossq_extract_true_insured_name_from_upload_csv(file_path):
   return ""
 
 
+def _save_reconciled_structured_pdf(db, current_user, file, file_path, safe_filename, claims, profile_data):
+  """Persist only verified rows; never purge unrelated or unrecognized history."""
+  from app.services.reconciled_pdf import StructuredPDFError
+
+  org_id = current_user["organization_id"]
+  policies = profile_data["policy_numbers"]
+  incoming = {(c["claim_number"], c["policy_number"]): c for c in claims}
+  existing = db.query(Claim).filter(
+    Claim.organization_id == org_id,
+    func.upper(func.trim(Claim.policy_number)).in_(policies),
+  ).all()
+  existing_by_key = {}
+  for row in existing:
+    key = (str(row.claim_number or "").strip().upper(), str(row.policy_number or "").strip().upper())
+    if key not in incoming or key in existing_by_key or getattr(row, "is_deleted", False):
+      raise HTTPException(status_code=409, detail="Existing claim history differs from the verified loss run. Review or remove the incorrect test account before re-uploading.")
+    existing_by_key[key] = row
+
+  # Use the established normalizer for derived fields, but the verified source
+  # columns win over any fallback or inferred policy/claim identity.
+  payloads = []
+  for key, raw in incoming.items():
+    normalized = normalize_claim_data(raw, raw["policy_number"], current_user)
+    normalized.update(raw)
+    # Persist canonical ISO dates and retain explicit zero amounts and false flags.
+    for field in ("date_of_loss", "date_reported", "date_closed"):
+      normalized[field] = parse_date(raw.get(field))
+    payloads.append((key, lossq_filter_claim_model_fields(normalized)))
+
+  # Refuse to attach a verified upload to a different account sharing a policy key.
+  candidates = db.query(AccountProfile).filter(
+    AccountProfile.organization_id == org_id,
+    func.upper(func.trim(AccountProfile.policy_number)).in_(policies),
+  ).all()
+  for candidate in candidates:
+    if str(candidate.account_number or "").strip().upper() != str(profile_data["account_number"]).strip().upper():
+      raise HTTPException(status_code=409, detail="Policy already belongs to a different account. Review the existing profile.")
+    if str(candidate.policy_number or "").strip() != profile_data["policy_number"]:
+      raise HTTPException(status_code=409, detail="Existing account uses a different primary policy. Review the existing profile.")
+  if len(candidates) > 1:
+    raise HTTPException(status_code=409, detail="Duplicate existing account profiles require review.")
+  # Preserve market and non-column exposures through the existing JSON storage.
+  validation = profile_data["validation"]
+  validation["market_context"] = {
+    "country": profile_data["country"], "currency": profile_data["currency"],
+    "country_code": "CA" if profile_data["currency"] == "CAD" else "US",
+    "region_code": profile_data["state"],
+    "date_format": "YYYY/DD/MM" if profile_data["currency"] == "CAD" else "MM/DD/YYYY",
+  }
+  validation["exposure_inputs"] = profile_data.get("exposure_inputs", {})
+  profile = upsert_account_profile(db, profile_data, current_user, verified=True)
+  if profile is None:
+    raise StructuredPDFError("Verified account could not be saved.")
+  for key, payload in payloads:
+    row = existing_by_key.get(key)
+    if row is None:
+      db.add(Claim(**payload))
+    else:
+      for field, value in payload.items():
+        setattr(row, field, value)
+
+  db.add(UploadHistory(
+    filename=safe_filename, stored_path=file_path, content_type=file.content_type,
+    claims_saved=len(claims), uploaded_at=datetime.now().isoformat(),
+    uploaded_by_user_id=current_user["user_id"], organization_id=org_id,
+  ))
+  uploaded = [{"filename": safe_filename, "claims_saved": len(claims),
+               "duplicates_skipped": 0, "policy_number": profile_data["policy_number"]}]
+  record_audit_event(db, current_user=current_user, action="loss_run_uploaded",
+    resource_type="upload", resource_id=profile_data["policy_number"],
+    details={"parser": "reconciled_structured", "saved_claims": len(claims),
+             "validation": profile_data["validation"], "uploaded_files": uploaded})
+  db.commit()
+  db.refresh(profile)
+  profile_response = dict(profile_data, id=profile.id, account_profile_id=profile.id,
+                          selected_profile_id=profile.id, selected_policy_number=profile_data["policy_number"])
+  return {
+    "message": "Verified loss run uploaded successfully", "saved_claims": len(claims),
+    "duplicates_skipped": 0, "policy_number": profile_data["policy_number"],
+    "account_number": profile_data["account_number"], "account_profile_id": profile.id,
+    "selected_profile_id": profile.id, "selected_policy_number": profile_data["policy_number"],
+    "profile_auto_populated": True, "profile": profile_response, "account_profile": profile_response,
+    "policies": profile_data["policies"], "claims": claims, "parsed_claims": claims,
+    "saved_claim_rows": claims, "parsed_claim_count": len(claims), "saved_claim_count": len(claims),
+    "validation": profile_data["validation"], "uploaded_files": uploaded,
+  }
+
+
 async def save_uploaded_files(files, policy_number, db, current_user):
   # LOSSQ_SAVE_UPLOADED_FILES_SAFE_DEFAULTS_V1
   # Initialize shared parse variables inside the actual upload save loop.
@@ -26634,6 +26723,23 @@ async def save_uploaded_files(files, policy_number, db, current_user):
 
     with open(file_path, "wb") as buffer:
       shutil.copyfileobj(file.file, buffer)
+
+    # Verified structured uploads bypass legacy heuristic overlays before any claim purge.
+    if len(files) == 1 and str(file_path).lower().endswith((".pdf", ".csv", ".xlsx")):
+      from app.services.reconciled_pdf import parse_reconciled_pdf, StructuredPDFError
+      from app.services.reconciled_tabular import parse_reconciled_tabular
+      try:
+        verified = (parse_reconciled_pdf(file_path) if str(file_path).lower().endswith(".pdf")
+                    else parse_reconciled_tabular(file_path))
+        if verified is not None:
+          verified_claims, verified_profile = verified
+          return _save_reconciled_structured_pdf(
+            db, current_user, file, file_path, safe_upload_filename,
+            verified_claims, verified_profile,
+          )
+      except StructuredPDFError as exc:
+        db.rollback()
+        raise HTTPException(status_code=422, detail=str(exc))
 
     try:
       parsed_claims, parsed_profile = parse_file(file_path, safe_upload_filename or safe_filename)
