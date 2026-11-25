@@ -3,7 +3,7 @@ name: LossQ quality gate
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, 'fix/**']
 
 permissions:
   contents: read
@@ -32,6 +32,9 @@ jobs:
           backend/app/main.py
           backend/app/routes/review.py
           backend/app/routes/upload_v2.py
+          backend/app/routes/upload.py
+          backend/app/services/reconciled_pdf.py
+          backend/app/services/reconciled_tabular.py
           backend/app/routes/loss_intelligence.py
           backend/app/models/underwriting_rule_set.py
           backend/app/services/loss_intelligence_guard.py

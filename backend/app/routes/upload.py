@@ -20072,11 +20072,12 @@ def lossq_us_readable_loss_run_overlay_v1(file_path, parsed_claims=None, parsed_
 
 def upsert_account_profile(db: Session, profile_data: dict, current_user: dict):
   # LOSSQ_UPSERT_POLICY_SCHEDULE_SANITIZE_CALL_V6
-  profile_data = lossq_sanitize_profile_policies_before_upsert_v6(profile_data)
-  # LOSSQ_MARKET_INTELLIGENCE_PROFILE_APPLY_CALL_V1
-  profile_data = lossq_apply_market_intelligence_to_profile_v1(profile_data)
-  # LOSSQ_EXPOSURE_INPUT_UNIVERSAL_TERMINOLOGY_CALL_V1
-  profile_data = lossq_exposure_input_universal_terminology_v1(profile_data)
+  if not (profile_data.get("validation") or {}).get("structured_reconciled"):
+    profile_data = lossq_sanitize_profile_policies_before_upsert_v6(profile_data)
+    # LOSSQ_MARKET_INTELLIGENCE_PROFILE_APPLY_CALL_V1
+    profile_data = lossq_apply_market_intelligence_to_profile_v1(profile_data)
+    # LOSSQ_EXPOSURE_INPUT_UNIVERSAL_TERMINOLOGY_CALL_V1
+    profile_data = lossq_exposure_input_universal_terminology_v1(profile_data)
 
   policy_number = clean_profile_value(
     profile_data.get("policy_number")
@@ -26626,8 +26627,23 @@ def _save_reconciled_structured_pdf(db, current_user, file, file_path, safe_file
   for key, raw in incoming.items():
     normalized = normalize_claim_data(raw, raw["policy_number"], current_user)
     normalized.update(raw)
+    # Persist canonical ISO dates and retain explicit zero amounts and false flags.
+    for field in ("date_of_loss", "date_reported", "date_closed"):
+      normalized[field] = parse_date(raw.get(field))
     payloads.append((key, lossq_filter_claim_model_fields(normalized)))
 
+  # Refuse to attach a verified upload to a different account sharing a policy key.
+  candidates = db.query(AccountProfile).filter(
+    AccountProfile.organization_id == org_id,
+    func.upper(func.trim(AccountProfile.policy_number)).in_(policies),
+  ).all()
+  for candidate in candidates:
+    if str(candidate.account_number or "").strip().upper() != str(profile_data["account_number"]).strip().upper():
+      raise HTTPException(status_code=409, detail="Policy already belongs to a different account. Review the existing profile.")
+    if str(candidate.policy_number or "").strip() != profile_data["policy_number"]:
+      raise HTTPException(status_code=409, detail="Existing account uses a different primary policy. Review the existing profile.")
+  if len(candidates) > 1:
+    raise HTTPException(status_code=409, detail="Duplicate existing account profiles require review.")
   profile = upsert_account_profile(db, profile_data, current_user)
   if profile is None:
     raise StructuredPDFError("Verified account could not be saved.")
@@ -26648,7 +26664,7 @@ def _save_reconciled_structured_pdf(db, current_user, file, file_path, safe_file
                "duplicates_skipped": 0, "policy_number": profile_data["policy_number"]}]
   record_audit_event(db, current_user=current_user, action="loss_run_uploaded",
     resource_type="upload", resource_id=profile_data["policy_number"],
-    details={"parser": "reconciled_pdf", "saved_claims": len(claims),
+    details={"parser": "reconciled_structured", "saved_claims": len(claims),
              "validation": profile_data["validation"], "uploaded_files": uploaded})
   db.commit()
   db.refresh(profile)
@@ -26699,11 +26715,13 @@ async def save_uploaded_files(files, policy_number, db, current_user):
     with open(file_path, "wb") as buffer:
       shutil.copyfileobj(file.file, buffer)
 
-    # Verified split-table PDFs bypass legacy heuristic overlays before any claim purge.
-    if len(files) == 1 and str(file_path).lower().endswith(".pdf"):
+    # Verified structured uploads bypass legacy heuristic overlays before any claim purge.
+    if len(files) == 1 and str(file_path).lower().endswith((".pdf", ".csv", ".xlsx")):
       from app.services.reconciled_pdf import parse_reconciled_pdf, StructuredPDFError
+      from app.services.reconciled_tabular import parse_reconciled_tabular
       try:
-        verified = parse_reconciled_pdf(file_path)
+        verified = (parse_reconciled_pdf(file_path) if str(file_path).lower().endswith(".pdf")
+                    else parse_reconciled_tabular(file_path))
         if verified is not None:
           verified_claims, verified_profile = verified
           return _save_reconciled_structured_pdf(

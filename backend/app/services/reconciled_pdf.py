@@ -36,7 +36,7 @@ HEADERS = {
 def _date(value):
     for fmt in ("%m/%d/%Y", "%Y-%m-%d"):
         try:
-            return datetime.strptime(value, fmt).strftime("%m/%d/%Y")
+            return datetime.strptime(value, fmt).date().isoformat()
         except ValueError:
             pass
     raise StructuredPDFError("Invalid or ambiguous date in structured loss run.")
@@ -114,7 +114,7 @@ def parse_reconciled_layout(text):
         number = number.upper()
         _require(number not in policies and number != account_number.upper() and bool(lob), "Duplicate or invalid policy identity.")
         effective, expiration = _date(effective), _date(expiration)
-        _require(datetime.strptime(effective, "%m/%d/%Y") < datetime.strptime(expiration, "%m/%d/%Y"), "Invalid policy period.")
+        _require(effective < expiration, "Invalid policy period.")
         premium, exposure = _amount(premium), _amount(exposure)
         policies[number] = {
             "policy_number": number, "line_of_business": lob, "coverage": lob,
@@ -180,7 +180,7 @@ def parse_reconciled_layout(text):
         claim = claims[number]
         _require(bool(closed_date) == (claim["status"] == "Closed"), "Claim status and closure date disagree.")
         claim.update(
-            claimant=claimant, jurisdiction_state=jurisdiction, adjuster=adjuster,
+            claimant=claimant, jurisdiction_state=jurisdiction, adjuster=adjuster, examiner=adjuster,
             date_reported=_date(reported_date), date_closed=_date(closed_date) if closed_date else None,
             litigation=litigation.lower() == "yes", description=description,
             litigation_status="Litigation" if litigation.lower() == "yes" else "",
@@ -206,6 +206,7 @@ def parse_reconciled_layout(text):
         "country": "United States", "currency": "USD",
         "policies": list(policies.values()), "policy_numbers": list(policies),
         "current_premium": str(premium_total), "exposure_inputs": exposures.copy(),
+        "exposure_basis": " | ".join(f'{p["exposure_basis"]}: {p["exposure_value"]}' for p in policies.values()),
         "raw_text_preview": text[:2500],
         "validation": {
             "claim_count": len(claims), "policy_count": len(policies),
@@ -214,7 +215,9 @@ def parse_reconciled_layout(text):
                                 "reported_total_incurred": float(reported[2])},
             "calculated_total_incurred": float(calculated[2]),
             "extraction_quality": {"status": "passed", "critical_issues": []},
-            "structured_pdf_reconciled": True,
+            "structured_pdf_reconciled": True, "structured_reconciled": True,
+            "market_country": "United States", "market_currency": "USD",
+            "listed_policy_premium_total": float(premium_total),
         },
         **exposures,
     }
