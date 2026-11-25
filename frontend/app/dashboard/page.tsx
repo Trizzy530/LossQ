@@ -8335,8 +8335,11 @@ if (isUploading) return;
   }
 
   const primaryData = uploadResults[uploadResults.length - 1] || {};
+  const verifiedUpload = primaryData?.validation?.structured_reconciled === true;
+  // A verified account is authoritative. Do not merge other selected accounts into it.
+  const displayUploadResults = verifiedUpload ? [primaryData] : uploadResults;
 
-  const allUploadProfiles = uploadResults
+  const allUploadProfiles = displayUploadResults
   .map((item) => item?.profile || item?.account_profile || item?.accountProfile || {})
   .filter((item) => item && typeof item === "object");
 
@@ -8387,7 +8390,7 @@ if (isUploading) return;
    customer_number: lossqCleanAccountNumber(
     mergedUploadProfile?.customer_number || mergedUploadProfile?.account_number
    ),
-   policy_number: mergedAccountKey || chooseSafePolicyNumber(mergedUploadProfile?.policy_number) || "",
+   policy_number: verifiedUpload ? mergedUploadProfile?.policy_number : (mergedAccountKey || chooseSafePolicyNumber(mergedUploadProfile?.policy_number) || ""),
 
    effective_date:
     mergedUploadProfile?.effective_date ||
@@ -8446,7 +8449,7 @@ if (isUploading) return;
   };
   const uploadedFileNames = selectedFiles.map((file) => file.name).join(", ");
 
-  const combinedClaims = uploadResults.flatMap((item) =>
+  const combinedClaims = displayUploadResults.flatMap((item) =>
    firstNonEmptyArray(
     item?.saved_claim_rows,
     item?.claims,
@@ -8456,7 +8459,7 @@ if (isUploading) return;
    )
   );
 
-  const combinedPolicies = uploadResults.flatMap((item) =>
+  const combinedPolicies = displayUploadResults.flatMap((item) =>
    firstNonEmptyArray(
     item?.policies,
     item?.profile?.policies,
@@ -8481,7 +8484,7 @@ if (isUploading) return;
      ...(primaryProfile || {}),
      ...((allUploadProfiles || []).reduce((acc: any, item: any) => ({...acc,...(item || {}) }), {})),
      },
-     policies: lossqForceDatesOntoPolicyRows(combinedPolicies, {
+     policies: verifiedUpload ? combinedPolicies : lossqForceDatesOntoPolicyRows(combinedPolicies, {
       effective_date:
        mergedUploadProfile?.effective_date ||
        mergedUploadProfile?.policy_effective_date ||
@@ -8594,7 +8597,7 @@ if (isUploading) return;
    primaryProfile?.raw_text ||
    "";
 
-  const extractedExposureInputs = extractExposureInputsFromUploadText(uploadRawText);
+  const extractedExposureInputs = verifiedUpload ? {} : extractExposureInputsFromUploadText(uploadRawText);
 
   const cleanCarrierName = chooseCleanCarrier(
    primaryProfile?.carrier_name,
@@ -8682,7 +8685,7 @@ if (isUploading) return;
     primaryData?.policy_number
    );
 
-   if (safeUploadedProfilePolicy) {
+   if (!verifiedUpload && safeUploadedProfilePolicy) {
     uploadedProfile.policy_number = safeUploadedProfilePolicy;
    }
 
@@ -8693,7 +8696,7 @@ if (isUploading) return;
    );
 
    // LOSSQ_UPLOADED_PROFILE_POLICY_ACCOUNT_SAFETY_NET_V1
-   if (lossqLooksLikeAccountIdentifier(uploadedProfile.policy_number)) {
+   if (!verifiedUpload && lossqLooksLikeAccountIdentifier(uploadedProfile.policy_number)) {
     const actualUploadedPolicy = lossqChooseActualPolicyNumber(
     ...(Array.isArray(uploadedProfile?.policies)
       ? uploadedProfile.policies.map((p: any) => p?.policy_number)
@@ -8720,7 +8723,7 @@ if (isUploading) return;
     mergedUploadProfile?.policy_number
    );
 
-   if (safeMainAccountKey) {
+   if (!verifiedUpload && safeMainAccountKey) {
     uploadedProfile.policy_number = safeMainAccountKey;
    }
 
@@ -8741,7 +8744,7 @@ if (isUploading) return;
     parsed_claims: uploadedProfile.parsed_claims,
    });
 
-   uploadedProfile.evaluation_date = getBestEvaluationDate(uploadedProfile);
+   if (!verifiedUpload) uploadedProfile.evaluation_date = getBestEvaluationDate(uploadedProfile);
 
 
    resetProfileAnalyticsState({
@@ -8858,7 +8861,7 @@ setLazyLoadedTools,
 
    try {
 
-    if (mergedUploadProfile && typeof mergedUploadProfile === "object") {
+    if (!verifiedUpload && mergedUploadProfile && typeof mergedUploadProfile === "object") {
 
      const profileSavePayload = {
 

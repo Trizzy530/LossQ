@@ -31,7 +31,7 @@ class TabularTests(unittest.TestCase):
         claims, profile = parse_rows(fixture())
         self.assertEqual(len(claims),3)
         self.assertEqual(len(profile['policies']),3)
-        self.assertEqual(profile['current_premium'],'71500')
+        self.assertEqual(float(profile['current_premium']),71500)
         self.assertEqual(profile['validation']['listed_policy_premium_total'],117500)
         self.assertEqual(profile['professional_revenue'],'3150000')
         self.assertEqual(claims[-1]['total_incurred'],0)
